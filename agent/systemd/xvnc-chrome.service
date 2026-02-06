@@ -1,0 +1,14 @@
+[Unit]
+Description=TigerVNC Server for Chrome (DISPLAY=:1)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/Xvnc :1 -geometry 1920x1080 -depth 24 -rfbport 5901 -SecurityTypes None -AlwaysShared -AcceptSetDesktopSize -localhost no
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

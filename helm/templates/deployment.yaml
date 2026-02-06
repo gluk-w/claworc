@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "claworc.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "claworc.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "claworc.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "claworc.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "claworc.serviceAccountName" . }}
+      containers:
+        - name: claworc
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: CLAWORC_DATABASE_PATH
+              value: {{ .Values.config.databasePath | quote }}
+            - name: CLAWORC_K8S_NAMESPACE
+              value: {{ .Values.config.k8sNamespace | quote }}
+            - name: CLAWORC_K8S_NODE_IP
+              value: {{ .Values.config.k8sNodeIp | quote }}
+            - name: CLAWORC_CONTAINER_IMAGE
+              value: {{ .Values.config.containerImage | quote }}
+            - name: CLAWORC_NODEPORT_START
+              value: {{ .Values.config.nodeportStart | quote }}
+            - name: CLAWORC_NODEPORT_END
+              value: {{ .Values.config.nodeportEnd | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "claworc.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

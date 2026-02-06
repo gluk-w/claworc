@@ -1,0 +1,21 @@
+[Unit]
+Description=OpenClaw Gateway Service
+After=chrome.service network.target
+Requires=chrome.service
+
+[Service]
+Type=simple
+Environment="DISPLAY=:1"
+Environment="HOME=/root"
+Environment="PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+WorkingDirectory=/root
+ExecStartPre=/bin/bash -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"'
+ExecStart=/bin/bash -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && /usr/local/bin/openclaw gateway'
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

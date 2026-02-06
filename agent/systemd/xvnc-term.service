@@ -1,0 +1,14 @@
+[Unit]
+Description=TigerVNC Server for Terminal (DISPLAY=:2)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/Xvnc :2 -geometry 1920x1080 -depth 24 -rfbport 5902 -SecurityTypes None -AlwaysShared -AcceptSetDesktopSize -localhost no
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

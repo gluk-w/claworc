@@ -1,0 +1,50 @@
+replicaCount: 1
+
+image:
+  repository: glukw/claworc-dashboard
+  tag: latest
+  pullPolicy: Always
+
+config:
+  databasePath: /app/data/claworc.db
+  k8sNamespace: claworc
+  k8sNodeIp: "192.168.1.104"
+  containerImage: glukw/openclaw-vnc-chrome:latest
+  nodeportStart: 30100
+  nodeportEnd: 30199
+
+service:
+  type: NodePort
+  port: 8001
+  nodePort: 30000
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+  accessMode: ReadWriteOnce
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+probes:
+  liveness:
+    path: /health
+    initialDelaySeconds: 10
+    periodSeconds: 30
+  readiness:
+    path: /health
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  annotations: {}

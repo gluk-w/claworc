@@ -1,0 +1,17 @@
+[Unit]
+Description=Google Chrome Kiosk
+After=xvnc-chrome.service
+Requires=xvnc-chrome.service
+
+[Service]
+Type=simple
+Environment="DISPLAY=:1"
+Environment="HOME=/root"
+ExecStart=/usr/bin/google-chrome-stable --user-data-dir=/root/.config/google-chrome
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

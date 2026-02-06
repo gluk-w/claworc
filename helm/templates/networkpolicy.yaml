@@ -1,0 +1,20 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bot-instance-isolation
+  namespace: {{ .Values.config.k8sNamespace }}
+spec:
+  podSelector:
+    matchLabels:
+      managed-by: claworc
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "claworc.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: 6081
+        - port: 6082
+        - port: 18789

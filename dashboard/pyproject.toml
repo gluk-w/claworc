@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "claworc"
+version = "0.1.0"
+description = "Claworc - OpenClaw Orchestrator Dashboard"
+authors = []
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "^0.115.0"
+uvicorn = {extras = ["standard"], version = "^0.34.0"}
+aiosqlite = "^0.20.0"
+kubernetes = "^31.0.0"
+cryptography = "^44.0.0"
+sse-starlette = "^2.2.0"
+pydantic-settings = "^2.12.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
