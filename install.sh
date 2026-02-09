@@ -97,13 +97,14 @@ install_docker() {
 
     echo ""
     echo "Pulling dashboard image..."
-    docker pull "$DASHBOARD_IMAGE:$TAG"
+    docker pull --platform linux/amd64 "$DASHBOARD_IMAGE:$TAG"
 
     # --- Launch --------------------------------------------------------------
 
     echo ""
     echo "Starting dashboard..."
     docker run -d \
+        --platform linux/amd64 \
         --name "$CONTAINER_NAME" \
         -p "$PORT:8000" \
         -v /var/run/docker.sock:/var/run/docker.sock \
