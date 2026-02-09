@@ -3,7 +3,6 @@ set -euo pipefail
 
 # Defaults
 DASHBOARD_IMAGE="glukw/claworc-dashboard"
-AGENT_IMAGE="glukw/openclaw-vnc-chrome"
 TAG="latest"
 CONTAINER_NAME="claworc-dashboard"
 
@@ -91,7 +90,6 @@ install_docker() {
     echo "  Port:       $PORT"
     echo "  Data dir:   $DATA_DIR"
     echo "  Dashboard:  $DASHBOARD_IMAGE:$TAG"
-    echo "  Agent:      $AGENT_IMAGE:$TAG"
 
     confirm
 
@@ -100,10 +98,6 @@ install_docker() {
     echo ""
     echo "Pulling dashboard image..."
     docker pull "$DASHBOARD_IMAGE:$TAG"
-
-    echo ""
-    echo "Pulling agent image..."
-    docker pull --platform linux/amd64 "$AGENT_IMAGE:$TAG"
 
     # --- Launch --------------------------------------------------------------
 
