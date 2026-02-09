@@ -120,7 +120,7 @@ spec:
     spec:
       containers:
       - name: moltbot
-        image: registry.optimalux.com:32001/optimalux/moltbot:latest
+        image: glukw/openclaw-vnc-chrome:latest:latest
         imagePullPolicy: Always
         securityContext:
           privileged: true

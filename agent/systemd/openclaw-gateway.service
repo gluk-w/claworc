@@ -1,16 +1,18 @@
 [Unit]
 Description=OpenClaw Gateway Service
-After=chrome.service network.target
+After=chrome.service network.target init-env.service
 Requires=chrome.service
 
 [Service]
 Type=simple
 Environment="DISPLAY=:1"
-Environment="HOME=/root"
+User=claworc
+Environment="HOME=/home/claworc"
 Environment="PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-WorkingDirectory=/root
-ExecStartPre=/bin/bash -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"'
-ExecStart=/bin/bash -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && /usr/local/bin/openclaw gateway'
+WorkingDirectory=/home/claworc
+EnvironmentFile=-/etc/default/openclaw
+ExecStartPre=/bin/bash -c 'test -n "$OPENCLAW_GATEWAY_TOKEN" && /usr/local/bin/openclaw config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN" || true'
+ExecStart=/usr/local/bin/openclaw gateway
 Restart=always
 RestartSec=3
 TimeoutStopSec=30

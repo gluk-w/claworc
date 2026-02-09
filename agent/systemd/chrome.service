@@ -6,8 +6,9 @@ Requires=xvnc-chrome.service
 [Service]
 Type=simple
 Environment="DISPLAY=:1"
-Environment="HOME=/root"
-ExecStart=/usr/bin/google-chrome-stable --user-data-dir=/root/.config/google-chrome
+User=claworc
+Environment="HOME=/home/claworc"
+ExecStart=/usr/bin/google-chrome-stable --user-data-dir=/home/claworc/.config/google-chrome --remote-debugging-port=9222
 Restart=always
 RestartSec=3
 StandardOutput=journal

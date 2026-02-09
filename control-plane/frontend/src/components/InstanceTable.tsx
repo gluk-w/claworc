@@ -23,6 +23,7 @@ interface InstanceTableProps {
   onStart: (id: number) => void;
   onStop: (id: number) => void;
   onRestart: (id: number) => void;
+  onClone: (id: number) => void;
   onDelete: (id: number) => void;
   onReorder?: (orderedIds: number[]) => void;
   loadingInstanceId?: number | null;
@@ -33,6 +34,7 @@ function SortableRow({
   onStart,
   onStop,
   onRestart,
+  onClone,
   onDelete,
   loading,
 }: {
@@ -40,6 +42,7 @@ function SortableRow({
   onStart: (id: number) => void;
   onStop: (id: number) => void;
   onRestart: (id: number) => void;
+  onClone: (id: number) => void;
   onDelete: (id: number) => void;
   loading?: boolean;
 }) {
@@ -69,6 +72,7 @@ function SortableRow({
         onStart={onStart}
         onStop={onStop}
         onRestart={onRestart}
+        onClone={onClone}
         onDelete={onDelete}
         loading={loading}
         dragHandleListeners={listeners}
@@ -83,6 +87,7 @@ export default function InstanceTable({
   onStart,
   onStop,
   onRestart,
+  onClone,
   onDelete,
   onReorder,
   loadingInstanceId,
@@ -154,6 +159,7 @@ export default function InstanceTable({
                   onStart={onStart}
                   onStop={onStop}
                   onRestart={onRestart}
+                  onClone={onClone}
                   onDelete={onDelete}
                   loading={loadingInstanceId === inst.id}
                 />

@@ -20,7 +20,6 @@ RUN apt-get update && apt-get install -y \
     x11-utils \
     xfonts-base \
     fonts-liberation \
-    xterm \
     ca-certificates \
     curl \
     wget \
@@ -30,21 +29,27 @@ RUN apt-get update && apt-get install -y \
     python3-venv \
     gnupg \
     build-essential \
+    vim \
     && rm -rf /var/lib/apt/lists/*
+
+# Create claworc user
+RUN useradd -m -s /bin/bash claworc
 
 # Upgrade pip
 RUN python3 -m pip install --no-cache-dir --break-system-packages --upgrade --ignore-installed pip setuptools wheel
 
 # Install pipx
-RUN python3 -m pip install --no-cache-dir --break-system-packages pipx && \
-    python3 -m pipx ensurepath
+RUN python3 -m pip install --no-cache-dir --break-system-packages pipx
+USER claworc
+RUN python3 -m pipx ensurepath
 
 # Install Poetry
-RUN curl -sSL https://install.python-poetry.org | python3 - && \
-    ln -s /root/.local/bin/poetry /usr/local/bin/poetry
+RUN curl -sSL https://install.python-poetry.org | python3 -
+USER root
+RUN ln -s /home/claworc/.local/bin/poetry /usr/local/bin/poetry
 
 # Add Python tools to PATH for interactive sessions
-RUN echo 'export PATH="/root/.local/bin:$PATH"' >> /root/.bashrc
+RUN echo 'export PATH="/home/claworc/.local/bin:$PATH"' >> /home/claworc/.bashrc
 
 # Install Google Chrome (AMD64 only)
 RUN wget -q -O /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
@@ -55,19 +60,24 @@ RUN wget -q -O /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com
     rm -rf /var/lib/apt/lists/*
 
 # Configure Chrome as default browser
-RUN mkdir -p /root/.config && \
-    echo "[Default Applications]" > /root/.config/mimeapps.list && \
-    echo "text/html=google-chrome.desktop" >> /root/.config/mimeapps.list && \
-    echo "x-scheme-handler/http=google-chrome.desktop" >> /root/.config/mimeapps.list && \
-    echo "x-scheme-handler/https=google-chrome.desktop" >> /root/.config/mimeapps.list && \
-    echo "x-scheme-handler/about=google-chrome.desktop" >> /root/.config/mimeapps.list && \
-    echo "x-scheme-handler/unknown=google-chrome.desktop" >> /root/.config/mimeapps.list
+RUN mkdir -p /home/claworc/.config && \
+    echo "[Default Applications]" > /home/claworc/.config/mimeapps.list && \
+    echo "text/html=google-chrome.desktop" >> /home/claworc/.config/mimeapps.list && \
+    echo "x-scheme-handler/http=google-chrome.desktop" >> /home/claworc/.config/mimeapps.list && \
+    echo "x-scheme-handler/https=google-chrome.desktop" >> /home/claworc/.config/mimeapps.list && \
+    echo "x-scheme-handler/about=google-chrome.desktop" >> /home/claworc/.config/mimeapps.list && \
+    echo "x-scheme-handler/unknown=google-chrome.desktop" >> /home/claworc/.config/mimeapps.list && \
+    chown -R claworc:claworc /home/claworc/.config
 
-# Create wrapper script for Chrome to always use --no-sandbox --kiosk flags
+# Create wrapper script for Chrome to always use --no-sandbox flags
 RUN mv /usr/bin/google-chrome-stable /usr/bin/google-chrome-stable.real && \
     echo '#!/bin/bash' > /usr/bin/google-chrome-stable && \
-    echo 'exec /usr/bin/google-chrome-stable.real --no-sandbox --disable-dev-shm-usage --kiosk "$@"' >> /usr/bin/google-chrome-stable && \
+    echo 'exec /usr/bin/google-chrome-stable.real --no-sandbox --disable-dev-shm-usage --no-first-run --no-default-browser-check --password-store=basic "$@"' >> /usr/bin/google-chrome-stable && \
     chmod +x /usr/bin/google-chrome-stable
+
+# Suppress Chrome --no-sandbox warning bar via enterprise policy
+RUN mkdir -p /etc/opt/chrome/policies/managed && \
+    echo '{"CommandLineFlagSecurityWarningsEnabled": false}' > /etc/opt/chrome/policies/managed/suppress_warnings.json
 
 # Copy Node.js, npm, and installed packages from builder
 COPY --from=builder /usr/bin/node /usr/bin/node
@@ -78,11 +88,7 @@ COPY --from=builder /usr/lib/node_modules /usr/lib/node_modules
 RUN ln -s /usr/lib/node_modules/openclaw/dist/entry.js /usr/local/bin/openclaw
 
 # Create working directory
-RUN mkdir -p /root/.openclaw
-
-# Install openclaw browser extension
-# RUN openclaw browser extension install && \
-#    cp -r ~/.openclaw/browser/chrome-extension /root/
+RUN mkdir -p /home/claworc/.openclaw && chown claworc:claworc /home/claworc/.openclaw
 
 # Install Homebrew for Linux
 RUN useradd -m -s /bin/bash linuxbrew || true && \
@@ -90,10 +96,12 @@ RUN useradd -m -s /bin/bash linuxbrew || true && \
     chown -R linuxbrew:linuxbrew /home/linuxbrew
 
 # Download and run Homebrew installer as linuxbrew user
-RUN su - linuxbrew -c 'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+RUN su - linuxbrew -c 'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"' && \
+    chmod o+x /home/linuxbrew && \
+    chmod -R o+rx /home/linuxbrew/.linuxbrew
 
 # Add Homebrew to PATH for all users
-RUN echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /root/.bashrc && \
+RUN echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/claworc/.bashrc && \
     echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /etc/profile.d/homebrew.sh
 
 # Install noVNC
@@ -103,22 +111,23 @@ RUN git clone --branch v1.4.0 --depth 1 https://github.com/novnc/noVNC.git /opt/
 # Configure systemd
 RUN systemctl set-default multi-user.target
 
-# Copy systemd unit files (7 services, dual VNC)
+# Copy helper scripts
+COPY scripts/start-xvnc.sh /opt/scripts/start-xvnc.sh
+COPY scripts/init-env.sh /opt/scripts/init-env.sh
+RUN chmod +x /opt/scripts/start-xvnc.sh /opt/scripts/init-env.sh
+
+# Copy systemd unit files
+COPY systemd/init-env.service /etc/systemd/system/init-env.service
 COPY systemd/xvnc-chrome.service /etc/systemd/system/xvnc-chrome.service
 COPY systemd/novnc-chrome.service /etc/systemd/system/novnc-chrome.service
 COPY systemd/chrome.service /etc/systemd/system/chrome.service
-COPY systemd/xvnc-term.service /etc/systemd/system/xvnc-term.service
-COPY systemd/novnc-term.service /etc/systemd/system/novnc-term.service
-COPY systemd/terminal.service /etc/systemd/system/terminal.service
 COPY systemd/openclaw-gateway.service /etc/systemd/system/openclaw-gateway.service
 
 # Enable all services
-RUN systemctl enable xvnc-chrome.service && \
+RUN systemctl enable init-env.service && \
+    systemctl enable xvnc-chrome.service && \
     systemctl enable novnc-chrome.service && \
     systemctl enable chrome.service && \
-    systemctl enable xvnc-term.service && \
-    systemctl enable novnc-term.service && \
-    systemctl enable terminal.service && \
     systemctl enable openclaw-gateway.service
 
 # Prevent systemd from clearing /tmp
@@ -126,12 +135,18 @@ RUN mkdir -p /etc/systemd/system/systemd-tmpfiles-setup.service.d && \
     echo "[Service]" > /etc/systemd/system/systemd-tmpfiles-setup.service.d/override.conf && \
     echo "ExecStart=" >> /etc/systemd/system/systemd-tmpfiles-setup.service.d/override.conf
 
-WORKDIR /root
+WORKDIR /home/claworc
 
 # Health check on Chrome noVNC port
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:6081/ || exit 1
 
-EXPOSE 6081 6082 5901 5902
+
+# Setup OpenClaw — config is initialized at runtime by init-env.sh (PVC shadows image layer)
+COPY --chown=claworc:claworc browser.json /opt/browser.json
+USER claworc
+RUN openclaw setup
+
+USER root
 
 CMD ["/sbin/init"]

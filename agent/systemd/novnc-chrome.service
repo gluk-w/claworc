@@ -5,6 +5,7 @@ Requires=xvnc-chrome.service
 
 [Service]
 Type=simple
+User=claworc
 ExecStart=/opt/novnc/utils/novnc_proxy --vnc localhost:5901 --listen 6081
 Restart=always
 RestartSec=3

@@ -8,6 +8,7 @@ import {
   useStartInstance,
   useStopInstance,
   useRestartInstance,
+  useCloneInstance,
   useDeleteInstance,
   useRestartedToast,
   useReorderInstances,
@@ -20,6 +21,7 @@ export default function DashboardPage() {
   const startMutation = useStartInstance();
   const stopMutation = useStopInstance();
   const restartMutation = useRestartInstance();
+  const cloneMutation = useCloneInstance();
   const deleteMutation = useDeleteInstance();
   const reorderMutation = useReorderInstances();
   const queryClient = useQueryClient();
@@ -42,6 +44,7 @@ export default function DashboardPage() {
     if (startMutation.isPending) return startMutation.variables;
     if (stopMutation.isPending) return stopMutation.variables?.id;
     if (restartMutation.isPending) return restartMutation.variables?.id;
+    if (cloneMutation.isPending) return cloneMutation.variables?.id;
     if (deleteMutation.isPending) return deleteMutation.variables;
     return null;
   };
@@ -74,6 +77,10 @@ export default function DashboardPage() {
           onRestart={(id) => {
             const inst = instances?.find((i) => i.id === id);
             if (inst) restartMutation.mutate({ id, displayName: inst.display_name });
+          }}
+          onClone={(id) => {
+            const inst = instances?.find((i) => i.id === id);
+            if (inst) cloneMutation.mutate({ id, displayName: inst.display_name });
           }}
           onDelete={(id) => deleteMutation.mutate(id)}
           onReorder={handleReorder}

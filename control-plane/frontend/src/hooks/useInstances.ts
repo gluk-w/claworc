@@ -10,6 +10,7 @@ import {
   startInstance,
   stopInstance,
   restartInstance,
+  cloneInstance,
   fetchInstanceConfig,
   updateInstanceConfig,
   reorderInstances,
@@ -54,6 +55,23 @@ export function useUpdateInstance() {
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.detail || "Failed to update instance");
+    },
+  });
+}
+
+export function useCloneInstance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id }: { id: number; displayName: string }) =>
+      cloneInstance(id),
+    onSuccess: (_data, { displayName }) => {
+      toast(`Cloning ${displayName}`);
+      qc.invalidateQueries({ queryKey: ["instances"] });
+    },
+    onError: (error: any, { displayName }) => {
+      toast.error(
+        error.response?.data?.detail || `Failed to clone ${displayName}`,
+      );
     },
   });
 }

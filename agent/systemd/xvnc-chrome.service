@@ -1,10 +1,13 @@
 [Unit]
 Description=TigerVNC Server for Chrome (DISPLAY=:1)
-After=network.target
+After=network.target init-env.service
+Requires=init-env.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/Xvnc :1 -geometry 1920x1080 -depth 24 -rfbport 5901 -SecurityTypes None -AlwaysShared -AcceptSetDesktopSize -localhost no
+User=claworc
+EnvironmentFile=-/etc/default/vnc
+ExecStart=/opt/scripts/start-xvnc.sh 1 5901
 Restart=always
 RestartSec=3
 StandardOutput=journal

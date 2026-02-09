@@ -8,10 +8,6 @@ image:
 config:
   databasePath: /app/data/claworc.db
   k8sNamespace: claworc
-  k8sNodeIp: "192.168.1.104"
-  containerImage: glukw/openclaw-vnc-chrome:latest
-  nodeportStart: 30100
-  nodeportEnd: 30199
 
 service:
   type: NodePort

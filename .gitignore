@@ -1,0 +1,11 @@
+.env
+!.env.development
+dashboard/frontend/dist
+dashboard/frontend/node_modules
+data/
+*.db
+*.db-shm
+*.db-wal
+
+tmp
+*.log

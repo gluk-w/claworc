@@ -12,6 +12,7 @@ import {
   useStartInstance,
   useStopInstance,
   useRestartInstance,
+  useCloneInstance,
   useDeleteInstance,
   useUpdateInstance,
   useInstanceConfig,
@@ -38,6 +39,7 @@ export default function InstanceDetailPage() {
   const startMutation = useStartInstance();
   const stopMutation = useStopInstance();
   const restartMutation = useRestartInstance();
+  const cloneMutation = useCloneInstance();
   const deleteMutation = useDeleteInstance();
   const updateMutation = useUpdateInstance();
   const updateConfigMutation = useUpdateInstanceConfig();
@@ -230,6 +232,9 @@ export default function InstanceDetailPage() {
           onStop={(id) => stopMutation.mutate(id)}
           onRestart={(id) =>
             restartMutation.mutate({ id, displayName: instance.display_name })
+          }
+          onClone={(id) =>
+            cloneMutation.mutate({ id, displayName: instance.display_name })
           }
           onDelete={(id) =>
             deleteMutation.mutate(id, {

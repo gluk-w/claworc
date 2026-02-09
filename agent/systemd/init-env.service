@@ -1,0 +1,11 @@
+[Unit]
+Description=Export container env to systemd
+Before=xvnc-chrome.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/scripts/init-env.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+{
+    "enabled": true,
+    "remoteCdpTimeoutMs": 1500,
+    "remoteCdpHandshakeTimeoutMs": 3000,
+    "defaultProfile": "remote",
+    "color": "#FF4500",
+    "headless": false,
+    "noSandbox": false,
+    "attachOnly": true,
+    "profiles": {
+      "remote": {
+        "cdpUrl": "http://10.0.0.42:9222",
+        "color": "#00AA00"
+      }
+    }
+}

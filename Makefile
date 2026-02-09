@@ -1,66 +1,94 @@
-AGENT_IMAGE := glukw/openclaw-vnc-chrome
-DASHBOARD_IMAGE := glukw/claworc-dashboard
-TAG := latest
-PLATFORM := linux/amd64
+# Load .env.development defaults, then .env for personal overrides
+include .env.development
+-include .env
+export
 
-KUBECONFIG := --kubeconfig ../kubeconfig
+AGENT_IMAGE := glukw/openclaw-vnc-chrome
+DASHBOARD_IMAGE := glukw/claworc
+TAG := latest
+AGENT_PLATFORM := linux/amd64
+DASHBOARD_PLATFORM := linux/amd64,linux/arm64
+
+KUBECONFIG := ../kubeconfig
 HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
 
-.PHONY: agent-build agent-push agent dashboard-build dashboard-push dashboard docker-prune \
-	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-stop
+.PHONY: agent dashboard docker-prune \
+	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-stop \
+	pull-agent local-build local-up local-down local-logs local-clean control-plane
 
-agent-build:
-	docker build --platform $(PLATFORM) -t $(AGENT_IMAGE):$(TAG) agent/
+agent:
+	docker buildx build --platform $(AGENT_PLATFORM) -t $(AGENT_IMAGE):$(TAG) --push agent/
 
-agent-push:
-	docker push $(AGENT_IMAGE):$(TAG)
-
-agent: agent-build agent-push
-
-dashboard-build:
-	docker build --platform $(PLATFORM) -t $(DASHBOARD_IMAGE):$(TAG) dashboard/
-
-dashboard-push:
-	docker push $(DASHBOARD_IMAGE):$(TAG)
-
-dashboard: dashboard-build dashboard-push
+dashboard:
+	docker buildx build --platform $(DASHBOARD_PLATFORM) -t $(DASHBOARD_IMAGE):$(TAG) --push control-plane/
 
 docker-prune:
 	docker system prune -af
 
 helm-install:
-	helm install $(HELM_RELEASE) helm/ --namespace $(HELM_NAMESPACE) --create-namespace $(KUBECONFIG)
+	helm install $(HELM_RELEASE) helm/ --namespace $(HELM_NAMESPACE) --create-namespace --kubeconfig $(KUBECONFIG)
 
 helm-upgrade:
-	helm upgrade $(HELM_RELEASE) helm/ --namespace $(HELM_NAMESPACE) $(KUBECONFIG)
+	helm upgrade $(HELM_RELEASE) helm/ --namespace $(HELM_NAMESPACE) --kubeconfig $(KUBECONFIG)
 
 helm-uninstall:
-	helm uninstall $(HELM_RELEASE) --namespace $(HELM_NAMESPACE) $(KUBECONFIG)
+	helm uninstall $(HELM_RELEASE) --namespace $(HELM_NAMESPACE) --kubeconfig $(KUBECONFIG)
 
 helm-template:
-	helm template $(HELM_RELEASE) helm/ --namespace $(HELM_NAMESPACE) $(KUBECONFIG)
+	helm template $(HELM_RELEASE) helm/ --namespace $(HELM_NAMESPACE) --kubeconfig $(KUBECONFIG)
 
 install-dev:
 	@echo "Installing development dependencies..."
-	@echo "Installing backend dependencies (Poetry)..."
-	@cd dashboard && poetry install
 	@echo "Installing frontend dependencies (npm)..."
-	@cd dashboard/frontend && npm install
+	@cd control-plane/frontend && npm install
 	@echo "All dependencies installed successfully!"
 
+control-plane:
+	@cd control-plane && $(shell go env GOPATH)/bin/air
+
+dev-frontend:
+
 dev:
-	@echo "Starting local development servers..."
-	@echo "Backend will run on http://localhost:8000"
-	@echo "Frontend will run on http://localhost:5173"
+	@echo "=== Development Config ==="
+	@echo "  DATABASE_PATH: $(CLAWORC_DATABASE_PATH)"
 	@echo ""
-	@(cd dashboard && CLAWORC_DATABASE_PATH=/tmp/claworc.db poetry run uvicorn backend.app:app --reload --port 8000) & \
-	(cd dashboard/frontend && npm run dev) & \
+	@echo "Control plane: http://localhost:8000"
+	@echo "Frontend:      http://localhost:5173"
+	@echo ""
+	@(cd control-plane && $(shell go env GOPATH)/bin/air) & \
+	(cd control-plane/frontend && npm run dev) & \
 	wait
 
 dev-stop:
 	@echo "Stopping development servers..."
-	@-pkill -f "uvicorn backend.app:app" 2>/dev/null || true
-	@-lsof -ti:8000 | xargs kill 2>/dev/null || true
-	@-lsof -ti:5173 | xargs kill 2>/dev/null || true
+	@-pkill -f "air" 2>/dev/null || true
+	@-lsof -ti:8000 | xargs kill -9 2>/dev/null || true
+	@-lsof -ti:5173 | xargs kill -9 2>/dev/null || true
 	@echo "Development servers stopped"
+
+pull-agent:
+	docker pull $(AGENT_IMAGE):$(TAG)
+
+# --- Local Docker testing ---------------------------------------------------
+
+local-build:
+	docker build -t claworc-agent:local agent/
+	docker build -t claworc-dashboard:local control-plane/
+
+local-up:
+	@mkdir -p "$(CURDIR)/data/configs"
+	CLAWORC_DATA_DIR=$(CURDIR)/data docker compose up -d
+	@echo ""
+	@echo "Dashboard: http://localhost:8000"
+	@echo "Data dir:  $(CURDIR)/data"
+
+local-down:
+	docker compose down
+
+local-logs:
+	docker compose logs -f
+
+local-clean:
+	docker compose down --rmi local -v
+	rm -rf "$(CURDIR)/data"

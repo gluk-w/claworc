@@ -1,0 +1,14 @@
+services:
+  control-plane:
+    image: glukw/claworc:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - claworc-data:/app/data
+    environment:
+      - CLAWORC_DATABASE_PATH=/app/data/claworc.db
+    restart: unless-stopped
+
+volumes:
+  claworc-data:

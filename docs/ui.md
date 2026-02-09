@@ -1,277 +1,71 @@
-# User Interface
+# Claworc Dashboard
 
-## Tech Stack
+Claworc gives you a clean, web-based dashboard to manage all your OpenClaw agent instances from one place. 
+Launch new isolated agents, monitor their status, access their browser and terminal sessions, 
+tweak configurations, and stream logs -- all without touching a command line.
 
-- **React** with TypeScript
-- **Vite** for build tooling and development server
-- **TailwindCSS** for styling
-- **React Router** for client-side routing
-- **TanStack React Query** for server state management and data fetching
-- **Monaco Editor** (@monaco-editor/react) for JSON configuration editing
-- **Axios** for HTTP requests
-- **Lucide React** for icons
+## Dashboard
 
-## Pages
+The dashboard is your home base. It shows every agent instance at a glance in a simple table with live status updates.
 
-### Dashboard (`/`)
+Each instance displays:
 
-The main landing page showing all bot instances in a table.
+- **Name** -- click to dive into the full detail view.
+- **Status** -- a color-coded badge so you can tell what's happening instantly: green for running, yellow for creating, gray for stopped, red for error.
+- **Quick actions** -- start, stop, restart, open Chrome, open Terminal, or delete -- all one click away, right from the table row.
 
-**Table Columns**:
-| Column | Content |
-|--------|---------|
-| Name | Display name (clickable, navigates to detail page) |
-| Status | Color-coded badge: green (running), yellow (creating), gray (stopped), red (error) |
-| NodePorts | Chrome and Terminal port numbers with copy buttons |
-| Created | Relative timestamp (e.g., "2 hours ago") |
-| Actions | Button group: Chrome VNC, Terminal VNC, Start/Stop, Restart, Delete |
+Status badges refresh automatically every few seconds, so you always see the latest state without hitting reload.
 
-**Action Buttons**:
-- **Chrome VNC** (monitor icon): Opens `window.open('http://192.168.1.104:<nodeport_chrome>/vnc.html?autoconnect=true')` — Chrome kiosk session. Disabled when instance is stopped.
-- **Terminal VNC** (terminal icon): Opens `window.open('http://192.168.1.104:<nodeport_terminal>/vnc.html?autoconnect=true')` — xterm session. Disabled when instance is stopped.
-- **Start** (play icon): Visible when status is `stopped`. Calls `POST /instances/{id}/start`.
-- **Stop** (square icon): Visible when status is `running`. Calls `POST /instances/{id}/stop`.
-- **Restart** (refresh icon): Visible when status is `running`. Calls `POST /instances/{id}/restart`.
-- **Delete** (trash icon): Shows confirmation dialog before calling `DELETE /instances/{id}`.
+## Creating a New Instance
 
-**Header Area**:
-- Page title "Openclaw Orchestrator"
-- "New Instance" button (navigates to create page)
-- "Settings" link/button (navigates to settings page)
+Spinning up a new agent takes seconds. Just give it a name, and Claworc handles the rest with sensible defaults.
 
-**Polling**: The instance list auto-refreshes every 5 seconds via React Query's `refetchInterval` to keep status badges current.
+**What you can configure:**
 
----
+- **Display Name** -- a human-friendly name for your agent (required).
+- **Resource Limits** -- fine-tune CPU, memory, and storage allocations if you need to. Defaults are already set for most workloads, so you can skip this entirely if you're just getting started.
+- **API Key Overrides** -- each instance inherits your global API keys automatically. Need a specific instance to use a different Anthropic, OpenAI, or Brave key? Just expand this section and enter them. Leave it blank to use the global keys.
+- **Initial Configuration** -- power users can provide a custom `clawdbot.json` configuration using the built-in code editor with full JSON syntax highlighting and validation.
 
-### Create Instance (`/instances/new`)
+Hit "New Instance" and you'll be taken straight to your new instance's detail page.
 
-A form page for creating a new bot instance.
+## Instance Detail
 
-**Form Fields**:
+Click any instance name to view all details, organized into three tabs.
 
-| Field | Type | Required | Default |
-|-------|------|----------|---------|
-| Display Name | Text input | Yes | -- |
-| CPU Request | Text input | No | 500m |
-| CPU Limit | Text input | No | 2000m |
-| Memory Request | Text input | No | 1Gi |
-| Memory Limit | Text input | No | 4Gi |
-| Clawdbot Storage | Text input | No | 5Gi |
-| Homebrew Storage | Text input | No | 10Gi |
-| Clawd Storage | Text input | No | 5Gi |
+### Overview
 
-**API Key Overrides Section** (collapsed by default):
+A clear summary of the instance's current state:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| Anthropic API Key | Password input | Leave empty to use global key |
-| OpenAI API Key | Password input | Leave empty to use global key |
-| Brave API Key | Password input | Leave empty to use global key |
+- Status, resource allocations (CPU, memory, storage), and connection details.
+- Direct links to open the Chrome browser session or Terminal session.
+- Timestamps showing when the instance was created and last updated.
+- A quick view of which API key overrides are active (values are always kept hidden for security).
 
-**Initial Config Section** (collapsed by default):
-- Monaco editor for entering the initial clawdbot.json content
-- Defaults to `{}` (empty JSON object)
+### Configuration
 
-**Form Actions**:
-- "Create" button: Submits the form, navigates to instance detail on success
-- "Cancel" button: Navigates back to dashboard
+Edit your agent's configuration directly in the browser using a full-featured code editor with JSON syntax highlighting. Make your changes, hit "Save," and Claworc applies the new configuration automatically. If you make a mistake, the "Reset" button reverts to the last saved version.
 
-**Validation**:
-- Display name is required and must be non-empty
-- Resource values should match K8s format patterns (e.g., digits + unit suffix)
-- JSON config must be valid JSON
+### Live Logs
 
----
+Stream your agent's logs in real time with a terminal-style viewer. Logs auto-scroll as new lines arrive, and you can pause scrolling to inspect something specific. The viewer loads the most recent 100 lines on open, then keeps streaming as the agent runs.
 
-### Instance Detail (`/instances/:id`)
+## Chrome and Terminal Access
 
-A detail page with tabbed content.
+Every agent instance comes with its own isolated Chrome browser and terminal, accessible directly from the dashboard. Clicking the Chrome or Terminal button opens a full-screen remote session in a new browser tab -- no extra software or VNC clients needed.
 
-**Header**:
-- Instance display name as page title
-- Status badge
-- Action buttons (Chrome VNC, Terminal VNC, Start/Stop, Restart, Delete) -- same as dashboard row
-- Back link to dashboard
+Each session opens in its own dedicated window, giving you maximum screen space to work alongside your agent.
 
-**Tabs**:
+## Settings
 
-#### Overview Tab
+The Settings page is where you manage your global configuration.
 
-| Field | Value |
-|-------|-------|
-| Name | K8s-safe name (e.g., "bot-alpha") |
-| Display Name | Human name |
-| Status | Current status with badge |
-| Chrome NodePort | Port number |
-| Terminal NodePort | Port number |
-| Chrome VNC URL | Clickable link |
-| Terminal VNC URL | Clickable link |
-| CPU | Request / Limit |
-| Memory | Request / Limit |
-| Storage (Clawdbot) | Size |
-| Storage (Homebrew) | Size |
-| Storage (Clawd) | Size |
-| API Key Overrides | Shows which keys have overrides (without revealing values) |
-| Created | Timestamp |
-| Updated | Timestamp |
+### API Keys
 
-#### Config Tab
+Set your Anthropic, OpenAI, and Brave API keys once, and every instance picks them up automatically. Keys are encrypted at rest and displayed masked in the UI for security. You can reveal, edit, or update them at any time.
 
-- Full-height Monaco editor with JSON syntax highlighting
-- Loads current config from `GET /instances/{id}/config`
-- "Save" button: Validates JSON, calls `PUT /instances/{id}/config`
-- "Reset" button: Reverts editor content to last saved state
-- Shows a warning that saving will restart the pod
-- JSON validation errors displayed inline below the editor
+Changing a global key automatically propagates to all instances that don't have their own override -- no need to update each instance individually.
 
-#### Logs Tab
+### Default Resource Limits
 
-- Terminal-style log viewer with dark background and monospace font
-- Connects to `GET /instances/{id}/logs` via EventSource (SSE)
-- Auto-scrolls to bottom as new lines arrive
-- "Clear" button to clear the display (does not clear actual logs)
-- "Pause/Resume" toggle to stop/resume auto-scroll
-- Shows most recent 100 lines on initial load, then streams new lines
-
----
-
-### Settings (`/settings`)
-
-Global settings page.
-
-**API Keys Section**:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| Anthropic API Key | Password input | Shows masked value (****abcd), editable |
-| OpenAI API Key | Password input | Shows masked value, editable |
-| Brave API Key | Password input | Shows masked value, editable |
-
-Each key field has a "Show/Hide" toggle button and a "Save" button (or a single "Save All" button).
-
-**Default Resource Limits Section**:
-
-| Field | Type | Default |
-|-------|------|---------|
-| Default CPU Request | Text input | 500m |
-| Default CPU Limit | Text input | 2000m |
-| Default Memory Request | Text input | 1Gi |
-| Default Memory Limit | Text input | 4Gi |
-| Default Clawdbot Storage | Text input | 5Gi |
-| Default Homebrew Storage | Text input | 10Gi |
-| Default Clawd Storage | Text input | 5Gi |
-
-**Save**: Single "Save Settings" button that updates all changed fields via `PUT /api/v1/settings`.
-
-**Note**: A banner at the top warns that changing global API keys will update all instances that don't have overrides.
-
----
-
-## Component Hierarchy
-
-```
-App
-  +-- Layout (header with nav)
-  |     +-- Header ("Claworc", nav links)
-  |
-  +-- Routes
-        +-- DashboardPage
-        |     +-- InstanceTable
-        |           +-- InstanceRow (per instance)
-        |                 +-- StatusBadge
-        |                 +-- ActionButtons
-        |                       +-- VncChromeButton
-        |                       +-- VncTerminalButton
-        |                       +-- StartStopButton
-        |                       +-- RestartButton
-        |                       +-- DeleteButton (with ConfirmDialog)
-        |
-        +-- CreateInstancePage
-        |     +-- InstanceForm
-        |           +-- ResourceFields
-        |           +-- ApiKeyFields (collapsible)
-        |           +-- ConfigEditor (collapsible, Monaco)
-        |
-        +-- InstanceDetailPage
-        |     +-- InstanceHeader (name, status, actions)
-        |     +-- TabNav (Overview | Config | Logs)
-        |     +-- OverviewTab
-        |     +-- ConfigTab
-        |     |     +-- MonacoEditor
-        |     +-- LogsTab
-        |           +-- LogViewer (SSE consumer)
-        |
-        +-- SettingsPage
-              +-- ApiKeySettings
-              +-- DefaultResourceSettings
-```
-
-## VNC Integration
-
-The VNC viewers are **not** embedded in the Claworc UI. Instead, they open as separate browser windows/tabs:
-
-```javascript
-// Chrome VNC (kiosk mode)
-window.open(
-  `http://192.168.1.104:${instance.nodeport_chrome}/vnc.html?autoconnect=true`,
-  `vnc-chrome-${instance.name}`
-);
-
-// Terminal VNC (xterm)
-window.open(
-  `http://192.168.1.104:${instance.nodeport_terminal}/vnc.html?autoconnect=true`,
-  `vnc-term-${instance.name}`
-);
-```
-
-This approach was chosen because:
-- noVNC's web client works standalone without modification
-- Embedding in an iframe would require CSP configuration
-- Separate windows give the user full screen real estate for each session
-- The `autoconnect=true` parameter skips the noVNC connection dialog
-- Each session has a unique window name to prevent duplicates
-
-## Responsive Design
-
-The UI is designed for desktop use (internal tool). Minimum supported viewport is 1280px wide. The interface uses TailwindCSS utility classes with a clean, functional aesthetic suitable for an admin dashboard.
-
-## Project Structure
-
-```
-frontend/
-  package.json
-  vite.config.ts
-  tsconfig.json
-  index.html
-  src/
-    main.tsx
-    App.tsx
-    api/
-      client.ts              -- Axios instance with base URL
-      instances.ts           -- Instance API functions
-      settings.ts            -- Settings API functions
-    pages/
-      DashboardPage.tsx
-      CreateInstancePage.tsx
-      InstanceDetailPage.tsx
-      SettingsPage.tsx
-    components/
-      Layout.tsx
-      InstanceTable.tsx
-      InstanceRow.tsx
-      StatusBadge.tsx
-      ActionButtons.tsx
-      ConfirmDialog.tsx
-      InstanceForm.tsx
-      MonacoConfigEditor.tsx
-      LogViewer.tsx
-      ApiKeySettings.tsx
-      ResourceSettings.tsx
-    hooks/
-      useInstances.ts        -- React Query hooks for instance data
-      useSettings.ts         -- React Query hooks for settings
-      useInstanceLogs.ts     -- SSE hook for log streaming
-    types/
-      instance.ts            -- TypeScript interfaces
-      settings.ts
-```
+Set the default CPU, memory, and storage allocations for new instances. These defaults apply whenever you create an instance without specifying custom values, keeping your workflow fast while still giving you full control when you need it.

@@ -52,8 +52,8 @@ func configureGatewayToken(ctx context.Context, execFn ExecFunc, name, token str
 // configureModelsAndKeys applies model config and API keys to the instance's openclaw.json.
 // It reads the current config, merges model settings, sets API keys via `openclaw config set`,
 // and restarts the gateway.
-func configureModelsAndKeys(ctx context.Context, execFn ExecFunc, name string, models []string, apiKeys map[string]string, waitFn WaitFunc) {
-	if len(models) == 0 && len(apiKeys) == 0 {
+func configureModelsAndKeys(ctx context.Context, execFn ExecFunc, name string, models []string, apiKeys map[string]string, defaultProvider string, waitFn WaitFunc) {
+	if len(models) == 0 && len(apiKeys) == 0 && defaultProvider == "" {
 		return
 	}
 
@@ -62,8 +62,8 @@ func configureModelsAndKeys(ctx context.Context, execFn ExecFunc, name string, m
 		return
 	}
 
-	// Apply model config to openclaw.json if models are specified
-	if len(models) > 0 {
+	// Apply model config and default provider to openclaw.json
+	if len(models) > 0 || defaultProvider != "" {
 		// Read current config
 		stdout, _, code, err := execFn(ctx, name, []string{"cat", PathOpenClawConfig})
 		if err != nil || code != 0 {
@@ -76,7 +76,6 @@ func configureModelsAndKeys(ctx context.Context, execFn ExecFunc, name string, m
 			config = make(map[string]interface{})
 		}
 
-		// Set agents.defaults.model.primary and fallbacks
 		agents, ok := config["agents"].(map[string]interface{})
 		if !ok {
 			agents = make(map[string]interface{})
@@ -86,15 +85,26 @@ func configureModelsAndKeys(ctx context.Context, execFn ExecFunc, name string, m
 			defaults = make(map[string]interface{})
 		}
 
-		modelConfig := map[string]interface{}{
-			"primary": models[0],
+		// Set agents.defaults.model.primary and fallbacks
+		if len(models) > 0 {
+			modelConfig := map[string]interface{}{
+				"primary": models[0],
+			}
+			if len(models) > 1 {
+				modelConfig["fallbacks"] = models[1:]
+			} else {
+				modelConfig["fallbacks"] = []string{}
+			}
+			defaults["model"] = modelConfig
 		}
-		if len(models) > 1 {
-			modelConfig["fallbacks"] = models[1:]
+
+		// Set agents.defaults.provider (default provider key name)
+		if defaultProvider != "" {
+			defaults["provider"] = defaultProvider
 		} else {
-			modelConfig["fallbacks"] = []string{}
+			delete(defaults, "provider")
 		}
-		defaults["model"] = modelConfig
+
 		agents["defaults"] = defaults
 		config["agents"] = agents
 
