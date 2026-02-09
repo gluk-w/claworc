@@ -2,9 +2,9 @@
 
 Claworc can be installed in three ways:
 
-1. **Installer script** — interactive setup for Docker or Kubernetes (recommended)
-2. **Helm chart** — manual deployment to a Kubernetes cluster
-3. **Docker Compose** — manual deployment on a single machine
+1. [**Installer script**](#1-installer-script-linux--macos) — interactive setup for Docker or Kubernetes (recommended)
+2. [**Helm chart**](#2-manual-installation-with-helm) — manual deployment to a Kubernetes cluster
+3. [**Docker Compose**](#3-manual-installation-with-docker-compose) — manual deployment on a single machine
 
 ---
 
@@ -58,13 +58,8 @@ Install the chart:
 ```bash
 helm install claworc helm/ \
   --namespace claworc \
-  --create-namespace \
-  --set config.nodeIp="<YOUR_NODE_IP>" \
-  --set config.portStart=30100 \
-  --set config.portEnd=30199
+  --create-namespace
 ```
-
-Replace `<YOUR_NODE_IP>` with the IP address of a cluster node that agents will be reachable on.
 
 If your kubeconfig is not at the default path, add `--kubeconfig /path/to/kubeconfig`.
 
@@ -83,12 +78,7 @@ You can override any value in `helm/values.yaml` with `--set` flags or a custom 
 
 | Value | Description | Default |
 |-------|-------------|---------|
-| `config.nodeIp` | Node IP used in VNC URLs | `192.168.1.104` |
-| `config.portStart` | Start of NodePort range for agents | `30100` |
-| `config.portEnd` | End of NodePort range for agents | `30199` |
 | `config.databasePath` | SQLite database path inside the pod | `/app/data/claworc.db` |
-| `image.repository` | Dashboard image | `glukw/claworc-dashboard` |
-| `image.tag` | Dashboard image tag | `latest` |
 | `service.nodePort` | NodePort for the dashboard itself | `30000` |
 | `persistence.enabled` | Enable persistent storage for the database | `true` |
 | `persistence.size` | PVC size | `1Gi` |
@@ -97,8 +87,7 @@ You can override any value in `helm/values.yaml` with `--set` flags or a custom 
 
 ```bash
 helm upgrade claworc helm/ \
-  --namespace claworc \
-  --set config.nodeIp="<YOUR_NODE_IP>"
+  --namespace claworc
 ```
 
 ### Uninstall
@@ -146,15 +135,11 @@ The `docker-compose.yml` is configured through environment variables. You can se
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `CLAWORC_DATA_DIR` | Host directory for database and configs (required) | — |
-| `CLAWORC_NODE_IP` | IP address used in VNC URLs | `127.0.0.1` |
-| `CLAWORC_PORT_START` | Start of host port range for agents | `30100` |
-| `CLAWORC_PORT_END` | End of host port range for agents | `30199` |
 
 Example `.env` file:
 
 ```
 CLAWORC_DATA_DIR=/home/user/.claworc/data
-CLAWORC_NODE_IP=192.168.1.50
 ```
 
 ### Useful commands

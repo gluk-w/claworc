@@ -1,10 +1,5 @@
 replicaCount: 1
 
-image:
-  repository: glukw/claworc-dashboard
-  tag: latest
-  pullPolicy: Always
-
 config:
   databasePath: /app/data/claworc.db
   k8sNamespace: claworc

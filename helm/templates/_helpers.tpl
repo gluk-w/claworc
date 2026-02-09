@@ -34,7 +34,7 @@ Common labels.
 {{- define "claworc.labels" -}}
 helm.sh/chart: {{ include "claworc.chart" . }}
 {{ include "claworc.selectorLabels" . }}
-app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
