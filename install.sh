@@ -103,7 +103,7 @@ install_docker() {
 
     echo ""
     echo "Pulling agent image..."
-    docker pull "$AGENT_IMAGE:$TAG"
+    docker pull --platform linux/amd64 "$AGENT_IMAGE:$TAG"
 
     # --- Launch --------------------------------------------------------------
 

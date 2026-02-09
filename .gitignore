@@ -9,3 +9,6 @@ data/
 
 tmp
 *.log
+
+node_modules
+dist
