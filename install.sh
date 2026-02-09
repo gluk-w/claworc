@@ -12,13 +12,13 @@ CONTAINER_NAME="claworc-dashboard"
 prompt() {
     local var="$1" prompt_text="$2" default="$3"
     printf "%s [%s]: " "$prompt_text" "$default"
-    read -r input
+    read -r input </dev/tty
     eval "$var=\"\${input:-$default}\""
 }
 
 confirm() {
     printf "\nProceed? [Y/n]: "
-    read -r answer
+    read -r answer </dev/tty
     case "${answer:-y}" in
         [Yy]*) return 0 ;;
         *)     echo "Aborted."; exit 1 ;;
@@ -35,7 +35,7 @@ echo "  1) Docker      - Run on a single machine using Docker"
 echo "  2) Kubernetes  - Deploy to a Kubernetes cluster using Helm"
 echo ""
 printf "Select deployment mode [1]: "
-read -r MODE
+read -r MODE </dev/tty
 MODE="${MODE:-1}"
 
 # =============================================================================
@@ -77,7 +77,7 @@ install_docker() {
     if docker container inspect "$CONTAINER_NAME" &>/dev/null; then
         echo "Existing installation detected ($CONTAINER_NAME)."
         printf "Remove and reinstall? [Y/n]: "
-        read -r answer
+        read -r answer </dev/tty
         case "${answer:-y}" in
             [Yy]*) docker rm -f "$CONTAINER_NAME" >/dev/null ;;
             *)     echo "Aborted."; exit 1 ;;
@@ -123,15 +123,15 @@ install_docker() {
     echo ""
     echo "--- Initial Admin Setup ---"
     printf "Admin username [admin]: "
-    read -r ADMIN_USER
+    read -r ADMIN_USER </dev/tty
     ADMIN_USER="${ADMIN_USER:-admin}"
 
     while true; do
         printf "Admin password: "
-        read -rs ADMIN_PASS
+        read -rs ADMIN_PASS </dev/tty
         echo
         printf "Confirm password: "
-        read -rs ADMIN_PASS_CONFIRM
+        read -rs ADMIN_PASS_CONFIRM </dev/tty
         echo
         if [ "$ADMIN_PASS" = "$ADMIN_PASS_CONFIRM" ] && [ -n "$ADMIN_PASS" ]; then
             break
@@ -195,7 +195,7 @@ install_kubernetes() {
     echo "  2) kubectl port-forward - Keep service cluster-internal, access locally"
     echo ""
     printf "Select access method [1]: "
-    read -r ACCESS_METHOD
+    read -r ACCESS_METHOD </dev/tty
     ACCESS_METHOD="${ACCESS_METHOD:-1}"
 
     SERVICE_HELM_ARGS=""
@@ -214,7 +214,7 @@ install_kubernetes() {
     if helm list --kubeconfig "$KUBECONFIG_PATH" -n "$NAMESPACE" 2>/dev/null | grep -q claworc; then
         echo "Existing Helm release detected."
         printf "Upgrade existing installation? [Y/n]: "
-        read -r answer
+        read -r answer </dev/tty
         case "${answer:-y}" in
             [Yy]*) HELM_CMD="upgrade" ;;
             *)     echo "Aborted."; exit 1 ;;
@@ -272,15 +272,15 @@ install_kubernetes() {
     echo ""
     echo "--- Initial Admin Setup ---"
     printf "Admin username [admin]: "
-    read -r ADMIN_USER
+    read -r ADMIN_USER </dev/tty
     ADMIN_USER="${ADMIN_USER:-admin}"
 
     while true; do
         printf "Admin password: "
-        read -rs ADMIN_PASS
+        read -rs ADMIN_PASS </dev/tty
         echo
         printf "Confirm password: "
-        read -rs ADMIN_PASS_CONFIRM
+        read -rs ADMIN_PASS_CONFIRM </dev/tty
         echo
         if [ "$ADMIN_PASS" = "$ADMIN_PASS_CONFIRM" ] && [ -n "$ADMIN_PASS" ]; then
             break
