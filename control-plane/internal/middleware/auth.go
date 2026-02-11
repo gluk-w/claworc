@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/glukw/claworc/internal/auth"
-	"github.com/glukw/claworc/internal/config"
-	"github.com/glukw/claworc/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/auth"
+	"github.com/gluk-w/claworc/control-plane/internal/config"
+	"github.com/gluk-w/claworc/control-plane/internal/database"
 )
 
 type contextKey string

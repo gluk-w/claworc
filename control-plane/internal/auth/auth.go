@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	SessionDuration = 1 * time.Hour
+	SessionDuration = 3 * time.Hour
 	SessionCookie   = "claworc_session"
 	BcryptCost      = 12
 )

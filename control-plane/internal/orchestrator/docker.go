@@ -16,7 +16,7 @@ import (
 	"github.com/docker/docker/api/types/volume"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/go-units"
-	"github.com/glukw/claworc/internal/config"
+	"github.com/gluk-w/claworc/control-plane/internal/config"
 )
 
 const (
@@ -163,7 +163,7 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	mounts := []mount.Mount{
 		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "homebrew"), Target: "/home/linuxbrew/.linuxbrew"},
 		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "clawd"), Target: "/home/claworc/clawd"},
-		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "chrome"), Target: "/home/claworc/.config/google-chrome"},
+		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "chrome"), Target: "/home/claworc/chrome-data"},
 		{Type: mount.TypeBind, Source: "/sys/fs/cgroup", Target: "/sys/fs/cgroup"},
 	}
 

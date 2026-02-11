@@ -8,11 +8,6 @@
   "theme_color": "#111827",
   "icons": [
     {
-      "src": "/pwa_images/android/android-launchericon-48-48.png",
-      "sizes": "48x48",
-      "type": "image/png"
-    },
-    {
       "src": "/pwa_images/launchericon-72-72.png",
       "sizes": "72x72",
       "type": "image/png"

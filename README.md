@@ -1,6 +1,6 @@
 # Claworc — AI Agent Orchestrator for OpenClaw
 
-[OpenClaw](https://openclaw.com) is an open-source AI agent that runs locally, 
+[OpenClaw](https://openclaw.ai) is an open-source AI agent that runs locally, 
 connects to any LLM, and autonomously executes tasks using an operating system's tools. 
 Claworc makes it safe and simple to run multiple OpenClaw instances across your organization 
 from a single web dashboard.
@@ -55,7 +55,7 @@ for instance access. [Read more](docs/install.md)
 
 ## Documentation
 
-- [Installation](docs/install.md) - Multiple options
+- [Installation](docs/install.md) - Runs on Docker or Kubernetes
 - [Features](docs/features.md) - Feature specifications and user workflows
 - [Architecture](docs/architecture.md) - System architecture and design decisions
 - [API](docs/api.md) - REST API endpoints and request/response formats

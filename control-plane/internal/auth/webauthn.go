@@ -10,7 +10,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	"github.com/glukw/claworc/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/database"
 )
 
 var WebAuthn *webauthn.WebAuthn

@@ -1,6 +1,4 @@
 export interface Settings {
-  anthropic_api_key: string;
-  openai_api_key: string;
   brave_api_key: string;
   api_keys: Record<string, string>;
   default_models: string[];

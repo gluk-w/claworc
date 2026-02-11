@@ -1,5 +1,6 @@
 import { useState } from "react";
 import ProviderTable from "@/components/ProviderTable";
+import { LLM_API_KEY_OPTIONS } from "@/components/DynamicApiKeyEditor";
 import { useSettings } from "@/hooks/useSettings";
 import type { InstanceCreatePayload } from "@/types/instance";
 
@@ -31,7 +32,7 @@ export default function InstanceForm({
   // API key overrides
   const [disabledProviders, setDisabledProviders] = useState<string[]>([]);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
-  const [defaultModel, setDefaultModel] = useState("");
+  const [defaultModel, setDefaultModel] = useState(LLM_API_KEY_OPTIONS[0].value);
 
   // Brave key
   const [braveKey, setBraveKey] = useState("");
@@ -95,6 +96,7 @@ export default function InstanceForm({
               Display Name *
             </label>
             <input
+              data-testid="display-name-input"
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
@@ -232,6 +234,7 @@ export default function InstanceForm({
           Cancel
         </button>
         <button
+          data-testid="create-instance-button"
           type="submit"
           disabled={loading || !displayName.trim()}
           className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"

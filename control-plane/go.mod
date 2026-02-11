@@ -1,4 +1,4 @@
-module github.com/glukw/claworc
+module github.com/gluk-w/claworc/control-plane
 
 go 1.24.0
 

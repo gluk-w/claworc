@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/glukw/claworc/internal/database"
-	"github.com/glukw/claworc/internal/middleware"
-	"github.com/glukw/claworc/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/middleware"
+	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/go-chi/chi/v5"
 )
 

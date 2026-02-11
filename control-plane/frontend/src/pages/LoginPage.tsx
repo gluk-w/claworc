@@ -91,7 +91,7 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="w-full max-w-sm">
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h1 className="text-xl font-semibold text-gray-900 text-center mb-1">
+          <h1 data-testid="login-title" className="text-xl font-semibold text-gray-900 text-center mb-1">
             {setupMode ? "Create Admin Account" : "Sign In"}
           </h1>
           <p className="text-sm text-gray-500 text-center mb-6">
@@ -101,7 +101,7 @@ export default function LoginPage() {
           </p>
 
           {error && (
-            <div className="mb-4 p-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md">
+            <div data-testid="login-error" className="mb-4 p-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md">
               {error}
             </div>
           )}
@@ -112,6 +112,7 @@ export default function LoginPage() {
                 Username
               </label>
               <input
+                data-testid="username-input"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -126,6 +127,7 @@ export default function LoginPage() {
                 Password
               </label>
               <input
+                data-testid="password-input"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -140,6 +142,7 @@ export default function LoginPage() {
                   Confirm Password
                 </label>
                 <input
+                  data-testid="confirm-password-input"
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
@@ -150,6 +153,7 @@ export default function LoginPage() {
               </div>
             )}
             <button
+              data-testid="login-submit-button"
               type="submit"
               disabled={loading}
               className="w-full px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
@@ -173,6 +177,7 @@ export default function LoginPage() {
                 </div>
               </div>
               <button
+                data-testid="passkey-login-button"
                 onClick={handlePasskeyLogin}
                 disabled={loading}
                 className="w-full px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"

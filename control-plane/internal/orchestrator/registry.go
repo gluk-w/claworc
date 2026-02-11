@@ -6,7 +6,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/glukw/claworc/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/database"
 )
 
 var (

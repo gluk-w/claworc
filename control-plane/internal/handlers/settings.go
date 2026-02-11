@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/glukw/claworc/internal/crypto"
-	"github.com/glukw/claworc/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/crypto"
+	"github.com/gluk-w/claworc/control-plane/internal/database"
 )
 
 // fixedEncryptedSettings are non-LLM keys stored as fixed setting entries.
@@ -85,26 +85,6 @@ func settingsToResponse(raw map[string]string) map[string]interface{} {
 		}
 	}
 	result["api_keys"] = apiKeys
-
-	// Backward compat: also emit old fields from migrated data
-	for _, old := range []struct{ oldKey, newKey string }{
-		{"anthropic_api_key", "api_key:ANTHROPIC_API_KEY"},
-		{"openai_api_key", "api_key:OPENAI_API_KEY"},
-	} {
-		if _, exists := result[old.oldKey]; !exists {
-			val := raw[old.newKey]
-			if val != "" {
-				decrypted, err := crypto.Decrypt(val)
-				if err != nil {
-					result[old.oldKey] = ""
-				} else {
-					result[old.oldKey] = crypto.Mask(decrypted)
-				}
-			} else {
-				result[old.oldKey] = ""
-			}
-		}
-	}
 
 	return result
 }
@@ -193,26 +173,9 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Handle old-format anthropic_api_key / openai_api_key (backward compat)
-	for _, old := range []struct{ oldKey, newKey string }{
-		{"anthropic_api_key", "api_key:ANTHROPIC_API_KEY"},
-		{"openai_api_key", "api_key:OPENAI_API_KEY"},
-	} {
-		if v, ok := raw[old.oldKey]; ok {
-			if strVal, ok := v.(string); ok && strVal != "" {
-				encrypted, err := crypto.Encrypt(strVal)
-				if err != nil {
-					writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
-					return
-				}
-				database.SetSetting(old.newKey, encrypted)
-			}
-		}
-	}
-
 	// Handle remaining plain settings
 	for key, val := range raw {
-		if key == "default_models" || key == "api_keys" || key == "delete_api_keys" || key == "brave_api_key" || key == "anthropic_api_key" || key == "openai_api_key" {
+		if key == "default_models" || key == "api_keys" || key == "delete_api_keys" || key == "brave_api_key" {
 			continue
 		}
 		if strVal, ok := val.(string); ok {

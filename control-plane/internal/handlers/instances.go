@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/glukw/claworc/internal/crypto"
-	"github.com/glukw/claworc/internal/database"
-	"github.com/glukw/claworc/internal/middleware"
-	"github.com/glukw/claworc/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/crypto"
+	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/middleware"
+	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -34,8 +34,6 @@ type instanceCreateRequest struct {
 	StorageHomebrew string            `json:"storage_homebrew"`
 	StorageClawd    string            `json:"storage_clawd"`
 	StorageChrome   string            `json:"storage_chrome"`
-	AnthropicAPIKey *string           `json:"anthropic_api_key"` // backward compat
-	OpenAIAPIKey    *string           `json:"openai_api_key"`    // backward compat
 	BraveAPIKey     *string           `json:"brave_api_key"`
 	APIKeys         map[string]string `json:"api_keys"`
 	Models          *modelsConfig     `json:"models"`
@@ -54,7 +52,6 @@ type instanceResponse struct {
 	ID                    uint            `json:"id"`
 	Name                  string          `json:"name"`
 	DisplayName           string          `json:"display_name"`
-	PortChrome            int             `json:"port_chrome"`
 	VNCChromeURL          string          `json:"vnc_chrome_url"`
 	Status                string          `json:"status"`
 	CPURequest            string          `json:"cpu_request"`
@@ -64,8 +61,6 @@ type instanceResponse struct {
 	StorageHomebrew       string          `json:"storage_homebrew"`
 	StorageClawd          string          `json:"storage_clawd"`
 	StorageChrome         string          `json:"storage_chrome"`
-	HasAnthropicOverride  bool            `json:"has_anthropic_override"`
-	HasOpenAIOverride     bool            `json:"has_openai_override"`
 	HasBraveOverride      bool            `json:"has_brave_override"`
 	APIKeyOverrides       []string        `json:"api_key_overrides"`
 	Models                *modelsResponse `json:"models"`
@@ -235,18 +230,6 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 
 	apiKeyOverrides := getInstanceAPIKeyNames(inst.ID)
 
-	// Backward compat: check both old columns and new table
-	hasAnthropicOverride := inst.AnthropicAPIKey != ""
-	hasOpenAIOverride := inst.OpenAIAPIKey != ""
-	for _, k := range apiKeyOverrides {
-		if k == "ANTHROPIC_API_KEY" {
-			hasAnthropicOverride = true
-		}
-		if k == "OPENAI_API_KEY" {
-			hasOpenAIOverride = true
-		}
-	}
-
 	mc := parseModelsConfig(inst.ModelsConfig)
 	effective := computeEffectiveModels(mc)
 
@@ -254,7 +237,6 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		ID:                    inst.ID,
 		Name:                  inst.Name,
 		DisplayName:           inst.DisplayName,
-		PortChrome:            inst.PortChrome,
 		VNCChromeURL:          fmt.Sprintf("/api/v1/instances/%d/vnc/chrome/vnc.html?autoconnect=true&resize=scale&path=api/v1/instances/%d/vnc/chrome/websockify", inst.ID, inst.ID),
 		Status:                status,
 		CPURequest:            inst.CPURequest,
@@ -264,8 +246,6 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		StorageHomebrew:       inst.StorageHomebrew,
 		StorageClawd:          inst.StorageClawd,
 		StorageChrome:         inst.StorageChrome,
-		HasAnthropicOverride:  hasAnthropicOverride,
-		HasOpenAIOverride:     hasOpenAIOverride,
 		HasBraveOverride:      inst.BraveAPIKey != "",
 		APIKeyOverrides:       apiKeyOverrides,
 		Models:                &modelsResponse{Effective: effective, DisabledDefaults: mc.Disabled, Extra: mc.Extra},
@@ -497,7 +477,6 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	inst := database.Instance{
 		Name:            name,
 		DisplayName:     body.DisplayName,
-		PortChrome:      0,
 		Status:          "creating",
 		CPURequest:      body.CPURequest,
 		CPULimit:        body.CPULimit,
@@ -522,14 +501,6 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 
 	// Save API keys to the new table
 	allAPIKeys := make(map[string]string)
-	// Merge backward-compat fields
-	if body.AnthropicAPIKey != nil && *body.AnthropicAPIKey != "" {
-		allAPIKeys["ANTHROPIC_API_KEY"] = *body.AnthropicAPIKey
-	}
-	if body.OpenAIAPIKey != nil && *body.OpenAIAPIKey != "" {
-		allAPIKeys["OPENAI_API_KEY"] = *body.OpenAIAPIKey
-	}
-	// Merge new-format api_keys (takes precedence)
 	for k, v := range body.APIKeys {
 		allAPIKeys[k] = v
 	}
@@ -959,7 +930,6 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 	inst := database.Instance{
 		Name:            cloneName,
 		DisplayName:     cloneDisplayName,
-		PortChrome:      0,
 		Status:          "creating",
 		CPURequest:      src.CPURequest,
 		CPULimit:        src.CPULimit,

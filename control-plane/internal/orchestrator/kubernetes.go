@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/glukw/claworc/internal/config"
+	"github.com/gluk-w/claworc/control-plane/internal/config"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -630,7 +630,7 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 							},
 						},
 						VolumeMounts: []corev1.VolumeMount{
-							{Name: "chrome-data", MountPath: "/home/claworc/.config/google-chrome"},
+							{Name: "chrome-data", MountPath: "/home/claworc/chrome-data"},
 							{Name: "homebrew-data", MountPath: "/home/linuxbrew/.linuxbrew"},
 							{Name: "openclaw-data", MountPath: "/home/claworc/.openclaw"},
 							{Name: "cgroup", MountPath: "/sys/fs/cgroup"},

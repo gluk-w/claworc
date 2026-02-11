@@ -11,6 +11,7 @@ export default function StatusBadge({ status }: { status: string }) {
   const style = statusStyles[status] ?? "bg-gray-100 text-gray-800";
   return (
     <span
+      data-testid="status-badge"
       className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${style}`}
     >
       {status}

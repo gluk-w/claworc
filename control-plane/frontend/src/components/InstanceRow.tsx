@@ -46,6 +46,7 @@ export default function InstanceRow({
       </td>
       <td className="px-4 py-3">
         <Link
+          data-testid={`instance-link-${instance.id}`}
           to={`/instances/${instance.id}`}
           className="text-sm font-medium text-blue-600 hover:text-blue-800"
         >

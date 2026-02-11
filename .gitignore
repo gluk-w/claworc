@@ -12,3 +12,8 @@ tmp
 
 node_modules
 dist
+
+control-plane/claworc
+
+test-results/
+playwright-report/

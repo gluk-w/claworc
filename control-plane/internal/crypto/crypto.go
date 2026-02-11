@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/fernet/fernet-go"
-	"github.com/glukw/claworc/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/database"
 )
 
 func getKey() (*fernet.Key, error) {

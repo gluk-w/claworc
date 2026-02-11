@@ -3,8 +3,8 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/glukw/claworc/internal/database"
-	"github.com/glukw/claworc/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 )
 
 func HealthCheck(w http.ResponseWriter, r *http.Request) {

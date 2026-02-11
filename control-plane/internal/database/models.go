@@ -6,8 +6,6 @@ type Instance struct {
 	ID              uint      `gorm:"primaryKey;autoIncrement" json:"id"`
 	Name            string    `gorm:"uniqueIndex;not null" json:"name"`
 	DisplayName     string    `gorm:"not null" json:"display_name"`
-	PortChrome      int       `gorm:"not null;default:0" json:"port_chrome"`
-	PortTerminal    int       `gorm:"not null;default:0" json:"port_terminal"`
 	Status          string    `gorm:"not null;default:creating" json:"status"`
 	CPURequest      string    `gorm:"default:500m" json:"cpu_request"`
 	CPULimit        string    `gorm:"default:2000m" json:"cpu_limit"`
@@ -16,12 +14,9 @@ type Instance struct {
 	StorageHomebrew string    `gorm:"default:10Gi" json:"storage_homebrew"`
 	StorageClawd    string    `gorm:"default:5Gi" json:"storage_clawd"`
 	StorageChrome   string    `gorm:"default:5Gi" json:"storage_chrome"`
-	AnthropicAPIKey string    `json:"-"` // deprecated: migrated to InstanceAPIKey
-	OpenAIAPIKey    string    `json:"-"` // deprecated: migrated to InstanceAPIKey
 	BraveAPIKey     string    `json:"-"`
 	ContainerImage  string    `json:"container_image"`
 	VNCResolution   string    `json:"vnc_resolution"`
-	ClawdbotConfig  string    `json:"clawdbot_config"`
 	GatewayToken    string    `json:"-"`
 	ModelsConfig    string    `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
 	DefaultModel    string    `gorm:"default:''" json:"-"`

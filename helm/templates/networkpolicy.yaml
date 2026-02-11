@@ -16,5 +16,4 @@ spec:
               {{- include "claworc.selectorLabels" . | nindent 14 }}
       ports:
         - port: 6081
-        - port: 6082
         - port: 18789

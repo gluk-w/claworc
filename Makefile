@@ -20,7 +20,7 @@ HELM_NAMESPACE := claworc
 agent:
 	docker buildx build --platform $(AGENT_PLATFORM) -t $(AGENT_IMAGE):$(TAG) --push agent/
 
-dashboard:
+control-plane:
 	docker buildx build --platform $(DASHBOARD_PLATFORM) -t $(DASHBOARD_IMAGE):$(TAG) --push control-plane/
 
 docker-prune:
@@ -44,11 +44,6 @@ install-dev:
 	@cd control-plane/frontend && npm install
 	@echo "All dependencies installed successfully!"
 
-control-plane:
-	@cd control-plane && $(shell go env GOPATH)/bin/air
-
-dev-frontend:
-
 dev:
 	@echo "=== Development Config ==="
 	@echo "  DATABASE_PATH: $(CLAWORC_DATABASE_PATH)"
@@ -66,9 +61,6 @@ dev-stop:
 	@-lsof -ti:8000 | xargs kill -9 2>/dev/null || true
 	@-lsof -ti:5173 | xargs kill -9 2>/dev/null || true
 	@echo "Development servers stopped"
-
-pull-agent:
-	docker pull $(AGENT_IMAGE):$(TAG)
 
 # --- Local Docker testing ---------------------------------------------------
 
@@ -92,3 +84,6 @@ local-logs:
 local-clean:
 	docker compose down --rmi local -v
 	rm -rf "$(CURDIR)/data"
+
+e2e-docker-tests:
+	./scripts/run_tests.sh

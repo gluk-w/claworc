@@ -8,7 +8,7 @@ Type=simple
 Environment="DISPLAY=:1"
 User=claworc
 Environment="HOME=/home/claworc"
-ExecStart=/usr/bin/google-chrome-stable --user-data-dir=/home/claworc/.config/google-chrome --remote-debugging-port=9222
+ExecStart=/usr/bin/google-chrome-stable --user-data-dir=/home/claworc/chrome-data --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
 Restart=always
 RestartSec=3
 StandardOutput=journal

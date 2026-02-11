@@ -8,7 +8,6 @@ export interface Instance {
   id: number;
   name: string;
   display_name: string;
-  port_chrome?: number;
   vnc_chrome_url: string;
   status: "creating" | "running" | "restarting" | "stopping" | "stopped" | "error";
   cpu_request: string;
@@ -18,8 +17,6 @@ export interface Instance {
   storage_homebrew: string;
   storage_clawd: string;
   storage_chrome: string;
-  has_anthropic_override: boolean;
-  has_openai_override: boolean;
   has_brave_override: boolean;
   api_key_overrides: string[];
   models: InstanceModels;
@@ -47,8 +44,6 @@ export interface InstanceCreatePayload {
   storage_homebrew?: string;
   storage_clawd?: string;
   storage_chrome?: string;
-  anthropic_api_key?: string | null;
-  openai_api_key?: string | null;
   brave_api_key?: string | null;
   api_keys?: Record<string, string>;
   models?: { disabled: string[]; extra: string[] };
