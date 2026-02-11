@@ -15,7 +15,11 @@ docker compose $COMPOSE_FILES down --volumes --remove-orphans 2>/dev/null || tru
 docker ps -a --filter "name=bot-" --format '{{.ID}}' | xargs -r docker rm -f 2>/dev/null || true
 docker volume ls --filter "name=bot-" --format '{{.Name}}' | xargs -r docker volume rm 2>/dev/null || true
 
-# ── 2. Build & Start ──────────────────────────────────────────
+# ── 2. Pull agent image ───────────────────────────────────────
+echo "==> Pulling agent image..."
+docker pull --platform linux/amd64 glukw/openclaw-vnc-chrome:latest
+
+# ── 3. Build & Start ──────────────────────────────────────────
 echo "==> Building and starting services..."
 docker compose $COMPOSE_FILES up -d --build
 

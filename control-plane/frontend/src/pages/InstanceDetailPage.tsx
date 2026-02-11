@@ -55,6 +55,8 @@ export default function InstanceDetailPage() {
 
   const [activeTab, setActiveTab] = useState<Tab>(getTabFromHash());
   const [editedConfig, setEditedConfig] = useState<string | null>(null);
+  // Terminal is mounted once the user first visits the tab, then stays mounted
+  const [terminalActivated, setTerminalActivated] = useState(getTabFromHash() === "terminal");
 
   // API key editing state
   const [editingKeys, setEditingKeys] = useState(false);
@@ -62,7 +64,9 @@ export default function InstanceDetailPage() {
 
   // Update tab when hash changes
   useEffect(() => {
-    setActiveTab(getTabFromHash());
+    const tab = getTabFromHash();
+    setActiveTab(tab);
+    if (tab === "terminal") setTerminalActivated(true);
   }, [location.hash]);
 
   // Provider enable/disable state
@@ -84,11 +88,12 @@ export default function InstanceDetailPage() {
   // Update hash when tab changes
   const handleTabChange = (tab: Tab) => {
     setActiveTab(tab);
+    if (tab === "terminal") setTerminalActivated(true);
     navigate(`#${tab}`, { replace: true });
   };
 
   const logsHook = useInstanceLogs(instanceId, activeTab === "logs");
-  const termHook = useTerminal(instanceId, activeTab === "terminal" && instance?.status === "running");
+  const termHook = useTerminal(instanceId, terminalActivated && instance?.status === "running");
 
   if (isLoading) {
     return <div className="text-center py-12 text-gray-500">Loading...</div>;
@@ -367,8 +372,11 @@ export default function InstanceDetailPage() {
         </div>
       )}
 
-      {activeTab === "terminal" && (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-220px)] min-h-[400px]">
+      {terminalActivated && (
+        <div
+          className="bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-220px)] min-h-[400px]"
+          style={activeTab !== "terminal" ? { display: "none" } : undefined}
+        >
           {instance.status === "running" ? (
             <TerminalPanel
               connectionState={termHook.connectionState}
@@ -376,6 +384,7 @@ export default function InstanceDetailPage() {
               onResize={termHook.onResize}
               setTerminal={termHook.setTerminal}
               reconnect={termHook.reconnect}
+              visible={activeTab === "terminal"}
             />
           ) : (
             <div className="flex items-center justify-center h-full text-gray-500 text-sm">

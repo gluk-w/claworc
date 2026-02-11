@@ -12,6 +12,7 @@ interface TerminalPanelProps {
   onResize: (size: { cols: number; rows: number }) => void;
   setTerminal: (term: Terminal, fitAddon: FitAddon) => void;
   reconnect: () => void;
+  visible?: boolean;
 }
 
 function ConnectionIndicator({ state }: { state: TerminalConnectionState }) {
@@ -50,9 +51,11 @@ export default function TerminalPanel({
   onResize,
   setTerminal,
   reconnect,
+  visible = true,
 }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -81,11 +84,19 @@ export default function TerminalPanel({
       fitAddon.fit();
     });
 
+    // Re-fit after custom fonts load so cell metrics (and thus column count) are correct
+    document.fonts.ready.then(() => {
+      requestAnimationFrame(() => {
+        fitAddon.fit();
+      });
+    });
+
     term.onData(onData);
     term.onResize(onResize);
 
     setTerminal(term, fitAddon);
     termRef.current = term;
+    fitAddonRef.current = fitAddon;
 
     const observer = new ResizeObserver(() => {
       requestAnimationFrame(() => {
@@ -98,8 +109,18 @@ export default function TerminalPanel({
       observer.disconnect();
       term.dispose();
       termRef.current = null;
+      fitAddonRef.current = null;
     };
   }, []); // Mount once
+
+  // Re-fit terminal when tab becomes visible (container goes from display:none to visible)
+  useEffect(() => {
+    if (visible && fitAddonRef.current) {
+      requestAnimationFrame(() => {
+        fitAddonRef.current?.fit();
+      });
+    }
+  }, [visible]);
 
   return (
     <div className="flex flex-col h-full">
@@ -118,8 +139,7 @@ export default function TerminalPanel({
       </div>
       <div
         ref={containerRef}
-        className="flex-1 bg-gray-900"
-        style={{ padding: "4px" }}
+        className="flex-1 bg-gray-900 overflow-hidden"
       />
     </div>
   );

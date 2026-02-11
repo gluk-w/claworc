@@ -1,7 +1,6 @@
 #!/bin/bash
 tr '\0' '\n' < /proc/1/environ | grep -E '^(VNC_|DISPLAY_)' > /etc/default/vnc
-tr '\0' '\n' < /proc/1/environ | grep -E '^OPENCLAW_' > /etc/default/openclaw
-
+tr '\0' '\n' < /proc/1/environ | grep -E '^OPENCLAW_' > /etc/default/claworc
 
 # Initialize openclaw config on first run (PVC empty after mount)
 if [ ! -d "/home/claworc/.claworc" ]; then

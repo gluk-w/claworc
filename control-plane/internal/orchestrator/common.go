@@ -3,16 +3,13 @@ package orchestrator
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 )
 
-const (
-	PathOpenClawConfig = "/home/claworc/.openclaw/openclaw.json"
-)
+const PathOpenClawConfig = "/home/claworc/.openclaw/openclaw.json"
 
 var cmdGatewayStop = []string{"su", "-", "claworc", "-c", "openclaw gateway stop"}
 
@@ -47,110 +44,6 @@ func configureGatewayToken(ctx context.Context, execFn ExecFunc, name, token str
 		return
 	}
 	log.Printf("Gateway token configured for %s", name)
-}
-
-// configureModelsAndKeys applies model config and API keys to the instance's openclaw.json.
-// It reads the current config, merges model settings, sets API keys via `openclaw config set`,
-// and restarts the gateway.
-func configureModelsAndKeys(ctx context.Context, execFn ExecFunc, name string, models []string, apiKeys map[string]string, defaultProvider string, waitFn WaitFunc) {
-	if len(models) == 0 && len(apiKeys) == 0 && defaultProvider == "" {
-		return
-	}
-
-	if !waitFn(ctx, name, 120*time.Second) {
-		log.Printf("Timed out waiting for %s to start; models/keys not configured", name)
-		return
-	}
-
-	// Apply model config and default provider to openclaw.json
-	if len(models) > 0 || defaultProvider != "" {
-		// Read current config
-		stdout, _, code, err := execFn(ctx, name, []string{"cat", PathOpenClawConfig})
-		if err != nil || code != 0 {
-			log.Printf("Failed to read openclaw.json for %s, using empty config", name)
-			stdout = "{}"
-		}
-
-		var config map[string]interface{}
-		if err := json.Unmarshal([]byte(stdout), &config); err != nil {
-			config = make(map[string]interface{})
-		}
-
-		agents, ok := config["agents"].(map[string]interface{})
-		if !ok {
-			agents = make(map[string]interface{})
-		}
-		defaults, ok := agents["defaults"].(map[string]interface{})
-		if !ok {
-			defaults = make(map[string]interface{})
-		}
-
-		// Set agents.defaults.model.primary and fallbacks
-		if len(models) > 0 {
-			modelConfig := map[string]interface{}{
-				"primary": models[0],
-			}
-			if len(models) > 1 {
-				modelConfig["fallbacks"] = models[1:]
-			} else {
-				modelConfig["fallbacks"] = []string{}
-			}
-			defaults["model"] = modelConfig
-		}
-
-		// Set agents.defaults.provider (default provider key name)
-		if defaultProvider != "" {
-			defaults["provider"] = defaultProvider
-		} else {
-			delete(defaults, "provider")
-		}
-
-		agents["defaults"] = defaults
-		config["agents"] = agents
-
-		configBytes, err := json.MarshalIndent(config, "", "  ")
-		if err != nil {
-			log.Printf("Error marshaling config for %s: %v", name, err)
-			return
-		}
-
-		b64 := base64.StdEncoding.EncodeToString(configBytes)
-		cmd := []string{"sh", "-c", fmt.Sprintf("echo '%s' | base64 -d > %s", b64, PathOpenClawConfig)}
-		_, stderr, code, err := execFn(ctx, name, cmd)
-		if err != nil {
-			log.Printf("Error writing config for %s: %v", name, err)
-			return
-		}
-		if code != 0 {
-			log.Printf("Failed to write config for %s: %s", name, stderr)
-			return
-		}
-	}
-
-	// Set API keys via openclaw config set
-	for keyName, keyValue := range apiKeys {
-		cmd := []string{"su", "-", "claworc", "-c", fmt.Sprintf("openclaw config set env.%s %s", keyName, keyValue)}
-		_, stderr, code, err := execFn(ctx, name, cmd)
-		if err != nil {
-			log.Printf("Error setting API key %s for %s: %v", keyName, name, err)
-			continue
-		}
-		if code != 0 {
-			log.Printf("Failed to set API key %s for %s: %s", keyName, name, stderr)
-		}
-	}
-
-	// Restart gateway
-	_, stderr, code, err := execFn(ctx, name, cmdGatewayStop)
-	if err != nil {
-		log.Printf("Error restarting gateway for %s: %v", name, err)
-		return
-	}
-	if code != 0 {
-		log.Printf("Failed to restart gateway for %s: %s", name, stderr)
-		return
-	}
-	log.Printf("Models and API keys configured for %s", name)
 }
 
 func updateInstanceConfig(ctx context.Context, execFn ExecFunc, name string, configJSON string) error {

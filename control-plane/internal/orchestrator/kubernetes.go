@@ -136,10 +136,6 @@ func (k *KubernetesOrchestrator) configureGatewayToken(ctx context.Context, name
 	configureGatewayToken(ctx, k.ExecInInstance, name, token, k.waitForPodRunning)
 }
 
-func (k *KubernetesOrchestrator) ConfigureModelsAndKeys(ctx context.Context, name string, models []string, apiKeys map[string]string, defaultProvider string) {
-	configureModelsAndKeys(ctx, k.ExecInInstance, name, models, apiKeys, defaultProvider, k.waitForPodRunning)
-}
-
 func (k *KubernetesOrchestrator) CloneVolumes(ctx context.Context, srcName, dstName string) error {
 	// Scale both deployments to 0 to release PVCs (RWO constraint)
 	_ = k.scaleDeployment(ctx, srcName, 0)
@@ -432,11 +428,12 @@ func (k *KubernetesOrchestrator) ExecInteractive(ctx context.Context, name strin
 		Stdin:  stdinW,
 		Stdout: stdoutR,
 		Resize: func(cols, rows uint16) error {
+			// Drain any pending size so the new one is always delivered
 			select {
-			case sizeCh <- remotecommand.TerminalSize{Width: cols, Height: rows}:
+			case <-sizeCh:
 			default:
-				// drop if channel full
 			}
+			sizeCh <- remotecommand.TerminalSize{Width: cols, Height: rows}
 			return nil
 		},
 		Close: func() error {

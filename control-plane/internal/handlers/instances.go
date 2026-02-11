@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/crypto"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
@@ -151,10 +152,9 @@ func computeEffectiveModels(mc modelsConfig) []string {
 	return effective
 }
 
-// resolveInstanceModelsAndKeys builds the effective model list, collects all
-// decrypted API keys (global + instance overrides), and returns the default
-// provider key name for pushing to the running instance.
-func resolveInstanceModelsAndKeys(inst database.Instance) ([]string, map[string]string, string) {
+// resolveInstanceModelsAndKeys builds the effective model list and collects all
+// decrypted API keys (global + instance overrides) for pushing to the running instance.
+func resolveInstanceModelsAndKeys(inst database.Instance) ([]string, map[string]string) {
 	mc := parseModelsConfig(inst.ModelsConfig)
 	effective := computeEffectiveModels(mc)
 
@@ -211,7 +211,7 @@ func resolveInstanceModelsAndKeys(inst database.Instance) ([]string, map[string]
 		}
 	}
 
-	return effective, apiKeys, inst.DefaultModel
+	return effective, apiKeys
 }
 
 func instanceToResponse(inst database.Instance, status string) instanceResponse {
@@ -513,14 +513,21 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	effectiveImage := getEffectiveImage(inst)
 	effectiveResolution := getEffectiveResolution(inst)
 
-	orch := orchestrator.Get()
-	if orch != nil {
+	// Launch container creation asynchronously (image pull can take minutes)
+	go func() {
+		ctx := context.Background()
+		orch := orchestrator.Get()
+		if orch == nil {
+			database.DB.Model(&inst).Update("status", "error")
+			return
+		}
+
 		envVars := map[string]string{}
 		if gatewayTokenPlain != "" {
 			envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
 		}
 
-		err := orch.CreateInstance(r.Context(), orchestrator.CreateParams{
+		err := orch.CreateInstance(ctx, orchestrator.CreateParams{
 			Name:            name,
 			CPURequest:      body.CPURequest,
 			CPULimit:        body.CPULimit,
@@ -536,18 +543,19 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Printf("Failed to create container resources for %s: %v", name, err)
 			database.DB.Model(&inst).Update("status", "error")
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create container resources: %v", err))
 			return
 		}
-		database.DB.Model(&inst).Update("status", "running")
+		database.DB.Model(&inst).Updates(map[string]interface{}{
+			"status":     "running",
+			"updated_at": time.Now().UTC(),
+		})
 
-		// Push models and API keys to the instance (async, waits for container ready)
-		models, resolvedKeys, defaultProvider := resolveInstanceModelsAndKeys(inst)
-		go orch.ConfigureModelsAndKeys(context.Background(), name, models, resolvedKeys, defaultProvider)
-	}
+		// Push models and API keys to the instance (waits for container ready)
+		database.DB.First(&inst, inst.ID)
+		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
+		config.ConfigureInstance(ctx, orch, name, models, resolvedKeys)
+	}()
 
-	// Re-fetch to get updated timestamps
-	database.DB.First(&inst, inst.ID)
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
 }
 
@@ -676,8 +684,8 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		orchStatus, _ = orch.GetInstanceStatus(r.Context(), inst.Name)
 	}
 	if orch != nil && orchStatus == "running" {
-		models, resolvedKeys, defaultProvider := resolveInstanceModelsAndKeys(inst)
-		go orch.ConfigureModelsAndKeys(context.Background(), inst.Name, models, resolvedKeys, defaultProvider)
+		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
+		go config.ConfigureInstance(context.Background(), orch, inst.Name, models, resolvedKeys)
 	}
 
 	status := resolveStatus(&inst, orchStatus)
@@ -1014,8 +1022,8 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		// Push models and API keys to the running instance
 		// Re-fetch to get latest state
 		database.DB.First(&inst, inst.ID)
-		models, resolvedKeys, defaultProvider := resolveInstanceModelsAndKeys(inst)
-		orch.ConfigureModelsAndKeys(ctx, cloneName, models, resolvedKeys, defaultProvider)
+		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
+		config.ConfigureInstance(ctx, orch, cloneName, models, resolvedKeys)
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))

@@ -80,7 +80,7 @@ export default function ActionButtons({
         </button>
         <button
           onClick={() => onClone(instance.id)}
-          disabled={loading}
+          disabled={loading || instance.status === "creating"}
           title="Clone"
           className="p-1.5 text-gray-500 hover:text-purple-600 hover:bg-purple-50 rounded disabled:opacity-30 disabled:cursor-not-allowed"
         >

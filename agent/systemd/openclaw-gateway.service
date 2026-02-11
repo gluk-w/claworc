@@ -10,7 +10,8 @@ User=claworc
 Environment="HOME=/home/claworc"
 Environment="PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 WorkingDirectory=/home/claworc
-EnvironmentFile=-/etc/default/openclaw
+EnvironmentFile=-/etc/default/claworc
+EnvironmentFile=-/etc/default/claworc-keys
 ExecStartPre=/bin/bash -c 'test -n "$OPENCLAW_GATEWAY_TOKEN" && /usr/local/bin/openclaw config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN" || true'
 ExecStart=/usr/local/bin/openclaw gateway
 Restart=always

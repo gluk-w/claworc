@@ -246,10 +246,6 @@ func (d *DockerOrchestrator) configureGatewayToken(ctx context.Context, name, to
 	configureGatewayToken(ctx, d.ExecInInstance, name, token, d.waitForContainerRunning)
 }
 
-func (d *DockerOrchestrator) ConfigureModelsAndKeys(ctx context.Context, name string, models []string, apiKeys map[string]string, defaultProvider string) {
-	configureModelsAndKeys(ctx, d.ExecInInstance, name, models, apiKeys, defaultProvider, d.waitForContainerRunning)
-}
-
 func (d *DockerOrchestrator) CloneVolumes(ctx context.Context, srcName, dstName string) error {
 	// Stop destination container while we copy data into its volumes
 	timeout := 30
@@ -490,6 +486,7 @@ func (d *DockerOrchestrator) ExecInteractive(ctx context.Context, name string, c
 		AttachStdout: true,
 		AttachStderr: true,
 		Tty:          true,
+		ConsoleSize:  &[2]uint{24, 80},
 	}
 
 	execID, err := d.client.ContainerExecCreate(ctx, name, execCfg)

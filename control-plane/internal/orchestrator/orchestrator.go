@@ -6,6 +6,7 @@ import (
 	"net/http"
 )
 
+// ContainerOrchestrator thin abstraction providing generic primitives (exec, read/write files)
 type ContainerOrchestrator interface {
 	Initialize(ctx context.Context) error
 	IsAvailable(ctx context.Context) bool
@@ -21,7 +22,6 @@ type ContainerOrchestrator interface {
 
 	// Config
 	UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error
-	ConfigureModelsAndKeys(ctx context.Context, name string, models []string, apiKeys map[string]string, defaultProvider string)
 
 	// Logs
 	StreamInstanceLogs(ctx context.Context, name string, tail int, follow bool) (<-chan string, error)
