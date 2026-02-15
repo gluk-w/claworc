@@ -440,6 +440,7 @@ export default function InstanceDetailPage() {
                   copyFromVnc={vncHook.copyFromVnc}
                   pasteToVnc={vncHook.pasteToVnc}
                   chatOpen={false}
+                  showNewWindow={false}
                 />
               </div>
             </>
