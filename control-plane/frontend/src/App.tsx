@@ -7,6 +7,7 @@ import SettingsPage from "./pages/SettingsPage";
 import LoginPage from "./pages/LoginPage";
 import UsersPage from "./pages/UsersPage";
 import AccountPage from "./pages/AccountPage";
+import VncPopupPage from "./pages/VncPopupPage";
 import { useAuth } from "./contexts/AuthContext";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -27,6 +28,14 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/instances/:id/vnc"
+        element={
+          <ProtectedRoute>
+            <VncPopupPage />
+          </ProtectedRoute>
+        }
+      />
       <Route
         element={
           <ProtectedRoute>

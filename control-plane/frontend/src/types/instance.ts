@@ -8,7 +8,6 @@ export interface Instance {
   id: number;
   name: string;
   display_name: string;
-  vnc_chrome_url: string;
   status: "creating" | "running" | "restarting" | "stopping" | "stopped" | "error";
   cpu_request: string;
   cpu_limit: string;

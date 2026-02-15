@@ -21,30 +21,7 @@ interface SvarFileItem {
   type: "folder" | "file";
 }
 
-// Mapping between virtual paths and real paths
-const ALLOWED_FOLDERS = [
-  { virtual: "/openclaw-data", real: "/home/claworc/.openclaw", label: "openclaw-data" },
-  { virtual: "/clawd-data", real: "/home/claworc/clawd", label: "clawd-data" },
-];
-
-const virtualToReal = (path: string): string => {
-  if (path === "/") return "/";
-  for (const folder of ALLOWED_FOLDERS) {
-    if (path === folder.virtual || path.startsWith(folder.virtual + "/")) {
-      return path.replace(folder.virtual, folder.real);
-    }
-  }
-  return path;
-};
-
-const realToVirtual = (path: string): string => {
-  for (const folder of ALLOWED_FOLDERS) {
-    if (path === folder.real || path.startsWith(folder.real + "/")) {
-      return path.replace(folder.real, folder.virtual);
-    }
-  }
-  return path;
-};
+const ROOT_PATH = "/home/claworc";
 
 export default function FileBrowser({ instanceId }: FileBrowserProps) {
   const [currentPath, setCurrentPath] = useState("/");
@@ -53,51 +30,39 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [showNewFileDialog, setShowNewFileDialog] = useState(false);
   const [showNewFolderDialog, setShowNewFolderDialog] = useState(false);
+  const [editedContent, setEditedContent] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const apiRef = useRef<IApi | null>(null);
   const currentPathRef = useRef("/");
   const queryClient = useQueryClient();
 
-  // Determine if we're at root or need to fetch from API
-  const isRoot = currentPath === "/";
-  const realPath = virtualToReal(currentPath);
+  // The real filesystem path to browse
+  const realPath = currentPath === "/" ? ROOT_PATH : ROOT_PATH + currentPath;
 
   const { data: browseData, isLoading } = useBrowseFiles(
     instanceId,
     realPath,
-    !isRoot, // Only fetch if not at root
+    true,
   );
 
   // Function to invalidate the current browse query
   const refreshCurrentPath = () => {
-    const pathToRefresh = virtualToReal(currentPath);
     queryClient.invalidateQueries({
-      queryKey: ["instances", instanceId, "files", "browse", pathToRefresh],
+      queryKey: ["instances", instanceId, "files", "browse", realPath],
     });
   };
   const { data: fileContent } = useReadFile(
     instanceId,
-    selectedFile ? virtualToReal(selectedFile) : "",
+    selectedFile ? (selectedFile === "/" ? ROOT_PATH : ROOT_PATH + selectedFile) : "",
     !!selectedFile,
   );
 
   useEffect(() => {
-    if (isRoot) {
-      // Show virtual root with two folders
-      const rootFolders: SvarFileItem[] = ALLOWED_FOLDERS.map((folder) => ({
-        id: folder.virtual,
-        value: folder.label,
-        type: "folder",
-        size: undefined,
-        date: new Date(),
-      }));
-      setFileData(rootFolders);
-    } else if (browseData) {
-      // Transform real paths to virtual paths
+    if (browseData) {
       const transformed: SvarFileItem[] = browseData.entries.map(
         (entry: FileEntry) => {
-          const realEntryPath = `${realPath === "/" ? "" : realPath}/${entry.name}`;
-          const virtualEntryPath = realToVirtual(realEntryPath);
+          const virtualEntryPath = `${currentPath === "/" ? "" : currentPath}/${entry.name}`;
           return {
             id: virtualEntryPath,
             value: entry.name,
@@ -125,7 +90,7 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
 
       setFileData([...ancestors, ...transformed]);
     }
-  }, [browseData, currentPath, isRoot, realPath]);
+  }, [browseData, currentPath]);
 
   const handleInit = (api: IApi) => {
     apiRef.current = api;
@@ -139,6 +104,7 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
         currentPathRef.current = ev.id;
         setCurrentPath(ev.id);
         setSelectedFile(null);
+        setEditedContent(null);
       }
     });
 
@@ -147,6 +113,7 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
       const item = api.getFile(ev.id);
       if (item && item.type !== "folder") {
         setSelectedFile(item.id);
+        setEditedContent(null);
       }
     });
 
@@ -156,16 +123,10 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
         return false;
       }
 
-      if (ev.parent === "/") {
-        toast.error("Cannot create files at root level. Please open a folder first.");
-        return false;
-      }
-
       try {
-        const virtualFilePath = `${ev.parent}/${ev.file.name}`;
-        const realFilePath = virtualToReal(virtualFilePath);
+        const filePath = `${ev.parent === "/" ? ROOT_PATH : ROOT_PATH + ev.parent}/${ev.file.name}`;
 
-        await createFile(instanceId, realFilePath, "");
+        await createFile(instanceId, filePath, "");
         toast.success("File created successfully");
 
         refreshCurrentPath();
@@ -183,7 +144,7 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
       }
 
       try {
-        const parentRealPath = virtualToReal(ev.parent);
+        const parentRealPath = ev.parent === "/" ? ROOT_PATH : ROOT_PATH + ev.parent;
 
         await uploadFile(instanceId, parentRealPath, ev.file);
         toast.success("File uploaded successfully");
@@ -201,7 +162,7 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
     setShowNewFileDialog(false);
 
     try {
-      const filePath = `${realPath === "/" ? "" : realPath}/${fileName}`;
+      const filePath = `${realPath}/${fileName}`;
       await createFile(instanceId, filePath);
       toast.success("File created successfully");
       refreshCurrentPath();
@@ -214,7 +175,7 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
     setShowNewFolderDialog(false);
 
     try {
-      const dirPath = `${realPath === "/" ? "" : realPath}/${folderName}`;
+      const dirPath = `${realPath}/${folderName}`;
       await createDirectory(instanceId, dirPath);
       toast.success("Folder created successfully");
       refreshCurrentPath();
@@ -224,10 +185,6 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
   };
 
   const handleUploadClick = () => {
-    if (isRoot) {
-      toast.error("Cannot upload files to root level. Please select a folder.");
-      return;
-    }
     fileInputRef.current?.click();
   };
 
@@ -254,6 +211,30 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
     }
   };
 
+  const handleSaveFile = async () => {
+    if (!selectedFile || editedContent === null) return;
+    setIsSaving(true);
+    try {
+      const filePath = selectedFile === "/" ? ROOT_PATH : ROOT_PATH + selectedFile;
+      await createFile(instanceId, filePath, editedContent);
+      toast.success("File saved");
+      setEditedContent(null);
+      // Invalidate the read cache so re-opening shows fresh content
+      queryClient.invalidateQueries({
+        queryKey: ["instances", instanceId, "files", "read"],
+      });
+    } catch (error: any) {
+      toast.error(`Failed to save: ${error.response?.data?.detail || error.message || "Unknown error"}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCloseEditor = () => {
+    setSelectedFile(null);
+    setEditedContent(null);
+  };
+
   const handleBack = () => {
     if (currentPath === "/") return;
     const parts = currentPath.split("/");
@@ -262,6 +243,7 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
     currentPathRef.current = newPath;
     setCurrentPath(newPath);
     setSelectedFile(null);
+    setEditedContent(null);
     // Sync SVAR's internal navigation to match
     apiRef.current?.exec("set-path", { id: newPath });
   };
@@ -289,8 +271,7 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
         </span>
         <button
           onClick={() => setShowNewFileDialog(true)}
-          disabled={isRoot}
-          className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+          className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-1"
           title="Create new file"
         >
           <FilePlus size={14} />
@@ -298,8 +279,7 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
         </button>
         <button
           onClick={() => setShowNewFolderDialog(true)}
-          disabled={isRoot}
-          className="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+          className="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 flex items-center gap-1"
           title="Create new folder"
         >
           <FolderPlus size={14} />
@@ -307,7 +287,7 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
         </button>
         <button
           onClick={handleUploadClick}
-          disabled={isRoot || isUploading}
+          disabled={isUploading}
           className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
           title="Upload file"
         >
@@ -329,23 +309,44 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
           </Willow>
         </div>
         {selectedFile && fileContent && (
-          <div className="w-1/2 border border-gray-200 rounded-lg overflow-hidden bg-white">
-            <div className="border-b border-gray-200 px-4 py-2 bg-gray-50 flex items-center justify-between">
+          <div className="w-1/2 border border-gray-200 rounded-lg overflow-hidden bg-white flex flex-col">
+            <div className="border-b border-gray-200 px-4 py-2 bg-gray-50 flex items-center justify-between shrink-0">
               <h3 className="text-sm font-medium text-gray-900">
                 {selectedFile.split("/").pop()}
+                {editedContent !== null && <span className="ml-1 text-amber-600">*</span>}
               </h3>
-              <button
-                onClick={() => setSelectedFile(null)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                Close
-              </button>
+              <div className="flex items-center gap-2">
+                {editedContent !== null && (
+                  <>
+                    <button
+                      onClick={handleSaveFile}
+                      disabled={isSaving}
+                      className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {isSaving ? "Saving..." : "Save"}
+                    </button>
+                    <button
+                      onClick={() => setEditedContent(null)}
+                      className="text-xs px-2 py-1 text-gray-600 hover:text-gray-800"
+                    >
+                      Discard
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={handleCloseEditor}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  Close
+                </button>
+              </div>
             </div>
-            <div className="p-4 overflow-auto h-[calc(100%-48px)]">
-              <pre className="text-xs text-gray-800 whitespace-pre-wrap break-words font-mono">
-                {fileContent.content}
-              </pre>
-            </div>
+            <textarea
+              className="flex-1 w-full p-4 text-xs text-gray-800 font-mono resize-none outline-none"
+              value={editedContent ?? fileContent.content}
+              onChange={(e) => setEditedContent(e.target.value)}
+              spellCheck={false}
+            />
           </div>
         )}
       </div>

@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import {
   Monitor,
   Terminal,
@@ -33,51 +32,52 @@ export default function ActionButtons({
   loading,
 }: ActionButtonsProps) {
   const [showConfirm, setShowConfirm] = useState(false);
-  const navigate = useNavigate();
   const isStopped = instance.status === "stopped";
   const isRunning = instance.status === "running";
   const isRestarting = instance.status === "restarting";
   const isStopping = instance.status === "stopping";
   const isUnavailable = !isRunning;
 
-  const openVnc = (url: string, type: string) => {
-    window.open(url, `vnc-${type}-${instance.name}`);
-  };
+  const controlUrl = (() => {
+    const gwUrl = `ws://${window.location.host}/api/v1/instances/${instance.id}/control/`;
+    const params = new URLSearchParams({
+      gatewayUrl: gwUrl,
+      token: instance.gateway_token,
+    });
+    return `/api/v1/instances/${instance.id}/control/?${params}`;
+  })();
+
+  const disabledLinkClass = "pointer-events-none opacity-30";
 
   return (
     <>
       <div className="flex items-center gap-1">
-        <button
-          onClick={() => openVnc(instance.vnc_chrome_url, "chrome")}
-          disabled={isUnavailable}
+        <a
+          href={`/instances/${instance.id}#chrome`}
           title="Chrome Browser"
-          className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+          aria-disabled={isUnavailable}
+          className={`p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded ${isUnavailable ? disabledLinkClass : ""}`}
         >
           <Monitor size={16} />
-        </button>
-        <button
-          onClick={() => navigate(`/instances/${instance.id}#terminal`)}
-          disabled={isUnavailable}
+        </a>
+        <a
+          href={`/instances/${instance.id}#terminal`}
           title="Terminal"
-          className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+          aria-disabled={isUnavailable}
+          className={`p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded ${isUnavailable ? disabledLinkClass : ""}`}
         >
           <Terminal size={16} />
-        </button>
-        <button
-          onClick={() => {
-            const gwUrl = `ws://${window.location.host}/api/v1/instances/${instance.id}/control/`;
-            const params = new URLSearchParams({
-              gatewayUrl: gwUrl,
-              token: instance.gateway_token,
-            });
-            window.open(`/api/v1/instances/${instance.id}/control/?${params}`, `control-${instance.name}`);
-          }}
-          disabled={isUnavailable}
+        </a>
+        <a
+          href={controlUrl}
+          target="_blank"
+          rel="noopener noreferrer"
           title="Control UI"
-          className="p-1.5 text-gray-500 hover:text-teal-600 hover:bg-teal-50 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+          aria-disabled={isUnavailable}
+          className={`p-1.5 text-gray-500 hover:text-teal-600 hover:bg-teal-50 rounded ${isUnavailable ? disabledLinkClass : ""}`}
         >
           <LayoutDashboard size={16} />
-        </button>
+        </a>
         <button
           onClick={() => onClone(instance.id)}
           disabled={loading || instance.status === "creating"}

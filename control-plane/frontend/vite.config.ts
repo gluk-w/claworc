@@ -67,6 +67,9 @@ export default defineConfig({
       },
     }),
   ],
+  optimizeDeps: {
+    include: ["@novnc/novnc"],
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

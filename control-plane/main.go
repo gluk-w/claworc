@@ -132,7 +132,6 @@ func main() {
 
 			// VNC
 			r.Get("/instances/{id}/vnc/{display}/websockify", handlers.VNCWSProxy)
-			r.Get("/instances/{id}/vnc/{display}/*", handlers.VNCHTTPProxy)
 
 			// Control proxy
 			r.Get("/instances/{id}/control/*", handlers.ControlProxy)

@@ -53,7 +53,6 @@ type instanceResponse struct {
 	ID                    uint            `json:"id"`
 	Name                  string          `json:"name"`
 	DisplayName           string          `json:"display_name"`
-	VNCChromeURL          string          `json:"vnc_chrome_url"`
 	Status                string          `json:"status"`
 	CPURequest            string          `json:"cpu_request"`
 	CPULimit              string          `json:"cpu_limit"`
@@ -237,7 +236,6 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		ID:                    inst.ID,
 		Name:                  inst.Name,
 		DisplayName:           inst.DisplayName,
-		VNCChromeURL:          fmt.Sprintf("/api/v1/instances/%d/vnc/chrome/vnc.html?autoconnect=true&resize=scale&path=api/v1/instances/%d/vnc/chrome/websockify", inst.ID, inst.ID),
 		Status:                status,
 		CPURequest:            inst.CPURequest,
 		CPULimit:              inst.CPULimit,

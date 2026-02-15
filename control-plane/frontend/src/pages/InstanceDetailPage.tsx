@@ -1,12 +1,14 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { ArrowLeft, AlertTriangle } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import StatusBadge from "@/components/StatusBadge";
 import ActionButtons from "@/components/ActionButtons";
 import ProviderTable from "@/components/ProviderTable";
 import MonacoConfigEditor from "@/components/MonacoConfigEditor";
 import LogViewer from "@/components/LogViewer";
 import TerminalPanel from "@/components/TerminalPanel";
+import VncPanel from "@/components/VncPanel";
+import FileBrowser from "@/components/FileBrowser";
 import {
   useInstance,
   useStartInstance,
@@ -22,9 +24,10 @@ import {
 import { useSettings } from "@/hooks/useSettings";
 import { useInstanceLogs } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
+import { useVnc } from "@/hooks/useVnc";
 import type { InstanceUpdatePayload } from "@/types/instance";
 
-type Tab = "overview" | "terminal" | "config" | "logs";
+type Tab = "overview" | "chrome" | "terminal" | "files" | "config" | "logs";
 
 export default function InstanceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -47,7 +50,7 @@ export default function InstanceDetailPage() {
   // Get initial tab from URL hash
   const getTabFromHash = (): Tab => {
     const hash = location.hash.slice(1); // Remove '#'
-    if (hash === "terminal" || hash === "config" || hash === "logs") {
+    if (hash === "chrome" || hash === "terminal" || hash === "files" || hash === "config" || hash === "logs") {
       return hash;
     }
     return "overview";
@@ -55,8 +58,9 @@ export default function InstanceDetailPage() {
 
   const [activeTab, setActiveTab] = useState<Tab>(getTabFromHash());
   const [editedConfig, setEditedConfig] = useState<string | null>(null);
-  // Terminal is mounted once the user first visits the tab, then stays mounted
+  // Terminal/Chrome are mounted once the user first visits the tab, then stay mounted
   const [terminalActivated, setTerminalActivated] = useState(getTabFromHash() === "terminal");
+  const [chromeActivated, setChromeActivated] = useState(getTabFromHash() === "chrome");
 
   // API key editing state
   const [editingKeys, setEditingKeys] = useState(false);
@@ -67,6 +71,7 @@ export default function InstanceDetailPage() {
     const tab = getTabFromHash();
     setActiveTab(tab);
     if (tab === "terminal") setTerminalActivated(true);
+    if (tab === "chrome") setChromeActivated(true);
   }, [location.hash]);
 
   // Provider enable/disable state
@@ -89,11 +94,13 @@ export default function InstanceDetailPage() {
   const handleTabChange = (tab: Tab) => {
     setActiveTab(tab);
     if (tab === "terminal") setTerminalActivated(true);
+    if (tab === "chrome") setChromeActivated(true);
     navigate(`#${tab}`, { replace: true });
   };
 
   const logsHook = useInstanceLogs(instanceId, activeTab === "logs");
   const termHook = useTerminal(instanceId, terminalActivated && instance?.status === "running");
+  const vncHook = useVnc(instanceId, chromeActivated && instance?.status === "running");
 
   if (isLoading) {
     return <div className="text-center py-12 text-gray-500">Loading...</div>;
@@ -209,21 +216,15 @@ export default function InstanceDetailPage() {
 
   const tabs: { key: Tab; label: string }[] = [
     { key: "overview", label: "Overview" },
+    { key: "chrome", label: "Chrome" },
     { key: "terminal", label: "Terminal" },
+    { key: "files", label: "Files" },
     { key: "config", label: "Config" },
     { key: "logs", label: "Logs" },
   ];
 
   return (
     <div>
-      <button
-        onClick={() => navigate("/")}
-        className="inline-flex items-center gap-1 text-sm text-gray-600 hover:text-gray-900 mb-4"
-      >
-        <ArrowLeft size={16} />
-        Back to Dashboard
-      </button>
-
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-semibold text-gray-900">
@@ -372,6 +373,28 @@ export default function InstanceDetailPage() {
         </div>
       )}
 
+      {chromeActivated && (
+        <div
+          className="bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-220px)] min-h-[400px]"
+          style={activeTab !== "chrome" ? { display: "none" } : undefined}
+        >
+          {instance.status === "running" ? (
+            <VncPanel
+              instanceId={instanceId}
+              connectionState={vncHook.connectionState}
+              setContainer={vncHook.setContainer}
+              reconnect={vncHook.reconnect}
+              copyFromVnc={vncHook.copyFromVnc}
+              pasteToVnc={vncHook.pasteToVnc}
+            />
+          ) : (
+            <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+              Instance must be running to view Chrome.
+            </div>
+          )}
+        </div>
+      )}
+
       {terminalActivated && (
         <div
           className="bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-220px)] min-h-[400px]"
@@ -389,6 +412,18 @@ export default function InstanceDetailPage() {
           ) : (
             <div className="flex items-center justify-center h-full text-gray-500 text-sm">
               Instance must be running to use terminal.
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "files" && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4 h-[calc(100vh-220px)] min-h-[400px]">
+          {instance.status === "running" ? (
+            <FileBrowser instanceId={instanceId} />
+          ) : (
+            <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+              Instance must be running to browse files.
             </div>
           )}
         </div>

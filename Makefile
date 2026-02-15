@@ -13,7 +13,7 @@ KUBECONFIG := ../kubeconfig
 HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
 
-.PHONY: agent dashboard docker-prune \
+.PHONY: agent dashboard docker-prune release \
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-stop \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane
 
@@ -22,6 +22,9 @@ agent:
 
 control-plane:
 	docker buildx build --platform $(DASHBOARD_PLATFORM) -t $(DASHBOARD_IMAGE):$(TAG) --push control-plane/
+
+release: agent control-plane
+	@echo "Released $(AGENT_IMAGE):$(TAG) and $(DASHBOARD_IMAGE):$(TAG)"
 
 docker-prune:
 	docker system prune -af
@@ -87,3 +90,4 @@ local-clean:
 
 e2e-docker-tests:
 	./scripts/run_tests.sh
+	
