@@ -11,6 +11,7 @@ tmp
 *.log
 
 node_modules
+pkg/mod
 dist
 
 control-plane/claworc
