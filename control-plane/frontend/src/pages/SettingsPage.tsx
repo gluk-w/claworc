@@ -64,7 +64,7 @@ export default function SettingsPage() {
     { key: "default_memory_limit", label: "Default Memory Limit" },
     { key: "default_storage_homebrew", label: "Default Homebrew Storage" },
     { key: "default_storage_clawd", label: "Default Clawd Storage" },
-    { key: "default_storage_chrome", label: "Default Chrome Storage" },
+    { key: "default_storage_chrome", label: "Default Browser Storage" },
   ];
 
   const hasChanges =

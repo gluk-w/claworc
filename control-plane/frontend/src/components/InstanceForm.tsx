@@ -152,8 +152,8 @@ export default function InstanceForm({
           onAddKey={(key, value) =>
             setApiKeys((prev) => ({ ...prev, [key]: value }))
           }
-          onRemoveKey={() => {}}
-          onUndoRemove={() => {}}
+          onRemoveKey={() => { }}
+          onUndoRemove={() => { }}
           onUndoAdd={(key) =>
             setApiKeys((prev) => {
               const next = { ...prev };
@@ -207,7 +207,7 @@ export default function InstanceForm({
             {[
               { label: "Homebrew Storage", value: storageHomebrew, set: setStorageHomebrew },
               { label: "Clawd Storage", value: storageClawd, set: setStorageClawd },
-              { label: "Chrome Storage", value: storageChrome, set: setStorageChrome },
+              { label: "Browser Storage", value: storageChrome, set: setStorageChrome },
             ].map((field) => (
               <div key={field.label}>
                 <label className="block text-xs text-gray-500 mb-1">

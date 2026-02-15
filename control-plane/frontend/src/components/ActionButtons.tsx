@@ -64,7 +64,7 @@ export default function ActionButtons({
         </a>
         <a
           href={`/instances/${instance.id}#chrome`}
-          title="Chrome Browser"
+          title="Browser"
           aria-disabled={isUnavailable}
           className={`p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded ${isUnavailable ? disabledLinkClass : ""}`}
         >

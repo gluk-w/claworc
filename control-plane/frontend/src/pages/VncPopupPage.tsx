@@ -18,7 +18,7 @@ export default function VncPopupPage() {
   }
 
   if (instance.status !== "running") {
-    return <div className="flex items-center justify-center h-screen bg-gray-900 text-gray-400">Instance must be running to view Chrome.</div>;
+    return <div className="flex items-center justify-center h-screen bg-gray-900 text-gray-400">Instance must be running to view Browser.</div>;
   }
 
   return (
