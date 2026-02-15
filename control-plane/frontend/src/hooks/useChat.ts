@@ -127,6 +127,35 @@ export function useChat(instanceId: number, enabled: boolean) {
         case "error":
           addSystemMessage(`Error: ${frame.message}`);
           break;
+
+        // Raw gateway event frames (forwarded as-is from the gateway)
+        case "event": {
+          const ev = frame.event;
+          const payload = frame.payload as Record<string, unknown> | undefined;
+          // Skip heartbeat ticks and presence events
+          if (ev === "tick" || ev === "presence") break;
+          // Try to extract chat message content from event payload
+          const content = (payload?.message ?? payload?.content ?? payload?.text) as string | undefined;
+          if (content) {
+            const role = (payload?.role === "user") ? "user" as const : "agent" as const;
+            setMessages((prev) => [
+              ...prev,
+              { id: nextId(), role, content, timestamp: Date.now() },
+            ]);
+          } else {
+            // Log unknown events for debugging
+            console.log("[chat] gateway event:", ev, payload);
+          }
+          break;
+        }
+
+        // Raw gateway response frames (ack for chat.send etc.)
+        case "res": {
+          if (!frame.ok && frame.error) {
+            addSystemMessage(`Error: ${frame.error.message ?? frame.error.code ?? "unknown"}`);
+          }
+          break;
+        }
       }
     };
 

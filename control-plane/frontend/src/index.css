@@ -1,1 +1,72 @@
 @import "tailwindcss";
+
+/* SVAR Filemanager: hide toolbar (search, mode switcher) and reclaim its space */
+.wx-filemanager {
+  --wx-fm-toolbar-height: 0px !important;
+}
+
+.wx-filemanager > [class*="wx-toolbar"] {
+  display: none !important;
+}
+
+/* SVAR Filemanager: remove internal gray spacing */
+.wx-filemanager {
+  --wx-fm-background: transparent !important;
+}
+
+.wx-filemanager .wx-sidebar {
+  padding: 0 !important;
+}
+
+.wx-filemanager [class*="wx-content-wrapper"] {
+  margin-top: 0 !important;
+}
+
+.wx-content-item-fit,
+.wx-content-item {
+  padding: 0 !important;
+  padding-left: 8px !important;
+}
+
+/* SVAR Filemanager: propagate height through the content chain so scroll works */
+.wx-filemanager [class*="wx-content-wrapper"] {
+  overflow: hidden !important;
+}
+
+.wx-filemanager .wx-content {
+  height: 100% !important;
+}
+
+.wx-content-item-fit,
+.wx-content-item {
+  height: 100% !important;
+}
+
+/* SVAR Filemanager: scroll only the table body, keeping header pinned */
+.wx-filemanager .wx-scroll {
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow-x: hidden !important;
+}
+
+.wx-filemanager .wx-body {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  flex: 1 !important;
+  min-height: 0 !important;
+}
+
+/* SVAR Filemanager: disable all transitions and animations */
+.wx-filemanager,
+.wx-filemanager *,
+.wx-filemanager *:before,
+.wx-filemanager *:after {
+  animation: none !important;
+  transition: none !important;
+}
+
+/* SVAR Filemanager: enable vertical scrolling on the sidebar tree */
+.wx-filemanager .wx-tree {
+  overflow-y: auto !important;
+}

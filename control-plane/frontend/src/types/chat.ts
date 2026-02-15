@@ -29,8 +29,27 @@ export interface GatewayErrorFrame {
   message: string;
 }
 
+/** Raw gateway event frame (forwarded as-is from the gateway) */
+export interface GatewayEventFrame {
+  type: "event";
+  event: string;
+  payload?: Record<string, unknown>;
+  seq?: number;
+}
+
+/** Raw gateway response frame (ack for chat.send etc.) */
+export interface GatewayResponseFrame {
+  type: "res";
+  id: string;
+  ok: boolean;
+  payload?: Record<string, unknown>;
+  error?: { code?: string; message?: string };
+}
+
 export type GatewayFrame =
   | GatewayConnectedFrame
   | GatewayChatFrame
   | GatewayAgentFrame
-  | GatewayErrorFrame;
+  | GatewayErrorFrame
+  | GatewayEventFrame
+  | GatewayResponseFrame;

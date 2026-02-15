@@ -259,7 +259,6 @@ export default function InstanceDetailPage() {
     { key: "overview", label: "Overview" },
     { key: "chrome", label: "Chrome" },
     { key: "terminal", label: "Terminal" },
-    { key: "files", label: "Files" },
     { key: "config", label: "Config" },
     { key: "logs", label: "Logs" },
   ];
@@ -291,7 +290,7 @@ export default function InstanceDetailPage() {
         />
       </div>
 
-      <div className="border-b border-gray-200 mb-6">
+      <div className="border-b border-gray-200 mb-4">
         <nav className="flex gap-6">
           {tabs.map((tab) => (
             <button
@@ -416,7 +415,7 @@ export default function InstanceDetailPage() {
 
       {chromeActivated && (
         <div
-          className="bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-220px)] min-h-[400px] flex"
+          className="bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-142px)] min-h-[400px] flex"
           style={activeTab !== "chrome" ? { display: "none" } : undefined}
         >
           {instance.status === "running" ? (
@@ -440,8 +439,7 @@ export default function InstanceDetailPage() {
                   reconnect={vncHook.reconnect}
                   copyFromVnc={vncHook.copyFromVnc}
                   pasteToVnc={vncHook.pasteToVnc}
-                  chatOpen={chatOpen}
-                  onChatToggle={() => setChatOpen((prev) => !prev)}
+                  chatOpen={false}
                 />
               </div>
             </>
@@ -455,7 +453,7 @@ export default function InstanceDetailPage() {
 
       {terminalActivated && (
         <div
-          className="bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-220px)] min-h-[400px]"
+          className="bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-142px)] min-h-[400px]"
           style={activeTab !== "terminal" ? { display: "none" } : undefined}
         >
           {instance.status === "running" ? (
@@ -476,7 +474,7 @@ export default function InstanceDetailPage() {
       )}
 
       {activeTab === "files" && (
-        <div className="bg-white rounded-lg border border-gray-200 p-4 h-[calc(100vh-220px)] min-h-[400px]">
+        <div className="h-[calc(100vh-142px)] min-h-[400px]">
           {instance.status === "running" ? (
             <FileBrowser instanceId={instanceId} initialPath={getFilesPathFromHash()} onPathChange={handleFilesPathChange} />
           ) : (
@@ -488,39 +486,41 @@ export default function InstanceDetailPage() {
       )}
 
       {activeTab === "config" && (
-        <div className="space-y-4">
+        <div className="flex flex-col gap-4 h-[calc(100vh-142px)] min-h-[400px]">
           {instance.status !== "running" ? (
-            <div className="flex items-center justify-center h-64 text-gray-500 text-sm bg-white rounded-lg border border-gray-200">
+            <div className="flex items-center justify-center flex-1 text-gray-500 text-sm bg-white rounded-lg border border-gray-200">
               Instance must be running to edit config.
             </div>
           ) : (
             <>
-              <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-800">
-                <AlertTriangle size={16} className="shrink-0" />
-                Saving will restart the openclaw-gateway service.
-              </div>
-              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden flex-1 min-h-0">
                 <MonacoConfigEditor
                   value={currentConfig}
                   onChange={(v) => setEditedConfig(v ?? "{}")}
-                  height="400px"
+                  height="100%"
                 />
               </div>
-              <div className="flex justify-end gap-3">
-                <button
-                  onClick={handleResetConfig}
-                  disabled={editedConfig === null}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
-                >
-                  Reset
-                </button>
-                <button
-                  onClick={handleSaveConfig}
-                  disabled={updateConfigMutation.isPending}
-                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {updateConfigMutation.isPending ? "Saving..." : "Save"}
-                </button>
+              <div className="flex items-center shrink-0">
+                <div className="flex items-center gap-2 text-sm text-amber-700">
+                  <AlertTriangle size={16} className="shrink-0" />
+                  Saving will restart the openclaw-gateway service.
+                </div>
+                <div className="ml-auto flex gap-3">
+                  <button
+                    onClick={handleResetConfig}
+                    disabled={editedConfig === null}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Reset
+                  </button>
+                  <button
+                    onClick={handleSaveConfig}
+                    disabled={updateConfigMutation.isPending}
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {updateConfigMutation.isPending ? "Saving..." : "Save"}
+                  </button>
+                </div>
               </div>
             </>
           )}
@@ -528,7 +528,7 @@ export default function InstanceDetailPage() {
       )}
 
       {activeTab === "logs" && (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden h-[500px]">
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-142px)] min-h-[400px]">
           <LogViewer
             logs={logsHook.logs}
             isPaused={logsHook.isPaused}
