@@ -272,6 +272,10 @@ func resolveStatus(inst *database.Instance, orchStatus string) string {
 		return "stopping"
 	}
 
+	if inst.Status == "error" && orchStatus == "stopped" {
+		return "failed"
+	}
+
 	if inst.Status != "restarting" {
 		return orchStatus
 	}
