@@ -18,6 +18,7 @@ export function useChat(instanceId: number, enabled: boolean) {
   const retriesRef = useRef(0);
   const backoffRef = useRef(BACKOFF_INITIAL);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stableTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const enabledRef = useRef(enabled);
 
   useEffect(() => {
@@ -40,6 +41,10 @@ export function useChat(instanceId: number, enabled: boolean) {
 
   const disconnect = useCallback(() => {
     clearReconnectTimer();
+    if (stableTimerRef.current) {
+      clearTimeout(stableTimerRef.current);
+      stableTimerRef.current = null;
+    }
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -77,9 +82,21 @@ export function useChat(instanceId: number, enabled: boolean) {
       switch (frame.type) {
         case "connected":
           setConnectionState("connected");
-          retriesRef.current = 0;
-          backoffRef.current = BACKOFF_INITIAL;
-          addSystemMessage("Connected to Gateway");
+          // Only reset retries after connection is stable for 5s
+          // This prevents infinite reconnect loops when connections drop immediately
+          if (stableTimerRef.current) clearTimeout(stableTimerRef.current);
+          stableTimerRef.current = setTimeout(() => {
+            retriesRef.current = 0;
+            backoffRef.current = BACKOFF_INITIAL;
+          }, 5000);
+          // Only add message if last message isn't already "Connected to Gateway"
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last?.role === "system" && last.content === "Connected to Gateway") {
+              return prev;
+            }
+            return [...prev, { id: nextId(), role: "system", content: "Connected to Gateway", timestamp: Date.now() }];
+          });
           break;
 
         case "chat":

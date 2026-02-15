@@ -372,14 +372,19 @@ func (d *DockerOrchestrator) UpdateInstanceConfig(ctx context.Context, name stri
 }
 
 func (d *DockerOrchestrator) StreamInstanceLogs(ctx context.Context, name string, tail int, follow bool) (<-chan string, error) {
-	opts := container.LogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-		Follow:     follow,
-		Tail:       fmt.Sprintf("%d", tail),
+	cmd := fmt.Sprintf("openclaw logs --plain --limit %d", tail)
+	if follow {
+		cmd += " --follow"
+	}
+	cmdSlice := []string{"su", "-", "claworc", "-c", cmd}
+
+	execCfg := container.ExecOptions{
+		Cmd:          cmdSlice,
+		AttachStdout: true,
+		AttachStderr: true,
 	}
 
-	reader, err := d.client.ContainerLogs(ctx, name, opts)
+	execID, err := d.client.ContainerExecCreate(ctx, name, execCfg)
 	if err != nil {
 		if dockerclient.IsErrNotFound(err) {
 			ch := make(chan string, 1)
@@ -387,21 +392,24 @@ func (d *DockerOrchestrator) StreamInstanceLogs(ctx context.Context, name string
 			close(ch)
 			return ch, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("exec create: %w", err)
+	}
+
+	resp, err := d.client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("exec attach: %w", err)
 	}
 
 	ch := make(chan string, 100)
 	go func() {
 		defer close(ch)
-		defer reader.Close()
+		defer resp.Close()
 
 		buf := make([]byte, 8192)
 		for {
-			n, err := reader.Read(buf)
+			n, err := resp.Reader.Read(buf)
 			if n > 0 {
-				// Docker multiplexed stream: first 8 bytes are header
 				data := buf[:n]
-				// Strip docker log headers if present (8-byte header per frame)
 				text := stripDockerLogHeaders(data)
 				for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
 					if line != "" {

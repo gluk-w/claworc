@@ -114,15 +114,35 @@ func createDirectory(ctx context.Context, execFn ExecFunc, name string, path str
 }
 
 func writeFile(ctx context.Context, execFn ExecFunc, name string, path string, data []byte) error {
-	b64 := base64.StdEncoding.EncodeToString(data)
-	cmd := []string{"sh", "-c", fmt.Sprintf("echo '%s' | base64 -d > '%s'", b64, path)}
-	_, stderr, code, err := execFn(ctx, name, cmd)
+	// Write in chunks to avoid "argument list too long" for large files.
+	// 48KB raw → ~64KB base64, well under the typical 128KB–2MB arg limit.
+	const chunkSize = 48000
+
+	// Truncate / create the target file
+	_, stderr, code, err := execFn(ctx, name, []string{"sh", "-c", fmt.Sprintf("> '%s'", path)})
 	if err != nil {
 		return err
 	}
 	if code != 0 {
 		return fmt.Errorf("write file: %s", stderr)
 	}
+
+	for i := 0; i < len(data); i += chunkSize {
+		end := i + chunkSize
+		if end > len(data) {
+			end = len(data)
+		}
+		b64 := base64.StdEncoding.EncodeToString(data[i:end])
+		cmd := []string{"sh", "-c", fmt.Sprintf("echo '%s' | base64 -d >> '%s'", b64, path)}
+		_, stderr, code, err = execFn(ctx, name, cmd)
+		if err != nil {
+			return err
+		}
+		if code != 0 {
+			return fmt.Errorf("write file: %s", stderr)
+		}
+	}
+
 	return nil
 }
 

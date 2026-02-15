@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -68,17 +69,29 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decrypt gateway token
-	var gatewayToken string
+	// Decrypt gateway token and append to URL (matching controlWSProxy)
 	if inst.GatewayToken != "" {
-		gatewayToken, _ = crypto.Decrypt(inst.GatewayToken)
+		if tok, err := crypto.Decrypt(inst.GatewayToken); err == nil && tok != "" {
+			if strings.Contains(gwURL, "?") {
+				gwURL += "&token=" + tok
+			} else {
+				gwURL += "?token=" + tok
+			}
+		}
 	}
 
-	// Connect to gateway
+	// Connect to gateway (matching controlWSProxy pattern)
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	dialOpts := &websocket.DialOptions{}
+	origin, host := gatewayHost(gwURL)
+	dialOpts := &websocket.DialOptions{
+		Host:       host,
+		HTTPHeader: http.Header{},
+	}
+	if origin != "" {
+		dialOpts.HTTPHeader.Set("Origin", origin)
+	}
 	if t := orch.GetHTTPTransport(); t != nil {
 		dialOpts.HTTPClient = &http.Client{Transport: t}
 	}
@@ -91,15 +104,15 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	defer gwConn.CloseNow()
 
-	// Send connect handshake
-	connectMsg := map[string]string{
+	// Set read limits (match VNC/control handlers)
+	clientConn.SetReadLimit(4 * 1024 * 1024)
+	gwConn.SetReadLimit(4 * 1024 * 1024)
+
+	// Send connect handshake to start a chat session (token already in URL)
+	connectJSON, _ := json.Marshal(map[string]string{
 		"type": "connect",
 		"role": "operator",
-	}
-	if gatewayToken != "" {
-		connectMsg["token"] = gatewayToken
-	}
-	connectJSON, _ := json.Marshal(connectMsg)
+	})
 	if err := gwConn.Write(ctx, websocket.MessageText, connectJSON); err != nil {
 		clientConn.Close(4502, "Failed to send handshake")
 		return
@@ -111,6 +124,7 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 
 	_, data, err := gwConn.Read(handshakeCtx)
 	if err != nil {
+		log.Printf("[chat] handshake read error for %s: %v", inst.Name, err)
 		clientConn.Close(4504, "Gateway handshake timeout")
 		return
 	}
@@ -122,12 +136,13 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 			if m, ok := resp["message"].(string); ok {
 				msg = m
 			}
+			log.Printf("[chat] handshake error for %s: %s", inst.Name, msg)
 			clientConn.Close(4401, msg)
 			return
 		}
 	}
 
-	// Notify browser
+	// Notify browser that connection is established
 	connectedMsg, _ := json.Marshal(map[string]string{"type": "connected"})
 	clientConn.Write(ctx, websocket.MessageText, connectedMsg)
 

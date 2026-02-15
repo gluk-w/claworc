@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { AlertTriangle } from "lucide-react";
 import StatusBadge from "@/components/StatusBadge";
@@ -8,6 +8,7 @@ import MonacoConfigEditor from "@/components/MonacoConfigEditor";
 import LogViewer from "@/components/LogViewer";
 import TerminalPanel from "@/components/TerminalPanel";
 import VncPanel from "@/components/VncPanel";
+import ChatPanel from "@/components/ChatPanel";
 import FileBrowser from "@/components/FileBrowser";
 import {
   useInstance,
@@ -25,6 +26,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { useInstanceLogs } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useVnc } from "@/hooks/useVnc";
+import { useChat } from "@/hooks/useChat";
 import type { InstanceUpdatePayload } from "@/types/instance";
 
 type Tab = "overview" | "chrome" | "terminal" | "files" | "config" | "logs";
@@ -47,13 +49,24 @@ export default function InstanceDetailPage() {
   const updateMutation = useUpdateInstance();
   const updateConfigMutation = useUpdateInstanceConfig();
 
-  // Get initial tab from URL hash
+  // Get initial tab from URL hash (supports #files:///path pattern)
   const getTabFromHash = (): Tab => {
     const hash = location.hash.slice(1); // Remove '#'
-    if (hash === "chrome" || hash === "terminal" || hash === "files" || hash === "config" || hash === "logs") {
+    if (hash === "chrome" || hash === "terminal" || hash === "config" || hash === "logs") {
       return hash;
     }
+    if (hash === "files" || hash.startsWith("files://")) {
+      return "files";
+    }
     return "overview";
+  };
+
+  const getFilesPathFromHash = (): string => {
+    const hash = location.hash.slice(1);
+    if (hash.startsWith("files://")) {
+      return hash.slice("files://".length) || "/";
+    }
+    return "/";
   };
 
   const [activeTab, setActiveTab] = useState<Tab>(getTabFromHash());
@@ -90,6 +103,11 @@ export default function InstanceDetailPage() {
     setPendingDefaultModel(null);
   }, [instance?.default_model]);
 
+  const handleFilesPathChange = (path: string) => {
+    const hash = path === "/" ? "files" : `files://${path}`;
+    navigate(`#${hash}`, { replace: true });
+  };
+
   // Update hash when tab changes
   const handleTabChange = (tab: Tab) => {
     setActiveTab(tab);
@@ -98,9 +116,32 @@ export default function InstanceDetailPage() {
     navigate(`#${tab}`, { replace: true });
   };
 
+  const [chatOpen, setChatOpen] = useState(false);
+  const chatInitSentRef = useRef(false);
+
   const logsHook = useInstanceLogs(instanceId, activeTab === "logs");
   const termHook = useTerminal(instanceId, terminalActivated && instance?.status === "running");
   const vncHook = useVnc(instanceId, chromeActivated && instance?.status === "running");
+  const chatHook = useChat(instanceId, chatOpen && chromeActivated && instance?.status === "running");
+
+  // Auto-send initial messages when chat connects (delayed to survive StrictMode double-mount)
+  useEffect(() => {
+    if (chatHook.connectionState !== "connected" || !chatOpen || chatInitSentRef.current) return;
+    const timer = setTimeout(() => {
+      chatInitSentRef.current = true;
+      chatHook.clearMessages();
+      chatHook.sendMessage("/new");
+      chatHook.sendMessage("You need to interact with the current tab in Google Chrome");
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [chatHook.connectionState, chatOpen, chatHook.sendMessage, chatHook.clearMessages]);
+
+  // Reset init flag when chat is closed so re-opening starts fresh
+  useEffect(() => {
+    if (!chatOpen) {
+      chatInitSentRef.current = false;
+    }
+  }, [chatOpen]);
 
   if (isLoading) {
     return <div className="text-center py-12 text-gray-500">Loading...</div>;
@@ -375,20 +416,37 @@ export default function InstanceDetailPage() {
 
       {chromeActivated && (
         <div
-          className="bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-220px)] min-h-[400px]"
+          className="bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-220px)] min-h-[400px] flex"
           style={activeTab !== "chrome" ? { display: "none" } : undefined}
         >
           {instance.status === "running" ? (
-            <VncPanel
-              instanceId={instanceId}
-              connectionState={vncHook.connectionState}
-              setContainer={vncHook.setContainer}
-              reconnect={vncHook.reconnect}
-              copyFromVnc={vncHook.copyFromVnc}
-              pasteToVnc={vncHook.pasteToVnc}
-            />
+            <>
+              {chatOpen && (
+                <div className="w-96 flex-shrink-0 border-r border-gray-700">
+                  <ChatPanel
+                    messages={chatHook.messages}
+                    connectionState={chatHook.connectionState}
+                    onSend={chatHook.sendMessage}
+                    onClear={chatHook.clearMessages}
+                    onReconnect={chatHook.reconnect}
+                  />
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <VncPanel
+                  instanceId={instanceId}
+                  connectionState={vncHook.connectionState}
+                  setContainer={vncHook.setContainer}
+                  reconnect={vncHook.reconnect}
+                  copyFromVnc={vncHook.copyFromVnc}
+                  pasteToVnc={vncHook.pasteToVnc}
+                  chatOpen={chatOpen}
+                  onChatToggle={() => setChatOpen((prev) => !prev)}
+                />
+              </div>
+            </>
           ) : (
-            <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+            <div className="flex items-center justify-center h-full w-full text-gray-500 text-sm">
               Instance must be running to view Chrome.
             </div>
           )}
@@ -420,7 +478,7 @@ export default function InstanceDetailPage() {
       {activeTab === "files" && (
         <div className="bg-white rounded-lg border border-gray-200 p-4 h-[calc(100vh-220px)] min-h-[400px]">
           {instance.status === "running" ? (
-            <FileBrowser instanceId={instanceId} />
+            <FileBrowser instanceId={instanceId} initialPath={getFilesPathFromHash()} onPathChange={handleFilesPathChange} />
           ) : (
             <div className="flex items-center justify-center h-full text-gray-500 text-sm">
               Instance must be running to browse files.

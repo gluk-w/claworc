@@ -67,6 +67,9 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Flush headers immediately so the EventSource connection is established
+	flusher.Flush()
+
 	ctx := r.Context()
 	for {
 		select {

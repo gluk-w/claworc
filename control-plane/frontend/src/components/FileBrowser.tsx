@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Filemanager, Willow, type IApi } from "@svar-ui/react-filemanager";
 import "@svar-ui/react-filemanager/all.css";
 import { Upload, FilePlus, FolderPlus } from "lucide-react";
@@ -11,6 +11,8 @@ import type { FileEntry } from "@/types/files";
 
 interface FileBrowserProps {
   instanceId: number;
+  initialPath?: string;
+  onPathChange?: (path: string) => void;
 }
 
 interface SvarFileItem {
@@ -23,8 +25,8 @@ interface SvarFileItem {
 
 const ROOT_PATH = "/home/claworc";
 
-export default function FileBrowser({ instanceId }: FileBrowserProps) {
-  const [currentPath, setCurrentPath] = useState("/");
+export default function FileBrowser({ instanceId, initialPath = "/", onPathChange }: FileBrowserProps) {
+  const [currentPath, setCurrentPath] = useState(initialPath);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileData, setFileData] = useState<SvarFileItem[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -34,8 +36,18 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
   const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const apiRef = useRef<IApi | null>(null);
-  const currentPathRef = useRef("/");
+  const currentPathRef = useRef(initialPath);
+  // Cache of virtualPath -> SvarFileItems for that directory, so the sidebar tree stays expanded
+  const dirCacheRef = useRef<Map<string, SvarFileItem[]>>(new Map());
+  const onPathChangeRef = useRef(onPathChange);
+  onPathChangeRef.current = onPathChange;
   const queryClient = useQueryClient();
+
+  const updatePath = useCallback((newPath: string) => {
+    currentPathRef.current = newPath;
+    setCurrentPath(newPath);
+    onPathChangeRef.current?.(newPath);
+  }, []);
 
   // The real filesystem path to browse
   const realPath = currentPath === "/" ? ROOT_PATH : ROOT_PATH + currentPath;
@@ -60,6 +72,7 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
 
   useEffect(() => {
     if (browseData) {
+      // Transform API response into SVAR items for this directory
       const transformed: SvarFileItem[] = browseData.entries.map(
         (entry: FileEntry) => {
           const virtualEntryPath = `${currentPath === "/" ? "" : currentPath}/${entry.name}`;
@@ -73,36 +86,62 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
         },
       );
 
+      // Cache this directory's contents so the tree stays expanded on navigation
+      dirCacheRef.current.set(currentPath, transformed);
+
+      // Build fileData from all cached directories, deduplicating by id
+      const seen = new Set<string>();
+      const allItems: SvarFileItem[] = [];
+
+      for (const items of dirCacheRef.current.values()) {
+        for (const item of items) {
+          if (!seen.has(item.id)) {
+            seen.add(item.id);
+            allItems.push(item);
+          }
+        }
+      }
+
       // SVAR builds a tree from file IDs, deriving parent from path.
       // We must include ancestor folders so SVAR can attach children properly.
-      const ancestors: SvarFileItem[] = [];
       const parts = currentPath.split("/").filter(Boolean);
       for (let i = 0; i < parts.length; i++) {
         const ancestorPath = "/" + parts.slice(0, i + 1).join("/");
-        ancestors.push({
-          id: ancestorPath,
-          value: parts[i],
-          type: "folder",
-          size: undefined,
-          date: new Date(),
-        });
+        if (!seen.has(ancestorPath)) {
+          seen.add(ancestorPath);
+          allItems.push({
+            id: ancestorPath,
+            value: parts[i],
+            type: "folder",
+            size: undefined,
+            date: new Date(),
+          });
+        }
       }
 
-      setFileData([...ancestors, ...transformed]);
+      setFileData(allItems);
     }
   }, [browseData, currentPath]);
+
+  // After data loads, sync SVAR's internal path to match React state.
+  // On reload, handleInit fires before data exists so set-path fails silently;
+  // this effect re-applies it once the tree is populated.
+  useEffect(() => {
+    if (apiRef.current && fileData.length > 0 && currentPathRef.current !== "/") {
+      apiRef.current.exec("set-path", { id: currentPathRef.current });
+    }
+  }, [fileData]);
 
   const handleInit = (api: IApi) => {
     apiRef.current = api;
 
-    // Force SVAR to root on mount to match React state
-    api.exec("set-path", { id: "/" });
+    // Force SVAR to match React state on mount
+    api.exec("set-path", { id: currentPathRef.current });
 
     // Listen to set-path (runs after SVAR's internal handler) for folder navigation
     api.on("set-path", (ev: any) => {
       if (ev.id && ev.id !== currentPathRef.current) {
-        currentPathRef.current = ev.id;
-        setCurrentPath(ev.id);
+        updatePath(ev.id);
         setSelectedFile(null);
         setEditedContent(null);
       }
@@ -240,8 +279,7 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
     const parts = currentPath.split("/");
     parts.pop();
     const newPath = parts.join("/") || "/";
-    currentPathRef.current = newPath;
-    setCurrentPath(newPath);
+    updatePath(newPath);
     setSelectedFile(null);
     setEditedContent(null);
     // Sync SVAR's internal navigation to match
@@ -257,8 +295,8 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
   }
 
   return (
-    <div>
-      <div className="mb-4 flex items-center gap-3">
+    <div className="h-full flex flex-col">
+      <div className="mb-4 flex items-center gap-3 shrink-0">
         <button
           onClick={handleBack}
           disabled={currentPath === "/"}
@@ -302,7 +340,7 @@ export default function FileBrowser({ instanceId }: FileBrowserProps) {
         />
       </div>
 
-      <div className="flex gap-4 h-[600px]">
+      <div className="flex gap-4 flex-1 min-h-0">
         <div className="flex-1 border border-gray-200 rounded-lg overflow-hidden">
           <Willow>
             <Filemanager data={fileData} init={handleInit} />

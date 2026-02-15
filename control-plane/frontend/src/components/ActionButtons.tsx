@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   Monitor,
   Terminal,
-  LayoutDashboard,
+
   Copy,
   Play,
   Square,
@@ -53,6 +53,16 @@ export default function ActionButtons({
     <>
       <div className="flex items-center gap-1">
         <a
+          href={controlUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Control UI"
+          aria-disabled={isUnavailable}
+          className={`p-1.5 text-gray-500 hover:text-teal-600 hover:bg-teal-50 rounded ${isUnavailable ? disabledLinkClass : ""}`}
+        >
+          <img src="/openclaw.svg" alt="Control UI" width={16} height={16} />
+        </a>
+        <a
           href={`/instances/${instance.id}#chrome`}
           title="Chrome Browser"
           aria-disabled={isUnavailable}
@@ -67,16 +77,6 @@ export default function ActionButtons({
           className={`p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded ${isUnavailable ? disabledLinkClass : ""}`}
         >
           <Terminal size={16} />
-        </a>
-        <a
-          href={controlUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          title="Control UI"
-          aria-disabled={isUnavailable}
-          className={`p-1.5 text-gray-500 hover:text-teal-600 hover:bg-teal-50 rounded ${isUnavailable ? disabledLinkClass : ""}`}
-        >
-          <LayoutDashboard size={16} />
         </a>
         <button
           onClick={() => onClone(instance.id)}
