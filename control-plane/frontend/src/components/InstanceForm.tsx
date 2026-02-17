@@ -114,7 +114,7 @@ export default function InstanceForm({
               type="text"
               value={containerImage}
               onChange={(e) => setContainerImage(e.target.value)}
-              placeholder={settings?.default_container_image ?? "glukw/openclaw-vnc-chrome:latest"}
+              placeholder={settings?.default_container_image}
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>

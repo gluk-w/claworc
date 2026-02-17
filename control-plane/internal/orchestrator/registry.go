@@ -6,6 +6,7 @@ import (
 	"log"
 	"sync"
 
+	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 )
 
@@ -18,6 +19,16 @@ func InitOrchestrator(ctx context.Context) error {
 	backend, err := database.GetSetting("orchestrator_backend")
 	if err != nil {
 		backend = "auto"
+	}
+
+	// Allow environment variable override
+	if config.Cfg.Orchestrator != "" {
+		backend = config.Cfg.Orchestrator
+	}
+
+	// Allow environment variable override
+	if config.Cfg.Orchestrator != "" {
+		backend = config.Cfg.Orchestrator
 	}
 
 	if backend == "auto" || backend == "kubernetes" {

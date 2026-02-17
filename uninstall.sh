@@ -2,8 +2,8 @@
 set -euo pipefail
 
 CONTAINER_NAME="claworc-dashboard"
-DASHBOARD_IMAGE="glukw/claworc-dashboard"
-AGENT_IMAGE="glukw/openclaw-vnc-chrome"
+DASHBOARD_IMAGE="glukw/claworc"
+AGENT_IMAGE="glukw/openclaw-vnc-chromium"
 
 confirm() {
     printf "%s [Y/n]: " "$1"

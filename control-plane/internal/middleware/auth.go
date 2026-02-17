@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/gluk-w/claworc/control-plane/internal/auth"
@@ -26,6 +27,7 @@ func RequireAuth(store *auth.SessionStore) func(http.Handler) http.Handler {
 			if config.Cfg.AuthDisabled {
 				user, err := database.GetFirstAdmin()
 				if err != nil {
+					log.Printf("ERROR: AuthDisabled=true but failed to find admin user: %v", err)
 					writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": "No admin user found"})
 					return
 				}

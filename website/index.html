@@ -1,16 +1,18 @@
 <!DOCTYPE html>
 <html lang="en" class="scroll-smooth">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Claworc — AI Agent Orchestrator</title>
-    <meta name="description" content="Run multiple AI agents from a single dashboard. Each gets its own browser, terminal, and persistent storage.">
+    <meta name="description"
+        content="Run multiple AI agents from a single dashboard. Each gets its own browser, terminal, and persistent storage.">
 
     <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-6D2TB85Z1J"></script>
     <script>
         window.dataLayer = window.dataLayer || [];
-        function gtag(){dataLayer.push(arguments);}
+        function gtag() { dataLayer.push(arguments); }
         gtag('js', new Date());
 
         gtag('config', 'G-6D2TB85Z1J');
@@ -30,6 +32,7 @@
     </script>
     <link rel="stylesheet" href="css/style.css">
 </head>
+
 <body class="bg-slate-900 text-slate-100">
 
     <!-- Nav -->
@@ -37,10 +40,16 @@
         <div class="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
             <a href="#" class="text-xl font-bold text-white">Claworc</a>
             <div class="flex items-center gap-6">
-                <a href="#features" class="hidden sm:inline text-sm text-slate-400 hover:text-white transition-colors">Features</a>
-                <a href="#install" class="hidden sm:inline text-sm text-slate-400 hover:text-white transition-colors">Install</a>
-                <a href="https://github.com/gluk-w/claworc" target="_blank" rel="noopener" class="text-slate-400 hover:text-white transition-colors">
-                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                <a href="#features"
+                    class="hidden sm:inline text-sm text-slate-400 hover:text-white transition-colors">Features</a>
+                <a href="#install"
+                    class="hidden sm:inline text-sm text-slate-400 hover:text-white transition-colors">Install</a>
+                <a href="https://github.com/gluk-w/claworc" target="_blank" rel="noopener"
+                    class="text-slate-400 hover:text-white transition-colors">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                        <path
+                            d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+                    </svg>
                 </a>
             </div>
         </div>
@@ -55,21 +64,30 @@
                 </h1>
                 <p class="text-lg sm:text-xl text-blue-400 font-medium mb-6">OpenClaw Orchestrator</p>
                 <p class="text-lg sm:text-xl text-slate-300 leading-relaxed mb-8">
-                    Run multiple AI agents from a single dashboard. Each gets its own browser, terminal, and persistent storage.
+                    Run multiple AI agents from a single dashboard. Each gets its own browser, terminal, and persistent
+                    storage.
                 </p>
                 <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
-                    <a href="#install" class="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors">
+                    <a href="#install"
+                        class="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors">
                         Get Started
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                        </svg>
                     </a>
-                    <a href="https://github.com/gluk-w/claworc" target="_blank" rel="noopener" class="inline-flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold rounded-lg border border-slate-700 transition-colors">
-                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                    <a href="https://github.com/gluk-w/claworc" target="_blank" rel="noopener"
+                        class="inline-flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold rounded-lg border border-slate-700 transition-colors">
+                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                            <path
+                                d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+                        </svg>
                         View on GitHub
                     </a>
                 </div>
             </div>
             <div class="max-w-5xl mx-auto">
-                <img src="images/dashboard2.png" alt="Claworc Dashboard" class="screenshot w-full border border-slate-700">
+                <img src="images/dashboard2.png" alt="Claworc Dashboard"
+                    class="screenshot w-full border border-slate-700">
             </div>
         </div>
     </section>
@@ -78,40 +96,58 @@
     <section id="features" class="py-16 sm:py-24">
         <div class="max-w-6xl mx-auto px-4 sm:px-6">
             <h2 class="text-3xl sm:text-4xl font-bold text-center mb-4">What You Can Do</h2>
-            <p class="text-slate-400 text-center max-w-2xl mx-auto mb-12">Manage your entire fleet of AI agents from one place.</p>
+            <p class="text-slate-400 text-center max-w-2xl mx-auto mb-12">Manage your entire fleet of AI agents from one
+                place.</p>
 
             <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 <!-- Feature 1 -->
                 <div class="feature-card bg-slate-800 rounded-xl p-6 border border-slate-700">
                     <div class="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center mb-4">
-                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                        </svg>
                     </div>
                     <h3 class="text-lg font-semibold mb-2">Create & Manage Instances</h3>
-                    <p class="text-slate-400 text-sm">Spin up new agent workspaces, start/stop them, or remove them when done.</p>
+                    <p class="text-slate-400 text-sm">Spin up new agent workspaces, start/stop them, or remove them when
+                        done.</p>
                 </div>
 
                 <!-- Feature 2 -->
                 <div class="feature-card bg-slate-800 rounded-xl p-6 border border-slate-700">
                     <div class="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center mb-4">
-                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                        </svg>
                     </div>
                     <h3 class="text-lg font-semibold mb-2">Chat with Agents</h3>
-                    <p class="text-slate-400 text-sm">Send instructions and have a conversation with the AI agent in each instance.</p>
+                    <p class="text-slate-400 text-sm">Send instructions and have a conversation with the AI agent in
+                        each instance.</p>
                 </div>
 
                 <!-- Feature 3 -->
                 <div class="feature-card bg-slate-800 rounded-xl p-6 border border-slate-700">
                     <div class="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center mb-4">
-                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
                     </div>
                     <h3 class="text-lg font-semibold mb-2">Watch the Browser</h3>
-                    <p class="text-slate-400 text-sm">See what the agent is doing in Chrome in real time, or take control yourself.</p>
+                    <p class="text-slate-400 text-sm">See what the agent is doing in Chrome in real time, or take
+                        control yourself.</p>
                 </div>
 
                 <!-- Feature 4 -->
                 <div class="feature-card bg-slate-800 rounded-xl p-6 border border-slate-700">
                     <div class="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center mb-4">
-                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                        </svg>
                     </div>
                     <h3 class="text-lg font-semibold mb-2">Manage Files</h3>
                     <p class="text-slate-400 text-sm">Browse and manage the files in each instance's workspace.</p>
@@ -120,19 +156,29 @@
                 <!-- Feature 5 -->
                 <div class="feature-card bg-slate-800 rounded-xl p-6 border border-slate-700">
                     <div class="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center mb-4">
-                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
                     </div>
                     <h3 class="text-lg font-semibold mb-2">View Logs</h3>
-                    <p class="text-slate-400 text-sm">Stream live logs to monitor what's happening inside an instance.</p>
+                    <p class="text-slate-400 text-sm">Stream live logs to monitor what's happening inside an instance.
+                    </p>
                 </div>
 
                 <!-- Feature 6 -->
                 <div class="feature-card bg-slate-800 rounded-xl p-6 border border-slate-700">
                     <div class="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center mb-4">
-                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
                     </div>
                     <h3 class="text-lg font-semibold mb-2">Configure Models & API Keys</h3>
-                    <p class="text-slate-400 text-sm">Set global defaults or override per instance with different models and keys.</p>
+                    <p class="text-slate-400 text-sm">Set global defaults or override per instance with different models
+                        and keys.</p>
                 </div>
             </div>
         </div>
@@ -143,13 +189,17 @@
         <div class="max-w-6xl mx-auto px-4 sm:px-6">
             <h2 class="text-3xl sm:text-4xl font-bold text-center mb-4">What Is an Instance?</h2>
             <p class="text-slate-400 text-center max-w-2xl mx-auto mb-12">
-                A self-contained AI workspace. When you create one, Claworc spins up an isolated container that includes:
+                A self-contained AI workspace. When you create one, Claworc spins up an isolated container that
+                includes:
             </p>
 
             <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 max-w-4xl mx-auto">
                 <div class="text-center">
                     <div class="w-14 h-14 bg-blue-600/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-7 h-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                        <svg class="w-7 h-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
                     </div>
                     <h3 class="font-semibold mb-1">AI Agent</h3>
                     <p class="text-slate-400 text-sm">Claude, GPT, DeepSeek, or any supported model</p>
@@ -157,7 +207,10 @@
 
                 <div class="text-center">
                     <div class="w-14 h-14 bg-blue-600/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-7 h-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/></svg>
+                        <svg class="w-7 h-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+                        </svg>
                     </div>
                     <h3 class="font-semibold mb-1">Chrome Browser</h3>
                     <p class="text-slate-400 text-sm">Watch or control it live through your own browser</p>
@@ -165,7 +218,10 @@
 
                 <div class="text-center">
                     <div class="w-14 h-14 bg-blue-600/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-7 h-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        <svg class="w-7 h-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
                     </div>
                     <h3 class="font-semibold mb-1">Terminal</h3>
                     <p class="text-slate-400 text-sm">Command-line operations</p>
@@ -173,7 +229,10 @@
 
                 <div class="text-center">
                     <div class="w-14 h-14 bg-blue-600/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-7 h-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
+                        <svg class="w-7 h-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+                        </svg>
                     </div>
                     <h3 class="font-semibold mb-1">Persistent Storage</h3>
                     <p class="text-slate-400 text-sm">Files survive restarts and redeployments</p>
@@ -181,7 +240,8 @@
             </div>
 
             <p class="text-slate-400 text-center max-w-2xl mx-auto mt-10 text-sm">
-                Instances are fully isolated from each other, each with its own file system. They are monitored by systemd and automatically restarted if they crash.
+                Instances are fully isolated from each other, each with its own file system. They are monitored by
+                systemd and automatically restarted if they crash.
             </p>
         </div>
     </section>
@@ -197,8 +257,13 @@
                     </p>
                     <div class="space-y-4">
                         <div class="flex items-start gap-3">
-                            <div class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
-                                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                            <div
+                                class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor"
+                                    viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                                </svg>
                             </div>
                             <div>
                                 <h3 class="font-semibold">Admins</h3>
@@ -206,8 +271,13 @@
                             </div>
                         </div>
                         <div class="flex items-start gap-3">
-                            <div class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
-                                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+                            <div
+                                class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor"
+                                    viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                </svg>
                             </div>
                             <div>
                                 <h3 class="font-semibold">Users</h3>
@@ -218,7 +288,8 @@
                     <p class="text-slate-400 text-sm mt-6">Biometric identification is supported for authentication.</p>
                 </div>
                 <div>
-                    <img src="images/login.png" alt="Claworc Login Screen" class="screenshot w-full border border-slate-700">
+                    <img src="images/login.png" alt="Claworc Login Screen"
+                        class="screenshot w-full border border-slate-700">
                 </div>
             </div>
         </div>
@@ -229,7 +300,8 @@
         <div class="max-w-6xl mx-auto px-4 sm:px-6">
             <h2 class="text-3xl sm:text-4xl font-bold text-center mb-4">Get Started</h2>
             <p class="text-slate-400 text-center max-w-2xl mx-auto mb-12">
-                Claworc runs on Docker for local setups or Kubernetes for production. The control plane is a single 20 MB binary.
+                Claworc runs on Docker for local setups or Kubernetes for production. The control plane is a single 20
+                MB binary.
             </p>
 
             <div class="grid sm:grid-cols-3 gap-6 max-w-4xl mx-auto">
@@ -237,7 +309,10 @@
                 <div class="bg-slate-800 rounded-xl p-6 border border-slate-700 sm:col-span-3">
                     <div class="flex items-center gap-3 mb-4">
                         <div class="w-10 h-10 bg-green-600/20 rounded-lg flex items-center justify-center">
-                            <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                            <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M13 10V3L4 14h7v7l9-11h-7z" />
+                            </svg>
                         </div>
                         <div>
                             <h3 class="text-lg font-semibold">Quick Install</h3>
@@ -245,53 +320,88 @@
                         </div>
                     </div>
                     <div class="relative bg-slate-900 rounded-lg p-4 font-mono text-sm">
-                        <code id="install-command" class="text-green-400">curl -fsSL https://raw.githubusercontent.com/gluk-w/claworc/main/install.sh | bash</code>
-                        <button id="copy-install" class="copy-btn absolute top-3 right-3 p-1.5 bg-slate-700 hover:bg-slate-600 rounded-md transition-colors" title="Copy to clipboard">
-                            <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                        <code id="install-command"
+                            class="text-green-400">curl -fsSL https://raw.githubusercontent.com/gluk-w/claworc/main/install.sh | bash</code>
+                        <button id="copy-install"
+                            class="copy-btn absolute top-3 right-3 p-1.5 bg-slate-700 hover:bg-slate-600 rounded-md transition-colors"
+                            title="Copy to clipboard">
+                            <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
                         </button>
                     </div>
-                    <a href="https://github.com/gluk-w/claworc/blob/main/docs/install.md#1-installer-script-linux--macos" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300 mt-3 transition-colors">
+                    <a href="https://github.com/gluk-w/claworc/blob/main/docs/install.md#1-installer-script-linux--macos"
+                        target="_blank" rel="noopener"
+                        class="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300 mt-3 transition-colors">
                         View full instructions
-                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
                     </a>
                 </div>
 
                 <!-- Helm -->
                 <div class="bg-slate-800 rounded-xl p-6 border border-slate-700 flex flex-col">
                     <div class="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center mb-4">
-                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                        </svg>
                     </div>
                     <h3 class="text-lg font-semibold mb-2">Deploy with Helm</h3>
-                    <p class="text-slate-400 text-sm mb-4 flex-1">For Kubernetes production deployments with full control over configuration.</p>
-                    <a href="https://github.com/gluk-w/claworc/blob/main/docs/install.md#2-manual-installation-with-helm" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                    <p class="text-slate-400 text-sm mb-4 flex-1">For Kubernetes production deployments with full
+                        control over configuration.</p>
+                    <a href="https://github.com/gluk-w/claworc/blob/main/docs/install.md#2-manual-installation-with-helm"
+                        target="_blank" rel="noopener"
+                        class="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300 transition-colors">
                         Helm instructions
-                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
                     </a>
                 </div>
 
                 <!-- Docker Compose -->
                 <div class="bg-slate-800 rounded-xl p-6 border border-slate-700 flex flex-col">
                     <div class="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center mb-4">
-                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>
+                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+                        </svg>
                     </div>
                     <h3 class="text-lg font-semibold mb-2">Docker Compose</h3>
                     <p class="text-slate-400 text-sm mb-4 flex-1">For local development or single-server setups.</p>
-                    <a href="https://github.com/gluk-w/claworc/blob/main/docs/install.md#3-manual-installation-with-docker-compose" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                    <a href="https://github.com/gluk-w/claworc/blob/main/docs/install.md#3-manual-installation-with-docker-compose"
+                        target="_blank" rel="noopener"
+                        class="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300 transition-colors">
                         Docker Compose instructions
-                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
                     </a>
                 </div>
 
                 <!-- Docs -->
                 <div class="bg-slate-800 rounded-xl p-6 border border-slate-700 flex flex-col">
                     <div class="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center mb-4">
-                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                        </svg>
                     </div>
                     <h3 class="text-lg font-semibold mb-2">Documentation</h3>
                     <p class="text-slate-400 text-sm mb-4 flex-1">Architecture, API reference, data model, and more.</p>
-                    <a href="https://github.com/gluk-w/claworc/tree/main/docs" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                    <a href="https://github.com/gluk-w/claworc/tree/main/docs" target="_blank" rel="noopener"
+                        class="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300 transition-colors">
                         Read the docs
-                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
                     </a>
                 </div>
             </div>
@@ -305,11 +415,13 @@
                 Claworc is fully open source, self-hosted, and free.
             </p>
             <div class="flex items-center justify-center gap-4">
-                <a href="https://github.com/gluk-w/claworc" target="_blank" rel="noopener" class="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                <a href="https://github.com/gluk-w/claworc" target="_blank" rel="noopener"
+                    class="text-sm text-blue-400 hover:text-blue-300 transition-colors">
                     GitHub
                 </a>
                 <span class="text-slate-700">|</span>
-                <a href="https://github.com/gluk-w/claworc/issues" target="_blank" rel="noopener" class="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                <a href="https://github.com/gluk-w/claworc/issues" target="_blank" rel="noopener"
+                    class="text-sm text-blue-400 hover:text-blue-300 transition-colors">
                     Contributions welcome
                 </a>
             </div>
@@ -318,4 +430,5 @@
 
     <script src="js/main.js"></script>
 </body>
+
 </html>

@@ -4,6 +4,16 @@ export interface InstanceModels {
   extra: string[];
 }
 
+export interface ChannelAccount {
+  name: string;
+  enabled?: boolean;
+  groups?: string[];
+}
+
+export interface ChannelInfo {
+  type: string;
+  accounts: ChannelAccount[];
+}
 export interface Instance {
   id: number;
   name: string;
@@ -26,6 +36,7 @@ export interface Instance {
   has_resolution_override: boolean;
   control_url: string;
   gateway_token: string;
+  channels: ChannelInfo[];
   sort_order: number;
   created_at: string;
   updated_at: string;

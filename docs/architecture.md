@@ -68,7 +68,7 @@ Running Chrome in a separate sidecar container would require IPC mechanisms for 
 
 ## Container Image
 
-The moltbot Docker image (`glukw/openclaw-vnc-chrome:latest`) is a multi-stage build based on Ubuntu 24.04:
+The moltbot Docker image (`glukw/openclaw-vnc-chromium:latest`) is a multi-stage build based on Ubuntu 24.04:
 
 **Builder stage**: Installs Node.js 22 and the `clawdbot` npm package globally.
 

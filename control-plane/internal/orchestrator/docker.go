@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -138,7 +139,29 @@ func (d *DockerOrchestrator) ensureImage(ctx context.Context, img string) error 
 		return fmt.Errorf("pull image %s: %w", img, err)
 	}
 	defer reader.Close()
-	io.Copy(io.Discard, reader)
+
+	// Read the pull stream to detect errors (e.g. image not found on registry)
+	decoder := json.NewDecoder(reader)
+	for {
+		var event struct {
+			Error string `json:"error"`
+		}
+		if err := decoder.Decode(&event); err != nil {
+			if err == io.EOF {
+				break
+			}
+			break
+		}
+		if event.Error != "" {
+			return fmt.Errorf("pull image %s: %s", img, event.Error)
+		}
+	}
+
+	// Verify the image actually exists after pull
+	if _, _, err := d.client.ImageInspectWithRaw(ctx, img); err != nil {
+		return fmt.Errorf("image %s not available after pull: %w", img, err)
+	}
+
 	log.Printf("Image %s pulled successfully", img)
 	return nil
 }
@@ -174,7 +197,6 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "homebrew"), Target: "/home/linuxbrew/.linuxbrew"},
 		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "clawd"), Target: "/home/claworc/clawd"},
 		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "chrome"), Target: "/home/claworc/chrome-data"},
-		{Type: mount.TypeBind, Source: "/sys/fs/cgroup", Target: "/sys/fs/cgroup"},
 	}
 
 	// Resource limits
@@ -194,7 +216,7 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 		Env:    env,
 		Labels: map[string]string{"managed-by": labelManagedBy, "instance": params.Name},
 		Healthcheck: &container.HealthConfig{
-			Test:          []string{"CMD", "curl", "-sf", "http://localhost:6081/"},
+			Test:          []string{"CMD", "curl", "-sf", "http://localhost:3000/"},
 			Interval:      30_000_000_000,
 			Timeout:       10_000_000_000,
 			Retries:       3,
@@ -205,7 +227,7 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	hostCfg := &container.HostConfig{
 		Privileged: true,
 		Mounts:     mounts,
-		Tmpfs:      map[string]string{"/run": "", "/tmp": ""},
+		Tmpfs:      map[string]string{"/tmp": ""},
 		ShmSize:    shmSize,
 		Resources: container.Resources{
 			NanoCPUs: nanoCPUs,
@@ -347,7 +369,7 @@ func (d *DockerOrchestrator) GetInstanceStatus(ctx context.Context, name string)
 	inspect, err := d.client.ContainerInspect(ctx, name)
 	if err != nil {
 		if dockerclient.IsErrNotFound(err) {
-			return "stopped", nil
+			return "creating", nil
 		}
 		return "error", nil
 	}

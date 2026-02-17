@@ -6,6 +6,7 @@ import InstanceDetailPage from "./pages/InstanceDetailPage";
 import SettingsPage from "./pages/SettingsPage";
 import LoginPage from "./pages/LoginPage";
 import UsersPage from "./pages/UsersPage";
+import SystemLogsPage from "./pages/SystemLogsPage";
 import AccountPage from "./pages/AccountPage";
 import VncPopupPage from "./pages/VncPopupPage";
 import { useAuth } from "./contexts/AuthContext";
@@ -67,6 +68,14 @@ export default function App() {
           element={
             <AdminRoute>
               <UsersPage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="/logs"
+          element={
+            <AdminRoute>
+              <SystemLogsPage />
             </AdminRoute>
           }
         />

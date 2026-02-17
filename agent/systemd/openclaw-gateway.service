@@ -1,7 +1,7 @@
 [Unit]
 Description=OpenClaw Gateway Service
-After=chrome.service network.target init-env.service
-Requires=chrome.service
+After=network.target init-env.service
+Wants=chrome.service
 
 [Service]
 Type=simple

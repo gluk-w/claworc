@@ -67,6 +67,15 @@ install_docker() {
     prompt DATA_DIR    "Data directory"       "$HOME/.claworc/data"
     echo ""
 
+    echo "Enable authentication? (disable only if running locally and not exposed to the internet)"
+    printf "Enable auth [Y/n]: "
+    read -r ENABLE_AUTH </dev/tty
+    case "${ENABLE_AUTH:-y}" in
+        [Nn]*) ENABLE_AUTH="no" ;;
+        *)     ENABLE_AUTH="yes" ;;
+    esac
+    echo ""
+
     # Resolve to absolute path (mkdir first since parent may not exist yet)
     mkdir -p "$DATA_DIR"
     DATA_DIR="$(cd "$DATA_DIR" && pwd)"
@@ -89,6 +98,7 @@ install_docker() {
     echo "=== Configuration ==="
     echo "  Port:       $PORT"
     echo "  Data dir:   $DATA_DIR"
+    echo "  Auth:       $ENABLE_AUTH"
     echo "  Dashboard:  $DASHBOARD_IMAGE:$TAG"
 
     confirm
@@ -103,6 +113,12 @@ install_docker() {
 
     echo ""
     echo "Starting dashboard..."
+    AUTH_ENV=""
+    if [[ "$ENABLE_AUTH" == "no" ]]; then
+        AUTH_ENV="-e CLAWORC_AUTH_ENABLED=false"
+    fi
+
+    # shellcheck disable=SC2086
     docker run -d \
         --platform linux/amd64 \
         --name "$CONTAINER_NAME" \
@@ -110,32 +126,35 @@ install_docker() {
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v "$DATA_DIR":"$DATA_DIR" \
         -e CLAWORC_DATABASE_PATH="$DATA_DIR/claworc.db" \
+        $AUTH_ENV \
         --restart unless-stopped \
         "$DASHBOARD_IMAGE:$TAG" >/dev/null
 
     # --- Initial Admin Setup -------------------------------------------------
 
-    echo ""
-    echo "--- Initial Admin Setup ---"
-    printf "Admin username [admin]: "
-    read -r ADMIN_USER </dev/tty
-    ADMIN_USER="${ADMIN_USER:-admin}"
+    if [[ "$ENABLE_AUTH" == "yes" ]]; then
+        echo ""
+        echo "--- Initial Admin Setup ---"
+        printf "Admin username [admin]: "
+        read -r ADMIN_USER </dev/tty
+        ADMIN_USER="${ADMIN_USER:-admin}"
 
-    while true; do
-        printf "Admin password: "
-        read -rs ADMIN_PASS </dev/tty
-        echo
-        printf "Confirm password: "
-        read -rs ADMIN_PASS_CONFIRM </dev/tty
-        echo
-        if [ "$ADMIN_PASS" = "$ADMIN_PASS_CONFIRM" ] && [ -n "$ADMIN_PASS" ]; then
-            break
-        fi
-        echo "Passwords do not match or are empty. Try again."
-    done
+        while true; do
+            printf "Admin password: "
+            read -rs ADMIN_PASS </dev/tty
+            echo
+            printf "Confirm password: "
+            read -rs ADMIN_PASS_CONFIRM </dev/tty
+            echo
+            if [ "$ADMIN_PASS" = "$ADMIN_PASS_CONFIRM" ] && [ -n "$ADMIN_PASS" ]; then
+                break
+            fi
+            echo "Passwords do not match or are empty. Try again."
+        done
 
-    echo "Creating admin user..."
-    docker exec "$CONTAINER_NAME" /app/claworc --create-admin --username "$ADMIN_USER" --password "$ADMIN_PASS"
+        echo "Creating admin user..."
+        docker exec "$CONTAINER_NAME" /app/claworc --create-admin --username "$ADMIN_USER" --password "$ADMIN_PASS"
+    fi
 
     echo ""
     echo "=== Claworc is running ==="
@@ -183,6 +202,15 @@ install_kubernetes() {
 
     prompt KUBECONFIG_PATH "Kubeconfig path"           "$HOME/.kube/config"
     prompt NAMESPACE       "Namespace"                  "claworc"
+    echo ""
+
+    echo "Enable authentication? (disable only if running locally and not exposed to the internet)"
+    printf "Enable auth [Y/n]: "
+    read -r ENABLE_AUTH </dev/tty
+    case "${ENABLE_AUTH:-y}" in
+        [Nn]*) ENABLE_AUTH="no" ;;
+        *)     ENABLE_AUTH="yes" ;;
+    esac
     echo ""
 
     echo "How should the dashboard be accessed?"
@@ -237,6 +265,7 @@ install_kubernetes() {
     echo "  Action:      helm $HELM_CMD"
     echo "  Kubeconfig:  $KUBECONFIG_PATH"
     echo "  Namespace:   $NAMESPACE"
+    echo "  Auth:        $ENABLE_AUTH"
     echo "  Chart:       $CHART_PATH"
     if [[ "$SERVICE_TYPE" == "NodePort" ]]; then
         echo "  Access:      NodePort ($NODE_PORT)"
@@ -250,12 +279,18 @@ install_kubernetes() {
 
     echo ""
     echo "Running helm ${HELM_CMD}..."
+    AUTH_HELM_ARGS=""
+    if [[ "$ENABLE_AUTH" == "no" ]]; then
+        AUTH_HELM_ARGS="--set env.CLAWORC_AUTH_ENABLED=false"
+    fi
+
     # shellcheck disable=SC2086
     helm "$HELM_CMD" claworc "$CHART_PATH" \
         --namespace "$NAMESPACE" \
         --create-namespace \
         --kubeconfig "$KUBECONFIG_PATH" \
-        $SERVICE_HELM_ARGS
+        $SERVICE_HELM_ARGS \
+        $AUTH_HELM_ARGS
 
     # Wait for pod to be ready
     echo ""
@@ -264,27 +299,29 @@ install_kubernetes() {
 
     # --- Initial Admin Setup -------------------------------------------------
 
-    echo ""
-    echo "--- Initial Admin Setup ---"
-    printf "Admin username [admin]: "
-    read -r ADMIN_USER </dev/tty
-    ADMIN_USER="${ADMIN_USER:-admin}"
+    if [[ "$ENABLE_AUTH" == "yes" ]]; then
+        echo ""
+        echo "--- Initial Admin Setup ---"
+        printf "Admin username [admin]: "
+        read -r ADMIN_USER </dev/tty
+        ADMIN_USER="${ADMIN_USER:-admin}"
 
-    while true; do
-        printf "Admin password: "
-        read -rs ADMIN_PASS </dev/tty
-        echo
-        printf "Confirm password: "
-        read -rs ADMIN_PASS_CONFIRM </dev/tty
-        echo
-        if [ "$ADMIN_PASS" = "$ADMIN_PASS_CONFIRM" ] && [ -n "$ADMIN_PASS" ]; then
-            break
-        fi
-        echo "Passwords do not match or are empty. Try again."
-    done
+        while true; do
+            printf "Admin password: "
+            read -rs ADMIN_PASS </dev/tty
+            echo
+            printf "Confirm password: "
+            read -rs ADMIN_PASS_CONFIRM </dev/tty
+            echo
+            if [ "$ADMIN_PASS" = "$ADMIN_PASS_CONFIRM" ] && [ -n "$ADMIN_PASS" ]; then
+                break
+            fi
+            echo "Passwords do not match or are empty. Try again."
+        done
 
-    echo "Creating admin user..."
-    kubectl exec deploy/claworc -n "$NAMESPACE" --kubeconfig "$KUBECONFIG_PATH" -- /app/claworc --create-admin --username "$ADMIN_USER" --password "$ADMIN_PASS"
+        echo "Creating admin user..."
+        kubectl exec deploy/claworc -n "$NAMESPACE" --kubeconfig "$KUBECONFIG_PATH" -- /app/claworc --create-admin --username "$ADMIN_USER" --password "$ADMIN_PASS"
+    fi
 
     echo ""
     echo "=== Claworc deployed to Kubernetes ==="

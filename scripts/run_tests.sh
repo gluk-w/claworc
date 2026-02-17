@@ -17,7 +17,7 @@ docker volume ls --filter "name=bot-" --format '{{.Name}}' | xargs -r docker vol
 
 # ── 2. Pull agent image ───────────────────────────────────────
 echo "==> Pulling agent image..."
-docker pull --platform linux/amd64 glukw/openclaw-vnc-chrome:latest
+docker pull --platform linux/amd64 glukw/openclaw-vnc-chromium:latest
 
 # ── 3. Build & Start ──────────────────────────────────────────
 echo "==> Building and starting services..."
