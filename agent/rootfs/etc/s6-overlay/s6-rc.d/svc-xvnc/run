@@ -1,0 +1,5 @@
+#!/bin/bash
+exec s6-setuidgid claworc /usr/bin/Xvnc :1 \
+  -geometry ${VNC_RESOLUTION:-1920x1080} -depth ${VNC_DEPTH:-24} \
+  -rfbport 5901 -SecurityTypes None -AlwaysShared \
+  -AcceptSetDesktopSize -localhost no

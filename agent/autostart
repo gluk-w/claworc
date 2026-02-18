@@ -1,0 +1,11 @@
+#!/bin/bash
+/usr/bin/chromium \
+  --no-first-run \
+  --no-sandbox \
+  --password-store=basic \
+  --simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT' \
+  --start-maximized \
+  --user-data-dir=/config/chrome-data \
+  --remote-debugging-port=9222 \
+  --remote-debugging-address=127.0.0.1 \
+  --disable-default-apps > /dev/null 2>&1

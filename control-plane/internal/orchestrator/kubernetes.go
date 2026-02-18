@@ -110,26 +110,35 @@ func (k *KubernetesOrchestrator) CreateInstance(ctx context.Context, params Crea
 	return nil
 }
 
-func (k *KubernetesOrchestrator) waitForPodRunning(ctx context.Context, name string, timeout time.Duration) bool {
+func (k *KubernetesOrchestrator) waitForPodRunning(ctx context.Context, name string, timeout time.Duration) (string, bool) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		pods, err := k.clientset.CoreV1().Pods(k.ns()).List(ctx, metav1.ListOptions{
 			LabelSelector: fmt.Sprintf("app=%s", name),
 		})
 		if err == nil && len(pods.Items) > 0 {
-			for _, cs := range pods.Items[0].Status.ContainerStatuses {
+			pod := pods.Items[0]
+			for _, cs := range pod.Status.ContainerStatuses {
 				if cs.State.Running != nil {
-					return true
+					tag := pod.Spec.Containers[0].Image
+					sha := cs.ImageID
+					if idx := strings.Index(sha, "sha256:"); idx >= 0 {
+						sha = sha[idx:]
+						if len(sha) > 19 { // "sha256:" (7) + 12 chars
+							sha = sha[:19]
+						}
+					}
+					return fmt.Sprintf("%s (%s)", tag, sha), true
 				}
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return false
+			return "", false
 		case <-time.After(2 * time.Second):
 		}
 	}
-	return false
+	return "", false
 }
 
 func (k *KubernetesOrchestrator) configureGatewayToken(ctx context.Context, name, token string) {
@@ -493,7 +502,7 @@ func (k *KubernetesOrchestrator) GetVNCBaseURL(_ context.Context, name string, d
 	if display != "chrome" {
 		return "", fmt.Errorf("unsupported display type: %s", display)
 	}
-	port := 6081
+	port := 3000
 	if !k.inCluster {
 		host := strings.TrimRight(k.restConfig.Host, "/")
 		return fmt.Sprintf("%s/api/v1/namespaces/%s/services/%s-vnc:%d/proxy", host, k.ns(), name, port), nil
@@ -507,9 +516,9 @@ func (k *KubernetesOrchestrator) GetGatewayWSURL(_ context.Context, name string)
 		// Convert https:// to wss:// for WebSocket through API server proxy
 		wsHost := strings.Replace(host, "https://", "wss://", 1)
 		wsHost = strings.Replace(wsHost, "http://", "ws://", 1)
-		return fmt.Sprintf("%s/api/v1/namespaces/%s/services/%s-vnc:18789/proxy", wsHost, k.ns(), name), nil
+		return fmt.Sprintf("%s/api/v1/namespaces/%s/services/%s-vnc:3000/proxy/gateway", wsHost, k.ns(), name), nil
 	}
-	return fmt.Sprintf("ws://%s-vnc.%s.svc.cluster.local:18789", name, k.ns()), nil
+	return fmt.Sprintf("ws://%s-vnc.%s.svc.cluster.local:3000/gateway", name, k.ns()), nil
 }
 
 func (k *KubernetesOrchestrator) GetHTTPTransport() http.RoundTripper {
@@ -635,8 +644,7 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 						ImagePullPolicy: corev1.PullAlways,
 						SecurityContext: &corev1.SecurityContext{Privileged: &privileged},
 						Ports: []corev1.ContainerPort{
-							{Name: "novnc-chrome", ContainerPort: 6081},
-							{Name: "gateway", ContainerPort: 18789},
+							{Name: "http", ContainerPort: 3000},
 						},
 						Env: envVars,
 						Resources: corev1.ResourceRequirements{
@@ -659,12 +667,12 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 							{Name: "dshm", MountPath: "/dev/shm"},
 						},
 						LivenessProbe: &corev1.Probe{
-							ProbeHandler:        corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(6081)}},
+							ProbeHandler:        corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(3000)}},
 							InitialDelaySeconds: 60,
 							PeriodSeconds:       30,
 						},
 						ReadinessProbe: &corev1.Probe{
-							ProbeHandler:        corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/", Port: intstr.FromInt32(6081)}},
+							ProbeHandler:        corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/", Port: intstr.FromInt32(3000)}},
 							InitialDelaySeconds: 30,
 							PeriodSeconds:       10,
 						},
@@ -692,8 +700,7 @@ func buildService(name, ns string) *corev1.Service {
 			Type:     corev1.ServiceTypeClusterIP,
 			Selector: map[string]string{"app": name},
 			Ports: []corev1.ServicePort{
-				{Name: "chrome", Port: 6081, TargetPort: intstr.FromInt32(6081), Protocol: corev1.ProtocolTCP},
-				{Name: "gateway", Port: 18789, TargetPort: intstr.FromInt32(18789), Protocol: corev1.ProtocolTCP},
+				{Name: "http", Port: 3000, TargetPort: intstr.FromInt32(3000), Protocol: corev1.ProtocolTCP},
 			},
 		},
 	}

@@ -1,0 +1,8 @@
+#!/bin/bash
+export DISPLAY=:1 HOME=/home/claworc
+sleep 2  # wait for window manager
+exec s6-setuidgid claworc chromium \
+  --remote-debugging-port=9222 \
+  --remote-debugging-address=127.0.0.1 \
+  --user-data-dir=/home/claworc/chrome-data \
+  --no-sandbox --start-maximized --no-first-run --disable-default-apps

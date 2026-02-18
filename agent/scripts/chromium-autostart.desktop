@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Chromium Debug
-Exec=chromium-browser --no-sandbox --remote-debugging-port=9222 --start-maximized
-Hidden=false
-NoDisplay=false
-X-GNOME-Autostart-enabled=true

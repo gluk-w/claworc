@@ -1,0 +1,2 @@
+#!/bin/bash
+exec websockify 0.0.0.0:5900 localhost:5901
