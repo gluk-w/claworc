@@ -1,16 +1,20 @@
 # Installation Guide
 
-Claworc can be installed in three ways:
+Claworc can be installed in four ways:
 
-1. [**Installer script**](#1-installer-script-linux--macos) — interactive setup for Docker or Kubernetes (recommended)
+1. [**Installer script**](#1-installer-script) — interactive setup for Docker or Kubernetes (recommended)
+   - [Linux / macOS](#linux--macos)
+   - [Windows](#windows)
 2. [**Helm chart**](#2-manual-installation-with-helm) — manual deployment to a Kubernetes cluster
 3. [**Docker Compose**](#3-manual-installation-with-docker-compose) — manual deployment on a single machine
 
 ---
 
-## 1. Installer Script (Linux / macOS)
+## 1. Installer Script
 
 The installer script auto-detects your environment and walks you through configuration.
+
+### Linux / macOS
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gluk-w/claworc/main/install.sh | bash
@@ -32,6 +36,27 @@ To uninstall:
 
 ```bash
 bash uninstall.sh
+```
+
+### Windows
+
+For Windows users, use the PowerShell installer script. Open **PowerShell** (not Command Prompt) and run:
+
+```powershell
+# Clone the repository
+git clone https://github.com/gluk-w/claworc.git
+cd claworc
+
+# Run the installer
+.\install.ps1
+```
+
+The PowerShell script provides the same interactive setup as the bash version, with support for both Docker and Kubernetes deployment modes.
+
+**Note:** If you encounter an execution policy error, you may need to allow the script to run:
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
 ---
@@ -164,6 +189,23 @@ rm -rf ~/.claworc/data
 ---
 
 ## Troubleshooting
+
+### Windows: bash script fails with "invalid option" error
+
+If you're on Windows and trying to run the bash script (`install.sh`) instead of the PowerShell script, you may encounter errors like:
+
+```
+: invalid option nameet: pipefail
+```
+
+This is caused by Windows line endings (`\r\n`) in the script file. **Solution: Use the PowerShell installer** (`install.ps1`) instead, which is designed for Windows.
+
+If you must use bash (e.g., in WSL or Git Bash), convert the line endings first:
+
+```bash
+dos2unix install.sh
+bash install.sh
+```
 
 ### Viewing logs
 
