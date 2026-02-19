@@ -162,9 +162,9 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	}
 
 	// Environment
-	env := []string{
-		fmt.Sprintf("VNC_RESOLUTION=%s", params.VNCResolution),
-		"VNC_DEPTH=24",
+	env := []string{"PUID=1000", "PGID=1000", "START_DOCKER=false"}
+	if parts := strings.SplitN(params.VNCResolution, "x", 2); len(parts) == 2 {
+		env = append(env, "SELKIES_MANUAL_WIDTH="+parts[0], "SELKIES_MANUAL_HEIGHT="+parts[1])
 	}
 	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
 		env = append(env, fmt.Sprintf("OPENCLAW_GATEWAY_TOKEN=%s", token))
@@ -173,9 +173,8 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	// Mounts
 	mounts := []mount.Mount{
 		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "homebrew"), Target: "/home/linuxbrew/.linuxbrew"},
-		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "clawd"), Target: "/home/claworc/clawd"},
-		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "chrome"), Target: "/home/claworc/chrome-data"},
-		{Type: mount.TypeBind, Source: "/sys/fs/cgroup", Target: "/sys/fs/cgroup"},
+		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "clawd"), Target: "/config/clawd"},
+		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "chrome"), Target: "/config/chrome-data"},
 	}
 
 	// Resource limits
@@ -195,7 +194,7 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 		Env:    env,
 		Labels: map[string]string{"managed-by": labelManagedBy, "instance": params.Name},
 		Healthcheck: &container.HealthConfig{
-			Test:          []string{"CMD", "curl", "-sf", "http://localhost:6081/"},
+			Test:          []string{"CMD", "curl", "-sf", "http://localhost:3000/"},
 			Interval:      30_000_000_000,
 			Timeout:       10_000_000_000,
 			Retries:       3,
@@ -206,7 +205,6 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	hostCfg := &container.HostConfig{
 		Privileged: true,
 		Mounts:     mounts,
-		Tmpfs:      map[string]string{"/run": "", "/tmp": ""},
 		ShmSize:    shmSize,
 		Resources: container.Resources{
 			NanoCPUs: nanoCPUs,
@@ -237,20 +235,25 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	return nil
 }
 
-func (d *DockerOrchestrator) waitForContainerRunning(ctx context.Context, name string, timeout time.Duration) bool {
+func (d *DockerOrchestrator) waitForContainerRunning(ctx context.Context, name string, timeout time.Duration) (string, bool) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		inspect, err := d.client.ContainerInspect(ctx, name)
 		if err == nil && inspect.State.Status == "running" {
-			return true
+			tag := inspect.Config.Image
+			sha := inspect.Image
+			if len(sha) > 19 { // "sha256:" (7) + 12 chars
+				sha = sha[:19]
+			}
+			return fmt.Sprintf("%s (%s)", tag, sha), true
 		}
 		select {
 		case <-ctx.Done():
-			return false
+			return "", false
 		case <-time.After(2 * time.Second):
 		}
 	}
-	return false
+	return "", false
 }
 
 func (d *DockerOrchestrator) configureGatewayToken(ctx context.Context, name, token string) {
@@ -387,7 +390,7 @@ func (d *DockerOrchestrator) StreamInstanceLogs(ctx context.Context, name string
 	if follow {
 		cmd += " --follow"
 	}
-	cmdSlice := []string{"su", "-", "claworc", "-c", cmd}
+	cmdSlice := []string{"su", "-", "abc", "-c", cmd}
 
 	execCfg := container.ExecOptions{
 		Cmd:          cmdSlice,
@@ -565,7 +568,7 @@ func (d *DockerOrchestrator) GetVNCBaseURL(ctx context.Context, name string, dis
 
 	for _, net := range inspect.NetworkSettings.Networks {
 		if net.IPAddress != "" {
-			return fmt.Sprintf("http://%s:6081", net.IPAddress), nil
+			return fmt.Sprintf("http://%s:3000", net.IPAddress), nil
 		}
 	}
 	return "", fmt.Errorf("cannot determine container IP for %s", name)
@@ -579,7 +582,7 @@ func (d *DockerOrchestrator) GetGatewayWSURL(ctx context.Context, name string) (
 
 	for _, net := range inspect.NetworkSettings.Networks {
 		if net.IPAddress != "" {
-			return fmt.Sprintf("ws://%s:18789", net.IPAddress), nil
+			return fmt.Sprintf("ws://%s:3000/gateway", net.IPAddress), nil
 		}
 	}
 	return "", fmt.Errorf("cannot determine container IP for %s", name)

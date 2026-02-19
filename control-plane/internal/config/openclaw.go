@@ -71,7 +71,7 @@ func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models
 		}
 		// Use base64 encoding to safely pass JSON through shell
 		b64 := base64.StdEncoding.EncodeToString(modelJSON)
-		cmd := []string{"su", "-", "claworc", "-c",
+		cmd := []string{"su", "-", "abc", "-c",
 			fmt.Sprintf("openclaw config set agents.defaults.model \"$(echo '%s' | base64 -d)\" --json", b64)}
 		_, stderr, code, err := ops.ExecInInstance(ctx, name, cmd)
 		if err != nil {
@@ -85,7 +85,7 @@ func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models
 	}
 
 	// Restart gateway so it picks up new env vars and config
-	cmd := []string{"su", "-", "claworc", "-c", "openclaw gateway stop"}
+	cmd := []string{"su", "-", "abc", "-c", "openclaw gateway stop"}
 	_, stderr, code, err := ops.ExecInInstance(ctx, name, cmd)
 	if err != nil {
 		log.Printf("Error restarting gateway for %s: %v", logutil.SanitizeForLog(name), err)

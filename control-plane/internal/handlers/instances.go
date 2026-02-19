@@ -840,7 +840,7 @@ func GetInstanceConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := orch.ReadFile(r.Context(), inst.Name, "/home/claworc/.openclaw/openclaw.json")
+	content, err := orch.ReadFile(r.Context(), inst.Name, orchestrator.PathOpenClawConfig)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "Instance must be running to read config")
 		return

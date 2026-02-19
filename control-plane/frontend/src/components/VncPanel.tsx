@@ -1,20 +1,21 @@
 import { useCallback, useRef } from "react";
-import { Wifi, WifiOff, Loader2, RefreshCw, Maximize, Copy, ClipboardPaste, ExternalLink, MessageSquare } from "lucide-react";
-import type { VncConnectionState } from "@/hooks/useVnc";
+import { Wifi, WifiOff, Loader2, RefreshCw, Maximize, ExternalLink, MessageSquare } from "lucide-react";
+import type { DesktopConnectionState } from "@/hooks/useDesktop";
 
 interface VncPanelProps {
   instanceId: number;
-  connectionState: VncConnectionState;
-  setContainer: (el: HTMLDivElement | null) => void;
+  connectionState: DesktopConnectionState;
+  desktopUrl: string;
+  setIframe: (el: HTMLIFrameElement | null) => void;
+  onLoad: () => void;
+  onError: () => void;
   reconnect: () => void;
-  copyFromVnc: () => Promise<void>;
-  pasteToVnc: () => Promise<void>;
   chatOpen?: boolean;
   onChatToggle?: () => void;
   showNewWindow?: boolean;
 }
 
-function ConnectionIndicator({ state }: { state: VncConnectionState }) {
+function ConnectionIndicator({ state }: { state: DesktopConnectionState }) {
   switch (state) {
     case "connected":
       return (
@@ -47,10 +48,11 @@ function ConnectionIndicator({ state }: { state: VncConnectionState }) {
 export default function VncPanel({
   instanceId,
   connectionState,
-  setContainer,
+  desktopUrl,
+  setIframe,
+  onLoad,
+  onError,
   reconnect,
-  copyFromVnc,
-  pasteToVnc,
   chatOpen,
   onChatToggle,
   showNewWindow = true,
@@ -87,22 +89,6 @@ export default function VncPanel({
             <RefreshCw size={14} />
           </button>
         )}
-        <button
-          onClick={copyFromVnc}
-          disabled={connectionState !== "connected"}
-          className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded disabled:opacity-30 disabled:cursor-not-allowed"
-          title="Copy from remote clipboard"
-        >
-          <Copy size={14} /> Copy
-        </button>
-        <button
-          onClick={pasteToVnc}
-          disabled={connectionState !== "connected"}
-          className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded disabled:opacity-30 disabled:cursor-not-allowed"
-          title="Paste to remote clipboard"
-        >
-          <ClipboardPaste size={14} /> Paste
-        </button>
         <div className="flex-1" />
         {showNewWindow && (
           <button
@@ -122,9 +108,13 @@ export default function VncPanel({
         </button>
         <ConnectionIndicator state={connectionState} />
       </div>
-      <div
-        ref={setContainer}
-        className="flex-1 bg-gray-900 overflow-hidden"
+      <iframe
+        ref={setIframe}
+        src={connectionState !== "disconnected" ? desktopUrl : undefined}
+        onLoad={onLoad}
+        onError={onError}
+        className="flex-1 w-full border-0 bg-gray-900"
+        allow="clipboard-read; clipboard-write"
       />
     </div>
   );

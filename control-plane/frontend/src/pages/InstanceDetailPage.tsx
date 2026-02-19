@@ -25,7 +25,7 @@ import {
 import { useSettings } from "@/hooks/useSettings";
 import { useInstanceLogs } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
-import { useVnc } from "@/hooks/useVnc";
+import { useDesktop } from "@/hooks/useDesktop";
 import { useChat } from "@/hooks/useChat";
 import type { InstanceUpdatePayload } from "@/types/instance";
 
@@ -121,7 +121,7 @@ export default function InstanceDetailPage() {
 
   const logsHook = useInstanceLogs(instanceId, activeTab === "logs");
   const termHook = useTerminal(instanceId, terminalActivated && instance?.status === "running");
-  const vncHook = useVnc(instanceId, chromeActivated && instance?.status === "running");
+  const desktopHook = useDesktop(instanceId, chromeActivated && instance?.status === "running");
   const chatHook = useChat(instanceId, chatOpen && chromeActivated && instance?.status === "running");
 
   // Auto-send initial messages when chat connects (delayed to survive StrictMode double-mount)
@@ -433,11 +433,12 @@ export default function InstanceDetailPage() {
               <div className="flex-1 min-w-0">
                 <VncPanel
                   instanceId={instanceId}
-                  connectionState={vncHook.connectionState}
-                  setContainer={vncHook.setContainer}
-                  reconnect={vncHook.reconnect}
-                  copyFromVnc={vncHook.copyFromVnc}
-                  pasteToVnc={vncHook.pasteToVnc}
+                  connectionState={desktopHook.connectionState}
+                  desktopUrl={desktopHook.desktopUrl}
+                  setIframe={desktopHook.setIframe}
+                  onLoad={desktopHook.onLoad}
+                  onError={desktopHook.onError}
+                  reconnect={desktopHook.reconnect}
                   chatOpen={false}
                   showNewWindow={false}
                 />

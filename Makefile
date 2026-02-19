@@ -3,25 +3,33 @@ include .env.development
 -include .env
 export
 
-AGENT_IMAGE := glukw/openclaw-vnc-chrome
+AGENT_IMAGE_NAME := openclaw-vnc-chromium2
+AGENT_IMAGE := glukw/$(AGENT_IMAGE_NAME)
 DASHBOARD_IMAGE := glukw/claworc
 TAG := latest
-AGENT_PLATFORM := linux/amd64
-DASHBOARD_PLATFORM := linux/amd64,linux/arm64
+PLATFORMS := linux/amd64,linux/arm64
 
 KUBECONFIG := ../kubeconfig
 HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
 
-.PHONY: agent dashboard docker-prune release \
+.PHONY: agent agent-build agent-test agent-push dashboard docker-prune release \
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-stop \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane
 
-agent:
-	docker buildx build --platform $(AGENT_PLATFORM) -t $(AGENT_IMAGE):$(TAG) --push agent/
+agent: agent-build agent-test agent-push
+
+agent-build:
+	docker buildx build --platform linux/amd64 --load -t $(AGENT_IMAGE_NAME):test agent/
+
+agent-test:
+	cd tests && AGENT_TEST_IMAGE=$(AGENT_IMAGE_NAME):test npm run test:agent
+
+agent-push:
+	docker buildx build --platform $(PLATFORMS) -t $(AGENT_IMAGE):$(TAG) --push agent/
 
 control-plane:
-	docker buildx build --platform $(DASHBOARD_PLATFORM) -t $(DASHBOARD_IMAGE):$(TAG) --push control-plane/
+	docker buildx build --platform $(PLATFORMS) -t $(DASHBOARD_IMAGE):$(TAG) --push control-plane/
 
 release: agent control-plane
 	@echo "Released $(AGENT_IMAGE):$(TAG) and $(DASHBOARD_IMAGE):$(TAG)"
@@ -41,7 +49,11 @@ helm-uninstall:
 helm-template:
 	helm template $(HELM_RELEASE) helm/ --namespace $(HELM_NAMESPACE) --kubeconfig $(KUBECONFIG)
 
-install-dev:
+install-test:
+	@echo "Installing test dependencies (npm)"
+	@cd tests && npm install
+
+install-dev: install-test
 	@echo "Installing development dependencies..."
 	@echo "Installing frontend dependencies (npm)..."
 	@cd control-plane/frontend && npm install

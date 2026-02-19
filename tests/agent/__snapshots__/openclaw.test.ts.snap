@@ -1,0 +1,40 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`agent image > openclaw.json structure matches snapshot 1`] = `
+{
+  "browser": {
+    "attachOnly": "boolean",
+    "color": "string",
+    "defaultProfile": "string",
+    "enabled": "boolean",
+    "headless": "boolean",
+    "noSandbox": "boolean",
+    "profiles": {
+      "remote": {
+        "cdpUrl": "string",
+        "color": "string",
+      },
+    },
+    "remoteCdpHandshakeTimeoutMs": "number",
+    "remoteCdpTimeoutMs": "number",
+  },
+  "commands": {
+    "native": "string",
+    "nativeSkills": "string",
+    "restart": "boolean",
+  },
+  "gateway": {
+    "auth": {
+      "token": "string",
+    },
+    "controlUi": {
+      "dangerouslyDisableDeviceAuth": "boolean",
+    },
+    "mode": "string",
+  },
+  "meta": {
+    "lastTouchedAt": "string",
+    "lastTouchedVersion": "string",
+  },
+}
+`;

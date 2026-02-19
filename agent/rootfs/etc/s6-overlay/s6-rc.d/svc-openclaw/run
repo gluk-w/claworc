@@ -1,0 +1,30 @@
+#!/command/with-contenv bash
+
+export HOME=/config
+
+# Initialize config if missing
+if [ ! -f "/config/.openclaw/openclaw.json" ]; then
+    echo "Initializing OpenClaw..."
+    mkdir -p /config/.openclaw
+    chown abc:abc /config/.openclaw
+    s6-setuidgid abc openclaw doctor --fix || echo "Doctor finished with exit code $?"
+
+    s6-setuidgid abc openclaw config set gateway.mode local
+    s6-setuidgid abc openclaw config set gateway.bind localhost
+    s6-setuidgid abc openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth true
+    if [ -f "/defaults/browser.json" ]; then
+        s6-setuidgid abc openclaw config set browser "$(cat /defaults/browser.json)" --json
+    fi
+fi
+
+# Set token if provided
+if [ -n "$OPENCLAW_GATEWAY_TOKEN" ]; then
+    s6-setuidgid abc openclaw config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN"
+fi
+
+# Ensure abc owns the config directory
+chown -R abc:abc /config/.openclaw
+
+echo "Starting OpenClaw Gateway (foreground) as abc..."
+# OpenClaw requires an open stdin stream or it exits.
+exec bash -c "tail -f /dev/null | s6-setuidgid abc /usr/bin/openclaw gateway run"

@@ -21,7 +21,7 @@ interface SvarFileItem {
   type: "folder" | "file";
 }
 
-const ROOT_PATH = "/home/claworc";
+const ROOT_PATH = "/config";
 
 export default function FileBrowser({ instanceId, initialPath = "/", onPathChange }: FileBrowserProps) {
   const [currentPath, setCurrentPath] = useState(initialPath);

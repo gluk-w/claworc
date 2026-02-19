@@ -1,0 +1,12 @@
+{
+  "name": "claworc-tests",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "test:agent": "vitest run agent/"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0",
+    "typescript": "^5.7.0"
+  }
+}
