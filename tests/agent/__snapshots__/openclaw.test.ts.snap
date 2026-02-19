@@ -2,17 +2,6 @@
 
 exports[`agent image > openclaw.json structure matches snapshot 1`] = `
 {
-  "agents": {
-    "defaults": {
-      "compaction": {
-        "mode": "string",
-      },
-      "maxConcurrent": "number",
-      "subagents": {
-        "maxConcurrent": "number",
-      },
-    },
-  },
   "browser": {
     "attachOnly": "boolean",
     "color": "string",
@@ -32,25 +21,20 @@ exports[`agent image > openclaw.json structure matches snapshot 1`] = `
   "commands": {
     "native": "string",
     "nativeSkills": "string",
+    "restart": "boolean",
   },
   "gateway": {
+    "auth": {
+      "token": "string",
+    },
     "controlUi": {
       "dangerouslyDisableDeviceAuth": "boolean",
     },
     "mode": "string",
   },
-  "messages": {
-    "ackReactionScope": "string",
-  },
   "meta": {
     "lastTouchedAt": "string",
     "lastTouchedVersion": "string",
-  },
-  "wizard": {
-    "lastRunAt": "string",
-    "lastRunCommand": "string",
-    "lastRunMode": "string",
-    "lastRunVersion": "string",
   },
 }
 `;
