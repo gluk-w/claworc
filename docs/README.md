@@ -21,6 +21,7 @@ Claworc replaces this manual approach by:
 |----------|-------------|
 | [Features](features.md) | Feature specifications and user workflows |
 | [Architecture](architecture.md) | System architecture and design decisions |
+| [LLM Proxy](llm-proxy.md) | Usage tracking, budget caps, secure key management, and testing |
 | [API](api.md) | REST API endpoints and request/response formats |
 | [Data Model](data-model.md) | Database schema and Kubernetes resource model |
 | [Authentication](auth.md) | Authentication, authorization, and user management |
