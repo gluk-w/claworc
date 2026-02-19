@@ -1,0 +1,49 @@
+name: Feature Request
+description: Suggest new functionality or an improvement
+labels: ["C-Feature", "S-Needs-Triage"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What would you like?
+      description: A clear description of the feature or improvement.
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why do you need this?
+      description: What problem does this solve? What's your use case?
+      placeholder: I'm trying to do X but currently there's no way to...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the system would this affect?
+      multiple: true
+      options:
+        - Agent (container image, systemd, Chrome)
+        - API (REST endpoints, SSE)
+        - Auth (login, sessions, passkeys, RBAC)
+        - Config (settings, openclaw.json, models, API keys)
+        - Dashboard (React frontend, UI)
+        - Deployment (Helm, Docker Compose, installer)
+        - File Manager (browse, read, upload, download)
+        - Logs (SSE log streaming)
+        - Orchestrator (instance lifecycle, volumes)
+        - Proxy (VNC, terminal, chat, WebSocket)
+        - Other / Not sure
+    validations:
+      required: false
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: If you have ideas on how this could work, describe them here.
+    validations:
+      required: false

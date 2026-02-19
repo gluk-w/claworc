@@ -70,3 +70,7 @@ for instance access. [Read more](docs/install.md)
 ## Open Source
 
 Claworc is fully open source, self-hosted, and free. Contributions are welcome!
+
+# Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=gluk-w/claworc&type=date&legend=top-left)](https://www.star-history.com/#gluk-w/claworc&type=date&legend=top-left)

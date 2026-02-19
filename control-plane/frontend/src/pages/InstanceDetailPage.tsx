@@ -116,7 +116,7 @@ export default function InstanceDetailPage() {
     navigate(`#${tab}`, { replace: true });
   };
 
-  const [chatOpen, setChatOpen] = useState(false);
+  const [chatOpen, _setChatOpen] = useState(false);
   const chatInitSentRef = useRef(false);
 
   const logsHook = useInstanceLogs(instanceId, activeTab === "logs");

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/go-chi/chi/v5"
@@ -47,7 +48,7 @@ func BrowseFiles(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := orch.ListDirectory(r.Context(), inst.Name, dirPath)
 	if err != nil {
-		log.Printf("Failed to list directory %s for instance %s: %v", dirPath, inst.Name, err)
+		log.Printf("Failed to list directory %s for instance %s: %v", logutil.SanitizeForLog(dirPath), logutil.SanitizeForLog(inst.Name), err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to list directory: %v", err))
 		return
 	}
@@ -90,7 +91,7 @@ func ReadFileContent(w http.ResponseWriter, r *http.Request) {
 
 	content, err := orch.ReadFile(r.Context(), inst.Name, filePath)
 	if err != nil {
-		log.Printf("Failed to read file %s for instance %s: %v", filePath, inst.Name, err)
+		log.Printf("Failed to read file %s for instance %s: %v", logutil.SanitizeForLog(filePath), logutil.SanitizeForLog(inst.Name), err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to read file: %v", err))
 		return
 	}

@@ -7,6 +7,8 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 )
 
 const PathOpenClawConfig = "/config/.openclaw/openclaw.json"
@@ -23,29 +25,29 @@ type WaitFunc func(ctx context.Context, name string, timeout time.Duration) (ima
 func configureGatewayToken(ctx context.Context, execFn ExecFunc, name, token string, waitFn WaitFunc) {
 	imageInfo, ready := waitFn(ctx, name, 120*time.Second)
 	if !ready {
-		log.Printf("Timed out waiting for %s to start; gateway token not configured", name)
+		log.Printf("Timed out waiting for %s to start; gateway token not configured", logutil.SanitizeForLog(name))
 		return
 	}
 	cmd := []string{"su", "-", "abc", "-c", fmt.Sprintf("openclaw config set gateway.auth.token %s", token)}
 	_, stderr, code, err := execFn(ctx, name, cmd)
 	if err != nil {
-		log.Printf("Error configuring gateway token for %s: %v (image: %s)", name, err, imageInfo)
+		log.Printf("Error configuring gateway token for %s: %v (image: %s)", logutil.SanitizeForLog(name), err, logutil.SanitizeForLog(imageInfo))
 		return
 	}
 	if code != 0 {
-		log.Printf("Failed to configure gateway token for %s: %s (image: %s)", name, stderr, imageInfo)
+		log.Printf("Failed to configure gateway token for %s: %s (image: %s)", logutil.SanitizeForLog(name), logutil.SanitizeForLog(stderr), logutil.SanitizeForLog(imageInfo))
 		return
 	}
 	_, stderr, code, err = execFn(ctx, name, cmdGatewayStop)
 	if err != nil {
-		log.Printf("Error restarting gateway for %s: %v (image: %s)", name, err, imageInfo)
+		log.Printf("Error restarting gateway for %s: %v (image: %s)", logutil.SanitizeForLog(name), err, logutil.SanitizeForLog(imageInfo))
 		return
 	}
 	if code != 0 {
-		log.Printf("Failed to restart gateway for %s: %s (image: %s)", name, stderr, imageInfo)
+		log.Printf("Failed to restart gateway for %s: %s (image: %s)", logutil.SanitizeForLog(name), logutil.SanitizeForLog(stderr), logutil.SanitizeForLog(imageInfo))
 		return
 	}
-	log.Printf("Gateway token configured for %s (image: %s)", name, imageInfo)
+	log.Printf("Gateway token configured for %s (image: %s)", logutil.SanitizeForLog(name), logutil.SanitizeForLog(imageInfo))
 }
 
 func updateInstanceConfig(ctx context.Context, execFn ExecFunc, name string, configJSON string) error {

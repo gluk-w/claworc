@@ -2,11 +2,14 @@ package config
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
 	"time"
+
+	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 )
 
 // InstanceOps defines the generic primitives needed to configure an instance.
@@ -34,7 +37,7 @@ func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models
 
 	// Wait for instance to become running
 	if !waitForRunning(ctx, ops, name, 120*time.Second) {
-		log.Printf("Timed out waiting for %s to start; models/keys not configured", name)
+		log.Printf("Timed out waiting for %s to start; models/keys not configured", logutil.SanitizeForLog(name))
 		return
 	}
 
@@ -46,7 +49,7 @@ func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models
 		}
 		data := []byte(strings.Join(lines, "\n") + "\n")
 		if err := ops.WriteFile(ctx, name, pathClaworcKeys, data); err != nil {
-			log.Printf("Error writing API keys for %s: %v", name, err)
+			log.Printf("Error writing API keys for %s: %v", logutil.SanitizeForLog(name), err)
 			return
 		}
 	}
@@ -63,18 +66,20 @@ func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models
 		}
 		modelJSON, err := json.Marshal(modelConfig)
 		if err != nil {
-			log.Printf("Error marshaling model config for %s: %v", name, err)
+			log.Printf("Error marshaling model config for %s: %v", logutil.SanitizeForLog(name), err)
 			return
 		}
+		// Use base64 encoding to safely pass JSON through shell
+		b64 := base64.StdEncoding.EncodeToString(modelJSON)
 		cmd := []string{"su", "-", "abc", "-c",
-			fmt.Sprintf("openclaw config set agents.defaults.model '%s' --json", string(modelJSON))}
+			fmt.Sprintf("openclaw config set agents.defaults.model \"$(echo '%s' | base64 -d)\" --json", b64)}
 		_, stderr, code, err := ops.ExecInInstance(ctx, name, cmd)
 		if err != nil {
-			log.Printf("Error setting model config for %s: %v", name, err)
+			log.Printf("Error setting model config for %s: %v", logutil.SanitizeForLog(name), err)
 			return
 		}
 		if code != 0 {
-			log.Printf("Failed to set model config for %s: %s", name, stderr)
+			log.Printf("Failed to set model config for %s: %s", logutil.SanitizeForLog(name), logutil.SanitizeForLog(stderr))
 			return
 		}
 	}
@@ -83,14 +88,14 @@ func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models
 	cmd := []string{"su", "-", "abc", "-c", "openclaw gateway stop"}
 	_, stderr, code, err := ops.ExecInInstance(ctx, name, cmd)
 	if err != nil {
-		log.Printf("Error restarting gateway for %s: %v", name, err)
+		log.Printf("Error restarting gateway for %s: %v", logutil.SanitizeForLog(name), err)
 		return
 	}
 	if code != 0 {
-		log.Printf("Failed to restart gateway for %s: %s", name, stderr)
+		log.Printf("Failed to restart gateway for %s: %s", logutil.SanitizeForLog(name), logutil.SanitizeForLog(stderr))
 		return
 	}
-	log.Printf("Models and API keys configured for %s", name)
+	log.Printf("Models and API keys configured for %s", logutil.SanitizeForLog(name))
 }
 
 func waitForRunning(ctx context.Context, ops InstanceOps, name string, timeout time.Duration) bool {

@@ -17,6 +17,7 @@ import (
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/go-units"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
+	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 )
 
 const (
@@ -156,7 +157,7 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 			Labels: map[string]string{"managed-by": labelManagedBy, "instance": params.Name},
 		})
 		if err != nil {
-			log.Printf("Volume %s may already exist: %v", volName, err)
+			log.Printf("Volume %s may already exist: %v", logutil.SanitizeForLog(volName), err)
 		}
 	}
 
@@ -319,14 +320,14 @@ func (d *DockerOrchestrator) DeleteInstance(ctx context.Context, name string) er
 	// Remove container
 	err := d.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
 	if err != nil && !dockerclient.IsErrNotFound(err) {
-		log.Printf("Remove container %s: %v", name, err)
+		log.Printf("Remove container %s: %v", logutil.SanitizeForLog(name), err)
 	}
 
 	// Remove volumes
 	for _, suffix := range volumeSuffixes {
 		volName := d.volumeName(name, suffix)
 		if err := d.client.VolumeRemove(ctx, volName, true); err != nil && !dockerclient.IsErrNotFound(err) {
-			log.Printf("Remove volume %s: %v", volName, err)
+			log.Printf("Remove volume %s: %v", logutil.SanitizeForLog(volName), err)
 		}
 	}
 	return nil
