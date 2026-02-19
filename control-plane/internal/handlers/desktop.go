@@ -13,6 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/go-chi/chi/v5"
@@ -188,7 +189,7 @@ func desktopWSProxy(w http.ResponseWriter, r *http.Request, instanceID int) {
 
 	upstreamConn, _, err := websocket.Dial(dialCtx, wsURL, dialOpts)
 	if err != nil {
-		log.Printf("Desktop WS proxy: upstream dial error for %s: %v", wsURL, err)
+		log.Printf("Desktop WS proxy: upstream dial error for %s: %v", logutil.SanitizeForLog(wsURL), err)
 		clientConn.Close(4502, "Cannot connect to desktop service")
 		return
 	}
