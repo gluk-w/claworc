@@ -4,6 +4,7 @@ import DashboardPage from "./pages/DashboardPage";
 import CreateInstancePage from "./pages/CreateInstancePage";
 import InstanceDetailPage from "./pages/InstanceDetailPage";
 import SettingsPage from "./pages/SettingsPage";
+import UsagePage from "./pages/UsagePage";
 import LoginPage from "./pages/LoginPage";
 import UsersPage from "./pages/UsersPage";
 import AccountPage from "./pages/AccountPage";
@@ -54,6 +55,14 @@ export default function App() {
         />
         <Route path="/instances/:id" element={<InstanceDetailPage />} />
         <Route path="/account" element={<AccountPage />} />
+        <Route
+          path="/usage"
+          element={
+            <AdminRoute>
+              <UsagePage />
+            </AdminRoute>
+          }
+        />
         <Route
           path="/settings"
           element={

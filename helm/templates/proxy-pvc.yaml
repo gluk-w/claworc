@@ -1,0 +1,19 @@
+{{- if and .Values.proxy.enabled .Values.proxy.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "claworc.fullname" . }}-proxy-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "claworc.labels" . | nindent 4 }}
+    app.kubernetes.io/component: proxy
+spec:
+  accessModes:
+    - {{ .Values.proxy.persistence.accessMode | default "ReadWriteOnce" }}
+  resources:
+    requests:
+      storage: {{ .Values.proxy.persistence.size | default "1Gi" }}
+  {{- if .Values.proxy.persistence.storageClass }}
+  storageClassName: {{ .Values.proxy.persistence.storageClass | quote }}
+  {{- end }}
+{{- end }}

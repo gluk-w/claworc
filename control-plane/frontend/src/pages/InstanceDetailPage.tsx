@@ -28,8 +28,14 @@ import { useTerminal } from "@/hooks/useTerminal";
 import { useVnc } from "@/hooks/useVnc";
 import { useChat } from "@/hooks/useChat";
 import type { InstanceUpdatePayload } from "@/types/instance";
-
-type Tab = "overview" | "chrome" | "terminal" | "files" | "config" | "logs";
+import {
+  useInstanceUsage,
+  useInstanceLimits,
+  useSetBudget,
+  useSetRateLimit,
+  useProxyStatus,
+} from "@/hooks/useUsage";
+type Tab = "overview" | "chrome" | "terminal" | "files" | "config" | "logs" | "usage";
 
 export default function InstanceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -52,7 +58,7 @@ export default function InstanceDetailPage() {
   // Get initial tab from URL hash (supports #files:///path pattern)
   const getTabFromHash = (): Tab => {
     const hash = location.hash.slice(1); // Remove '#'
-    if (hash === "chrome" || hash === "terminal" || hash === "config" || hash === "logs") {
+    if (hash === "chrome" || hash === "terminal" || hash === "config" || hash === "logs" || hash === "usage") {
       return hash;
     }
     if (hash === "files" || hash.startsWith("files://")) {
@@ -255,13 +261,22 @@ export default function InstanceDetailPage() {
     });
   };
 
-  const tabs: { key: Tab; label: string }[] = [
+  const { data: proxyStatus } = useProxyStatus();
+  const { data: instanceUsage } = useInstanceUsage(instanceId, {});
+  const { data: instanceLimits } = useInstanceLimits(instanceId);
+  const setBudgetMutation = useSetBudget();
+  const setRateLimitMutation = useSetRateLimit();
+
+  const baseTabs: { key: Tab; label: string }[] = [
     { key: "overview", label: "Overview" },
     { key: "chrome", label: "Browser" },
     { key: "terminal", label: "Terminal" },
     { key: "config", label: "Config" },
     { key: "logs", label: "Logs" },
   ];
+  const tabs = proxyStatus?.proxy_enabled
+    ? [...baseTabs, { key: "usage" as Tab, label: "Usage" }]
+    : baseTabs;
 
   return (
     <div>
@@ -536,6 +551,161 @@ export default function InstanceDetailPage() {
             onTogglePause={logsHook.togglePause}
             onClear={logsHook.clearLogs}
           />
+        </div>
+      )}
+
+      {activeTab === "usage" && (
+        <div className="space-y-6">
+          {/* Usage breakdown */}
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-200">
+              <h3 className="text-sm font-medium text-gray-900">Token Usage</h3>
+            </div>
+            {!instanceUsage || instanceUsage.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-gray-500">
+                No usage data yet.
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    <th className="text-left px-4 py-2 font-medium text-gray-600">Provider</th>
+                    <th className="text-left px-4 py-2 font-medium text-gray-600">Model</th>
+                    <th className="text-right px-4 py-2 font-medium text-gray-600">Requests</th>
+                    <th className="text-right px-4 py-2 font-medium text-gray-600">Input</th>
+                    <th className="text-right px-4 py-2 font-medium text-gray-600">Output</th>
+                    <th className="text-right px-4 py-2 font-medium text-gray-600">Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {instanceUsage.map((row, i) => (
+                    <tr key={i} className="border-b border-gray-100 last:border-0">
+                      <td className="px-4 py-2 text-gray-900">{row.provider}</td>
+                      <td className="px-4 py-2 text-gray-700 font-mono text-xs">{row.model}</td>
+                      <td className="px-4 py-2 text-right text-gray-700">{row.requests.toLocaleString()}</td>
+                      <td className="px-4 py-2 text-right text-gray-700">{row.input_tokens.toLocaleString()}</td>
+                      <td className="px-4 py-2 text-right text-gray-700">{row.output_tokens.toLocaleString()}</td>
+                      <td className="px-4 py-2 text-right text-gray-700 font-medium">{row.estimated_cost_usd}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Budget config */}
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <h3 className="text-sm font-medium text-gray-900 mb-4">Budget Limit</h3>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const form = e.target as HTMLFormElement;
+                const limitDollars = parseFloat((form.elements.namedItem("limit") as HTMLInputElement).value || "0");
+                const periodType = (form.elements.namedItem("period") as HTMLSelectElement).value as "daily" | "monthly";
+                const hardLimit = (form.elements.namedItem("hard_limit") as HTMLInputElement).checked;
+                setBudgetMutation.mutate({
+                  id: instanceId,
+                  budget: {
+                    limit_micro: Math.round(limitDollars * 1_000_000),
+                    period_type: periodType,
+                    alert_threshold: 0.8,
+                    hard_limit: hardLimit,
+                  },
+                });
+              }}
+              className="flex items-end gap-4"
+            >
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Limit ($)</label>
+                <input
+                  name="limit"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  defaultValue={instanceLimits?.budget ? (instanceLimits.budget.limit_micro / 1_000_000).toFixed(2) : ""}
+                  placeholder="e.g. 10.00"
+                  className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-32"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Period</label>
+                <select
+                  name="period"
+                  defaultValue={instanceLimits?.budget?.period_type || "monthly"}
+                  className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
+                >
+                  <option value="daily">Daily</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  name="hard_limit"
+                  type="checkbox"
+                  defaultChecked={instanceLimits?.budget?.hard_limit || false}
+                  className="rounded"
+                />
+                Hard limit (block requests)
+              </label>
+              <button
+                type="submit"
+                disabled={setBudgetMutation.isPending}
+                className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+              >
+                {setBudgetMutation.isPending ? "Saving..." : "Save"}
+              </button>
+            </form>
+          </div>
+
+          {/* Rate limit config */}
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <h3 className="text-sm font-medium text-gray-900 mb-4">Rate Limit</h3>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const form = e.target as HTMLFormElement;
+                const rpm = parseInt((form.elements.namedItem("rpm") as HTMLInputElement).value || "0");
+                const tpm = parseInt((form.elements.namedItem("tpm") as HTMLInputElement).value || "0");
+                setRateLimitMutation.mutate({
+                  id: instanceId,
+                  rateLimits: rpm > 0 || tpm > 0
+                    ? [{ provider: "*", requests_per_minute: rpm, tokens_per_minute: tpm }]
+                    : [],
+                });
+              }}
+              className="flex items-end gap-4"
+            >
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Requests/min</label>
+                <input
+                  name="rpm"
+                  type="number"
+                  min="0"
+                  defaultValue={instanceLimits?.rate_limits?.[0]?.requests_per_minute || ""}
+                  placeholder="0 = unlimited"
+                  className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-32"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Tokens/min</label>
+                <input
+                  name="tpm"
+                  type="number"
+                  min="0"
+                  defaultValue={instanceLimits?.rate_limits?.[0]?.tokens_per_minute || ""}
+                  placeholder="0 = unlimited"
+                  className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-32"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={setRateLimitMutation.isPending}
+                className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+              >
+                {setRateLimitMutation.isPending ? "Saving..." : "Save"}
+              </button>
+            </form>
+          </div>
         </div>
       )}
     </div>

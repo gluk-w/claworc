@@ -8,7 +8,29 @@ services:
       - claworc-data:/app/data
     environment:
       - CLAWORC_DATABASE_PATH=/app/data/claworc.db
+      - CLAWORC_PROXY_ENABLED=true
+      - CLAWORC_PROXY_URL=http://llm-proxy:8080
+      - CLAWORC_PROXY_SECRET=${CLAWORC_PROXY_SECRET:-changeme}
+    networks:
+      - claworc
+    depends_on:
+      - llm-proxy
+    restart: unless-stopped
+
+  llm-proxy:
+    image: glukw/claworc-llm-proxy:latest
+    volumes:
+      - llm-proxy-data:/app/data
+    environment:
+      - LLM_PROXY_ADMIN_SECRET=${CLAWORC_PROXY_SECRET:-changeme}
+    networks:
+      - claworc
     restart: unless-stopped
 
 volumes:
   claworc-data:
+  llm-proxy-data:
+
+networks:
+  claworc:
+    driver: bridge

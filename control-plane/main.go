@@ -148,6 +148,14 @@ func main() {
 				r.Get("/settings", handlers.GetSettings)
 				r.Put("/settings", handlers.UpdateSettings)
 
+				// Usage & proxy
+				r.Get("/usage", handlers.GetUsage)
+				r.Get("/proxy/status", handlers.GetProxyStatus)
+				r.Get("/instances/{id}/usage", handlers.GetInstanceUsage)
+				r.Get("/instances/{id}/limits", handlers.GetInstanceLimits)
+				r.Put("/instances/{id}/budget", handlers.SetInstanceBudget)
+				r.Put("/instances/{id}/ratelimit", handlers.SetInstanceRateLimit)
+
 				// User management
 				r.Get("/users", handlers.ListUsers)
 				r.Post("/users", handlers.CreateUser)
