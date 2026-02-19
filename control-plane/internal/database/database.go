@@ -23,19 +23,12 @@ func Init() error {
 	}
 
 	var err error
-	DB, err = gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+	dsn := fmt.Sprintf("file:%s?_busy_timeout=5000", dbPath)
+	DB, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
 	})
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
-	}
-
-	sqlDB, err := DB.DB()
-	if err != nil {
-		return fmt.Errorf("get sql.DB: %w", err)
-	}
-	if _, err := sqlDB.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		return fmt.Errorf("set WAL mode: %w", err)
 	}
 
 	if err := DB.AutoMigrate(&Instance{}, &Setting{}, &InstanceAPIKey{}, &User{}, &UserInstance{}, &WebAuthnCredential{}); err != nil {
@@ -58,7 +51,7 @@ func seedDefaults() error {
 		"default_storage_homebrew": "10Gi",
 		"default_storage_clawd":    "5Gi",
 		"default_storage_chrome":   "5Gi",
-		"default_container_image":  "glukw/openclaw-vnc-chrome:latest",
+		"default_container_image":  "glukw/openclaw-vnc-chromium:latest",
 		"default_vnc_resolution":   "1920x1080",
 		"orchestrator_backend":     "auto",
 		"default_models":           "[]",

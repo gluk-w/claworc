@@ -1,7 +1,5 @@
 .env
 !.env.development
-dashboard/frontend/dist
-dashboard/frontend/node_modules
 data/
 *.db
 *.db-shm
@@ -11,10 +9,11 @@ tmp
 *.log
 
 node_modules
-pkg/mod
 dist
-
-control-plane/claworc
 
 test-results/
 playwright-report/
+
+/control-plane/pkg/
+/control-plane/claworc
+/control-plane/control-plane

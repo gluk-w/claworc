@@ -1,0 +1,2 @@
+backend: $HOME/go/bin/air
+frontend: cd frontend && npm run dev

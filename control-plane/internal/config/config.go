@@ -13,6 +13,8 @@ type Settings struct {
 	AuthDisabled bool     `envconfig:"AUTH_DISABLED" default:"false"`
 	RPOrigins    []string `envconfig:"RP_ORIGINS" default:"http://localhost:8000"`
 	RPID         string   `envconfig:"RP_ID" default:"localhost"`
+	LogPath      string   `envconfig:"LOG_PATH" default:"/app/data/claworc.log"`
+	Orchestrator string   `envconfig:"ORCHESTRATOR" default:""`
 }
 
 var Cfg Settings

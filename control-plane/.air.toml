@@ -3,9 +3,9 @@ tmp_dir = "tmp"
 
 [build]
   cmd = "go build -o ./tmp/control-plane ."
-  bin = "./tmp/control-plane"
+  full_bin = "./tmp/control-plane"
   include_ext = ["go"]
-  exclude_dir = ["tmp", "vendor", "frontend"]
+  exclude_dir = ["tmp", "vendor", "frontend", "pkg"]
   delay = 1000
 
 [misc]

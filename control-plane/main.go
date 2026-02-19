@@ -17,6 +17,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
+	"github.com/gluk-w/claworc/control-plane/internal/logging"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/go-chi/chi/v5"
@@ -40,6 +41,7 @@ func main() {
 	}
 
 	config.Load()
+	logging.Init()
 
 	if err := database.Init(); err != nil {
 		log.Fatalf("Database init: %v", err)
@@ -156,6 +158,10 @@ func main() {
 				r.Get("/users/{userId}/instances", handlers.GetUserAssignedInstances)
 				r.Put("/users/{userId}/instances", handlers.SetUserAssignedInstances)
 				r.Post("/users/{userId}/reset-password", handlers.ResetUserPassword)
+
+				// Server logs
+				r.Get("/logs", handlers.GetServerLogs)
+				r.Delete("/logs", handlers.ClearServerLogs)
 			})
 		})
 	})

@@ -20,7 +20,7 @@ spec:
       serviceAccountName: {{ include "claworc.serviceAccountName" . }}
       containers:
         - name: claworc
-          image: "glukw/claworc-dashboard:latest"
+          image: "glukw/claworc:latest"
           imagePullPolicy: Always
           ports:
             - name: http

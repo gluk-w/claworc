@@ -4,6 +4,7 @@ import {
   Plus,
   Settings,
   Users,
+  FileText,
   LogOut,
   User,
 } from "lucide-react";
@@ -32,18 +33,21 @@ export default function Sidebar() {
   const isActive = (path: string) => location.pathname === path;
 
   const navLinkClass = (path: string) =>
-    `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-      isActive(path)
-        ? "bg-blue-50 text-blue-700 font-medium"
-        : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+    `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive(path)
+      ? "bg-blue-50 text-blue-700 font-medium"
+      : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
     }`;
 
   return (
     <nav className="group fixed left-0 top-0 h-screen w-16 hover:w-56 transition-[width] duration-200 bg-white border-r border-gray-200 z-40 flex flex-col overflow-hidden">
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-4 h-14 border-b border-gray-200 shrink-0">
-        <span className="text-lg font-bold text-gray-900 shrink-0">O</span>
-        <span className="text-sm font-semibold text-gray-900 opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden">
+        <img
+          src="/logo.png"
+          alt="OpenClaw"
+          className="w-8 h-8 rounded-md shrink-0 object-contain"
+        />
+        <span className="text-sm font-semibold text-gray-900 opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden flex items-center">
           penClaw
           {orchLabel && (
             <span className="ml-2 inline-flex items-center gap-1 text-xs font-medium text-gray-500">
@@ -100,6 +104,12 @@ export default function Sidebar() {
                 Users
               </span>
             </Link>
+            <Link to="/logs" className={navLinkClass("/logs")}>
+              <FileText size={18} className="shrink-0" />
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
+                Logs
+              </span>
+            </Link>
           </>
         )}
       </div>
@@ -111,11 +121,10 @@ export default function Sidebar() {
       <div className="px-3 pb-4 border-t border-gray-200 pt-3 shrink-0">
         <Link
           to="/account"
-          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-            isActive("/account")
-              ? "bg-blue-50 text-blue-700 font-medium"
-              : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
-          }`}
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive("/account")
+            ? "bg-blue-50 text-blue-700 font-medium"
+            : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+            }`}
         >
           <User size={18} className="shrink-0" />
           <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">

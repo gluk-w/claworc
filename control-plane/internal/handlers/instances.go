@@ -71,6 +71,7 @@ type instanceResponse struct {
 	HasResolutionOverride bool            `json:"has_resolution_override"`
 	ControlURL            string          `json:"control_url"`
 	GatewayToken          string          `json:"gateway_token"`
+	Channels              []ChannelInfo   `json:"channels"`
 	SortOrder             int             `json:"sort_order"`
 	CreatedAt             string          `json:"created_at"`
 	UpdatedAt             string          `json:"updated_at"`
@@ -213,7 +214,7 @@ func resolveInstanceModelsAndKeys(inst database.Instance) ([]string, map[string]
 	return effective, apiKeys
 }
 
-func instanceToResponse(inst database.Instance, status string) instanceResponse {
+func instanceToResponse(ctx context.Context, inst database.Instance, status string) instanceResponse {
 	var containerImage *string
 	if inst.ContainerImage != "" {
 		containerImage = &inst.ContainerImage
@@ -231,6 +232,11 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 
 	mc := parseModelsConfig(inst.ModelsConfig)
 	effective := computeEffectiveModels(mc)
+
+	channels := getChannelsForInstance(ctx, inst.Name, status)
+	if channels == nil {
+		channels = []ChannelInfo{}
+	}
 
 	return instanceResponse{
 		ID:                    inst.ID,
@@ -254,6 +260,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		HasResolutionOverride: inst.VNCResolution != "",
 		ControlURL:            fmt.Sprintf("/api/v1/instances/%d/control/", inst.ID),
 		GatewayToken:          gatewayToken,
+		Channels:              channels,
 		SortOrder:             inst.SortOrder,
 		CreatedAt:             formatTimestamp(inst.CreatedAt),
 		UpdatedAt:             formatTimestamp(inst.UpdatedAt),
@@ -274,6 +281,11 @@ func resolveStatus(inst *database.Instance, orchStatus string) string {
 
 	if inst.Status == "error" && orchStatus == "stopped" {
 		return "failed"
+	}
+
+	// Show "preparing" for recently created instances while container is being set up
+	if orchStatus != "running" && orchStatus != "creating" && time.Since(inst.CreatedAt) < 15*time.Second {
+		return "preparing"
 	}
 
 	if inst.Status != "restarting" {
@@ -348,7 +360,7 @@ func ListInstances(w http.ResponseWriter, r *http.Request) {
 			orchStatus = s
 		}
 		status := resolveStatus(&instances[i], orchStatus)
-		responses = append(responses, instanceToResponse(instances[i], status))
+		responses = append(responses, instanceToResponse(r.Context(), instances[i], status))
 	}
 
 	writeJSON(w, http.StatusOK, responses)
@@ -558,7 +570,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		config.ConfigureInstance(ctx, orch, name, models, resolvedKeys)
 	}()
 
-	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
+	writeJSON(w, http.StatusCreated, instanceToResponse(r.Context(), inst, "creating"))
 }
 
 func GetInstance(w http.ResponseWriter, r *http.Request) {
@@ -584,7 +596,7 @@ func GetInstance(w http.ResponseWriter, r *http.Request) {
 		orchStatus, _ = orch.GetInstanceStatus(r.Context(), inst.Name)
 	}
 	status := resolveStatus(&inst, orchStatus)
-	writeJSON(w, http.StatusOK, instanceToResponse(inst, status))
+	writeJSON(w, http.StatusOK, instanceToResponse(r.Context(), inst, status))
 }
 
 type instanceUpdateRequest struct {
@@ -691,7 +703,7 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := resolveStatus(&inst, orchStatus)
-	writeJSON(w, http.StatusOK, instanceToResponse(inst, status))
+	writeJSON(w, http.StatusOK, instanceToResponse(r.Context(), inst, status))
 }
 
 func DeleteInstance(w http.ResponseWriter, r *http.Request) {
@@ -1028,7 +1040,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		config.ConfigureInstance(ctx, orch, cloneName, models, resolvedKeys)
 	}()
 
-	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
+	writeJSON(w, http.StatusCreated, instanceToResponse(r.Context(), inst, "creating"))
 }
 
 func ReorderInstances(w http.ResponseWriter, r *http.Request) {

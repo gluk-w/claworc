@@ -3,6 +3,7 @@ import { formatDistanceToNow } from "date-fns";
 import { GripVertical } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import ActionButtons from "./ActionButtons";
+import ChannelIcons from "./ChannelIcons";
 import type { Instance } from "@/types/instance";
 import type { SyntheticListenerMap } from "@dnd-kit/core/dist/hooks/utilities";
 
@@ -52,6 +53,9 @@ export default function InstanceRow({
         >
           {instance.display_name}
         </Link>
+      </td>
+      <td className="px-4 py-3">
+        <ChannelIcons channels={instance.channels} />
       </td>
       <td className="px-4 py-3">
         <StatusBadge status={instance.status} />
