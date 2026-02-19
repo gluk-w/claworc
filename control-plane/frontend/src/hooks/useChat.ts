@@ -143,8 +143,9 @@ export function useChat(instanceId: number, enabled: boolean) {
               { id: nextId(), role, content, timestamp: Date.now() },
             ]);
           } else {
-            // Log unknown events for debugging
-            console.log("[chat] gateway event:", ev, payload);
+            // Log unknown events for debugging (sanitize to prevent log injection)
+            const sanitizedEv = String(ev).replace(/[\n\r]/g, ' ');
+            console.log("[chat] gateway event:", sanitizedEv, payload);
           }
           break;
         }
