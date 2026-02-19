@@ -7,6 +7,8 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 )
 
 const PathOpenClawConfig = "/home/claworc/.openclaw/openclaw.json"
@@ -21,29 +23,29 @@ type WaitFunc func(ctx context.Context, name string, timeout time.Duration) bool
 
 func configureGatewayToken(ctx context.Context, execFn ExecFunc, name, token string, waitFn WaitFunc) {
 	if !waitFn(ctx, name, 120*time.Second) {
-		log.Printf("Timed out waiting for %s to start; gateway token not configured", name)
+		log.Printf("Timed out waiting for %s to start; gateway token not configured", logutil.SanitizeForLog(name))
 		return
 	}
 	cmd := []string{"su", "-", "claworc", "-c", fmt.Sprintf("openclaw config set gateway.auth.token %s", token)}
 	_, stderr, code, err := execFn(ctx, name, cmd)
 	if err != nil {
-		log.Printf("Error configuring gateway token for %s: %v", name, err)
+		log.Printf("Error configuring gateway token for %s: %v", logutil.SanitizeForLog(name), err)
 		return
 	}
 	if code != 0 {
-		log.Printf("Failed to configure gateway token for %s: %s", name, stderr)
+		log.Printf("Failed to configure gateway token for %s: %s", logutil.SanitizeForLog(name), logutil.SanitizeForLog(stderr))
 		return
 	}
 	_, stderr, code, err = execFn(ctx, name, cmdGatewayStop)
 	if err != nil {
-		log.Printf("Error restarting gateway for %s: %v", name, err)
+		log.Printf("Error restarting gateway for %s: %v", logutil.SanitizeForLog(name), err)
 		return
 	}
 	if code != 0 {
-		log.Printf("Failed to restart gateway for %s: %s", name, stderr)
+		log.Printf("Failed to restart gateway for %s: %s", logutil.SanitizeForLog(name), logutil.SanitizeForLog(stderr))
 		return
 	}
-	log.Printf("Gateway token configured for %s", name)
+	log.Printf("Gateway token configured for %s", logutil.SanitizeForLog(name))
 }
 
 func updateInstanceConfig(ctx context.Context, execFn ExecFunc, name string, configJSON string) error {

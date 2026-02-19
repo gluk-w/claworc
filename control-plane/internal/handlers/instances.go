@@ -16,6 +16,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/crypto"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/go-chi/chi/v5"
@@ -543,7 +544,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			EnvVars:         envVars,
 		})
 		if err != nil {
-			log.Printf("Failed to create container resources for %s: %v", name, err)
+			log.Printf("Failed to create container resources for %s: %v", logutil.SanitizeForLog(name), err)
 			database.DB.Model(&inst).Update("status", "error")
 			return
 		}
@@ -709,7 +710,7 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 
 	if orch := orchestrator.Get(); orch != nil {
 		if err := orch.DeleteInstance(r.Context(), inst.Name); err != nil {
-			log.Printf("Failed to delete container resources for %s – proceeding with DB cleanup: %v", inst.Name, err)
+			log.Printf("Failed to delete container resources for %s – proceeding with DB cleanup: %v", logutil.SanitizeForLog(inst.Name), err)
 		}
 	}
 

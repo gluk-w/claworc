@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/gluk-w/claworc/control-plane/internal/crypto"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/go-chi/chi/v5"
@@ -184,7 +185,7 @@ func ControlProxy(w http.ResponseWriter, r *http.Request) {
 		targetURL += "?" + r.URL.RawQuery
 	}
 
-	log.Printf("Control proxy: %s → %s", r.URL.Path, targetURL)
+	log.Printf("Control proxy: %s → %s", logutil.SanitizeForLog(r.URL.Path), logutil.SanitizeForLog(targetURL))
 	resp, err := getProxyClient().Get(targetURL)
 	if err != nil {
 		log.Printf("Control proxy error: %v", err)
@@ -261,7 +262,7 @@ func controlWSProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("Control WS proxy: %s → %s", r.URL.Path, wsURL)
+	log.Printf("Control WS proxy: %s → %s", logutil.SanitizeForLog(r.URL.Path), logutil.SanitizeForLog(wsURL))
 	upstreamConn, _, err := websocket.Dial(dialCtx, wsURL, dialOpts)
 	if err != nil {
 		log.Printf("Control WS proxy: upstream dial error: %v", err)
