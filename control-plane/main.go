@@ -130,8 +130,8 @@ func main() {
 			// Terminal WebSocket
 			r.Get("/instances/{id}/terminal", handlers.TerminalWSProxy)
 
-			// VNC
-			r.Get("/instances/{id}/vnc/{display}/websockify", handlers.VNCWSProxy)
+			// Desktop proxy (Selkies streaming UI)
+			r.HandleFunc("/instances/{id}/desktop/*", handlers.DesktopProxy)
 
 			// Control proxy
 			r.Get("/instances/{id}/control/*", handlers.ControlProxy)

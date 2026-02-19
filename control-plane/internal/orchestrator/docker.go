@@ -161,9 +161,9 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	}
 
 	// Environment
-	env := []string{
-		fmt.Sprintf("VNC_RESOLUTION=%s", params.VNCResolution),
-		"VNC_DEPTH=24",
+	env := []string{"PUID=1000", "PGID=1000", "START_DOCKER=false"}
+	if parts := strings.SplitN(params.VNCResolution, "x", 2); len(parts) == 2 {
+		env = append(env, "SELKIES_MANUAL_WIDTH="+parts[0], "SELKIES_MANUAL_HEIGHT="+parts[1])
 	}
 	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
 		env = append(env, fmt.Sprintf("OPENCLAW_GATEWAY_TOKEN=%s", token))
@@ -172,9 +172,8 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	// Mounts
 	mounts := []mount.Mount{
 		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "homebrew"), Target: "/home/linuxbrew/.linuxbrew"},
-		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "clawd"), Target: "/home/claworc/clawd"},
-		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "chrome"), Target: "/home/claworc/chrome-data"},
-		{Type: mount.TypeBind, Source: "/sys/fs/cgroup", Target: "/sys/fs/cgroup"},
+		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "clawd"), Target: "/config/clawd"},
+		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "chrome"), Target: "/config/chrome-data"},
 	}
 
 	// Resource limits
@@ -205,7 +204,6 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	hostCfg := &container.HostConfig{
 		Privileged: true,
 		Mounts:     mounts,
-		Tmpfs:      map[string]string{"/run": "", "/tmp": ""},
 		ShmSize:    shmSize,
 		Resources: container.Resources{
 			NanoCPUs: nanoCPUs,
@@ -391,7 +389,7 @@ func (d *DockerOrchestrator) StreamInstanceLogs(ctx context.Context, name string
 	if follow {
 		cmd += " --follow"
 	}
-	cmdSlice := []string{"su", "-", "claworc", "-c", cmd}
+	cmdSlice := []string{"su", "-", "abc", "-c", cmd}
 
 	execCfg := container.ExecOptions{
 		Cmd:          cmdSlice,

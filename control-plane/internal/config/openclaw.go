@@ -66,7 +66,7 @@ func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models
 			log.Printf("Error marshaling model config for %s: %v", name, err)
 			return
 		}
-		cmd := []string{"su", "-", "claworc", "-c",
+		cmd := []string{"su", "-", "abc", "-c",
 			fmt.Sprintf("openclaw config set agents.defaults.model '%s' --json", string(modelJSON))}
 		_, stderr, code, err := ops.ExecInInstance(ctx, name, cmd)
 		if err != nil {
@@ -80,7 +80,7 @@ func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models
 	}
 
 	// Restart gateway so it picks up new env vars and config
-	cmd := []string{"su", "-", "claworc", "-c", "openclaw gateway stop"}
+	cmd := []string{"su", "-", "abc", "-c", "openclaw gateway stop"}
 	_, stderr, code, err := ops.ExecInInstance(ctx, name, cmd)
 	if err != nil {
 		log.Printf("Error restarting gateway for %s: %v", name, err)

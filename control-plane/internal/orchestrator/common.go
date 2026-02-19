@@ -9,9 +9,9 @@ import (
 	"time"
 )
 
-const PathOpenClawConfig = "/home/claworc/.openclaw/openclaw.json"
+const PathOpenClawConfig = "/config/.openclaw/openclaw.json"
 
-var cmdGatewayStop = []string{"su", "-", "claworc", "-c", "openclaw gateway stop"}
+var cmdGatewayStop = []string{"su", "-", "abc", "-c", "openclaw gateway stop"}
 
 // ExecFunc matches the ExecInInstance method signature.
 type ExecFunc func(ctx context.Context, name string, cmd []string) (string, string, int, error)
@@ -26,7 +26,7 @@ func configureGatewayToken(ctx context.Context, execFn ExecFunc, name, token str
 		log.Printf("Timed out waiting for %s to start; gateway token not configured", name)
 		return
 	}
-	cmd := []string{"su", "-", "claworc", "-c", fmt.Sprintf("openclaw config set gateway.auth.token %s", token)}
+	cmd := []string{"su", "-", "abc", "-c", fmt.Sprintf("openclaw config set gateway.auth.token %s", token)}
 	_, stderr, code, err := execFn(ctx, name, cmd)
 	if err != nil {
 		log.Printf("Error configuring gateway token for %s: %v (image: %s)", name, err, imageInfo)

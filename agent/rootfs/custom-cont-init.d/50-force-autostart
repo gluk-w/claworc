@@ -1,0 +1,8 @@
+#!/bin/bash
+mkdir -p /config/.config/openbox
+cp /defaults/autostart /config/.config/openbox/autostart
+chown abc:abc /config/.config/openbox/autostart
+
+# Ensure chrome-data and openclaw dirs are owned by abc (PUID may differ from build-time UID)
+mkdir -p /config/chrome-data /config/.openclaw
+chown abc:abc /config/chrome-data /config/.openclaw

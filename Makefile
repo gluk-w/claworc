@@ -3,7 +3,7 @@ include .env.development
 -include .env
 export
 
-AGENT_IMAGE_NAME := openclaw-vnc-chromium
+AGENT_IMAGE_NAME := openclaw-vnc-chromium2
 AGENT_IMAGE := glukw/$(AGENT_IMAGE_NAME)
 DASHBOARD_IMAGE := glukw/claworc
 TAG := latest

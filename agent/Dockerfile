@@ -7,8 +7,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && curl -sSL https://install.python-poetry.org | POETRY_HOME=/usr/local python3 - \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /config/.openclaw /config/chrome-data /home/linuxbrew/.linuxbrew \
-    && chown -R abc:abc /config/.openclaw /config/chrome-data \
+RUN mkdir -p /home/linuxbrew/.linuxbrew \
     && chown -R abc:abc /home/linuxbrew/.linuxbrew
 
 COPY autostart /defaults/autostart
@@ -17,6 +16,6 @@ COPY browser.json /defaults/browser.json
 COPY rootfs/ /
 
 RUN chmod +x /etc/s6-overlay/s6-rc.d/svc-openclaw/run \
-    && chmod +x /etc/cont-init.d/50-force-autostart
+    && chmod +x /custom-cont-init.d/50-force-autostart
 
 ENV START_DOCKER=false

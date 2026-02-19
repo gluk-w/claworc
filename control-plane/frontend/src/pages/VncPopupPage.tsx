@@ -1,13 +1,13 @@
 import { useParams } from "react-router-dom";
 import VncPanel from "@/components/VncPanel";
-import { useVnc } from "@/hooks/useVnc";
+import { useDesktop } from "@/hooks/useDesktop";
 import { useInstance } from "@/hooks/useInstances";
 
 export default function VncPopupPage() {
   const { id } = useParams<{ id: string }>();
   const instanceId = Number(id);
   const { data: instance, isLoading } = useInstance(instanceId);
-  const vncHook = useVnc(instanceId, instance?.status === "running");
+  const desktopHook = useDesktop(instanceId, instance?.status === "running");
 
   if (isLoading) {
     return <div className="flex items-center justify-center h-screen bg-gray-900 text-gray-400">Loading...</div>;
@@ -25,11 +25,12 @@ export default function VncPopupPage() {
     <div className="h-screen">
       <VncPanel
         instanceId={instanceId}
-        connectionState={vncHook.connectionState}
-        setContainer={vncHook.setContainer}
-        reconnect={vncHook.reconnect}
-        copyFromVnc={vncHook.copyFromVnc}
-        pasteToVnc={vncHook.pasteToVnc}
+        connectionState={desktopHook.connectionState}
+        desktopUrl={desktopHook.desktopUrl}
+        setIframe={desktopHook.setIframe}
+        onLoad={desktopHook.onLoad}
+        onError={desktopHook.onError}
+        reconnect={desktopHook.reconnect}
       />
     </div>
   );

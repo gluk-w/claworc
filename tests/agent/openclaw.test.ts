@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
 
-const IMAGE = process.env.AGENT_TEST_IMAGE ?? "openclaw-vnc-chromium:test";
+const IMAGE = process.env.AGENT_TEST_IMAGE ?? "openclaw-vnc-chromium2:test";
 const CONTAINER = "agent-test-" + process.pid;
 
 interface ExecResult {
@@ -30,7 +30,7 @@ function exec(cmd: string[]): ExecResult {
 }
 
 function execAsUser(cmd: string): ExecResult {
-  return exec(["su", "-", "claworc", "-c", cmd]);
+  return exec(["su", "-", "abc", "-c", cmd]);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -58,7 +58,7 @@ describe("agent image", () => {
 
     execFileSync(
       "docker",
-      ["run", "-d", "--privileged", "--platform", "linux/amd64", "--name", CONTAINER, IMAGE],
+      ["run", "-d", "--privileged", "--platform", "linux/amd64", "-e", "OPENCLAW_GATEWAY_TOKEN=zzzbbb", "--name", CONTAINER, IMAGE],
       { encoding: "utf-8" },
     );
 
@@ -93,16 +93,16 @@ describe("agent image", () => {
     }
   });
 
-  it("openclaw home directory exists and is owned by claworc", () => {
-    const result = exec(["stat", "-c", "%U:%G", "/home/claworc/.openclaw"]);
+  it("openclaw home directory exists and is owned by abc", () => {
+    const result = exec(["stat", "-c", "%U:%G", "/config/.openclaw"]);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout.trim()).toBe("claworc:claworc");
+    expect(result.stdout.trim()).toBe("abc:abc");
   });
 
   it("openclaw.json structure matches snapshot", () => {
     const result = exec([
       "cat",
-      "/home/claworc/.openclaw/openclaw.json",
+      "/config/.openclaw/openclaw.json",
     ]);
     expect(result.exitCode).toBe(0);
 
@@ -131,7 +131,7 @@ describe("agent image", () => {
 
     const configResult = exec([
       "cat",
-      "/home/claworc/.openclaw/openclaw.json",
+      "/config/.openclaw/openclaw.json",
     ]);
     const config = JSON.parse(configResult.stdout);
     expect(config.gateway.auth.token).toBe("test-token-abc123");
@@ -150,7 +150,7 @@ describe("agent image", () => {
 
     const configResult = exec([
       "cat",
-      "/home/claworc/.openclaw/openclaw.json",
+      "/config/.openclaw/openclaw.json",
     ]);
     const config = JSON.parse(configResult.stdout);
     expect(config.agents.defaults.model).toEqual({
@@ -162,7 +162,7 @@ describe("agent image", () => {
   it("openclaw status shows gateway as reachable", () => {
     const result = execAsUser("openclaw status");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("reachable");
+    expect(result.stdout).toContain(" reachable");
   });
 
   it("openclaw gateway stop exits without crash", () => {

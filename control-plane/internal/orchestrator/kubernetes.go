@@ -332,7 +332,7 @@ func (k *KubernetesOrchestrator) StreamInstanceLogs(ctx context.Context, name st
 	if follow {
 		cmd += " --follow"
 	}
-	cmdSlice := []string{"su", "-", "claworc", "-c", cmd}
+	cmdSlice := []string{"su", "-", "abc", "-c", cmd}
 
 	req := k.clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
@@ -615,15 +615,21 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 	privileged := true
 
 	envVars := []corev1.EnvVar{
-		{Name: "VNC_RESOLUTION", Value: params.VNCResolution},
-		{Name: "VNC_DEPTH", Value: "24"},
+		{Name: "PUID", Value: "1000"},
+		{Name: "PGID", Value: "1000"},
+		{Name: "START_DOCKER", Value: "false"},
+	}
+	if parts := strings.SplitN(params.VNCResolution, "x", 2); len(parts) == 2 {
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "SELKIES_MANUAL_WIDTH", Value: parts[0]},
+			corev1.EnvVar{Name: "SELKIES_MANUAL_HEIGHT", Value: parts[1]},
+		)
 	}
 	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "OPENCLAW_GATEWAY_TOKEN", Value: token})
 	}
 
 	shmSize := resource.MustParse("2Gi")
-	hostPathDir := corev1.HostPathDirectory
 
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -658,12 +664,9 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 							},
 						},
 						VolumeMounts: []corev1.VolumeMount{
-							{Name: "chrome-data", MountPath: "/home/claworc/chrome-data"},
+							{Name: "chrome-data", MountPath: "/config/chrome-data"},
 							{Name: "homebrew-data", MountPath: "/home/linuxbrew/.linuxbrew"},
-							{Name: "openclaw-data", MountPath: "/home/claworc/.openclaw"},
-							{Name: "cgroup", MountPath: "/sys/fs/cgroup"},
-							{Name: "run", MountPath: "/run"},
-							{Name: "tmp", MountPath: "/tmp"},
+							{Name: "openclaw-data", MountPath: "/config/.openclaw"},
 							{Name: "dshm", MountPath: "/dev/shm"},
 						},
 						LivenessProbe: &corev1.Probe{
@@ -681,9 +684,6 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 						{Name: "homebrew-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-homebrew"}}},
 						{Name: "openclaw-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-openclaw"}}},
 						{Name: "chrome-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-chrome"}}},
-						{Name: "cgroup", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/sys/fs/cgroup", Type: &hostPathDir}}},
-						{Name: "run", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}}},
-						{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 						{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &shmSize}}},
 					},
 					ImagePullSecrets: []corev1.LocalObjectReference{{Name: "ghcr-secret"}},

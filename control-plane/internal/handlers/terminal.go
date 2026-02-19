@@ -61,7 +61,7 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := orch.ExecInteractive(ctx, inst.Name, []string{"su", "-", "claworc"})
+	session, err := orch.ExecInteractive(ctx, inst.Name, []string{"su", "-", "abc"})
 	if err != nil {
 		log.Printf("Failed to start exec session for %s: %v", inst.Name, err)
 		clientConn.Close(4500, "Failed to start shell")

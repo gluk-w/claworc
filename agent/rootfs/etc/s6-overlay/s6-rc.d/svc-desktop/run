@@ -1,3 +1,0 @@
-#!/bin/bash
-export DISPLAY=:1 HOME=/home/claworc
-exec s6-setuidgid claworc dbus-launch --exit-with-session startxfce4
