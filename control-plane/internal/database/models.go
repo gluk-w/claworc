@@ -18,6 +18,7 @@ type Instance struct {
 	ContainerImage  string    `json:"container_image"`
 	VNCResolution   string    `json:"vnc_resolution"`
 	GatewayToken    string    `json:"-"`
+	ProxyToken      string    `json:"-"`
 	ModelsConfig    string    `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
 	DefaultModel    string    `gorm:"default:''" json:"-"`
 	SortOrder       int       `gorm:"not null;default:0" json:"sort_order"`

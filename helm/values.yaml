@@ -39,3 +39,24 @@ rbac:
 serviceAccount:
   create: true
   annotations: {}
+
+# LLM Proxy configuration
+proxy:
+  enabled: false
+  adminSecret: "changeme"
+  image:
+    repository: glukw/claworc-llm-proxy
+    tag: latest
+    pullPolicy: Always
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce

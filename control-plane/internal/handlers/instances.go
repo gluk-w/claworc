@@ -16,6 +16,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/crypto"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/llmproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/go-chi/chi/v5"
@@ -448,6 +449,18 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate proxy token if proxy is enabled
+	var proxyTokenPlain string
+	var encProxyToken string
+	if config.Cfg.ProxyEnabled {
+		proxyTokenPlain = generateToken()
+		encProxyToken, err = crypto.Encrypt(proxyTokenPlain)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to encrypt proxy token")
+			return
+		}
+	}
+
 	var containerImage string
 	if body.ContainerImage != nil {
 		containerImage = *body.ContainerImage
@@ -491,6 +504,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		ContainerImage:  containerImage,
 		VNCResolution:   vncResolution,
 		GatewayToken:    encGatewayToken,
+		ProxyToken:      encProxyToken,
 		ModelsConfig:    modelsConfigJSON,
 		DefaultModel:    body.DefaultModel,
 		SortOrder:       maxSortOrder + 1,
@@ -555,7 +569,18 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		// Push models and API keys to the instance (waits for container ready)
 		database.DB.First(&inst, inst.ID)
 		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
-		config.ConfigureInstance(ctx, orch, name, models, resolvedKeys)
+
+		// Register with proxy and sync keys if proxy is enabled
+		if config.Cfg.ProxyEnabled && proxyTokenPlain != "" {
+			if err := llmproxy.RegisterInstance(name, proxyTokenPlain); err != nil {
+				log.Printf("Failed to register %s with proxy: %v", name, err)
+			}
+			if err := llmproxy.SyncInstanceKeys(name, resolvedKeys); err != nil {
+				log.Printf("Failed to sync keys for %s to proxy: %v", name, err)
+			}
+		}
+
+		config.ConfigureInstanceWithProxy(ctx, orch, name, models, resolvedKeys, proxyTokenPlain)
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -687,7 +712,21 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	if orch != nil && orchStatus == "running" {
 		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
-		go config.ConfigureInstance(context.Background(), orch, inst.Name, models, resolvedKeys)
+
+		// Re-sync keys to proxy if enabled
+		if config.Cfg.ProxyEnabled {
+			go func() {
+				if err := llmproxy.SyncInstanceKeys(inst.Name, resolvedKeys); err != nil {
+					log.Printf("Failed to sync keys for %s to proxy: %v", inst.Name, err)
+				}
+			}()
+		}
+
+		proxyToken := ""
+		if inst.ProxyToken != "" {
+			proxyToken, _ = crypto.Decrypt(inst.ProxyToken)
+		}
+		go config.ConfigureInstanceWithProxy(context.Background(), orch, inst.Name, models, resolvedKeys, proxyToken)
 	}
 
 	status := resolveStatus(&inst, orchStatus)
@@ -710,6 +749,13 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 	if orch := orchestrator.Get(); orch != nil {
 		if err := orch.DeleteInstance(r.Context(), inst.Name); err != nil {
 			log.Printf("Failed to delete container resources for %s – proceeding with DB cleanup: %v", inst.Name, err)
+		}
+	}
+
+	// Revoke proxy token if proxy is enabled
+	if config.Cfg.ProxyEnabled {
+		if err := llmproxy.RevokeInstance(inst.Name); err != nil {
+			log.Printf("Failed to revoke proxy token for %s: %v", inst.Name, err)
 		}
 	}
 
@@ -744,6 +790,13 @@ func StartInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Re-enable proxy token when starting
+	if config.Cfg.ProxyEnabled {
+		if err := llmproxy.EnableInstance(inst.Name); err != nil {
+			log.Printf("Failed to enable proxy token for %s: %v", inst.Name, err)
+		}
+	}
+
 	database.DB.Model(&inst).Updates(map[string]interface{}{
 		"status":     "running",
 		"updated_at": time.Now().UTC(),
@@ -773,6 +826,13 @@ func StopInstance(w http.ResponseWriter, r *http.Request) {
 		if err := orch.StopInstance(r.Context(), inst.Name); err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to stop instance: %v", err))
 			return
+		}
+	}
+
+	// Disable proxy token when stopping
+	if config.Cfg.ProxyEnabled {
+		if err := llmproxy.DisableInstance(inst.Name); err != nil {
+			log.Printf("Failed to disable proxy token for %s: %v", inst.Name, err)
 		}
 	}
 
@@ -933,6 +993,18 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate proxy token for clone if proxy is enabled
+	var cloneProxyTokenPlain string
+	var encCloneProxyToken string
+	if config.Cfg.ProxyEnabled {
+		cloneProxyTokenPlain = generateToken()
+		encCloneProxyToken, err = crypto.Encrypt(cloneProxyTokenPlain)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to encrypt proxy token")
+			return
+		}
+	}
+
 	// Compute next sort_order
 	var maxSortOrder int
 	database.DB.Model(&database.Instance{}).Select("COALESCE(MAX(sort_order), 0)").Scan(&maxSortOrder)
@@ -952,6 +1024,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		ContainerImage:  src.ContainerImage,
 		VNCResolution:   src.VNCResolution,
 		GatewayToken:    encGatewayToken,
+		ProxyToken:      encCloneProxyToken,
 		ModelsConfig:    src.ModelsConfig,
 		DefaultModel:    src.DefaultModel,
 		SortOrder:       maxSortOrder + 1,
@@ -1025,7 +1098,18 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		// Re-fetch to get latest state
 		database.DB.First(&inst, inst.ID)
 		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
-		config.ConfigureInstance(ctx, orch, cloneName, models, resolvedKeys)
+
+		// Register clone with proxy if enabled
+		if config.Cfg.ProxyEnabled && cloneProxyTokenPlain != "" {
+			if err := llmproxy.RegisterInstance(cloneName, cloneProxyTokenPlain); err != nil {
+				log.Printf("Failed to register clone %s with proxy: %v", cloneName, err)
+			}
+			if err := llmproxy.SyncInstanceKeys(cloneName, resolvedKeys); err != nil {
+				log.Printf("Failed to sync keys for clone %s to proxy: %v", cloneName, err)
+			}
+		}
+
+		config.ConfigureInstanceWithProxy(ctx, orch, cloneName, models, resolvedKeys, cloneProxyTokenPlain)
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))

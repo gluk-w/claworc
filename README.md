@@ -33,8 +33,9 @@ and automatically restarted if they crash.
 - **Watch the browser** — see what the agent is doing in Chrome in real time, or take control yourself
 - **Manage files** — browse and manage the files in each instance's workspace
 - **View logs** — stream live logs to monitor what's happening inside an instance
-- **Configure models and API keys** — set global defaults so you don't have to re-enter API keys for every instance, or 
+- **Configure models and API keys** — set global defaults so you don't have to re-enter API keys for every instance, or
   override them per instance with different models and keys
+- **Track usage and costs** — monitor token usage, LLM costs, and set budget limits with the built-in LLM proxy (optional)
 
 ## Access Control
 
@@ -56,15 +57,27 @@ for instance access. [Read more](docs/install.md)
 ## Documentation
 
 - [Installation](docs/install.md) - Runs on Docker or Kubernetes
+- [LLM Proxy](docs/llm-proxy.md) - Usage tracking, budget caps, and secure key management
 - [Features](docs/features.md) - Feature specifications and user workflows
 - [Architecture](docs/architecture.md) - System architecture and design decisions
 - [API](docs/api.md) - REST API endpoints and request/response formats
 - [Data Model](docs/data-model.md) - Database schema and Kubernetes resource model
 - [UI](docs/ui.md) - Frontend pages, components, and interaction patterns
 
+## LLM Proxy (Optional)
+
+Claworc includes an optional LLM proxy service that adds:
+
+- **Secure key management** — API keys never leave the proxy; instances get per-instance tokens
+- **Usage tracking** — monitor token consumption, costs, and LLM provider usage across all instances
+- **Budget enforcement** — set spending limits (daily/monthly) with hard caps that block requests when exceeded
+- **Rate limiting** — protect against runaway costs with requests-per-minute and tokens-per-minute limits
+- **Instant revocation** — disable instance access immediately without rotating keys
+
+Supports 15 providers: Anthropic, OpenAI, Google Gemini, Mistral, Groq, DeepSeek, xAI, Cohere, Together, Fireworks, Cerebras, Perplexity, OpenRouter, Ollama, llama.cpp. [Read more](docs/llm-proxy.md)
+
 ## Coming Soon
 
-- API token usage monitoring
 - Skills management
 
 ## Open Source

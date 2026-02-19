@@ -17,3 +17,33 @@ spec:
       ports:
         - port: 6081
         - port: 18789
+---
+{{- if .Values.proxy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-proxy-access
+  namespace: {{ .Values.config.k8sNamespace }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "claworc.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: proxy
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow agent pods to reach the proxy
+    - from:
+        - podSelector:
+            matchLabels:
+              managed-by: claworc
+      ports:
+        - port: 8080
+    # Allow control plane to reach the proxy
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "claworc.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: 8080
+{{- end }}

@@ -6,6 +6,7 @@ import {
   Users,
   LogOut,
   User,
+  BarChart3,
 } from "lucide-react";
 import { useHealth } from "@/hooks/useHealth";
 import { useAuth } from "@/contexts/AuthContext";
@@ -88,6 +89,12 @@ export default function Sidebar() {
         </Link>
         {isAdmin && (
           <>
+            <Link to="/usage" className={navLinkClass("/usage")}>
+              <BarChart3 size={18} className="shrink-0" />
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
+                Usage
+              </span>
+            </Link>
             <Link to="/settings" className={navLinkClass("/settings")}>
               <Settings size={18} className="shrink-0" />
               <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
