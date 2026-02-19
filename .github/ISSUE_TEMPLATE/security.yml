@@ -1,0 +1,47 @@
+name: Security Issue
+description: Report a security vulnerability or concern
+labels: ["C-Security", "S-Needs-Triage", "P-High"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **If this is a critical vulnerability (auth bypass, data exposure, remote code execution), please report it privately via [GitHub Security Advisories](../../security/advisories/new) instead of opening a public issue.**
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What is the security concern?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      description: What type of security issue is this?
+      options:
+        - Authentication / Authorization bypass
+        - API key / Secret exposure
+        - Encryption weakness
+        - Container escape / Isolation
+        - Input validation / Injection
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: What could an attacker do by exploiting this?
+    validations:
+      required: false
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: How can this be triggered?
+    validations:
+      required: false

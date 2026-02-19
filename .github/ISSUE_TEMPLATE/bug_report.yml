@@ -1,0 +1,88 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["C-Bug", "S-Needs-Triage"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: When I try to X, Y happens instead of Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to reproduce the behavior.
+      placeholder: |
+        1. Create a new instance
+        2. Click "Open Browser"
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the system is affected?
+      multiple: true
+      options:
+        - Agent (container image, systemd, Chrome)
+        - API (REST endpoints, SSE)
+        - Auth (login, sessions, passkeys, RBAC)
+        - Config (settings, openclaw.json, models, API keys)
+        - Dashboard (React frontend, UI)
+        - Deployment (Helm, Docker Compose, installer)
+        - File Manager (browse, read, upload, download)
+        - Logs (SSE log streaming)
+        - Orchestrator (instance lifecycle, volumes)
+        - Proxy (VNC, terminal, chat, WebSocket)
+        - Other / Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: What orchestrator backend and host OS?
+      multiple: true
+      options:
+        - Kubernetes
+        - Docker / Docker Compose
+        - Linux
+        - macOS (Docker Desktop)
+        - Windows (Docker Desktop)
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      description: |
+        Paste logs from `docker logs claworc` or the instance log viewer.
+        Drag and drop screenshots here.
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Docker image tag, Helm chart version, or git commit hash.
+      placeholder: "latest / v0.1.0 / abc1234"
+    validations:
+      required: false
