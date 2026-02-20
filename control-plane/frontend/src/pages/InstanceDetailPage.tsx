@@ -117,7 +117,7 @@ export default function InstanceDetailPage() {
     navigate(`#${tab}`, { replace: true });
   };
 
-  const [chatOpen, setChatOpen] = useState(false);
+  const [chatOpen, _setChatOpen] = useState(false);
   const chatInitSentRef = useRef(false);
 
   // Log type state for filtering between runtime and creation logs
@@ -290,7 +290,9 @@ export default function InstanceDetailPage() {
         <ActionButtons
           instance={instance}
           onStart={(id) => startMutation.mutate(id)}
-          onStop={(id) => stopMutation.mutate(id)}
+          onStop={(id) =>
+            stopMutation.mutate({ id, displayName: instance.display_name })
+          }
           onRestart={(id) =>
             restartMutation.mutate({ id, displayName: instance.display_name })
           }
