@@ -196,6 +196,47 @@ describe("LogViewer", () => {
     expect(infoIconAfter).not.toBeInTheDocument();
   });
 
+  // --- Docker-specific log rendering ---
+
+  it("renders Docker creation event messages correctly", () => {
+    const dockerLogs = [
+      "Waiting for container creation...",
+      "Container status: created",
+      "Container status: running",
+      "Health: starting",
+      "Health: healthy",
+      "Starting services...",
+      "Container is running and healthy",
+    ];
+    render(
+      <LogViewer {...defaultProps} logType="creation" logs={dockerLogs} />,
+    );
+    expect(
+      screen.getByText("Waiting for container creation..."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Container status: created")).toBeInTheDocument();
+    expect(screen.getByText("Health: healthy")).toBeInTheDocument();
+    expect(
+      screen.getByText("Container is running and healthy"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders Docker error and timeout messages correctly", () => {
+    const dockerLogs = [
+      "Error inspecting container: connection refused",
+      "Timed out waiting for container to become ready",
+    ];
+    render(
+      <LogViewer {...defaultProps} logType="creation" logs={dockerLogs} />,
+    );
+    expect(
+      screen.getByText("Error inspecting container: connection refused"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Timed out waiting for container to become ready"),
+    ).toBeInTheDocument();
+  });
+
   // --- Auto-scroll behavior ---
 
   it("has a bottom ref div for auto-scroll anchoring", () => {

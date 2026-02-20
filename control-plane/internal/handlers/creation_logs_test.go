@@ -848,6 +848,399 @@ func TestStreamCreationLogs_AdditionalStatuses(t *testing.T) {
 	}
 }
 
+// --- Docker-specific E2E verification tests ---
+// These tests verify that Docker creation log event patterns flow correctly
+// through the SSE handler, matching the DockerOrchestrator.StreamCreationLogs output.
+
+// TestStreamCreationLogs_DockerFullLifecycle simulates a complete Docker container
+// creation lifecycle: container not found → created → running → health starting → healthy + logs.
+func TestStreamCreationLogs_DockerFullLifecycle(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-docker-lifecycle")
+	createTestAdmin(t)
+
+	ch := make(chan string, 20)
+	ch <- "Waiting for container creation..."
+	ch <- "Container status: created"
+	ch <- "Container status: running"
+	ch <- "Health: starting"
+	ch <- "Health: healthy"
+	ch <- "systemd[1]: Started OpenClaw Agent Service"
+	ch <- "clawd[42]: Listening on port 8080"
+	ch <- "Container is running and healthy"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+
+	expected := []string{
+		"Waiting for container creation...",
+		"Container status: created",
+		"Container status: running",
+		"Health: starting",
+		"Health: healthy",
+		"systemd[1]: Started OpenClaw Agent Service",
+		"clawd[42]: Listening on port 8080",
+		"Container is running and healthy",
+	}
+	if len(lines) != len(expected) {
+		t.Fatalf("expected %d events, got %d: %v", len(expected), len(lines), lines)
+	}
+	for i, exp := range expected {
+		if lines[i] != exp {
+			t.Errorf("event %d: expected %q, got %q", i, exp, lines[i])
+		}
+	}
+}
+
+// TestStreamCreationLogs_DockerContainerNotFound simulates the scenario where the
+// Docker container hasn't been created yet (container not found polling).
+func TestStreamCreationLogs_DockerContainerNotFound(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-docker-notfound")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Waiting for container creation..."
+	ch <- "Waiting for container creation..."
+	ch <- "Container status: created"
+	ch <- "Container status: running"
+	ch <- "Container is running and healthy"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 events, got %d: %v", len(lines), lines)
+	}
+	// Both "Waiting for container creation..." messages should come through
+	if lines[0] != "Waiting for container creation..." {
+		t.Errorf("event 0: expected waiting message, got %q", lines[0])
+	}
+	if lines[4] != "Container is running and healthy" {
+		t.Errorf("event 4: expected healthy message, got %q", lines[4])
+	}
+}
+
+// TestStreamCreationLogs_DockerInspectError simulates errors from Docker
+// ContainerInspect (e.g., daemon connectivity issues).
+func TestStreamCreationLogs_DockerInspectError(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-docker-inspect-err")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Waiting for container creation..."
+	ch <- "Error inspecting container: connection refused"
+	ch <- "Container status: created"
+	ch <- "Container status: running"
+	ch <- "Container is running and healthy"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 events, got %d: %v", len(lines), lines)
+	}
+	if !strings.Contains(lines[1], "Error inspecting container") {
+		t.Errorf("event 1: expected inspect error, got %q", lines[1])
+	}
+}
+
+// TestStreamCreationLogs_DockerTimeout simulates a Docker container that fails
+// to become healthy within the timeout period.
+func TestStreamCreationLogs_DockerTimeout(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-docker-timeout")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Waiting for container creation..."
+	ch <- "Container status: created"
+	ch <- "Container status: running"
+	ch <- "Health: starting"
+	ch <- "Timed out waiting for container to become ready"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 events, got %d: %v", len(lines), lines)
+	}
+	if lines[4] != "Timed out waiting for container to become ready" {
+		t.Errorf("expected timeout message, got %q", lines[4])
+	}
+}
+
+// TestStreamCreationLogs_DockerHealthFailure simulates a container that starts
+// but health checks report unhealthy status.
+func TestStreamCreationLogs_DockerHealthFailure(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-docker-unhealthy")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Container status: created"
+	ch <- "Container status: running"
+	ch <- "Health: starting"
+	ch <- "Health: unhealthy"
+	ch <- "Timed out waiting for container to become ready"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 events, got %d: %v", len(lines), lines)
+	}
+	if lines[3] != "Health: unhealthy" {
+		t.Errorf("event 3: expected unhealthy status, got %q", lines[3])
+	}
+}
+
+// TestStreamCreationLogs_DockerFastStartup simulates a Docker container that
+// starts almost instantly (no waiting phase, immediate health).
+func TestStreamCreationLogs_DockerFastStartup(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-docker-fast")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Container status: running"
+	ch <- "Health: healthy"
+	ch <- "Container is running and healthy"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 events for fast Docker startup, got %d: %v", len(lines), lines)
+	}
+	if lines[0] != "Container status: running" {
+		t.Errorf("event 0: expected running status, got %q", lines[0])
+	}
+	if lines[2] != "Container is running and healthy" {
+		t.Errorf("event 2: expected healthy message, got %q", lines[2])
+	}
+}
+
+// TestStreamCreationLogs_DockerWithContainerLogs simulates Docker creation logs
+// that include container stdout/stderr lines (stripped of Docker mux headers).
+func TestStreamCreationLogs_DockerWithContainerLogs(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-docker-logs")
+	createTestAdmin(t)
+
+	ch := make(chan string, 20)
+	ch <- "Container status: created"
+	ch <- "Container status: running"
+	ch <- "Health: starting"
+	ch <- "Health: healthy"
+	// These simulate container stdout lines after Docker log header stripping
+	ch <- "Starting services..."
+	ch <- "VNC server started on display :1"
+	ch <- "noVNC listening on port 6080"
+	ch <- "Chrome remote debugging on port 9222"
+	ch <- "OpenClaw agent ready"
+	ch <- "Container is running and healthy"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 10 {
+		t.Fatalf("expected 10 events, got %d: %v", len(lines), lines)
+	}
+	// Verify container logs are interleaved correctly
+	if lines[4] != "Starting services..." {
+		t.Errorf("event 4: expected container log, got %q", lines[4])
+	}
+	if lines[8] != "OpenClaw agent ready" {
+		t.Errorf("event 8: expected container log, got %q", lines[8])
+	}
+}
+
+// TestStreamCreationLogs_DockerMultipleInstances verifies that multiple Docker
+// instances stream independent creation events without cross-contamination.
+func TestStreamCreationLogs_DockerMultipleInstances(t *testing.T) {
+	setupTestDB(t)
+	inst1 := createTestInstance(t, "bot-docker-1")
+	inst2 := createTestInstance(t, "bot-docker-2")
+	createTestAdmin(t)
+
+	ch1 := make(chan string, 10)
+	ch2 := make(chan string, 10)
+
+	mock := &concurrentMockOrchestrator{
+		channels: map[string]chan string{
+			"bot-docker-1": ch1,
+			"bot-docker-2": ch2,
+		},
+	}
+	orchestrator.SetForTest(mock)
+
+	// Docker instance 1: fast startup
+	ch1 <- "Container status: running"
+	ch1 <- "Health: healthy"
+	ch1 <- "Container is running and healthy"
+	close(ch1)
+
+	// Docker instance 2: slow with health retries
+	ch2 <- "Waiting for container creation..."
+	ch2 <- "Container status: created"
+	ch2 <- "Container status: running"
+	ch2 <- "Health: starting"
+	ch2 <- "Health: starting"
+	ch2 <- "Health: healthy"
+	ch2 <- "Container is running and healthy"
+	close(ch2)
+
+	router := newRouter()
+
+	// Stream instance 1
+	req1 := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst1.ID), nil)
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+
+	body1, _ := io.ReadAll(w1.Result().Body)
+	lines1 := parseSSEData(string(body1))
+	if len(lines1) != 3 {
+		t.Fatalf("instance 1: expected 3 events, got %d: %v", len(lines1), lines1)
+	}
+	for _, line := range lines1 {
+		if strings.Contains(line, "Waiting for") || strings.Contains(line, "created") {
+			t.Errorf("instance 1: unexpected slow-path event leaked: %q", line)
+		}
+	}
+
+	// Stream instance 2
+	req2 := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst2.ID), nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+
+	body2, _ := io.ReadAll(w2.Result().Body)
+	lines2 := parseSSEData(string(body2))
+	if len(lines2) != 7 {
+		t.Fatalf("instance 2: expected 7 events, got %d: %v", len(lines2), lines2)
+	}
+	if lines2[0] != "Waiting for container creation..." {
+		t.Errorf("instance 2 event 0: expected waiting msg, got %q", lines2[0])
+	}
+}
+
 // concurrentMockOrchestrator routes StreamCreationLogs to per-instance channels.
 type concurrentMockOrchestrator struct {
 	mockOrchestrator

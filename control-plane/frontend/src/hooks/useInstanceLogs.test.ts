@@ -275,6 +275,71 @@ describe("useInstanceLogs", () => {
     expect(latest.url).toBe("/api/v1/instances/2/creation-logs");
   });
 
+  // --- Docker-specific message patterns ---
+
+  it("appends Docker creation events (container status, health, logs)", () => {
+    const { result } = renderHook(() => useInstanceLogs(42, true, "creation"));
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateMessage("Waiting for container creation...");
+      es.simulateMessage("Container status: created");
+      es.simulateMessage("Container status: running");
+      es.simulateMessage("Health: starting");
+      es.simulateMessage("Health: healthy");
+      es.simulateMessage("Starting services...");
+      es.simulateMessage("Container is running and healthy");
+    });
+
+    expect(result.current.logs).toHaveLength(7);
+    expect(result.current.logs[0]).toBe("Waiting for container creation...");
+    expect(result.current.logs[1]).toBe("Container status: created");
+    expect(result.current.logs[4]).toBe("Health: healthy");
+    expect(result.current.logs[6]).toBe("Container is running and healthy");
+  });
+
+  it("handles Docker error events (inspect errors, timeouts)", () => {
+    const { result } = renderHook(() => useInstanceLogs(42, true, "creation"));
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateMessage("Waiting for container creation...");
+      es.simulateMessage("Error inspecting container: connection refused");
+      es.simulateMessage("Container status: running");
+      es.simulateMessage("Timed out waiting for container to become ready");
+    });
+
+    expect(result.current.logs).toHaveLength(4);
+    expect(result.current.logs[1]).toBe(
+      "Error inspecting container: connection refused",
+    );
+    expect(result.current.logs[3]).toBe(
+      "Timed out waiting for container to become ready",
+    );
+  });
+
+  it("clears Docker creation events when switching to runtime", () => {
+    const { result, rerender } = renderHook(
+      ({ logType }) => useInstanceLogs(42, true, logType),
+      { initialProps: { logType: "creation" as const } },
+    );
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateMessage("Container status: created");
+      es.simulateMessage("Container status: running");
+      es.simulateMessage("Health: healthy");
+      es.simulateMessage("Container is running and healthy");
+    });
+    expect(result.current.logs).toHaveLength(4);
+
+    rerender({ logType: "runtime" as const });
+    expect(result.current.logs).toHaveLength(0);
+  });
+
   // --- Concurrent instances ---
 
   it("supports independent log streams for different instance IDs", () => {
