@@ -67,6 +67,7 @@ type CreateParams struct {
 	ContainerImage  string
 	VNCResolution   string
 	EnvVars         map[string]string
+	ImagePullSecret string
 }
 
 type FileEntry struct {
