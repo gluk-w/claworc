@@ -41,3 +41,9 @@ rbac:
 serviceAccount:
   create: true
   annotations: {}
+
+nodeSelector: {}
+
+affinity: {}
+
+tolerations: []
