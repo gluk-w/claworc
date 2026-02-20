@@ -18,6 +18,8 @@ type Instance struct {
 	ContainerImage  string    `json:"container_image"`
 	VNCResolution   string    `json:"vnc_resolution"`
 	GatewayToken    string    `json:"-"`
+	AgentCert       string    `json:"-"` // PEM-encoded agent certificate (public)
+	AgentCertKey    string    `json:"-"` // PEM-encoded agent private key (Fernet-encrypted)
 	ModelsConfig    string    `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
 	DefaultModel    string    `gorm:"default:''" json:"-"`
 	SortOrder       int       `gorm:"not null;default:0" json:"sort_order"`
