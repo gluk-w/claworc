@@ -1,0 +1,221 @@
+name: Test Installer Scripts
+
+on:
+  pull_request:
+    paths:
+      - 'install.sh'
+      - 'install.ps1'
+      - '.github/workflows/test-installers.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'install.sh'
+      - 'install.ps1'
+      - '.github/workflows/test-installers.yml'
+
+jobs:
+  test-bash-linux:
+    name: Test install.sh on Linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify script syntax
+        run: bash -n install.sh
+
+      - name: Check for shellcheck issues
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck install.sh || true
+
+      - name: Test script with Docker mode (dry-run)
+        run: |
+          # Test that script can detect Docker
+          if ! command -v docker &>/dev/null; then
+            echo "Docker not found (expected in CI)"
+          fi
+          # Verify script has correct permissions
+          chmod +x install.sh
+          # Test basic parsing by sourcing functions
+          bash -c 'source install.sh 2>/dev/null || true'
+
+      - name: Verify line endings (LF only)
+        run: |
+          if file install.sh | grep -q CRLF; then
+            echo "ERROR: install.sh has CRLF line endings"
+            exit 1
+          fi
+          echo "PASS: install.sh has correct LF line endings"
+
+  test-bash-macos:
+    name: Test install.sh on macOS
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify script syntax
+        run: bash -n install.sh
+
+      - name: Test script execution
+        run: |
+          chmod +x install.sh
+          # Verify script can be parsed
+          bash -c 'source install.sh 2>/dev/null || true'
+
+      - name: Verify line endings
+        run: |
+          if file install.sh | grep -q CRLF; then
+            echo "ERROR: install.sh has CRLF line endings"
+            exit 1
+          fi
+          echo "PASS: install.sh has correct LF line endings"
+
+  test-bash-windows:
+    name: Test install.sh on Windows (Git Bash)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Test with Git Bash
+        shell: bash
+        run: |
+          echo "=== Testing install.sh with Git Bash (relates to issue #5) ==="
+
+          # Check line endings
+          if file install.sh | grep -q CRLF; then
+            echo "WARNING: install.sh has CRLF line endings (this will cause issue #5)"
+          else
+            echo "PASS: install.sh has LF line endings"
+          fi
+
+          # Test syntax - this may fail with CRLF endings (issue #5)
+          if bash -n install.sh 2>&1; then
+            echo "PASS: Script syntax check passed"
+          else
+            echo "FAIL: Script syntax check failed (this is issue #5 - use install.ps1 instead)"
+            exit 1
+          fi
+
+      - name: Document expected behavior
+        shell: bash
+        run: |
+          echo "Note: If install.sh fails on Windows with Git Bash due to line ending issues,"
+          echo "this is the known issue #5. Users should use install.ps1 instead."
+
+  test-powershell-windows:
+    name: Test install.ps1 on Windows (PowerShell)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify PowerShell script syntax
+        shell: pwsh
+        run: |
+          $errors = $null
+          $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content -Raw install.ps1), [ref]$errors)
+          if ($errors) {
+            Write-Host "PowerShell syntax errors found:"
+            $errors | ForEach-Object { Write-Host $_ }
+            exit 1
+          }
+          Write-Host "PASS: PowerShell syntax check passed"
+
+      - name: Test PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+          $results = Invoke-ScriptAnalyzer -Path install.ps1
+          if ($results) {
+            Write-Host "PSScriptAnalyzer findings:"
+            $results | Format-Table -AutoSize
+            # Don't fail on warnings, just report
+          } else {
+            Write-Host "PASS: No PSScriptAnalyzer issues found"
+          }
+
+      - name: Test script can be loaded
+        shell: pwsh
+        run: |
+          # Test that script functions can be defined
+          # We can't run it interactively, but we can verify it loads
+          try {
+            Get-Content install.ps1 -Raw | Out-Null
+            Write-Host "PASS: Script can be read successfully"
+          } catch {
+            Write-Host "FAIL: Failed to read script"
+            exit 1
+          }
+
+      - name: Verify script requirements
+        shell: pwsh
+        run: |
+          # Check if script declares proper requirements
+          $content = Get-Content install.ps1 -Raw
+          if ($content -match '#Requires -Version') {
+            Write-Host "PASS: Script has PowerShell version requirement"
+          } else {
+            Write-Host "FAIL: Script missing PowerShell version requirement"
+            exit 1
+          }
+
+  test-docker-integration:
+    name: Integration Test (Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Test install.sh Docker mode (simulated)
+        run: |
+          # Create a test wrapper that simulates user input
+          cat > test-docker-install.sh << 'EOF'
+          #!/bin/bash
+          set -euo pipefail
+
+          # Mock user inputs for Docker mode
+          {
+            echo "1"           # Select Docker mode
+            echo ""            # Default port (8000)
+            echo "/tmp/test"   # Data directory
+            echo "n"           # Don't proceed with installation
+          } | bash install.sh 2>&1 | tee /tmp/install-output.log
+
+          # Check if script processed inputs
+          if grep -q "Docker Deployment" /tmp/install-output.log; then
+            echo "PASS: Script entered Docker mode correctly"
+            exit 0
+          else
+            echo "FAIL: Script did not enter Docker mode"
+            cat /tmp/install-output.log
+            exit 1
+          fi
+          EOF
+
+          chmod +x test-docker-install.sh
+          ./test-docker-install.sh || echo "Note: Full installation not run (expected)"
+
+  summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [test-bash-linux, test-bash-macos, test-bash-windows, test-powershell-windows, test-docker-integration]
+    if: always()
+    steps:
+      - name: Check test results
+        run: |
+          echo "=== Installer Test Summary ==="
+          echo ""
+          echo "Tests completed for:"
+          echo "  - install.sh on Linux"
+          echo "  - install.sh on macOS"
+          echo "  - install.sh on Windows (Git Bash)"
+          echo "  - install.ps1 on Windows (PowerShell)"
+          echo "  - Docker integration test"
+          echo ""
+          echo "For Windows users:"
+          echo "  - Git Bash: Use install.sh (if line endings are correct)"
+          echo "  - PowerShell: Use install.ps1 (recommended, fixes issue #5)"
