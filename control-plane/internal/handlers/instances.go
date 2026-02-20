@@ -892,13 +892,13 @@ func GetInstanceConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := orch.ReadFile(r.Context(), inst.Name, orchestrator.PathOpenClawConfig)
-	if err != nil {
+	stdout, _, code, err := orch.ExecInInstance(r.Context(), inst.Name, []string{"cat", orchestrator.PathOpenClawConfig})
+	if err != nil || code != 0 {
 		writeError(w, http.StatusServiceUnavailable, "Instance must be running to read config")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"config": string(content)})
+	writeJSON(w, http.StatusOK, map[string]string{"config": stdout})
 }
 
 func UpdateInstanceConfig(w http.ResponseWriter, r *http.Request) {
