@@ -576,6 +576,20 @@ func (d *DockerOrchestrator) GetGatewayWSURL(ctx context.Context, name string) (
 	return "", fmt.Errorf("cannot determine container IP for %s", name)
 }
 
+func (d *DockerOrchestrator) GetAgentTunnelAddr(ctx context.Context, name string) (string, error) {
+	inspect, err := d.client.ContainerInspect(ctx, name)
+	if err != nil {
+		return "", fmt.Errorf("inspect container: %w", err)
+	}
+
+	for _, net := range inspect.NetworkSettings.Networks {
+		if net.IPAddress != "" {
+			return fmt.Sprintf("%s:3001", net.IPAddress), nil
+		}
+	}
+	return "", fmt.Errorf("cannot determine container IP for %s", name)
+}
+
 func (d *DockerOrchestrator) GetHTTPTransport() http.RoundTripper {
 	return nil
 }

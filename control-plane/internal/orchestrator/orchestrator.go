@@ -40,6 +40,7 @@ type ContainerOrchestrator interface {
 
 	// URLs
 	GetGatewayWSURL(ctx context.Context, name string) (string, error)
+	GetAgentTunnelAddr(ctx context.Context, name string) (string, error)
 
 	// GetHTTPTransport returns a custom transport for reaching service URLs,
 	// or nil if the default transport is sufficient (e.g. in-cluster).

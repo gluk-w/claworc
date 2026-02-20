@@ -520,6 +520,18 @@ func (k *KubernetesOrchestrator) GetGatewayWSURL(_ context.Context, name string)
 	return fmt.Sprintf("ws://%s-vnc.%s.svc.cluster.local:3000/gateway", name, k.ns()), nil
 }
 
+func (k *KubernetesOrchestrator) GetAgentTunnelAddr(_ context.Context, name string) (string, error) {
+	if !k.inCluster {
+		// Out-of-cluster: use the K8s API server proxy to reach the service.
+		// The caller (tunnel client) dials via WSS, so we return the API server
+		// host + service proxy path. The tunnel client should use GetHTTPTransport
+		// for the authed transport.
+		host := strings.TrimRight(k.restConfig.Host, "/")
+		return fmt.Sprintf("%s/api/v1/namespaces/%s/services/%s-vnc:3001/proxy", host, k.ns(), name), nil
+	}
+	return fmt.Sprintf("%s-vnc.%s.svc.cluster.local:3001", name, k.ns()), nil
+}
+
 func (k *KubernetesOrchestrator) GetHTTPTransport() http.RoundTripper {
 	if !k.inCluster {
 		transport, err := rest.TransportFor(k.restConfig)
@@ -681,6 +693,7 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 						SecurityContext: &corev1.SecurityContext{Privileged: &privileged},
 						Ports: []corev1.ContainerPort{
 							{Name: "http", ContainerPort: 3000},
+							{Name: "tunnel", ContainerPort: 3001},
 						},
 						Env: envVars,
 						Resources: corev1.ResourceRequirements{
@@ -735,6 +748,7 @@ func buildService(name, ns string) *corev1.Service {
 			Selector: map[string]string{"app": name},
 			Ports: []corev1.ServicePort{
 				{Name: "http", Port: 3000, TargetPort: intstr.FromInt32(3000), Protocol: corev1.ProtocolTCP},
+				{Name: "tunnel", Port: 3001, TargetPort: intstr.FromInt32(3001), Protocol: corev1.ProtocolTCP},
 			},
 		},
 	}
