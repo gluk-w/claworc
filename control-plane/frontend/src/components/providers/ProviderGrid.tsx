@@ -1,9 +1,10 @@
-import { useState, useMemo } from "react";
-import { KeyRound } from "lucide-react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { KeyRound, Check } from "lucide-react";
 import type { Settings } from "@/types/settings";
 import { PROVIDERS } from "./providerData";
 import type { Provider, ProviderCategory } from "./providerData";
 import ProviderCard from "./ProviderCard";
+import type { CardAnimationState } from "./ProviderCard";
 import ProviderCardSkeleton from "./ProviderCardSkeleton";
 import ProviderConfigModal from "./ProviderConfigModal";
 
@@ -43,6 +44,33 @@ export default function ProviderGrid({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [pendingChanges, setPendingChanges] = useState<Record<string, PendingChange>>({});
   const [pendingDeletes, setPendingDeletes] = useState<string[]>([]);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [cardAnimations, setCardAnimations] = useState<Record<string, CardAnimationState>>({});
+  const animationTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const saveSuccessTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Schedule clearing an animation state after its duration */
+  const scheduleAnimationClear = useCallback((envVar: string, delayMs: number) => {
+    const existing = animationTimers.current.get(envVar);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      setCardAnimations((prev) => {
+        const next = { ...prev };
+        delete next[envVar];
+        return next;
+      });
+      animationTimers.current.delete(envVar);
+    }, delayMs);
+    animationTimers.current.set(envVar, timer);
+  }, []);
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      animationTimers.current.forEach((t) => clearTimeout(t));
+      if (saveSuccessTimer.current) clearTimeout(saveSuccessTimer.current);
+    };
+  }, []);
 
   /** Check whether a provider has a key configured (server or pending) */
   const isConfigured = (provider: Provider): boolean => {
@@ -92,12 +120,16 @@ export default function ProviderGrid({
     const envVar = selectedProvider.envVarName;
     setPendingChanges((prev) => ({ ...prev, [envVar]: { apiKey, baseUrl } }));
     setPendingDeletes((prev) => prev.filter((k) => k !== envVar));
+    setCardAnimations((prev) => ({ ...prev, [envVar]: "added" }));
+    scheduleAnimationClear(envVar, 200);
     setIsModalOpen(false);
     setSelectedProvider(null);
   };
 
   const handleDelete = (provider: Provider) => {
     const envVar = provider.envVarName;
+    setCardAnimations((prev) => ({ ...prev, [envVar]: "deleted" }));
+    scheduleAnimationClear(envVar, 400);
     setPendingDeletes((prev) =>
       prev.includes(envVar) ? prev : [...prev, envVar],
     );
@@ -135,6 +167,12 @@ export default function ProviderGrid({
       .then(() => {
         setPendingChanges({});
         setPendingDeletes([]);
+        setSaveSuccess(true);
+        if (saveSuccessTimer.current) clearTimeout(saveSuccessTimer.current);
+        saveSuccessTimer.current = setTimeout(() => {
+          setSaveSuccess(false);
+          saveSuccessTimer.current = null;
+        }, 1500);
       })
       .catch(() => {
         // Error handling is managed by the parent (e.g. LLMProvidersTab)
@@ -204,6 +242,7 @@ export default function ProviderGrid({
                   maskedKey={getMaskedKey(provider)}
                   onConfigure={() => handleConfigure(provider)}
                   onDelete={() => handleDelete(provider)}
+                  animationState={cardAnimations[provider.envVarName] ?? "idle"}
                 />
               ))}
             </div>
@@ -211,14 +250,28 @@ export default function ProviderGrid({
         );
       })}
 
-      {hasChanges && (
+      {(hasChanges || saveSuccess) && (
         <div className="flex justify-end pt-4 border-t border-gray-200">
           <button
             onClick={handleSaveChanges}
-            disabled={isSaving}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
+            disabled={isSaving || saveSuccess}
+            data-testid="save-changes-button"
+            className={`px-4 py-2 text-sm font-medium text-white rounded-md transition-all duration-200 ease-in-out disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+              saveSuccess
+                ? "bg-green-600"
+                : "bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+            }`}
           >
-            {isSaving ? "Saving..." : "Save Changes"}
+            {isSaving ? (
+              "Saving..."
+            ) : saveSuccess ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Check size={16} data-testid="save-success-icon" />
+                Saved!
+              </span>
+            ) : (
+              "Save Changes"
+            )}
           </button>
         </div>
       )}

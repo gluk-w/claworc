@@ -1,12 +1,15 @@
 import { ExternalLink, Trash2, Check } from "lucide-react";
 import type { Provider } from "./providerData";
 
+export type CardAnimationState = "idle" | "added" | "deleted";
+
 interface ProviderCardProps {
   provider: Provider;
   isConfigured: boolean;
   maskedKey: string | null;
   onConfigure: () => void;
   onDelete: () => void;
+  animationState?: CardAnimationState;
 }
 
 export default function ProviderCard({
@@ -15,6 +18,7 @@ export default function ProviderCard({
   maskedKey,
   onConfigure,
   onDelete,
+  animationState = "idle",
 }: ProviderCardProps) {
   const handleCardKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {
@@ -31,10 +35,16 @@ export default function ProviderCard({
       tabIndex={0}
       aria-label={`${provider.name} provider${isConfigured ? " (configured)" : ""}`}
       onKeyDown={handleCardKeyDown}
-      className={`relative bg-white rounded-lg border p-4 flex flex-col gap-3 transition-all duration-200 hover:shadow-md hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+      className={`relative bg-white rounded-lg border p-4 flex flex-col gap-3 transition-all duration-200 ease-in-out hover:shadow-md hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
         isConfigured
           ? "border-green-500 bg-green-50/30"
           : "border-gray-200"
+      } ${
+        animationState === "added"
+          ? "animate-provider-fade-in"
+          : animationState === "deleted"
+            ? "animate-provider-fade-out"
+            : ""
       }`}
     >
       {/* Configured badge – top-right corner */}
