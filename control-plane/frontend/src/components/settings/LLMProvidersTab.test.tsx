@@ -15,6 +15,7 @@ vi.mock("@/api/settings", () => ({
   fetchSettings: vi.fn(),
   updateSettings: (...args: unknown[]) =>
     mockUpdateSettings(...(args as [SettingsUpdatePayload])),
+  fetchProviderAnalytics: vi.fn().mockResolvedValue({ providers: {}, period_days: 7, since: "2026-02-13T00:00:00Z" }),
 }));
 
 vi.mock("react-hot-toast", () => ({

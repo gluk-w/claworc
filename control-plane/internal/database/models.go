@@ -65,3 +65,14 @@ type WebAuthnCredential struct {
 	AAGUID          []byte    `json:"-"`
 	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
 }
+
+// ProviderTelemetry tracks API call metrics per provider for usage analytics.
+type ProviderTelemetry struct {
+	ID         uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Provider   string    `gorm:"not null;index:idx_provider_timestamp" json:"provider"`
+	StatusCode int       `gorm:"not null" json:"status_code"`
+	Latency    int64     `gorm:"not null" json:"latency"` // milliseconds
+	IsError    bool      `gorm:"not null;default:false" json:"is_error"`
+	ErrorMsg   string    `json:"error_msg,omitempty"`
+	CreatedAt  time.Time `gorm:"autoCreateTime;index:idx_provider_timestamp" json:"created_at"`
+}

@@ -8,6 +8,10 @@ import type { ProviderSavePayload } from "./ProviderGrid";
 import { PROVIDERS } from "./providerData";
 import { STORAGE_KEY } from "../ConfirmDialog";
 
+vi.mock("@/api/settings", () => ({
+  fetchProviderAnalytics: vi.fn().mockResolvedValue({ providers: {}, period_days: 7, since: "2026-02-13T00:00:00Z" }),
+}));
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 const emptySettings: Settings = {

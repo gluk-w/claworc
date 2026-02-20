@@ -6,6 +6,10 @@ import ProviderGrid from "./ProviderGrid";
 import type { Settings } from "@/types/settings";
 import { PROVIDERS } from "./providerData";
 
+vi.mock("@/api/settings", () => ({
+  fetchProviderAnalytics: vi.fn().mockResolvedValue({ providers: {}, period_days: 7, since: "2026-02-13T00:00:00Z" }),
+}));
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 const emptySettings: Settings = {

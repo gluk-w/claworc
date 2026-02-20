@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/gluk-w/claworc/control-plane/internal/database"
 )
 
 type testProviderKeyRequest struct {
@@ -173,12 +176,36 @@ func TestProviderKey(w http.ResponseWriter, r *http.Request) {
 		baseURL = strings.TrimRight(req.BaseURL, "/")
 	}
 
-	result := testProviderAPI(baseURL, cfg, req.APIKey, req.Provider)
+	start := time.Now()
+	result, statusCode := testProviderAPI(baseURL, cfg, req.APIKey, req.Provider)
+	latency := time.Since(start).Milliseconds()
+
+	// Record telemetry (best-effort, don't fail the request)
+	if database.DB != nil {
+		errMsg := ""
+		if !result.Success {
+			errMsg = result.Message
+			if result.Details != "" {
+				errMsg += ": " + result.Details
+			}
+		}
+		if err := database.RecordTelemetry(&database.ProviderTelemetry{
+			Provider:   req.Provider,
+			StatusCode: statusCode,
+			Latency:    latency,
+			IsError:    !result.Success,
+			ErrorMsg:   errMsg,
+		}); err != nil {
+			log.Printf("WARNING: failed to record telemetry: %v", err)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, result)
 }
 
 // testProviderAPI makes a real HTTP request to the provider's API to test the key.
-func testProviderAPI(baseURL string, cfg providerTestConfig, apiKey string, providerID string) testProviderKeyResponse {
+// Returns the response and the HTTP status code (0 if no response was received).
+func testProviderAPI(baseURL string, cfg providerTestConfig, apiKey string, providerID string) (testProviderKeyResponse, int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -204,7 +231,7 @@ func testProviderAPI(baseURL string, cfg providerTestConfig, apiKey string, prov
 			Success: false,
 			Message: "Failed to create request",
 			Details: err.Error(),
-		}
+		}, 0
 	}
 
 	// Set auth header (skip for Google, which uses query param)
@@ -228,20 +255,20 @@ func testProviderAPI(baseURL string, cfg providerTestConfig, apiKey string, prov
 				Success: false,
 				Message: "Connection timed out after 5 seconds",
 				Details: "The provider's API did not respond in time. Check your network connection.",
-			}
+			}, 0
 		}
 		return testProviderKeyResponse{
 			Success: false,
 			Message: "Network error",
 			Details: err.Error(),
-		}
+		}, 0
 	}
 	defer resp.Body.Close()
 
 	// Read response body (limit to 4KB to avoid memory issues)
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 
-	return classifyResponse(resp.StatusCode, body, providerID)
+	return classifyResponse(resp.StatusCode, body, providerID), resp.StatusCode
 }
 
 // classifyResponse interprets the HTTP status and body to produce a user-friendly result.

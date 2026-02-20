@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"gorm.io/driver/sqlite"
@@ -38,7 +39,7 @@ func Init() error {
 		return fmt.Errorf("set WAL mode: %w", err)
 	}
 
-	if err := DB.AutoMigrate(&Instance{}, &Setting{}, &InstanceAPIKey{}, &User{}, &UserInstance{}, &WebAuthnCredential{}); err != nil {
+	if err := DB.AutoMigrate(&Instance{}, &Setting{}, &InstanceAPIKey{}, &User{}, &UserInstance{}, &WebAuthnCredential{}, &ProviderTelemetry{}); err != nil {
 		return fmt.Errorf("auto-migrate: %w", err)
 	}
 
@@ -208,4 +209,71 @@ func DeleteWebAuthnCredential(id string, userID uint) error {
 
 func UpdateCredentialSignCount(id string, count uint32) error {
 	return DB.Model(&WebAuthnCredential{}).Where("id = ?", id).Update("sign_count", count).Error
+}
+
+// Provider telemetry helpers
+
+func RecordTelemetry(entry *ProviderTelemetry) error {
+	return DB.Create(entry).Error
+}
+
+// ProviderStats holds aggregated usage metrics for a single provider.
+type ProviderStats struct {
+	Provider      string  `json:"provider"`
+	TotalRequests int64   `json:"total_requests"`
+	ErrorCount    int64   `json:"error_count"`
+	ErrorRate     float64 `json:"error_rate"`
+	AvgLatency    float64 `json:"avg_latency"`
+	LastError     string  `json:"last_error,omitempty"`
+	LastErrorAt   *time.Time `json:"last_error_at,omitempty"`
+}
+
+// GetProviderStats returns aggregated usage stats per provider for the given time window.
+func GetProviderStats(since time.Time) ([]ProviderStats, error) {
+	type row struct {
+		Provider      string
+		TotalRequests int64
+		ErrorCount    int64
+		AvgLatency    float64
+	}
+
+	var rows []row
+	err := DB.Model(&ProviderTelemetry{}).
+		Select("provider, COUNT(*) as total_requests, SUM(CASE WHEN is_error THEN 1 ELSE 0 END) as error_count, AVG(latency) as avg_latency").
+		Where("created_at >= ?", since).
+		Group("provider").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	stats := make([]ProviderStats, 0, len(rows))
+	for _, r := range rows {
+		s := ProviderStats{
+			Provider:      r.Provider,
+			TotalRequests: r.TotalRequests,
+			ErrorCount:    r.ErrorCount,
+			AvgLatency:    r.AvgLatency,
+		}
+		if r.TotalRequests > 0 {
+			s.ErrorRate = float64(r.ErrorCount) / float64(r.TotalRequests)
+		}
+
+		// Get the most recent error
+		var lastErr ProviderTelemetry
+		if err := DB.Where("provider = ? AND is_error = ? AND created_at >= ?", r.Provider, true, since).
+			Order("created_at DESC").First(&lastErr).Error; err == nil {
+			s.LastError = lastErr.ErrorMsg
+			s.LastErrorAt = &lastErr.CreatedAt
+		}
+
+		stats = append(stats, s)
+	}
+
+	return stats, nil
+}
+
+// CleanupOldTelemetry removes telemetry records older than the given cutoff.
+func CleanupOldTelemetry(before time.Time) error {
+	return DB.Where("created_at < ?", before).Delete(&ProviderTelemetry{}).Error
 }

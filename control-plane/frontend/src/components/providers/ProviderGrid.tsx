@@ -1,10 +1,12 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { KeyRound, Check, Search, X } from "lucide-react";
-import type { Settings } from "@/types/settings";
+import type { Settings, ProviderAnalyticsResponse } from "@/types/settings";
+import { fetchProviderAnalytics } from "@/api/settings";
 import { PROVIDERS } from "./providerData";
 import type { Provider, ProviderCategory } from "./providerData";
 import { CATEGORY_ICONS } from "./providerIcons";
+import { getHealthStatus } from "./providerHealth";
 import ProviderCard from "./ProviderCard";
 import type { CardAnimationState } from "./ProviderCard";
 import ProviderCardSkeleton from "./ProviderCardSkeleton";
@@ -57,8 +59,22 @@ export default function ProviderGrid({
   const [providerToDelete, setProviderToDelete] = useState<Provider | null>(null);
   const [selectedProviderIds, setSelectedProviderIds] = useState<Set<string>>(new Set());
   const [batchDeleteTarget, setBatchDeleteTarget] = useState<Provider[] | null>(null);
+  const [analytics, setAnalytics] = useState<ProviderAnalyticsResponse | null>(null);
   const animationTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const saveSuccessTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Fetch provider analytics (best-effort, non-blocking)
+  useEffect(() => {
+    let cancelled = false;
+    fetchProviderAnalytics()
+      .then((data) => {
+        if (!cancelled) setAnalytics(data);
+      })
+      .catch(() => {
+        // Analytics are optional – silently ignore failures
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   // Search and filter state from URL query params
   const searchQuery = searchParams.get("q") ?? "";
@@ -535,6 +551,7 @@ export default function ProviderGrid({
                   selectionMode={selectionMode}
                   isSelected={selectedProviderIds.has(provider.id)}
                   onSelect={(selected) => handleToggleSelect(provider, selected)}
+                  healthStatus={getHealthStatus(analytics?.providers[provider.id])}
                 />
               ))}
             </div>

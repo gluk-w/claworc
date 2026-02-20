@@ -1,5 +1,5 @@
 import client from "./client";
-import type { Settings, SettingsUpdatePayload } from "@/types/settings";
+import type { Settings, SettingsUpdatePayload, ProviderAnalyticsResponse } from "@/types/settings";
 
 export async function fetchSettings(): Promise<Settings> {
   const { data } = await client.get<Settings>("/settings");
@@ -31,6 +31,13 @@ export async function testProviderKey(
   const { data } = await client.post<TestProviderKeyResponse>(
     "/settings/test-provider-key",
     payload,
+  );
+  return data;
+}
+
+export async function fetchProviderAnalytics(): Promise<ProviderAnalyticsResponse> {
+  const { data } = await client.get<ProviderAnalyticsResponse>(
+    "/analytics/providers",
   );
   return data;
 }

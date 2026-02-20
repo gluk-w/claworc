@@ -16,6 +16,7 @@ vi.mock("react-hot-toast", () => ({
 
 vi.mock("@/api/settings", () => ({
   testProviderKey: vi.fn(),
+  fetchProviderAnalytics: vi.fn().mockResolvedValue({ providers: {}, period_days: 7, since: "2026-02-13T00:00:00Z" }),
 }));
 
 const mockTestProviderKey = vi.mocked(settingsApi.testProviderKey);

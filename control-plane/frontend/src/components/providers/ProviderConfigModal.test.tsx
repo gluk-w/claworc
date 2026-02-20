@@ -19,6 +19,7 @@ vi.mock("@/api/settings", () => ({
     success: true,
     message: "API key is valid. Connection successful!",
   }),
+  fetchProviderAnalytics: vi.fn().mockResolvedValue({ providers: {}, period_days: 7, since: "2026-02-13T00:00:00Z" }),
 }));
 
 const mockTestProviderKey = vi.mocked(settingsApi.testProviderKey);

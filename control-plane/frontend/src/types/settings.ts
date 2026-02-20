@@ -33,3 +33,22 @@ export interface SettingsUpdatePayload {
 
 // Keep backward compat alias
 export type SettingsUpdate = SettingsUpdatePayload;
+
+// Provider analytics types
+export interface ProviderStats {
+  provider: string;
+  total_requests: number;
+  error_count: number;
+  error_rate: number;
+  avg_latency: number;
+  last_error?: string;
+  last_error_at?: string;
+}
+
+export interface ProviderAnalyticsResponse {
+  providers: Record<string, ProviderStats>;
+  period_days: number;
+  since: string;
+}
+
+export type ProviderHealthStatus = "healthy" | "warning" | "error" | "unknown";

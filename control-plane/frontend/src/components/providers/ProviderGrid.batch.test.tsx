@@ -12,6 +12,7 @@ vi.mock("@/api/settings", () => ({
   testProviderKey: vi.fn(() =>
     Promise.resolve({ success: true, message: "OK" }),
   ),
+  fetchProviderAnalytics: vi.fn().mockResolvedValue({ providers: {}, period_days: 7, since: "2026-02-13T00:00:00Z" }),
 }));
 
 const emptySettings: Settings = {

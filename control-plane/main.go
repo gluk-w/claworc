@@ -149,6 +149,9 @@ func main() {
 				r.Put("/settings", handlers.UpdateSettings)
 				r.Post("/settings/test-provider-key", handlers.TestProviderKey)
 
+				// Analytics
+				r.Get("/analytics/providers", handlers.GetProviderAnalytics)
+
 				// User management
 				r.Get("/users", handlers.ListUsers)
 				r.Post("/users", handlers.CreateUser)

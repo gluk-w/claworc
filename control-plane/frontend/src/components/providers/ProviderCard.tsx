@@ -1,6 +1,8 @@
 import { ExternalLink, Trash2, Check } from "lucide-react";
 import type { Provider } from "./providerData";
+import type { ProviderHealthStatus } from "@/types/settings";
 import { PROVIDER_ICONS } from "./providerIcons";
+import { HEALTH_COLORS, HEALTH_LABELS } from "./providerHealth";
 
 export type CardAnimationState = "idle" | "added" | "deleted";
 
@@ -17,6 +19,8 @@ interface ProviderCardProps {
   isSelected?: boolean;
   /** Called when the selection checkbox is toggled */
   onSelect?: (selected: boolean) => void;
+  /** Health status derived from analytics data */
+  healthStatus?: ProviderHealthStatus;
 }
 
 export default function ProviderCard({
@@ -29,6 +33,7 @@ export default function ProviderCard({
   selectionMode = false,
   isSelected = false,
   onSelect,
+  healthStatus,
 }: ProviderCardProps) {
   const handleCardKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {
@@ -103,16 +108,28 @@ export default function ProviderCard({
             {provider.name}
           </span>
         </div>
-        <a
-          href={provider.docsUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-md"
-          title="API key documentation"
-          aria-label={`${provider.name} API key documentation`}
-        >
-          <ExternalLink size={14} />
-        </a>
+        <div className="flex items-center gap-1.5">
+          {/* Health indicator */}
+          {healthStatus && healthStatus !== "unknown" && (
+            <span
+              className="inline-flex items-center justify-center w-2.5 h-2.5 rounded-full"
+              style={{ backgroundColor: HEALTH_COLORS[healthStatus] }}
+              title={`Health: ${HEALTH_LABELS[healthStatus]}`}
+              aria-label={`Provider health: ${HEALTH_LABELS[healthStatus]}`}
+              data-testid="health-indicator"
+            />
+          )}
+          <a
+            href={provider.docsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-md"
+            title="API key documentation"
+            aria-label={`${provider.name} API key documentation`}
+          >
+            <ExternalLink size={14} />
+          </a>
+        </div>
       </div>
 
       {/* Body */}

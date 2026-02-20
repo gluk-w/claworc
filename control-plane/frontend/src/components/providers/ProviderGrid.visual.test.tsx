@@ -1,8 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import ProviderGrid from "./ProviderGrid";
 import type { Settings } from "@/types/settings";
+
+vi.mock("@/api/settings", () => ({
+  fetchProviderAnalytics: vi.fn().mockResolvedValue({ providers: {}, period_days: 7, since: "2026-02-13T00:00:00Z" }),
+}));
 
 const emptySettings: Settings = {
   brave_api_key: "",
