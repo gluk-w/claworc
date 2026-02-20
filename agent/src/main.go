@@ -6,12 +6,17 @@ import (
 	"time"
 
 	"github.com/gluk-w/claworc/agent/config"
+	"github.com/gluk-w/claworc/agent/proxy"
 )
 
 func main() {
 	cfg := config.Load()
 
 	mux := http.NewServeMux()
+
+	gw := proxy.GatewayHandler(cfg.GatewayAddr)
+	mux.Handle("/gateway/", gw)
+	mux.Handle("/websocket/", gw)
 
 	srv := &http.Server{
 		Addr:         cfg.ListenAddr,
