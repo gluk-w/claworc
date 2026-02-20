@@ -1,2 +1,11 @@
 #!/command/with-contenv bash
+# Write TLS cert and key from env vars to disk if provided
+mkdir -p /config/ssl
+if [ -n "$AGENT_TLS_CERT" ]; then
+  printf '%s' "$AGENT_TLS_CERT" > /config/ssl/agent.crt
+fi
+if [ -n "$AGENT_TLS_KEY" ]; then
+  printf '%s' "$AGENT_TLS_KEY" > /config/ssl/agent.key
+  chmod 600 /config/ssl/agent.key
+fi
 exec /usr/local/bin/claworc-proxy
