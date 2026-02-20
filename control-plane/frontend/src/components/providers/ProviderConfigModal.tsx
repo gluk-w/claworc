@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { X, Eye, EyeOff, ExternalLink } from "lucide-react";
+import { X, Eye, EyeOff, ExternalLink, Loader2 } from "lucide-react";
+import toast from "react-hot-toast";
 import type { Provider } from "./providerData";
+import { validateApiKey } from "./validateApiKey";
 
 interface ProviderConfigModalProps {
   provider: Provider;
@@ -23,6 +25,7 @@ export default function ProviderConfigModal({
   const [testResult, setTestResult] = useState<
     "idle" | "valid" | "invalid"
   >("idle");
+  const [isTesting, setIsTesting] = useState(false);
 
   if (!isOpen) return null;
 
@@ -41,17 +44,31 @@ export default function ProviderConfigModal({
     setBaseUrl("");
     setShowKey(false);
     setTestResult("idle");
+    setIsTesting(false);
     onClose();
   };
 
-  const handleTestConnection = () => {
+  const handleTestConnection = async () => {
     const key = apiKey.trim();
-    if (!key || key.length < 8) {
-      setTestResult("invalid");
+    if (!key) return;
+
+    setIsTesting(true);
+
+    // Brief delay so the spinner is visible
+    await new Promise((r) => setTimeout(r, 400));
+
+    const result = validateApiKey(provider, key);
+    setTestResult(result.valid ? "valid" : "invalid");
+    setIsTesting(false);
+
+    if (result.valid) {
+      toast.success(result.message);
     } else {
-      setTestResult("valid");
+      toast.error(result.message);
     }
   };
+
+  const saveDisabled = !apiKey.trim() || testResult === "invalid";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -147,7 +164,7 @@ export default function ProviderConfigModal({
           )}
           {testResult === "invalid" && (
             <p className="text-xs text-red-600">
-              Key seems too short. Please check and try again.
+              Validation failed. Check the key format and try again.
             </p>
           )}
         </div>
@@ -157,10 +174,11 @@ export default function ProviderConfigModal({
           <button
             type="button"
             onClick={handleTestConnection}
-            disabled={!apiKey.trim()}
-            className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!apiKey.trim() || isTesting}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Test Connection
+            {isTesting && <Loader2 size={12} className="animate-spin" />}
+            {isTesting ? "Checking..." : "Test Connection"}
           </button>
           <div className="flex items-center gap-2">
             <button
@@ -173,7 +191,7 @@ export default function ProviderConfigModal({
             <button
               type="button"
               onClick={handleSave}
-              disabled={!apiKey.trim()}
+              disabled={saveDisabled}
               className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Save
