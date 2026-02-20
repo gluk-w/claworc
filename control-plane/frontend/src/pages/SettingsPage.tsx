@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from "react";
+import { Loader2 } from "lucide-react";
 import LLMProvidersTab from "@/components/settings/LLMProvidersTab";
 import ResourceLimitsTab from "@/components/settings/ResourceLimitsTab";
 import AgentImageTab from "@/components/settings/AgentImageTab";
@@ -45,7 +46,22 @@ export default function SettingsPage() {
   );
 
   if (isLoading || !settings) {
-    return <div className="text-center py-12 text-gray-500">Loading...</div>;
+    return (
+      <div data-testid="settings-loading">
+        <div className="h-6 w-32 bg-gray-200 rounded animate-pulse mb-6" />
+        <div className="border-b border-gray-200 mb-6">
+          <div className="flex gap-4 -mb-px">
+            {TABS.map((tab) => (
+              <div key={tab.id} className="h-8 w-28 bg-gray-200 rounded animate-pulse" />
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center justify-center py-12">
+          <Loader2 size={24} className="animate-spin text-gray-400" />
+          <span className="ml-2 text-gray-500">Loading settings...</span>
+        </div>
+      </div>
+    );
   }
 
   return (

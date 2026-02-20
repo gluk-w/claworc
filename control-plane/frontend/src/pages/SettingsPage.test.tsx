@@ -69,7 +69,7 @@ describe("SettingsPage", () => {
     mockUpdateSettings.mockResolvedValue(mockSettings);
   });
 
-  it("renders loading state initially", () => {
+  it("renders loading state initially with skeleton and spinner", () => {
     // Use a query client that won't resolve immediately
     const qc = new QueryClient({
       defaultOptions: {
@@ -84,7 +84,8 @@ describe("SettingsPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.getByTestId("settings-loading")).toBeInTheDocument();
+    expect(screen.getByText("Loading settings...")).toBeInTheDocument();
   });
 
   it("renders the Settings heading and all 3 tab buttons", async () => {

@@ -3,6 +3,7 @@ import type { Settings } from "@/types/settings";
 import { PROVIDERS } from "./providerData";
 import type { Provider, ProviderCategory } from "./providerData";
 import ProviderCard from "./ProviderCard";
+import ProviderCardSkeleton from "./ProviderCardSkeleton";
 import ProviderConfigModal from "./ProviderConfigModal";
 
 /** Category display order */
@@ -28,12 +29,14 @@ interface ProviderGridProps {
   settings: Settings;
   onSaveChanges: (payload: ProviderSavePayload) => Promise<void>;
   isSaving: boolean;
+  isLoading?: boolean;
 }
 
 export default function ProviderGrid({
   settings,
   onSaveChanges,
   isSaving,
+  isLoading = false,
 }: ProviderGridProps) {
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -137,6 +140,28 @@ export default function ProviderGrid({
       });
   };
 
+  if (isLoading) {
+    return (
+      <div className="space-y-6" data-testid="provider-grid-loading">
+        <div className="h-4 w-48 bg-gray-200 rounded animate-pulse" />
+        {CATEGORY_ORDER.map((category) => {
+          const providers = grouped.get(category);
+          if (!providers || providers.length === 0) return null;
+          return (
+            <div key={category}>
+              <div className="h-3 w-32 bg-gray-200 rounded animate-pulse mb-3" />
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {providers.map((provider) => (
+                  <ProviderCardSkeleton key={provider.id} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <p className="text-sm text-gray-600">
@@ -187,6 +212,7 @@ export default function ProviderGrid({
           onClose={handleCloseModal}
           onSave={handleSave}
           currentMaskedKey={getMaskedKey(selectedProvider)}
+          isSaving={isSaving}
         />
       )}
     </div>

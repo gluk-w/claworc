@@ -10,6 +10,7 @@ interface ProviderConfigModalProps {
   onClose: () => void;
   onSave: (apiKey: string, baseUrl?: string) => void;
   currentMaskedKey: string | null;
+  isSaving?: boolean;
 }
 
 export default function ProviderConfigModal({
@@ -18,6 +19,7 @@ export default function ProviderConfigModal({
   onClose,
   onSave,
   currentMaskedKey,
+  isSaving = false,
 }: ProviderConfigModalProps) {
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -124,7 +126,7 @@ export default function ProviderConfigModal({
     }
   };
 
-  const saveDisabled = !apiKey.trim() || testResult === "invalid";
+  const saveDisabled = !apiKey.trim() || testResult === "invalid" || isSaving;
 
   const handleKeyDownOnInput = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !saveDisabled) {
@@ -281,9 +283,10 @@ export default function ProviderConfigModal({
               type="button"
               onClick={handleSave}
               disabled={saveDisabled}
-              className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              Save
+              {isSaving && <Loader2 size={12} className="animate-spin" />}
+              {isSaving ? "Saving..." : "Save"}
             </button>
           </div>
         </div>
