@@ -75,6 +75,9 @@ func main() {
 		log.Printf("WARNING: %v", err)
 	}
 
+	// Connect tunnels for instances that were running before control-plane restart
+	go handlers.ConnectRunningInstanceTunnels()
+
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)

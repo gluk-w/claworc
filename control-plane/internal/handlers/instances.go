@@ -577,6 +577,9 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		database.DB.First(&inst, inst.ID)
 		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
 		config.ConfigureInstance(ctx, orch, name, models, resolvedKeys)
+
+		// Connect tunnel to the newly running instance
+		startTunnelForInstance(&inst)
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -728,6 +731,9 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Disconnect tunnel and cancel reconnect loop
+	stopTunnelForInstance(inst.ID)
+
 	if orch := orchestrator.Get(); orch != nil {
 		if err := orch.DeleteInstance(r.Context(), inst.Name); err != nil {
 			log.Printf("Failed to delete container resources for %s – proceeding with DB cleanup: %v", inst.Name, err)
@@ -769,6 +775,11 @@ func StartInstance(w http.ResponseWriter, r *http.Request) {
 		"status":     "running",
 		"updated_at": time.Now().UTC(),
 	})
+
+	// Connect tunnel in background (agent may need time to fully start)
+	instCopy := inst
+	go startTunnelForInstance(&instCopy)
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "running"})
 }
 
@@ -789,6 +800,9 @@ func StopInstance(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "Access denied")
 		return
 	}
+
+	// Disconnect tunnel and cancel reconnect loop before stopping
+	stopTunnelForInstance(inst.ID)
 
 	if orch := orchestrator.Get(); orch != nil {
 		if err := orch.StopInstance(r.Context(), inst.Name); err != nil {
@@ -828,6 +842,11 @@ func RestartInstance(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+	// Disconnect existing tunnel; start reconnect loop for when agent comes back
+	stopTunnelForInstance(inst.ID)
+	instCopy := inst
+	go startTunnelForInstance(&instCopy)
 
 	database.DB.Model(&inst).Updates(map[string]interface{}{
 		"status":     "restarting",
@@ -1068,6 +1087,9 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		database.DB.First(&inst, inst.ID)
 		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
 		config.ConfigureInstance(ctx, orch, cloneName, models, resolvedKeys)
+
+		// Connect tunnel to the newly running clone
+		startTunnelForInstance(&inst)
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))

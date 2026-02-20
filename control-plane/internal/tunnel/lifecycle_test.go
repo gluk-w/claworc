@@ -151,10 +151,20 @@ func TestReconnectLoop_ReconnectsOnClosedSession(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go ReconnectLoop(ctx, inst, resolver, 10*time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		ReconnectLoop(ctx, inst, resolver, 10*time.Millisecond)
+		close(done)
+	}()
 
 	time.Sleep(60 * time.Millisecond)
 	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ReconnectLoop did not stop after context cancel")
+	}
 
 	if reconnectAttempts == 0 {
 		t.Error("expected at least one reconnect attempt for closed session")
