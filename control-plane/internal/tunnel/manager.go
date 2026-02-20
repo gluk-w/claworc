@@ -2,6 +2,17 @@ package tunnel
 
 import "sync"
 
+// Manager is the package-level TunnelManager singleton, initialised at
+// startup by calling InitManager(). Handlers use Manager.Get(instanceID)
+// to obtain a TunnelClient.
+var Manager *TunnelManager
+
+// InitManager creates the global TunnelManager singleton. Call once during
+// control-plane startup.
+func InitManager() {
+	Manager = NewTunnelManager()
+}
+
 // TunnelManager tracks active tunnel connections to agent instances.
 type TunnelManager struct {
 	mu      sync.RWMutex

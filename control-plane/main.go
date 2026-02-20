@@ -19,6 +19,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/tunnel"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
@@ -65,6 +66,9 @@ func main() {
 			sessionStore.Cleanup()
 		}
 	}()
+
+	// Init tunnel manager (must happen before routes are registered)
+	tunnel.InitManager()
 
 	ctx := context.Background()
 	if err := orchestrator.InitOrchestrator(ctx); err != nil {
@@ -130,7 +134,7 @@ func main() {
 			// Terminal WebSocket
 			r.Get("/instances/{id}/terminal", handlers.TerminalWSProxy)
 
-			// Desktop proxy (Selkies streaming UI)
+			// Desktop proxy (Neko VNC via tunnel)
 			r.HandleFunc("/instances/{id}/desktop/*", handlers.DesktopProxy)
 
 			// Control proxy

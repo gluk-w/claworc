@@ -509,18 +509,6 @@ func (k *KubernetesOrchestrator) WriteFile(ctx context.Context, name string, pat
 	return writeFile(ctx, k.ExecInInstance, name, path, data)
 }
 
-func (k *KubernetesOrchestrator) GetVNCBaseURL(_ context.Context, name string, display string) (string, error) {
-	if display != "chrome" {
-		return "", fmt.Errorf("unsupported display type: %s", display)
-	}
-	port := 3000
-	if !k.inCluster {
-		host := strings.TrimRight(k.restConfig.Host, "/")
-		return fmt.Sprintf("%s/api/v1/namespaces/%s/services/%s-vnc:%d/proxy", host, k.ns(), name, port), nil
-	}
-	return fmt.Sprintf("http://%s-vnc.%s.svc.cluster.local:%d", name, k.ns(), port), nil
-}
-
 func (k *KubernetesOrchestrator) GetGatewayWSURL(_ context.Context, name string) (string, error) {
 	if !k.inCluster {
 		host := strings.TrimRight(k.restConfig.Host, "/")

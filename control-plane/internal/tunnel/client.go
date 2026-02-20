@@ -89,6 +89,31 @@ func (tc *TunnelClient) OpenStream(ctx context.Context) (net.Conn, error) {
 	return s.Open()
 }
 
+// OpenChannel opens a new yamux stream, writes the channel header (e.g.
+// "neko\n"), and returns the stream positioned for the caller to send
+// HTTP requests or raw data. The agent-side router reads this header and
+// dispatches the stream to the appropriate handler.
+func (tc *TunnelClient) OpenChannel(ctx context.Context, channel string) (net.Conn, error) {
+	conn, err := tc.OpenStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := conn.Write([]byte(channel + "\n")); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("write channel header %q: %w", channel, err)
+	}
+
+	return conn, nil
+}
+
+// SetSession replaces the yamux session directly. Intended for testing.
+func (tc *TunnelClient) SetSession(session *yamux.Session) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	tc.session = session
+}
+
 // Close tears down the yamux session and underlying WebSocket connection.
 func (tc *TunnelClient) Close() error {
 	tc.mu.Lock()

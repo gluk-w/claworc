@@ -562,23 +562,6 @@ func (d *DockerOrchestrator) WriteFile(ctx context.Context, name string, path st
 	return writeFile(ctx, d.ExecInInstance, name, path, data)
 }
 
-func (d *DockerOrchestrator) GetVNCBaseURL(ctx context.Context, name string, display string) (string, error) {
-	if display != "chrome" {
-		return "", fmt.Errorf("unsupported display type: %s", display)
-	}
-	inspect, err := d.client.ContainerInspect(ctx, name)
-	if err != nil {
-		return "", fmt.Errorf("inspect container: %w", err)
-	}
-
-	for _, net := range inspect.NetworkSettings.Networks {
-		if net.IPAddress != "" {
-			return fmt.Sprintf("http://%s:3000", net.IPAddress), nil
-		}
-	}
-	return "", fmt.Errorf("cannot determine container IP for %s", name)
-}
-
 func (d *DockerOrchestrator) GetGatewayWSURL(ctx context.Context, name string) (string, error) {
 	inspect, err := d.client.ContainerInspect(ctx, name)
 	if err != nil {

@@ -39,7 +39,6 @@ type ContainerOrchestrator interface {
 	WriteFile(ctx context.Context, name string, path string, data []byte) error
 
 	// URLs
-	GetVNCBaseURL(ctx context.Context, name string, display string) (string, error)
 	GetGatewayWSURL(ctx context.Context, name string) (string, error)
 
 	// GetHTTPTransport returns a custom transport for reaching service URLs,
