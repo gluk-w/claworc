@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/crypto"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 )
 
@@ -38,8 +39,15 @@ func ConnectInstance(ctx context.Context, inst *database.Instance, resolver Addr
 		return nil
 	}
 
+	// Load the control-plane client certificate for mTLS. If unavailable
+	// we still connect (the agent may fall back to RequireAnyClientCert).
+	cpCert, _, cpErr := crypto.GetControlPlaneCert()
+	if cpErr != nil {
+		log.Printf("[tunnel] instance %d (%s): warning: could not load control-plane client cert: %v", inst.ID, inst.Name, cpErr)
+	}
+
 	client := NewTunnelClient(inst.ID, inst.Name)
-	if err := client.Connect(ctx, addr, agentCertPEM); err != nil {
+	if err := client.Connect(ctx, addr, agentCertPEM, cpCert); err != nil {
 		log.Printf("[tunnel] instance %d (%s): connect failed: %v", inst.ID, inst.Name, err)
 		return err
 	}

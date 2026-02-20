@@ -51,4 +51,5 @@ type CreateParams struct {
 	EnvVars         map[string]string
 	AgentTLSCert    string // PEM-encoded agent TLS certificate
 	AgentTLSKey     string // PEM-encoded agent TLS private key (plaintext)
+	ControlPlaneCA  string // PEM-encoded control-plane client certificate (for agent mTLS verification)
 }

@@ -93,7 +93,7 @@ func (k *KubernetesOrchestrator) CreateInstance(ctx context.Context, params Crea
 
 	// Create Secret with agent TLS cert/key if provided
 	if params.AgentTLSCert != "" && params.AgentTLSKey != "" {
-		secret := buildTLSSecret(params.Name, ns, params.AgentTLSCert, params.AgentTLSKey)
+		secret := buildTLSSecret(params.Name, ns, params.AgentTLSCert, params.AgentTLSKey, params.ControlPlaneCA)
 		if _, err := k.clientset.CoreV1().Secrets(ns).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
 			return fmt.Errorf("create TLS secret: %w", err)
 		}
@@ -553,17 +553,21 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 	}
 }
 
-func buildTLSSecret(name, ns, certPEM, keyPEM string) *corev1.Secret {
+func buildTLSSecret(name, ns, certPEM, keyPEM, controlPlaneCA string) *corev1.Secret {
+	data := map[string][]byte{
+		"agent-tls-cert": []byte(certPEM),
+		"agent-tls-key":  []byte(keyPEM),
+	}
+	if controlPlaneCA != "" {
+		data["cp-ca.crt"] = []byte(controlPlaneCA)
+	}
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name + "-tls",
 			Namespace: ns,
 			Labels:    map[string]string{"app": name, "managed-by": "claworc"},
 		},
-		Data: map[string][]byte{
-			"agent-tls-cert": []byte(certPEM),
-			"agent-tls-key":  []byte(keyPEM),
-		},
+		Data: data,
 	}
 }
 

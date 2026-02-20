@@ -173,3 +173,58 @@ func TestGenerateAgentCertPair_SelfSigned(t *testing.T) {
 		t.Errorf("self-signed verification failed: %v", err)
 	}
 }
+
+func TestGenerateControlPlaneCertPair(t *testing.T) {
+	certPEM, keyPEM, err := GenerateControlPlaneCertPair()
+	if err != nil {
+		t.Fatalf("GenerateControlPlaneCertPair() error = %v", err)
+	}
+
+	if certPEM == "" {
+		t.Fatal("certPEM is empty")
+	}
+	if keyPEM == "" {
+		t.Fatal("keyPEM is empty")
+	}
+
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		t.Fatal("failed to decode cert PEM")
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("ParseCertificate() error = %v", err)
+	}
+
+	// Verify CommonName
+	if cert.Subject.CommonName != "claworc-control-plane" {
+		t.Errorf("CommonName = %q, want %q", cert.Subject.CommonName, "claworc-control-plane")
+	}
+
+	// Verify ExtKeyUsage is ClientAuth
+	if len(cert.ExtKeyUsage) != 1 || cert.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth {
+		t.Errorf("ExtKeyUsage = %v, want [ClientAuth]", cert.ExtKeyUsage)
+	}
+
+	// Verify it's ECDSA P-256
+	pubKey, ok := cert.PublicKey.(*ecdsa.PublicKey)
+	if !ok {
+		t.Fatal("public key is not ECDSA")
+	}
+	if pubKey.Curve != elliptic.P256() {
+		t.Error("curve is not P-256")
+	}
+
+	// Verify the cert+key pair can be used as a TLS certificate
+	_, err = tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatalf("X509KeyPair() error = %v", err)
+	}
+
+	// Verify self-signed
+	if cert.Issuer.CommonName != cert.Subject.CommonName {
+		t.Errorf("not self-signed: Issuer.CN = %q, Subject.CN = %q",
+			cert.Issuer.CommonName, cert.Subject.CommonName)
+	}
+}

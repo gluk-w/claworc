@@ -32,8 +32,9 @@ func NewTunnelClient(instanceID uint, instanceName string) *TunnelClient {
 // Connect dials the agent's tunnel endpoint over WebSocket with mTLS and
 // establishes a yamux client session. The agentCertPEM is the PEM-encoded
 // certificate the agent presented during TLS; it acts as the pinned CA for
-// cert verification (no shared CA needed).
-func (tc *TunnelClient) Connect(ctx context.Context, agentAddr string, agentCertPEM string) error {
+// cert verification (no shared CA needed). If clientCert is non-nil, it is
+// presented to the agent for mutual authentication.
+func (tc *TunnelClient) Connect(ctx context.Context, agentAddr string, agentCertPEM string, clientCert *tls.Certificate) error {
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
 
@@ -50,6 +51,10 @@ func (tc *TunnelClient) Connect(ctx context.Context, agentAddr string, agentCert
 		RootCAs:    pool,
 		ServerName: fmt.Sprintf("agent-%s", tc.instanceName),
 		MinVersion: tls.VersionTLS12,
+	}
+
+	if clientCert != nil {
+		tlsCfg.Certificates = []tls.Certificate{*clientCert}
 	}
 
 	wsConn, _, err := websocket.Dial(ctx, fmt.Sprintf("wss://%s/tunnel", agentAddr), &websocket.DialOptions{

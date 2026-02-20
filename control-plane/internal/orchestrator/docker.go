@@ -174,6 +174,9 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	if params.AgentTLSKey != "" {
 		env = append(env, fmt.Sprintf("AGENT_TLS_KEY=%s", params.AgentTLSKey))
 	}
+	if params.ControlPlaneCA != "" {
+		env = append(env, fmt.Sprintf("CONTROL_PLANE_CA=%s", params.ControlPlaneCA))
+	}
 
 	// Mounts
 	mounts := []mount.Mount{

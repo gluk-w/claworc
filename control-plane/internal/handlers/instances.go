@@ -561,6 +561,12 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
 		}
 
+		// Get control-plane client cert for mTLS with agent
+		_, cpCertPEM, cpCertErr := crypto.GetControlPlaneCert()
+		if cpCertErr != nil {
+			log.Printf("Warning: could not load control-plane client cert for %s: %v", name, cpCertErr)
+		}
+
 		err := orch.CreateInstance(ctx, orchestrator.CreateParams{
 			Name:            name,
 			CPURequest:      body.CPURequest,
@@ -575,6 +581,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			EnvVars:         envVars,
 			AgentTLSCert:    agentCertPEM,
 			AgentTLSKey:     agentKeyPEM,
+			ControlPlaneCA:  cpCertPEM,
 		})
 		if err != nil {
 			log.Printf("Failed to create container resources for %s: %v", name, err)
@@ -1062,6 +1069,12 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
 		}
 
+		// Get control-plane client cert for mTLS with agent
+		_, cloneCPCertPEM, cloneCPCertErr := crypto.GetControlPlaneCert()
+		if cloneCPCertErr != nil {
+			log.Printf("Warning: could not load control-plane client cert for clone %s: %v", cloneName, cloneCPCertErr)
+		}
+
 		// Create container/deployment with empty volumes
 		err := orch.CreateInstance(ctx, orchestrator.CreateParams{
 			Name:            cloneName,
@@ -1077,6 +1090,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			EnvVars:         envVars,
 			AgentTLSCert:    cloneCertPEM,
 			AgentTLSKey:     cloneKeyPEM,
+			ControlPlaneCA:  cloneCPCertPEM,
 		})
 		if err != nil {
 			log.Printf("Failed to create container for clone %s: %v", cloneName, err)

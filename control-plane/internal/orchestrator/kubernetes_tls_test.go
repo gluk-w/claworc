@@ -5,7 +5,7 @@ import (
 )
 
 func TestBuildTLSSecret(t *testing.T) {
-	secret := buildTLSSecret("bot-test", "claworc", "CERT_PEM", "KEY_PEM")
+	secret := buildTLSSecret("bot-test", "claworc", "CERT_PEM", "KEY_PEM", "")
 
 	if secret.Name != "bot-test-tls" {
 		t.Errorf("secret name = %q, want %q", secret.Name, "bot-test-tls")
@@ -24,6 +24,21 @@ func TestBuildTLSSecret(t *testing.T) {
 	}
 	if secret.Labels["app"] != "bot-test" {
 		t.Errorf("secret label app = %q, want %q", secret.Labels["app"], "bot-test")
+	}
+	// cp-ca.crt should not be present when ControlPlaneCA is empty
+	if _, ok := secret.Data["cp-ca.crt"]; ok {
+		t.Error("cp-ca.crt should not be present when ControlPlaneCA is empty")
+	}
+}
+
+func TestBuildTLSSecret_WithControlPlaneCA(t *testing.T) {
+	secret := buildTLSSecret("bot-test", "claworc", "CERT_PEM", "KEY_PEM", "CP_CA_PEM")
+
+	if string(secret.Data["cp-ca.crt"]) != "CP_CA_PEM" {
+		t.Errorf("secret cp-ca.crt = %q, want %q", string(secret.Data["cp-ca.crt"]), "CP_CA_PEM")
+	}
+	if string(secret.Data["agent-tls-cert"]) != "CERT_PEM" {
+		t.Errorf("secret cert = %q, want %q", string(secret.Data["agent-tls-cert"]), "CERT_PEM")
 	}
 }
 

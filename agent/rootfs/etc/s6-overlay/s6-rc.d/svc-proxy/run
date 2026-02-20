@@ -8,4 +8,7 @@ if [ -n "$AGENT_TLS_KEY" ]; then
   printf '%s' "$AGENT_TLS_KEY" > /config/ssl/agent.key
   chmod 600 /config/ssl/agent.key
 fi
+if [ -n "$CONTROL_PLANE_CA" ]; then
+  printf '%s' "$CONTROL_PLANE_CA" > /config/ssl/cp-ca.crt
+fi
 exec /usr/local/bin/claworc-proxy

@@ -3,9 +3,11 @@ package tunnel
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"sync"
 
 	"github.com/coder/websocket"
@@ -33,8 +35,25 @@ func ListenTunnel(cfg config.Config) error {
 
 	tlsCfg := &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		ClientAuth:   tls.RequireAnyClientCert,
 		MinVersion:   tls.VersionTLS12,
+	}
+
+	// If the control-plane CA certificate is available, require and verify
+	// client certificates (full mTLS). Otherwise fall back to requiring any
+	// client cert without chain verification.
+	if cpCA, err := os.ReadFile(cfg.ControlPlaneCA); err == nil && len(cpCA) > 0 {
+		pool := x509.NewCertPool()
+		if pool.AppendCertsFromPEM(cpCA) {
+			tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+			tlsCfg.ClientCAs = pool
+			log.Printf("tunnel: mTLS hardened — verifying client certs against %s", cfg.ControlPlaneCA)
+		} else {
+			log.Printf("tunnel: warning: could not parse control-plane CA from %s, falling back to RequireAnyClientCert", cfg.ControlPlaneCA)
+			tlsCfg.ClientAuth = tls.RequireAnyClientCert
+		}
+	} else {
+		log.Printf("tunnel: control-plane CA not found at %s, using RequireAnyClientCert", cfg.ControlPlaneCA)
+		tlsCfg.ClientAuth = tls.RequireAnyClientCert
 	}
 
 	ln, err := tls.Listen("tcp", cfg.TunnelAddr, tlsCfg)
