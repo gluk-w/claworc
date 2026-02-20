@@ -168,6 +168,12 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
 		env = append(env, fmt.Sprintf("OPENCLAW_GATEWAY_TOKEN=%s", token))
 	}
+	if params.AgentTLSCert != "" {
+		env = append(env, fmt.Sprintf("AGENT_TLS_CERT=%s", params.AgentTLSCert))
+	}
+	if params.AgentTLSKey != "" {
+		env = append(env, fmt.Sprintf("AGENT_TLS_KEY=%s", params.AgentTLSKey))
+	}
 
 	// Mounts
 	mounts := []mount.Mount{

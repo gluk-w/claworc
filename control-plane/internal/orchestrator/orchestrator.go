@@ -67,6 +67,8 @@ type CreateParams struct {
 	ContainerImage  string
 	VNCResolution   string
 	EnvVars         map[string]string
+	AgentTLSCert    string // PEM-encoded agent TLS certificate
+	AgentTLSKey     string // PEM-encoded agent TLS private key (plaintext)
 }
 
 type FileEntry struct {

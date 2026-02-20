@@ -501,6 +501,25 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate agent TLS certificate pair
+	var agentCertPEM, agentKeyPEM string
+	certPEM, keyPEM, err := crypto.GenerateAgentCertPair(name)
+	if err != nil {
+		log.Printf("Failed to generate agent cert for %s: %v", name, err)
+	} else {
+		agentCertPEM = certPEM
+		agentKeyPEM = keyPEM
+		encKeyPEM, err := crypto.Encrypt(keyPEM)
+		if err != nil {
+			log.Printf("Failed to encrypt agent cert key for %s: %v", name, err)
+		} else {
+			database.DB.Model(&inst).Updates(map[string]interface{}{
+				"agent_cert":     certPEM,
+				"agent_cert_key": encKeyPEM,
+			})
+		}
+	}
+
 	// Save API keys to the new table
 	allAPIKeys := make(map[string]string)
 	for k, v := range body.APIKeys {
@@ -541,6 +560,8 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			ContainerImage:  effectiveImage,
 			VNCResolution:   effectiveResolution,
 			EnvVars:         envVars,
+			AgentTLSCert:    agentCertPEM,
+			AgentTLSKey:     agentKeyPEM,
 		})
 		if err != nil {
 			log.Printf("Failed to create container resources for %s: %v", name, err)
@@ -962,6 +983,25 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate agent TLS certificate pair for the clone
+	var cloneCertPEM, cloneKeyPEM string
+	certPEM, keyPEM, err := crypto.GenerateAgentCertPair(cloneName)
+	if err != nil {
+		log.Printf("Failed to generate agent cert for clone %s: %v", cloneName, err)
+	} else {
+		cloneCertPEM = certPEM
+		cloneKeyPEM = keyPEM
+		encKeyPEM, err := crypto.Encrypt(keyPEM)
+		if err != nil {
+			log.Printf("Failed to encrypt agent cert key for clone %s: %v", cloneName, err)
+		} else {
+			database.DB.Model(&inst).Updates(map[string]interface{}{
+				"agent_cert":     certPEM,
+				"agent_cert_key": encKeyPEM,
+			})
+		}
+	}
+
 	// Copy API keys from source instance
 	var srcKeys []database.InstanceAPIKey
 	database.DB.Where("instance_id = ?", src.ID).Find(&srcKeys)
@@ -1003,6 +1043,8 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			ContainerImage:  effectiveImage,
 			VNCResolution:   effectiveResolution,
 			EnvVars:         envVars,
+			AgentTLSCert:    cloneCertPEM,
+			AgentTLSKey:     cloneKeyPEM,
 		})
 		if err != nil {
 			log.Printf("Failed to create container for clone %s: %v", cloneName, err)

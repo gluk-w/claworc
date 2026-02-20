@@ -93,6 +93,14 @@ func (k *KubernetesOrchestrator) CreateInstance(ctx context.Context, params Crea
 		}
 	}
 
+	// Create Secret with agent TLS cert/key if provided
+	if params.AgentTLSCert != "" && params.AgentTLSKey != "" {
+		secret := buildTLSSecret(params.Name, ns, params.AgentTLSCert, params.AgentTLSKey)
+		if _, err := k.clientset.CoreV1().Secrets(ns).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+			return fmt.Errorf("create TLS secret: %w", err)
+		}
+	}
+
 	dep := buildDeployment(params, ns)
 	if _, err := k.clientset.AppsV1().Deployments(ns).Create(ctx, dep, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("create deployment: %w", err)
@@ -253,6 +261,9 @@ func (k *KubernetesOrchestrator) DeleteInstance(ctx context.Context, name string
 	}
 	if err := k.clientset.CoreV1().Services(ns).Delete(ctx, name+"-vnc", metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("delete service: %w", err)
+	}
+	if err := k.clientset.CoreV1().Secrets(ns).Delete(ctx, name+"-tls", metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+		log.Printf("Delete TLS secret %s-tls: %v", name, err)
 	}
 	for _, suffix := range []string{"homebrew", "openclaw", "chrome"} {
 		pvcName := fmt.Sprintf("%s-%s", name, suffix)
@@ -631,6 +642,37 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 
 	shmSize := resource.MustParse("2Gi")
 
+	volumeMounts := []corev1.VolumeMount{
+		{Name: "chrome-data", MountPath: "/config/chrome-data"},
+		{Name: "homebrew-data", MountPath: "/home/linuxbrew/.linuxbrew"},
+		{Name: "openclaw-data", MountPath: "/config/.openclaw"},
+		{Name: "dshm", MountPath: "/dev/shm"},
+	}
+
+	volumes := []corev1.Volume{
+		{Name: "homebrew-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-homebrew"}}},
+		{Name: "openclaw-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-openclaw"}}},
+		{Name: "chrome-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-chrome"}}},
+		{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &shmSize}}},
+	}
+
+	if params.AgentTLSCert != "" && params.AgentTLSKey != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "agent-tls",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName:  params.Name + "-tls",
+					DefaultMode: func() *int32 { m := int32(0400); return &m }(),
+				},
+			},
+		})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "agent-tls",
+			MountPath: "/config/ssl",
+			ReadOnly:  true,
+		})
+	}
+
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      params.Name,
@@ -663,12 +705,7 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 								corev1.ResourceMemory: resource.MustParse(params.MemoryLimit),
 							},
 						},
-						VolumeMounts: []corev1.VolumeMount{
-							{Name: "chrome-data", MountPath: "/config/chrome-data"},
-							{Name: "homebrew-data", MountPath: "/home/linuxbrew/.linuxbrew"},
-							{Name: "openclaw-data", MountPath: "/config/.openclaw"},
-							{Name: "dshm", MountPath: "/dev/shm"},
-						},
+						VolumeMounts: volumeMounts,
 						LivenessProbe: &corev1.Probe{
 							ProbeHandler:        corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(3000)}},
 							InitialDelaySeconds: 60,
@@ -680,15 +717,24 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 							PeriodSeconds:       10,
 						},
 					}},
-					Volumes: []corev1.Volume{
-						{Name: "homebrew-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-homebrew"}}},
-						{Name: "openclaw-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-openclaw"}}},
-						{Name: "chrome-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-chrome"}}},
-						{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &shmSize}}},
-					},
+					Volumes: volumes,
 					ImagePullSecrets: []corev1.LocalObjectReference{{Name: "ghcr-secret"}},
 				},
 			},
+		},
+	}
+}
+
+func buildTLSSecret(name, ns, certPEM, keyPEM string) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name + "-tls",
+			Namespace: ns,
+			Labels:    map[string]string{"app": name, "managed-by": "claworc"},
+		},
+		Data: map[string][]byte{
+			"agent-tls-cert": []byte(certPEM),
+			"agent-tls-key":  []byte(keyPEM),
 		},
 	}
 }
