@@ -10,6 +10,7 @@ import type { CardAnimationState } from "./ProviderCard";
 import ProviderCardSkeleton from "./ProviderCardSkeleton";
 import ProviderConfigModal from "./ProviderConfigModal";
 import ConfirmDialog, { isSuppressed } from "../ConfirmDialog";
+import BatchActionBar from "./BatchActionBar";
 
 /** Category display order */
 const CATEGORY_ORDER: ProviderCategory[] = [
@@ -54,6 +55,8 @@ export default function ProviderGrid({
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [cardAnimations, setCardAnimations] = useState<Record<string, CardAnimationState>>({});
   const [providerToDelete, setProviderToDelete] = useState<Provider | null>(null);
+  const [selectedProviderIds, setSelectedProviderIds] = useState<Set<string>>(new Set());
+  const [batchDeleteTarget, setBatchDeleteTarget] = useState<Provider[] | null>(null);
   const animationTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const saveSuccessTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -167,6 +170,66 @@ export default function ProviderGrid({
 
   const hasActiveFilters = searchQuery !== "" || filterStatus !== "all";
 
+  /** Selection helpers */
+  const selectionMode = selectedProviderIds.size > 0;
+
+  const selectedProviders = useMemo(
+    () => PROVIDERS.filter((p) => selectedProviderIds.has(p.id)),
+    [selectedProviderIds],
+  );
+
+  const allFilteredSelected = useMemo(
+    () => filteredProviders.length > 0 && filteredProviders.every((p) => selectedProviderIds.has(p.id)),
+    [filteredProviders, selectedProviderIds],
+  );
+
+  const handleToggleSelectAll = useCallback(() => {
+    setSelectedProviderIds((prev) => {
+      if (allFilteredSelected) {
+        // Deselect all currently filtered providers
+        const next = new Set(prev);
+        for (const p of filteredProviders) {
+          next.delete(p.id);
+        }
+        return next;
+      } else {
+        // Select all currently filtered providers
+        const next = new Set(prev);
+        for (const p of filteredProviders) {
+          next.add(p.id);
+        }
+        return next;
+      }
+    });
+  }, [allFilteredSelected, filteredProviders]);
+
+  const handleToggleSelect = useCallback((provider: Provider, selected: boolean) => {
+    setSelectedProviderIds((prev) => {
+      const next = new Set(prev);
+      if (selected) {
+        next.add(provider.id);
+      } else {
+        next.delete(provider.id);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedProviderIds(new Set());
+  }, []);
+
+  /** Build a map of configured keys for batch operations */
+  const configuredKeysMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const p of PROVIDERS) {
+      const masked = getMaskedKey(p);
+      if (masked) map[p.envVarName] = masked;
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings, pendingChanges, pendingDeletes]);
+
   /** Group filtered providers by category */
   const grouped = useMemo(() => {
     const map = new Map<ProviderCategory, Provider[]>();
@@ -211,6 +274,35 @@ export default function ProviderGrid({
     },
     [scheduleAnimationClear],
   );
+
+  const handleBatchDelete = useCallback(() => {
+    const configuredSelected = selectedProviders.filter((p) => isConfigured(p));
+    if (configuredSelected.length === 0) return;
+
+    if (isSuppressed("delete-provider")) {
+      for (const provider of configuredSelected) {
+        executeDelete(provider);
+      }
+      setSelectedProviderIds(new Set());
+    } else {
+      setBatchDeleteTarget(configuredSelected);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProviders, executeDelete]);
+
+  const handleConfirmBatchDelete = () => {
+    if (batchDeleteTarget) {
+      for (const provider of batchDeleteTarget) {
+        executeDelete(provider);
+      }
+      setSelectedProviderIds(new Set());
+      setBatchDeleteTarget(null);
+    }
+  };
+
+  const handleCancelBatchDelete = () => {
+    setBatchDeleteTarget(null);
+  };
 
   const handleDelete = (provider: Provider) => {
     if (isSuppressed("delete-provider")) {
@@ -309,10 +401,23 @@ export default function ProviderGrid({
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-gray-600" data-testid="provider-count-summary">
-        <span className="font-medium text-gray-900">{configuredCount}</span> of{" "}
-        {PROVIDERS.length} providers configured
-      </p>
+      <div className="flex items-center gap-3">
+        <label className="inline-flex items-center gap-2 cursor-pointer" data-testid="select-all-container">
+          <input
+            type="checkbox"
+            checked={allFilteredSelected && filteredProviders.length > 0}
+            onChange={handleToggleSelectAll}
+            aria-label="Select all providers"
+            data-testid="select-all-checkbox"
+            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 cursor-pointer"
+          />
+          <span className="text-sm text-gray-600">Select all</span>
+        </label>
+        <p className="text-sm text-gray-600" data-testid="provider-count-summary">
+          <span className="font-medium text-gray-900">{configuredCount}</span> of{" "}
+          {PROVIDERS.length} providers configured
+        </p>
+      </div>
 
       {/* Search and filter controls */}
       <div className="flex flex-col sm:flex-row gap-3" data-testid="provider-search-filter">
@@ -355,6 +460,16 @@ export default function ProviderGrid({
           <option value="not-configured">Show: Not Configured</option>
         </select>
       </div>
+
+      {/* Batch action bar */}
+      {selectionMode && (
+        <BatchActionBar
+          selectedProviders={selectedProviders}
+          configuredKeys={configuredKeysMap}
+          onDeleteSelected={handleBatchDelete}
+          onClearSelection={handleClearSelection}
+        />
+      )}
 
       {configuredCount === 0 && !hasActiveFilters && (
         <div
@@ -417,6 +532,9 @@ export default function ProviderGrid({
                   onConfigure={() => handleConfigure(provider)}
                   onDelete={() => handleDelete(provider)}
                   animationState={cardAnimations[provider.envVarName] ?? "idle"}
+                  selectionMode={selectionMode}
+                  isSelected={selectedProviderIds.has(provider.id)}
+                  onSelect={(selected) => handleToggleSelect(provider, selected)}
                 />
               ))}
             </div>
@@ -471,6 +589,18 @@ export default function ProviderGrid({
           storageId="delete-provider"
           onConfirm={handleConfirmDelete}
           onCancel={handleCancelDelete}
+        />
+      )}
+
+      {batchDeleteTarget && (
+        <ConfirmDialog
+          title="Delete Selected API Keys"
+          message={`Are you sure you want to delete ${batchDeleteTarget.length} API key${batchDeleteTarget.length !== 1 ? "s" : ""}? This will affect all instances without overrides.`}
+          confirmLabel="Delete All"
+          cancelLabel="Cancel"
+          storageId="delete-provider"
+          onConfirm={handleConfirmBatchDelete}
+          onCancel={handleCancelBatchDelete}
         />
       )}
     </div>

@@ -11,6 +11,12 @@ interface ProviderCardProps {
   onConfigure: () => void;
   onDelete: () => void;
   animationState?: CardAnimationState;
+  /** Whether selection mode is active (shows checkboxes) */
+  selectionMode?: boolean;
+  /** Whether this card is currently selected */
+  isSelected?: boolean;
+  /** Called when the selection checkbox is toggled */
+  onSelect?: (selected: boolean) => void;
 }
 
 export default function ProviderCard({
@@ -20,6 +26,9 @@ export default function ProviderCard({
   onConfigure,
   onDelete,
   animationState = "idle",
+  selectionMode = false,
+  isSelected = false,
+  onSelect,
 }: ProviderCardProps) {
   const handleCardKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {
@@ -66,6 +75,20 @@ export default function ProviderCard({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
+          {selectionMode && (
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={(e) => {
+                e.stopPropagation();
+                onSelect?.(e.target.checked);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              aria-label={`Select ${provider.name}`}
+              data-testid={`select-${provider.id}`}
+              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            />
+          )}
           {IconComponent && (
             <span
               className="inline-flex items-center justify-center w-6 h-6 rounded-md"

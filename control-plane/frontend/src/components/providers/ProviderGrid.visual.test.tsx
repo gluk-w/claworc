@@ -38,7 +38,9 @@ describe("ProviderGrid – visual design consistency", () => {
 
   it("uses space-y-4 for the main container vertical spacing", () => {
     renderGrid();
-    const container = screen.getByTestId("provider-count-summary").parentElement!;
+    // provider-count-summary is inside a flex wrapper, whose parent is the main container
+    const wrapper = screen.getByTestId("provider-count-summary").parentElement!;
+    const container = wrapper.parentElement!;
     expect(container.className).toContain("space-y-4");
   });
 
