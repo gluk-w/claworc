@@ -294,20 +294,18 @@ data:
 apiVersion: v1
 kind: Service
 metadata:
-  name: bot-{name}-vnc
+  name: bot-{name}
   namespace: claworc
 spec:
-  type: NodePort
+  type: ClusterIP
   ports:
-  - name: chrome
-    port: 6081
-    targetPort: 6081
-    nodePort: {nodeport_chrome}        # 30100, 30102, 30104, ...
+  - name: http
+    port: 3000
+    targetPort: 3000
     protocol: TCP
-  - name: terminal
-    port: 6082
-    targetPort: 6082
-    nodePort: {nodeport_terminal}      # 30101, 30103, 30105, ...
+  - name: tunnel
+    port: 3001
+    targetPort: 3001
     protocol: TCP
   selector:
     app: bot-{name}

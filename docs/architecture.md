@@ -89,7 +89,7 @@ For each bot instance, Claworc creates the following resources in the `claworc` 
 | Resource | Name Pattern | Purpose |
 |----------|-------------|---------|
 | Deployment | `bot-{name}` | Pod management with Recreate strategy |
-| Service | `bot-{name}-vnc` | NodePort service exposing dual noVNC (ports 6081 + 6082) |
+| Service | `bot-{name}` | ClusterIP service exposing HTTP (3000) and mTLS tunnel (3001) |
 | PVC | `bot-{name}-clawdbot` | Clawdbot data |
 | PVC | `bot-{name}-homebrew` | Homebrew packages |
 | PVC | `bot-{name}-clawd` | Clawd working directory |
@@ -99,23 +99,13 @@ For each bot instance, Claworc creates the following resources in the `claworc` 
 
 ## Networking
 
-### NodePort Strategy
+### Tunnel Architecture
 
-Each instance is exposed via a **NodePort** service with **two ports** from the range **30100-30199** (consecutive even/odd pairs, supporting up to 50 instances). NodePort was chosen over LoadBalancer because:
+All agent communication is routed through a multiplexed mTLS tunnel between the control plane and each agent. The control plane dials the agent's tunnel listener on port 3001, and all services (terminal, files, logs, desktop, chat) are multiplexed over this single connection using yamux.
 
-- The MetalLB pool is too small to allocate a separate LoadBalancer IP per instance
-- NodePort works directly with noVNC WebSocket connections
-- All instances are accessible at `http://192.168.1.104:<nodeport>`
-
-The port allocator tracks used port pairs in the SQLite database and assigns the lowest available even port on instance creation. The terminal port is always the Chrome port + 1.
-
-| Instance | Chrome NodePort | Terminal NodePort |
-|----------|----------------|-------------------|
-| 1st      | 30100          | 30101             |
-| 2nd      | 30102          | 30103             |
-| 3rd      | 30104          | 30105             |
-| ...      | ...            | ...               |
-| 50th     | 30198          | 30199             |
+Each agent exposes two ports via a ClusterIP service:
+- **Port 3000**: HTTP proxy (internal, agent health checks and Neko gateway WebSocket)
+- **Port 3001**: mTLS tunnel listener (control plane connects here)
 
 ### Service Configuration
 
@@ -123,20 +113,18 @@ The port allocator tracks used port pairs in the SQLite database and assigns the
 apiVersion: v1
 kind: Service
 metadata:
-  name: bot-{name}-vnc
+  name: bot-{name}
   namespace: claworc
 spec:
-  type: NodePort
+  type: ClusterIP
   ports:
-    - name: chrome
-      port: 6081
-      targetPort: 6081
-      nodePort: {allocated_even_port}   # 30100, 30102, 30104, ...
+    - name: http
+      port: 3000
+      targetPort: 3000
       protocol: TCP
-    - name: terminal
-      port: 6082
-      targetPort: 6082
-      nodePort: {allocated_even_port + 1}  # 30101, 30103, 30105, ...
+    - name: tunnel
+      port: 3001
+      targetPort: 3001
       protocol: TCP
   selector:
     app: bot-{name}

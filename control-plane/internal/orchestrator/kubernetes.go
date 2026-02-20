@@ -257,7 +257,7 @@ func (k *KubernetesOrchestrator) DeleteInstance(ctx context.Context, name string
 	if err := k.clientset.AppsV1().Deployments(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("delete deployment: %w", err)
 	}
-	if err := k.clientset.CoreV1().Services(ns).Delete(ctx, name+"-vnc", metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+	if err := k.clientset.CoreV1().Services(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("delete service: %w", err)
 	}
 	if err := k.clientset.CoreV1().Secrets(ns).Delete(ctx, name+"-tls", metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
@@ -342,9 +342,9 @@ func (k *KubernetesOrchestrator) GetGatewayWSURL(_ context.Context, name string)
 		// Convert https:// to wss:// for WebSocket through API server proxy
 		wsHost := strings.Replace(host, "https://", "wss://", 1)
 		wsHost = strings.Replace(wsHost, "http://", "ws://", 1)
-		return fmt.Sprintf("%s/api/v1/namespaces/%s/services/%s-vnc:3000/proxy/gateway", wsHost, k.ns(), name), nil
+		return fmt.Sprintf("%s/api/v1/namespaces/%s/services/%s:3000/proxy/gateway", wsHost, k.ns(), name), nil
 	}
-	return fmt.Sprintf("ws://%s-vnc.%s.svc.cluster.local:3000/gateway", name, k.ns()), nil
+	return fmt.Sprintf("ws://%s.%s.svc.cluster.local:3000/gateway", name, k.ns()), nil
 }
 
 func (k *KubernetesOrchestrator) GetAgentTunnelAddr(_ context.Context, name string) (string, error) {
@@ -354,9 +354,9 @@ func (k *KubernetesOrchestrator) GetAgentTunnelAddr(_ context.Context, name stri
 		// host + service proxy path. The tunnel client should use GetHTTPTransport
 		// for the authed transport.
 		host := strings.TrimRight(k.restConfig.Host, "/")
-		return fmt.Sprintf("%s/api/v1/namespaces/%s/services/%s-vnc:3001/proxy", host, k.ns(), name), nil
+		return fmt.Sprintf("%s/api/v1/namespaces/%s/services/%s:3001/proxy", host, k.ns(), name), nil
 	}
-	return fmt.Sprintf("%s-vnc.%s.svc.cluster.local:3001", name, k.ns()), nil
+	return fmt.Sprintf("%s.%s.svc.cluster.local:3001", name, k.ns()), nil
 }
 
 func (k *KubernetesOrchestrator) GetHTTPTransport() http.RoundTripper {
@@ -573,7 +573,7 @@ func buildTLSSecret(name, ns, certPEM, keyPEM, controlPlaneCA string) *corev1.Se
 
 func buildService(name, ns string) *corev1.Service {
 	return &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: name + "-vnc", Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: map[string]string{"app": name, "managed-by": "claworc"}},
 		Spec: corev1.ServiceSpec{
 			Type:     corev1.ServiceTypeClusterIP,
 			Selector: map[string]string{"app": name},

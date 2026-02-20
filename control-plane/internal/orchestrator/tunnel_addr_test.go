@@ -9,8 +9,8 @@ import (
 func TestBuildService_IncludesTunnelPort(t *testing.T) {
 	svc := buildService("bot-test", "claworc")
 
-	if svc.Name != "bot-test-vnc" {
-		t.Errorf("service name = %q, want %q", svc.Name, "bot-test-vnc")
+	if svc.Name != "bot-test" {
+		t.Errorf("service name = %q, want %q", svc.Name, "bot-test")
 	}
 	if svc.Namespace != "claworc" {
 		t.Errorf("service namespace = %q, want %q", svc.Namespace, "claworc")
@@ -106,7 +106,7 @@ func TestKubernetesOrchestrator_GetAgentTunnelAddr_InCluster(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	expected := "bot-test-vnc." + k.ns() + ".svc.cluster.local:3001"
+	expected := "bot-test." + k.ns() + ".svc.cluster.local:3001"
 	if addr != expected {
 		t.Errorf("addr = %q, want %q", addr, expected)
 	}
@@ -125,7 +125,7 @@ func TestKubernetesOrchestrator_GetAgentTunnelAddr_OutOfCluster(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	expected := "https://127.0.0.1:6443/api/v1/namespaces/" + k.ns() + "/services/bot-test-vnc:3001/proxy"
+	expected := "https://127.0.0.1:6443/api/v1/namespaces/" + k.ns() + "/services/bot-test:3001/proxy"
 	if addr != expected {
 		t.Errorf("addr = %q, want %q", addr, expected)
 	}
@@ -145,7 +145,7 @@ func TestKubernetesOrchestrator_GetAgentTunnelAddr_OutOfCluster_TrailingSlash(t 
 	}
 
 	// Should strip trailing slash from host
-	expected := "https://127.0.0.1:6443/api/v1/namespaces/" + k.ns() + "/services/bot-test-vnc:3001/proxy"
+	expected := "https://127.0.0.1:6443/api/v1/namespaces/" + k.ns() + "/services/bot-test:3001/proxy"
 	if addr != expected {
 		t.Errorf("addr = %q, want %q", addr, expected)
 	}
