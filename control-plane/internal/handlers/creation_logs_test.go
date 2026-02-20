@@ -632,6 +632,235 @@ func TestStreamCreationLogs_AllNonCreatingStatuses(t *testing.T) {
 	}
 }
 
+// TestStreamCreationLogs_MultipleInstances verifies that multiple instances
+// stream their own independent creation log events without cross-contamination.
+func TestStreamCreationLogs_MultipleInstances(t *testing.T) {
+	setupTestDB(t)
+	inst1 := createTestInstance(t, "bot-multi-1")
+	inst2 := createTestInstance(t, "bot-multi-2")
+	inst3 := createTestInstance(t, "bot-multi-3")
+	createTestAdmin(t)
+
+	ch1 := make(chan string, 10)
+	ch2 := make(chan string, 10)
+	ch3 := make(chan string, 10)
+
+	// concurrentMockOrchestrator routes channels per instance name
+	mock := &concurrentMockOrchestrator{
+		channels: map[string]chan string{
+			"bot-multi-1": ch1,
+			"bot-multi-2": ch2,
+			"bot-multi-3": ch3,
+		},
+	}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	// Pre-fill channels with instance-specific events
+	ch1 <- "Instance 1: Scheduling"
+	ch1 <- "Instance 1: Pulling image"
+	ch1 <- "Instance 1: Ready"
+	close(ch1)
+
+	ch2 <- "Instance 2: Scheduling"
+	ch2 <- "Instance 2: Ready"
+	close(ch2)
+
+	ch3 <- "Instance 3: Scheduling"
+	ch3 <- "Instance 3: Pulling image"
+	ch3 <- "Instance 3: Container creating"
+	ch3 <- "Instance 3: Ready"
+	close(ch3)
+
+	// Stream each instance sequentially and verify isolation
+	type testCase struct {
+		inst          database.Instance
+		expectedCount int
+		prefix        string
+	}
+	cases := []testCase{
+		{inst1, 3, "Instance 1:"},
+		{inst2, 2, "Instance 2:"},
+		{inst3, 4, "Instance 3:"},
+	}
+
+	for _, tc := range cases {
+		req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", tc.inst.ID), nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		resp := w.Result()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("%s: expected 200, got %d: %s", tc.inst.Name, resp.StatusCode, string(body))
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		lines := parseSSEData(string(body))
+		if len(lines) != tc.expectedCount {
+			t.Fatalf("%s: expected %d events, got %d: %v", tc.inst.Name, tc.expectedCount, len(lines), lines)
+		}
+		for _, line := range lines {
+			if !strings.HasPrefix(line, tc.prefix) {
+				t.Errorf("%s: unexpected event %q (expected prefix %q)", tc.inst.Name, line, tc.prefix)
+			}
+		}
+	}
+}
+
+// TestStreamCreationLogs_AccessDenied verifies that a non-admin user without
+// instance assignment gets 403 when accessing creation logs.
+func TestStreamCreationLogs_AccessDenied(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-denied")
+
+	// Create a regular user (not admin) without instance assignment
+	user := &database.User{Username: "regular", PasswordHash: "test", Role: "user"}
+	if err := database.DB.Create(user).Error; err != nil {
+		t.Fatalf("create test user: %v", err)
+	}
+
+	// Disable auth-disabled mode to use proper auth flow
+	config.Cfg.AuthDisabled = false
+
+	// Create session for the regular user
+	token, err := sessionStore.Create(user.ID)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	mock := &mockOrchestrator{}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: token})
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+
+	// Restore auth-disabled for other tests
+	config.Cfg.AuthDisabled = true
+}
+
+// TestStreamCreationLogs_Unauthenticated verifies that requests without
+// authentication credentials get 401.
+func TestStreamCreationLogs_Unauthenticated(t *testing.T) {
+	setupTestDB(t)
+	createTestInstance(t, "bot-unauth")
+
+	// Disable auth-disabled mode
+	config.Cfg.AuthDisabled = false
+
+	mock := &mockOrchestrator{}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", "/instances/1/creation-logs", nil)
+	// No cookie or session
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+
+	// Restore auth-disabled for other tests
+	config.Cfg.AuthDisabled = true
+}
+
+// TestStreamCreationLogs_SSEHeaders verifies all required SSE headers are set.
+func TestStreamCreationLogs_SSEHeaders(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-headers")
+	createTestAdmin(t)
+
+	ch := make(chan string, 1)
+	ch <- "test"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Errorf("expected Content-Type text/event-stream, got %q", resp.Header.Get("Content-Type"))
+	}
+	if resp.Header.Get("Cache-Control") != "no-cache" {
+		t.Errorf("expected Cache-Control no-cache, got %q", resp.Header.Get("Cache-Control"))
+	}
+	if resp.Header.Get("Connection") != "keep-alive" {
+		t.Errorf("expected Connection keep-alive, got %q", resp.Header.Get("Connection"))
+	}
+	if resp.Header.Get("X-Accel-Buffering") != "no" {
+		t.Errorf("expected X-Accel-Buffering no, got %q", resp.Header.Get("X-Accel-Buffering"))
+	}
+}
+
+// TestStreamCreationLogs_AdditionalStatuses verifies creation logs work correctly
+// for additional statuses like "stopping" and "restarting".
+func TestStreamCreationLogs_AdditionalStatuses(t *testing.T) {
+	// These statuses are not in the short-circuit list, so they should
+	// attempt to stream from the orchestrator
+	statuses := []string{"stopping", "restarting"}
+
+	for _, status := range statuses {
+		t.Run(status, func(t *testing.T) {
+			setupTestDB(t)
+			inst := createTestInstanceWithStatus(t, fmt.Sprintf("bot-%s", status), status)
+			createTestAdmin(t)
+
+			ch := make(chan string, 1)
+			ch <- "Stream event during " + status
+			close(ch)
+
+			mock := &mockOrchestrator{creationLogsCh: ch}
+			orchestrator.SetForTest(mock)
+
+			router := newRouter()
+
+			req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			resp := w.Result()
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status %q: expected 200, got %d: %s", status, resp.StatusCode, string(body))
+			}
+		})
+	}
+}
+
+// concurrentMockOrchestrator routes StreamCreationLogs to per-instance channels.
+type concurrentMockOrchestrator struct {
+	mockOrchestrator
+	channels map[string]chan string
+}
+
+func (m *concurrentMockOrchestrator) StreamCreationLogs(_ context.Context, name string) (<-chan string, error) {
+	if ch, ok := m.channels[name]; ok {
+		return ch, nil
+	}
+	return nil, fmt.Errorf("no channel for instance %s", name)
+}
+
 // parseSSEData extracts "data: ..." lines from SSE output.
 func parseSSEData(body string) []string {
 	var lines []string
