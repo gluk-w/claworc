@@ -8,6 +8,7 @@ import (
 	"github.com/gluk-w/claworc/agent/config"
 	"github.com/gluk-w/claworc/agent/neko"
 	"github.com/gluk-w/claworc/agent/server"
+	"github.com/gluk-w/claworc/agent/services"
 	"github.com/gluk-w/claworc/agent/tunnel"
 )
 
@@ -34,6 +35,9 @@ func main() {
 	if nekoHandler != nil {
 		tunnel.RegisterChannel(tunnel.ChannelNeko, tunnel.HTTPChannelHandler(nekoHandler))
 	}
+	tunnel.RegisterChannel(tunnel.ChannelTerminal, services.HandleTerminalStream)
+	tunnel.RegisterChannel(tunnel.ChannelFiles, services.HandleFilesStream)
+	tunnel.RegisterChannel(tunnel.ChannelLogs, services.HandleLogsStream)
 
 	// Start the mTLS tunnel listener in a background goroutine.
 	go func() {

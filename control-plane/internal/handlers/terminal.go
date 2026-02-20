@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -10,8 +11,14 @@ import (
 	"github.com/coder/websocket"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
-	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/tunnel"
 	"github.com/go-chi/chi/v5"
+)
+
+// Frame type markers matching the agent-side framing protocol.
+const (
+	frameBinary  byte = 0x01
+	frameControl byte = 0x02
 )
 
 type termResizeMsg struct {
@@ -49,41 +56,52 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.Get()
-	if orch == nil {
-		clientConn.Close(4500, "No orchestrator available")
+	tc := tunnel.Manager.Get(uint(id))
+	if tc == nil {
+		clientConn.Close(4500, "No tunnel available")
 		return
 	}
 
-	status, _ := orch.GetInstanceStatus(ctx, inst.Name)
-	if status != "running" {
-		clientConn.Close(4003, "Instance not running")
-		return
-	}
-
-	session, err := orch.ExecInteractive(ctx, inst.Name, []string{"su", "-", "abc"})
+	stream, err := tc.OpenChannel(ctx, tunnel.ChannelTerminal)
 	if err != nil {
-		log.Printf("Failed to start exec session for %s: %v", inst.Name, err)
-		clientConn.Close(4500, "Failed to start shell")
+		log.Printf("Failed to open terminal tunnel stream for %s: %v", inst.Name, err)
+		clientConn.Close(4500, "Failed to open tunnel stream")
 		return
 	}
-	defer session.Close()
+	defer stream.Close()
 
-	// Increase read limit for terminal traffic
+	// Send the init header with default size; the browser will send a resize
+	// shortly after connecting with the actual terminal dimensions.
+	initHeader, _ := json.Marshal(map[string]uint16{"cols": 80, "rows": 24})
+	if _, err := stream.Write(append(initHeader, '\n')); err != nil {
+		log.Printf("Failed to write terminal init header: %v", err)
+		clientConn.Close(4500, "Failed to initialize terminal")
+		return
+	}
+
+	// Increase read limit for terminal traffic.
 	clientConn.SetReadLimit(1024 * 1024)
 
 	relayCtx, relayCancel := context.WithCancel(ctx)
 	defer relayCancel()
 
-	// Shell stdout → Browser (binary WebSocket messages)
+	// Tunnel stream -> Browser: read framed data, send binary frames as-is to the WebSocket.
 	go func() {
 		defer relayCancel()
 		buf := make([]byte, 32*1024)
 		for {
-			n, err := session.Stdout.Read(buf)
+			n, err := stream.Read(buf)
 			if n > 0 {
-				if err := clientConn.Write(relayCtx, websocket.MessageBinary, buf[:n]); err != nil {
-					return
+				// The agent wraps PTY output in [0x01][data] frames.
+				// Strip the frame header and send raw PTY data to the browser.
+				data := buf[:n]
+				if len(data) > 0 && data[0] == frameBinary {
+					data = data[1:]
+				}
+				if len(data) > 0 {
+					if err := clientConn.Write(relayCtx, websocket.MessageBinary, data); err != nil {
+						return
+					}
 				}
 			}
 			if err != nil {
@@ -92,7 +110,7 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Browser → Shell stdin (binary = data, text = control JSON)
+	// Browser -> Tunnel stream: binary = PTY data, text = control JSON.
 	func() {
 		defer relayCancel()
 		for {
@@ -102,17 +120,31 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if msgType == websocket.MessageBinary {
-				if _, err := session.Stdin.Write(data); err != nil {
+				// Wrap as binary frame: [0x01][data]
+				frame := make([]byte, 1+len(data))
+				frame[0] = frameBinary
+				copy(frame[1:], data)
+				if _, err := stream.Write(frame); err != nil {
 					return
 				}
 			} else {
-				// Text message: parse as JSON control
+				// Text message: parse as JSON control (e.g. resize).
 				var msg termResizeMsg
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
 				}
 				if msg.Type == "resize" && msg.Cols > 0 && msg.Rows > 0 {
-					session.Resize(msg.Cols, msg.Rows)
+					// Build control frame: [0x02][varint len][json]
+					jsonData, _ := json.Marshal(msg)
+					var lenBuf [binary.MaxVarintLen64]byte
+					n := binary.PutUvarint(lenBuf[:], uint64(len(jsonData)))
+					frame := make([]byte, 1+n+len(jsonData))
+					frame[0] = frameControl
+					copy(frame[1:], lenBuf[:n])
+					copy(frame[1+n:], jsonData)
+					if _, err := stream.Write(frame); err != nil {
+						return
+					}
 				}
 			}
 		}

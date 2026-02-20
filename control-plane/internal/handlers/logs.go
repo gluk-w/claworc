@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -8,7 +10,7 @@ import (
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
-	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/tunnel"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -42,16 +44,30 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.Get()
-	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+	tc := tunnel.Manager.Get(inst.ID)
+	if tc == nil {
+		writeError(w, http.StatusServiceUnavailable, "No tunnel available")
 		return
 	}
 
-	ch, err := orch.StreamInstanceLogs(r.Context(), inst.Name, tail, follow)
+	ctx := r.Context()
+
+	stream, err := tc.OpenChannel(ctx, tunnel.ChannelLogs)
 	if err != nil {
-		log.Printf("Failed to stream logs for %s: %v", inst.Name, err)
+		log.Printf("Failed to open logs tunnel stream for %s: %v", inst.Name, err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to stream logs: %v", err))
+		return
+	}
+	defer stream.Close()
+
+	// Send the logs header.
+	header := struct {
+		Tail   int  `json:"tail"`
+		Follow bool `json:"follow"`
+	}{Tail: tail, Follow: follow}
+	if err := json.NewEncoder(stream).Encode(header); err != nil {
+		log.Printf("Failed to write logs header for %s: %v", inst.Name, err)
+		writeError(w, http.StatusInternalServerError, "Failed to initialize log stream")
 		return
 	}
 
@@ -70,17 +86,14 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 	// Flush headers immediately so the EventSource connection is established
 	flusher.Flush()
 
-	ctx := r.Context()
-	for {
+	scanner := bufio.NewScanner(stream)
+	for scanner.Scan() {
 		select {
-		case line, ok := <-ch:
-			if !ok {
-				return
-			}
-			fmt.Fprintf(w, "data: %s\n\n", line)
-			flusher.Flush()
 		case <-ctx.Done():
 			return
+		default:
 		}
+		fmt.Fprintf(w, "data: %s\n\n", scanner.Text())
+		flusher.Flush()
 	}
 }
