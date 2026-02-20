@@ -1,5 +1,13 @@
 import client from "./client";
-import type { Settings, SettingsUpdatePayload, ProviderAnalyticsResponse } from "@/types/settings";
+import type {
+  Settings,
+  SettingsUpdatePayload,
+  ProviderAnalyticsResponse,
+  TestProviderKeyRequest,
+  TestProviderKeyResponse,
+} from "@/types/settings";
+
+export type { TestProviderKeyRequest, TestProviderKeyResponse };
 
 export async function fetchSettings(): Promise<Settings> {
   const { data } = await client.get<Settings>("/settings");
@@ -11,18 +19,6 @@ export async function updateSettings(
 ): Promise<Settings> {
   const { data } = await client.put<Settings>("/settings", payload);
   return data;
-}
-
-export interface TestProviderKeyRequest {
-  provider: string;
-  api_key: string;
-  base_url?: string;
-}
-
-export interface TestProviderKeyResponse {
-  success: boolean;
-  message: string;
-  details?: string;
 }
 
 export async function testProviderKey(
