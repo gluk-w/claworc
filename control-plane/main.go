@@ -147,6 +147,7 @@ func main() {
 				// Settings
 				r.Get("/settings", handlers.GetSettings)
 				r.Put("/settings", handlers.UpdateSettings)
+				r.Post("/settings/test-provider-key", handlers.TestProviderKey)
 
 				// User management
 				r.Get("/users", handlers.ListUsers)

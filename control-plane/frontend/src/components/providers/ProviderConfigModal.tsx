@@ -3,6 +3,7 @@ import { X, Eye, EyeOff, ExternalLink, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
 import type { Provider } from "./providerData";
 import { validateApiKey } from "./validateApiKey";
+import { testProviderKey } from "@/api/settings";
 
 interface ProviderConfigModalProps {
   provider: Provider;
@@ -28,6 +29,7 @@ export default function ProviderConfigModal({
     "idle" | "valid" | "invalid"
   >("idle");
   const [isTesting, setIsTesting] = useState(false);
+  const [testErrorDetails, setTestErrorDetails] = useState<string | null>(null);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const apiKeyInputRef = useRef<HTMLInputElement>(null);
@@ -38,6 +40,7 @@ export default function ProviderConfigModal({
     setShowKey(false);
     setTestResult("idle");
     setIsTesting(false);
+    setTestErrorDetails(null);
     onClose();
   }, [onClose]);
 
@@ -110,19 +113,39 @@ export default function ProviderConfigModal({
     const key = apiKey.trim();
     if (!key) return;
 
+    // First do a quick client-side format check
+    const formatResult = validateApiKey(provider, key);
+    if (!formatResult.valid) {
+      setTestResult("invalid");
+      setTestErrorDetails(null);
+      toast.error(formatResult.message);
+      return;
+    }
+
     setIsTesting(true);
+    setTestErrorDetails(null);
 
-    // Brief delay so the spinner is visible
-    await new Promise((r) => setTimeout(r, 400));
+    try {
+      const result = await testProviderKey({
+        provider: provider.id,
+        api_key: key,
+        base_url: provider.supportsBaseUrl && baseUrl.trim() ? baseUrl.trim() : undefined,
+      });
 
-    const result = validateApiKey(provider, key);
-    setTestResult(result.valid ? "valid" : "invalid");
-    setIsTesting(false);
+      setTestResult(result.success ? "valid" : "invalid");
+      setTestErrorDetails(result.success ? null : result.details ?? null);
 
-    if (result.valid) {
-      toast.success(result.message);
-    } else {
-      toast.error(result.message);
+      if (result.success) {
+        toast.success(result.message);
+      } else {
+        toast.error(result.message);
+      }
+    } catch {
+      setTestResult("invalid");
+      setTestErrorDetails("Could not reach the server. Check your connection.");
+      toast.error("Connection test failed");
+    } finally {
+      setIsTesting(false);
     }
   };
 
@@ -191,6 +214,7 @@ export default function ProviderConfigModal({
                 onChange={(e) => {
                   setApiKey(e.target.value);
                   setTestResult("idle");
+                  setTestErrorDetails(null);
                 }}
                 onKeyDown={handleKeyDownOnInput}
                 aria-describedby={apiKeyDescribedBy}
@@ -250,13 +274,20 @@ export default function ProviderConfigModal({
           {/* Test result feedback */}
           {testResult === "valid" && (
             <p id="api-key-valid" role="status" className="text-xs text-green-600">
-              Key format looks valid.
+              API key verified successfully.
             </p>
           )}
           {testResult === "invalid" && (
-            <p id="api-key-error" role="alert" className="text-xs text-red-600">
-              Validation failed. Check the key format and try again.
-            </p>
+            <div id="api-key-error" role="alert" className="space-y-0.5">
+              <p className="text-xs text-red-600">
+                Connection test failed.
+              </p>
+              {testErrorDetails && (
+                <p className="text-xs text-red-500">
+                  {testErrorDetails}
+                </p>
+              )}
+            </div>
           )}
         </div>
 
@@ -269,7 +300,7 @@ export default function ProviderConfigModal({
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             {isTesting && <Loader2 size={12} className="animate-spin" />}
-            {isTesting ? "Checking..." : "Test Connection"}
+            {isTesting ? "Testing..." : "Test Connection"}
           </button>
           <div className="flex items-center gap-2">
             <button

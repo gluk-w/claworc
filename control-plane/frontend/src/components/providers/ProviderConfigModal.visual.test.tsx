@@ -8,6 +8,13 @@ vi.mock("react-hot-toast", () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock("@/api/settings", () => ({
+  testProviderKey: vi.fn().mockResolvedValue({
+    success: true,
+    message: "API key is valid.",
+  }),
+}));
+
 const testProvider: Provider = {
   id: "openai",
   name: "OpenAI",

@@ -13,6 +13,13 @@ vi.mock("react-hot-toast", () => ({
   },
 }));
 
+vi.mock("@/api/settings", () => ({
+  testProviderKey: vi.fn().mockResolvedValue({
+    success: true,
+    message: "API key is valid.",
+  }),
+}));
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function renderModal(provider: Provider) {

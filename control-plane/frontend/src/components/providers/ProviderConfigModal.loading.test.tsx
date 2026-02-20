@@ -11,6 +11,13 @@ vi.mock("react-hot-toast", () => ({
   },
 }));
 
+vi.mock("@/api/settings", () => ({
+  testProviderKey: vi.fn().mockResolvedValue({
+    success: true,
+    message: "API key is valid.",
+  }),
+}));
+
 const testProvider: Provider = {
   id: "anthropic",
   name: "Anthropic",

@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ProviderConfigModal from "./ProviderConfigModal";
 import type { Provider } from "./providerData";
+import * as settingsApi from "@/api/settings";
 
 // ── Mocks ──────────────────────────────────────────────────────────────
 
@@ -12,6 +13,15 @@ vi.mock("react-hot-toast", () => ({
     error: vi.fn(),
   },
 }));
+
+vi.mock("@/api/settings", () => ({
+  testProviderKey: vi.fn().mockResolvedValue({
+    success: true,
+    message: "API key is valid. Connection successful!",
+  }),
+}));
+
+const mockTestProviderKey = vi.mocked(settingsApi.testProviderKey);
 
 const testProvider: Provider = {
   id: "anthropic",
@@ -493,7 +503,7 @@ describe("ProviderConfigModal – validation", () => {
 
     await vi.waitFor(() => {
       expect(screen.getByRole("status")).toBeInTheDocument();
-      expect(screen.getByText("Key format looks valid.")).toBeInTheDocument();
+      expect(screen.getByText("API key verified successfully.")).toBeInTheDocument();
     });
   });
 
@@ -609,14 +619,22 @@ describe("ProviderConfigModal – validation", () => {
     expect(saveBtn).toBeDisabled();
   });
 
-  it("shows 'Checking...' text during validation", async () => {
+  it("shows 'Testing...' text during connection test", async () => {
+    // Use a delayed mock so the loading state is visible
+    mockTestProviderKey.mockImplementationOnce(
+      () => new Promise((resolve) => setTimeout(() => resolve({
+        success: true,
+        message: "API key is valid.",
+      }), 100)),
+    );
+
     renderModal({ provider: testProvider });
     const user = userEvent.setup();
 
     await user.type(screen.getByLabelText("API Key"), "sk-ant-valid-key-here");
     await user.click(screen.getByRole("button", { name: "Test Connection" }));
 
-    // The button text changes during the 400ms delay
-    expect(screen.getByRole("button", { name: /Checking/ })).toBeInTheDocument();
+    // The button text changes while the API call is in progress
+    expect(screen.getByRole("button", { name: /Testing/ })).toBeInTheDocument();
   });
 });
