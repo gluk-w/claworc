@@ -97,8 +97,8 @@ jobs:
           # Install Docker Desktop
           brew install --cask docker
 
-          # Start Docker Desktop in the background
-          open -a Docker
+          # Start Docker Desktop using full path
+          open /Applications/Docker.app
 
           # Wait for Docker daemon to be ready
           echo "Waiting for Docker to start..."
@@ -108,10 +108,15 @@ jobs:
               break
             fi
             echo "Waiting for Docker... ($i/60)"
-            sleep 3
+            sleep 5
           done
 
           # Verify Docker is running
+          if ! docker info &>/dev/null 2>&1; then
+            echo "ERROR: Docker failed to start after 5 minutes"
+            exit 1
+          fi
+          echo "PASS: Docker is running"
           docker info
 
       - name: Run E2E Docker installation
