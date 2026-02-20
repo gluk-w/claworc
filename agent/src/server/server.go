@@ -10,12 +10,18 @@ import (
 )
 
 // New creates an *http.Server with all routes wired up.
-func New(cfg config.Config) *http.Server {
+// If nekoHandler is non-nil it is mounted at /neko/ with the prefix stripped
+// so the embedded Neko server sees requests rooted at /.
+func New(cfg config.Config, nekoHandler http.Handler) *http.Server {
 	mux := http.NewServeMux()
 
 	gw := proxy.GatewayHandler(cfg.GatewayAddr)
 	mux.Handle("/gateway/", gw)
 	mux.Handle("/websocket/", gw)
+
+	if nekoHandler != nil {
+		mux.Handle("/neko/", http.StripPrefix("/neko", nekoHandler))
+	}
 
 	mux.HandleFunc("/health", healthHandler)
 

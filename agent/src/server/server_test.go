@@ -15,7 +15,7 @@ func TestHealthEndpoint(t *testing.T) {
 		ListenAddr:  ":0",
 		GatewayAddr: "127.0.0.1:1", // unused for health check
 	}
-	srv := New(cfg)
+	srv := New(cfg, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
@@ -56,7 +56,7 @@ func TestServerTimeouts(t *testing.T) {
 		ListenAddr:  ":9999",
 		GatewayAddr: "127.0.0.1:1",
 	}
-	srv := New(cfg)
+	srv := New(cfg, nil)
 
 	if srv.Addr != ":9999" {
 		t.Errorf("Addr = %q, want %q", srv.Addr, ":9999")
@@ -85,7 +85,7 @@ func TestGatewayRoutesRegistered(t *testing.T) {
 		ListenAddr:  ":0",
 		GatewayAddr: addr,
 	}
-	srv := New(cfg)
+	srv := New(cfg, nil)
 
 	for _, path := range []string{"/gateway/", "/websocket/"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -98,5 +98,83 @@ func TestGatewayRoutesRegistered(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("%s: status = %d, want %d", path, resp.StatusCode, http.StatusOK)
 		}
+	}
+}
+
+func TestNekoRouteRegistered(t *testing.T) {
+	nekoHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("neko:" + r.URL.Path))
+	})
+
+	cfg := config.Config{
+		ListenAddr:  ":0",
+		GatewayAddr: "127.0.0.1:1",
+	}
+	srv := New(cfg, nekoHandler)
+
+	// The route strips the /neko prefix, so Neko sees "/" for "/neko/".
+	req := httptest.NewRequest(http.MethodGet, "/neko/", nil)
+	w := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(w, req)
+
+	resp := w.Result()
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if got := string(body); got != "neko:/" {
+		t.Errorf("body = %q, want %q", got, "neko:/")
+	}
+}
+
+func TestNekoWSRouteStripPrefix(t *testing.T) {
+	nekoHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("path:" + r.URL.Path))
+	})
+
+	cfg := config.Config{
+		ListenAddr:  ":0",
+		GatewayAddr: "127.0.0.1:1",
+	}
+	srv := New(cfg, nekoHandler)
+
+	// /neko/ws should be seen by the handler as /ws.
+	req := httptest.NewRequest(http.MethodGet, "/neko/ws", nil)
+	w := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(w, req)
+
+	resp := w.Result()
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if got := string(body); got != "path:/ws" {
+		t.Errorf("body = %q, want %q", got, "path:/ws")
+	}
+}
+
+func TestNekoNilHandlerNotRegistered(t *testing.T) {
+	cfg := config.Config{
+		ListenAddr:  ":0",
+		GatewayAddr: "127.0.0.1:1",
+	}
+	srv := New(cfg, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/neko/", nil)
+	w := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(w, req)
+
+	resp := w.Result()
+	resp.Body.Close()
+
+	// With no neko handler, /neko/ should 404.
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusNotFound)
 	}
 }
