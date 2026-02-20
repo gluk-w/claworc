@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { AlertTriangle } from "lucide-react";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import type { SettingsUpdatePayload } from "@/types/settings";
 import { PROVIDERS } from "./providerData";
@@ -143,6 +144,12 @@ export default function ProviderGrid() {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-800">
+        <AlertTriangle size={16} className="shrink-0" />
+        Changing global API keys will update all instances that don't have
+        overrides.
+      </div>
+
       <p className="text-sm text-gray-600">
         <span className="font-medium text-gray-900">{configuredCount}</span> of{" "}
         {PROVIDERS.length} providers configured
