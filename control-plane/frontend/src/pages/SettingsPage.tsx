@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { AlertTriangle, Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import DynamicApiKeyEditor from "@/components/DynamicApiKeyEditor";
-import { ProviderGrid } from "@/components/providers";
+import LLMProvidersTab from "@/components/settings/LLMProvidersTab";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import type { SettingsUpdatePayload } from "@/types/settings";
 
@@ -78,20 +78,8 @@ export default function SettingsPage() {
     <div>
       <h1 className="text-xl font-semibold text-gray-900 mb-6">Settings</h1>
 
-      <div className="flex items-center gap-2 px-3 py-2 mb-6 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-800">
-        <AlertTriangle size={16} className="shrink-0" />
-        Changing global API keys will update all instances that don't have
-        overrides.
-      </div>
-
       <div className="space-y-8 max-w-4xl">
-        {/* New Provider Grid */}
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-sm font-medium text-gray-900 mb-4">
-            Provider Configuration
-          </h3>
-          <ProviderGrid />
-        </div>
+        <LLMProvidersTab settings={settings} />
 
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h3 className="text-sm font-medium text-gray-900 mb-4">

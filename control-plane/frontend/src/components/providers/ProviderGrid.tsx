@@ -1,7 +1,5 @@
 import { useState, useMemo } from "react";
-import { AlertTriangle } from "lucide-react";
-import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
-import type { SettingsUpdatePayload } from "@/types/settings";
+import type { Settings } from "@/types/settings";
 import { PROVIDERS } from "./providerData";
 import type { Provider, ProviderCategory } from "./providerData";
 import ProviderCard from "./ProviderCard";
@@ -21,10 +19,22 @@ interface PendingChange {
   baseUrl?: string;
 }
 
-export default function ProviderGrid() {
-  const { data: settings } = useSettings();
-  const updateMutation = useUpdateSettings();
+export interface ProviderSavePayload {
+  api_keys?: Record<string, string>;
+  delete_api_keys?: string[];
+}
 
+interface ProviderGridProps {
+  settings: Settings;
+  onSaveChanges: (payload: ProviderSavePayload) => Promise<void>;
+  isSaving: boolean;
+}
+
+export default function ProviderGrid({
+  settings,
+  onSaveChanges,
+  isSaving,
+}: ProviderGridProps) {
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [pendingChanges, setPendingChanges] = useState<Record<string, PendingChange>>({});
@@ -33,15 +43,8 @@ export default function ProviderGrid() {
   /** Check whether a provider has a key configured (server or pending) */
   const isConfigured = (provider: Provider): boolean => {
     const envVar = provider.envVarName;
-    // If pending delete, not configured
     if (pendingDeletes.includes(envVar)) return false;
-    // If pending change, configured
     if (envVar in pendingChanges) return true;
-    // Check server state
-    if (!settings) return false;
-    if (provider.id === "brave") {
-      return !!settings.brave_api_key;
-    }
     return !!settings.api_keys?.[envVar];
   };
 
@@ -53,10 +56,6 @@ export default function ProviderGrid() {
     if (pending) {
       const key = pending.apiKey;
       return "****" + (key.length > 4 ? key.slice(-4) : key);
-    }
-    if (!settings) return null;
-    if (provider.id === "brave") {
-      return settings.brave_api_key || null;
     }
     return settings.api_keys?.[envVar] || null;
   };
@@ -114,42 +113,32 @@ export default function ProviderGrid() {
     Object.keys(pendingChanges).length > 0 || pendingDeletes.length > 0;
 
   const handleSaveChanges = () => {
-    const payload: SettingsUpdatePayload = {};
+    const payload: ProviderSavePayload = {};
 
-    // Build api_keys from pendingChanges (excluding Brave which uses its own field)
     const apiKeys: Record<string, string> = {};
     for (const [envVar, change] of Object.entries(pendingChanges)) {
-      if (envVar === "BRAVE_API_KEY") {
-        payload.brave_api_key = change.apiKey;
-      } else {
-        apiKeys[envVar] = change.apiKey;
-      }
+      apiKeys[envVar] = change.apiKey;
     }
     if (Object.keys(apiKeys).length > 0) {
       payload.api_keys = apiKeys;
     }
 
-    // Build delete_api_keys from pendingDeletes
     if (pendingDeletes.length > 0) {
       payload.delete_api_keys = pendingDeletes;
     }
 
-    updateMutation.mutate(payload, {
-      onSuccess: () => {
+    onSaveChanges(payload)
+      .then(() => {
         setPendingChanges({});
         setPendingDeletes([]);
-      },
-    });
+      })
+      .catch(() => {
+        // Error handling is managed by the parent (e.g. LLMProvidersTab)
+      });
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-800">
-        <AlertTriangle size={16} className="shrink-0" />
-        Changing global API keys will update all instances that don't have
-        overrides.
-      </div>
-
       <p className="text-sm text-gray-600">
         <span className="font-medium text-gray-900">{configuredCount}</span> of{" "}
         {PROVIDERS.length} providers configured
@@ -183,10 +172,10 @@ export default function ProviderGrid() {
         <div className="flex justify-end pt-4 border-t border-gray-200">
           <button
             onClick={handleSaveChanges}
-            disabled={updateMutation.isPending}
+            disabled={isSaving}
             className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {updateMutation.isPending ? "Saving..." : "Save Changes"}
+            {isSaving ? "Saving..." : "Save Changes"}
           </button>
         </div>
       )}
