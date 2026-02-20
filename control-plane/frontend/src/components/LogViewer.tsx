@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Pause, Play, Trash2, Wifi, WifiOff } from "lucide-react";
+import { Info, Pause, Play, Trash2, Wifi, WifiOff } from "lucide-react";
 import type { LogType } from "@/hooks/useInstanceLogs";
 
 interface LogViewerProps {
@@ -68,6 +68,14 @@ export default function LogViewer({
             Creation
           </button>
         </div>
+        {logType === "creation" && (
+          <span
+            className="text-gray-400 hover:text-gray-200 cursor-help"
+            title="Creation logs are ephemeral and not stored. Switch to Runtime logs to see persistent application logs."
+          >
+            <Info size={14} />
+          </span>
+        )}
         <div className="flex-1" />
         <span className="flex items-center gap-1 text-xs text-gray-400">
           {isConnected ? (
