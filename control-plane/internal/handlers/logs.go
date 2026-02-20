@@ -32,7 +32,7 @@ func StreamCreationLogs(w http.ResponseWriter, r *http.Request) {
 
 	// Short-circuit for instances that are not in creation phase
 	switch inst.Status {
-	case "stopped", "failed", "error":
+	case "running", "stopped", "failed", "error":
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
