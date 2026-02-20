@@ -3,10 +3,12 @@ replicaCount: 1
 config:
   databasePath: /app/data/claworc.db
   k8sNamespace: claworc
+  rpid: localhost
+  rpOrigins: http://localhost:8000
 
 service:
   type: NodePort
-  port: 8001
+  port: 8000
   nodePort: 30000
 
 persistence:

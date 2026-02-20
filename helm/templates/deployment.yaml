@@ -20,7 +20,7 @@ spec:
       serviceAccountName: {{ include "claworc.serviceAccountName" . }}
       containers:
         - name: claworc
-          image: "glukw/claworc-dashboard:latest"
+          image: "glukw/claworc:latest"
           imagePullPolicy: Always
           ports:
             - name: http
@@ -31,6 +31,10 @@ spec:
               value: {{ .Values.config.databasePath | quote }}
             - name: CLAWORC_K8S_NAMESPACE
               value: {{ .Values.config.k8sNamespace | quote }}
+            - name: CLAWORC_RP_ID
+              value: {{ .Values.config.rpid | quote }}
+            - name: CLAWORC_RP_ORIGINS
+              value: {{ .Values.config.rpOrigins | quote }}
           volumeMounts:
             - name: data
               mountPath: /app/data
