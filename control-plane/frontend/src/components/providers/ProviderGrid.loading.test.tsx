@@ -86,7 +86,7 @@ describe("ProviderGrid – loading state", () => {
     );
 
     expect(screen.queryByTestId("provider-grid-loading")).not.toBeInTheDocument();
-    expect(screen.getByText(/providers configured/i)).toBeInTheDocument();
+    expect(screen.getByTestId("provider-count-summary")).toBeInTheDocument();
     expect(screen.getByText("Anthropic")).toBeInTheDocument();
   });
 

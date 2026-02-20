@@ -281,7 +281,7 @@ describe("SettingsPage — integration", () => {
 
     // Enter API key and save in modal
     await user.type(
-      screen.getByPlaceholderText("Enter API key"),
+      screen.getByLabelText("API Key"),
       "sk-ant-integration-test-key",
     );
     await user.click(screen.getByRole("button", { name: "Save" }));

@@ -195,7 +195,7 @@ export default function ProviderConfigModal({
                 onKeyDown={handleKeyDownOnInput}
                 aria-describedby={apiKeyDescribedBy}
                 className="w-full px-3 py-1.5 pr-10 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Enter API key"
+                placeholder={provider.apiKeyPlaceholder ?? "Enter API key"}
               />
               <button
                 type="button"
@@ -227,7 +227,7 @@ export default function ProviderConfigModal({
                 onKeyDown={handleKeyDownOnInput}
                 aria-describedby="base-url-note"
                 className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="https://your-proxy.example.com/v1"
+                placeholder={provider.baseUrlPlaceholder ?? "https://your-proxy.example.com/v1"}
               />
               <p id="base-url-note" className="mt-1 text-xs text-amber-600">
                 Note: Base URL configuration will be added in a future update.

@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { KeyRound } from "lucide-react";
 import type { Settings } from "@/types/settings";
 import { PROVIDERS } from "./providerData";
 import type { Provider, ProviderCategory } from "./providerData";
@@ -164,10 +165,27 @@ export default function ProviderGrid({
 
   return (
     <div className="space-y-6">
-      <p className="text-sm text-gray-600">
+      <p className="text-sm text-gray-600" data-testid="provider-count-summary">
         <span className="font-medium text-gray-900">{configuredCount}</span> of{" "}
         {PROVIDERS.length} providers configured
       </p>
+
+      {configuredCount === 0 && (
+        <div
+          className="flex flex-col items-center justify-center py-10 text-center"
+          data-testid="provider-empty-state"
+        >
+          <div className="flex items-center justify-center w-12 h-12 rounded-full bg-gray-100 mb-3">
+            <KeyRound size={24} className="text-gray-400" />
+          </div>
+          <p className="text-sm font-medium text-gray-900">
+            No providers configured yet
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            Get started by adding your first API key
+          </p>
+        </div>
+      )}
 
       {CATEGORY_ORDER.map((category) => {
         const providers = grouped.get(category);

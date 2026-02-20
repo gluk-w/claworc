@@ -48,7 +48,7 @@ describe("ProviderGrid – save / delete flow", () => {
 
   it("shows provider count summary", () => {
     renderGrid();
-    expect(screen.getByText(/providers configured/i)).toBeInTheDocument();
+    expect(screen.getByTestId("provider-count-summary")).toBeInTheDocument();
   });
 
   it("does not render a warning banner (moved to LLMProvidersTab)", () => {
@@ -78,7 +78,7 @@ describe("ProviderGrid – save / delete flow", () => {
 
     await user.click(configureButtons[0]!);
 
-    const keyInput = screen.getByPlaceholderText("Enter API key");
+    const keyInput = screen.getByLabelText("API Key");
     expect(keyInput).toBeInTheDocument();
 
     await user.type(keyInput, "sk-ant-test1234567890");
@@ -99,7 +99,7 @@ describe("ProviderGrid – save / delete flow", () => {
     });
     await user.click(configureButtons[0]!);
     await user.type(
-      screen.getByPlaceholderText("Enter API key"),
+      screen.getByLabelText("API Key"),
       "sk-ant-test1234567890",
     );
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -132,7 +132,7 @@ describe("ProviderGrid – save / delete flow", () => {
     await user.click(configBtn);
 
     await user.type(
-      screen.getByPlaceholderText("Enter API key"),
+      screen.getByLabelText("API Key"),
       "abcdefghijklmnopqrstuvwxyz123456",
     );
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -157,7 +157,7 @@ describe("ProviderGrid – save / delete flow", () => {
     await user.click(configureButtons[0]!); // Anthropic
 
     await user.type(
-      screen.getByPlaceholderText("Enter API key"),
+      screen.getByLabelText("API Key"),
       "sk-ant-test1234567890",
     );
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -209,7 +209,7 @@ describe("ProviderGrid – save / delete flow", () => {
     });
     await user.click(configureButtons[0]!);
     await user.type(
-      screen.getByPlaceholderText("Enter API key"),
+      screen.getByLabelText("API Key"),
       "sk-ant-test1234567890",
     );
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -260,7 +260,7 @@ describe("ProviderGrid – save / delete flow", () => {
     await user.click(groqConfigBtn);
 
     await user.type(
-      screen.getByPlaceholderText("Enter API key"),
+      screen.getByLabelText("API Key"),
       "gsk_test1234567890abcdef",
     );
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -290,7 +290,7 @@ describe("ProviderGrid – save / delete flow", () => {
     });
     await user.click(configureButtons[0]!);
     await user.type(
-      screen.getByPlaceholderText("Enter API key"),
+      screen.getByLabelText("API Key"),
       "sk-ant-test1234567890",
     );
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -362,7 +362,7 @@ describe("ProviderGrid – save / delete flow", () => {
     });
     await user.click(configureButtons[0]!);
     await user.type(
-      screen.getByPlaceholderText("Enter API key"),
+      screen.getByLabelText("API Key"),
       "sk-ant-test1234567890",
     );
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -403,7 +403,7 @@ describe("ProviderGrid – save / delete flow", () => {
     });
     await user.click(configureButtons[0]!);
     await user.type(
-      screen.getByPlaceholderText("Enter API key"),
+      screen.getByLabelText("API Key"),
       "sk-ant-test1234567890",
     );
     await user.click(screen.getByRole("button", { name: "Save" }));

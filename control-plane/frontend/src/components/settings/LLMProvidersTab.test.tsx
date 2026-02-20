@@ -84,7 +84,7 @@ describe("LLMProvidersTab", () => {
 
   it("renders the ProviderGrid with provider count", () => {
     renderTab();
-    expect(screen.getByText(/providers configured/i)).toBeInTheDocument();
+    expect(screen.getByTestId("provider-count-summary")).toBeInTheDocument();
   });
 
   it("normalizes brave_api_key into api_keys for ProviderGrid display", () => {
@@ -142,7 +142,7 @@ describe("LLMProvidersTab", () => {
     await user.click(configureButtons[0]!);
 
     await user.type(
-      screen.getByPlaceholderText("Enter API key"),
+      screen.getByLabelText("API Key"),
       "sk-ant-test1234567890",
     );
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -168,7 +168,7 @@ describe("LLMProvidersTab", () => {
     });
     await user.click(configureButtons[0]!);
     await user.type(
-      screen.getByPlaceholderText("Enter API key"),
+      screen.getByLabelText("API Key"),
       "sk-ant-test1234567890",
     );
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -210,7 +210,7 @@ describe("LLMProvidersTab", () => {
     });
     await user.click(configureButtons[0]!);
     await user.type(
-      screen.getByPlaceholderText("Enter API key"),
+      screen.getByLabelText("API Key"),
       "sk-ant-test1234567890",
     );
     await user.click(screen.getByRole("button", { name: "Save" }));
