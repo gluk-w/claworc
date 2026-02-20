@@ -92,32 +92,28 @@ jobs:
           fi
           echo "PASS: install.sh has correct LF line endings"
 
-      - name: Install and start Docker
+      - name: Install and start Docker with Colima
         run: |
-          # Install Docker Desktop
-          brew install --cask docker
+          # Install Docker CLI and Colima (lightweight Docker runtime for macOS)
+          brew install docker colima
 
-          # Start Docker Desktop using full path
-          open /Applications/Docker.app
+          # Start Colima with Docker runtime
+          colima start --cpu 2 --memory 4
 
-          # Wait for Docker daemon to be ready
-          echo "Waiting for Docker to start..."
-          for i in {1..60}; do
+          # Wait for Docker to be ready
+          echo "Waiting for Docker daemon..."
+          for i in {1..30}; do
             if docker info &>/dev/null 2>&1; then
-              echo "Docker is ready"
-              break
+              echo "PASS: Docker is ready"
+              docker info
+              exit 0
             fi
-            echo "Waiting for Docker... ($i/60)"
-            sleep 5
+            echo "Waiting... ($i/30)"
+            sleep 2
           done
 
-          # Verify Docker is running
-          if ! docker info &>/dev/null 2>&1; then
-            echo "ERROR: Docker failed to start after 5 minutes"
-            exit 1
-          fi
-          echo "PASS: Docker is running"
-          docker info
+          echo "ERROR: Docker failed to start"
+          exit 1
 
       - name: Run E2E Docker installation
         run: |
