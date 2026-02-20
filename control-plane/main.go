@@ -115,6 +115,7 @@ func main() {
 			r.Get("/instances/{id}/config", handlers.GetInstanceConfig)
 			r.Put("/instances/{id}/config", handlers.UpdateInstanceConfig)
 			r.Get("/instances/{id}/logs", handlers.StreamLogs)
+			r.Get("/instances/{id}/creation-logs", handlers.StreamCreationLogs)
 
 			// Files
 			r.Get("/instances/{id}/files/browse", handlers.BrowseFiles)
