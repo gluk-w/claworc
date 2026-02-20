@@ -137,7 +137,7 @@ export default function DynamicApiKeyEditor({
         <KeyRow
           key={keyName}
           keyName={keyName}
-          maskedValue={keys[keyName]}
+          maskedValue={keys[keyName] ?? ""}
           onUpdate={(v) => onUpdate(keyName, v)}
           onDelete={() => onDelete(keyName)}
         />

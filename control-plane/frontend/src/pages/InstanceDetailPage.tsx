@@ -275,7 +275,7 @@ export default function InstanceDetailPage() {
         <ActionButtons
           instance={instance}
           onStart={(id) => startMutation.mutate(id)}
-          onStop={(id) => stopMutation.mutate(id)}
+          onStop={(id) => stopMutation.mutate({ id, displayName: instance.display_name })}
           onRestart={(id) =>
             restartMutation.mutate({ id, displayName: instance.display_name })
           }
@@ -439,7 +439,8 @@ export default function InstanceDetailPage() {
                   onLoad={desktopHook.onLoad}
                   onError={desktopHook.onError}
                   reconnect={desktopHook.reconnect}
-                  chatOpen={false}
+                  chatOpen={chatOpen}
+                  onChatToggle={() => setChatOpen((prev) => !prev)}
                   showNewWindow={false}
                 />
               </div>

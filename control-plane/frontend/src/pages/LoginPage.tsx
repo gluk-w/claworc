@@ -66,9 +66,9 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const options = await webAuthnLoginBegin();
-      const result = await startAuthentication(
-        options as PublicKeyCredentialRequestOptionsJSON,
-      );
+      const result = await startAuthentication({
+        optionsJSON: options as PublicKeyCredentialRequestOptionsJSON,
+      });
       await webAuthnLoginFinish(result);
       refetch();
       navigate("/");

@@ -48,6 +48,7 @@
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.26",
     "jsdom": "^28.1.0",
+    "rollup-plugin-visualizer": "^6.0.8",
     "tailwindcss": "^4.0.0",
     "typescript": "~5.7.0",
     "typescript-eslint": "^8.56.0",
