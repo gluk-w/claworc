@@ -1,11 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import ProviderGrid from "./ProviderGrid";
 import type { Settings } from "@/types/settings";
 import type { ProviderSavePayload } from "./ProviderGrid";
-import { PROVIDERS } from "./providerData";
 import { STORAGE_KEY } from "../ConfirmDialog";
 
 vi.mock("@/api/settings", () => ({

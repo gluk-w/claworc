@@ -127,9 +127,11 @@ export default function ProviderGrid({
 
   // Cleanup timers on unmount
   useEffect(() => {
+    const timers = animationTimers.current;
+    const successTimer = saveSuccessTimer.current;
     return () => {
-      animationTimers.current.forEach((t) => clearTimeout(t));
-      if (saveSuccessTimer.current) clearTimeout(saveSuccessTimer.current);
+      timers.forEach((t) => clearTimeout(t));
+      if (successTimer) clearTimeout(successTimer);
     };
   }, []);
 

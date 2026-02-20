@@ -1,3 +1,6 @@
+// TODO: This component is intended for future per-instance model configuration.
+// It allows toggling global default models and adding extra models per instance.
+// Wire it into the instance detail/edit page when per-instance model overrides are implemented.
 import ModelListEditor from "./ModelListEditor";
 
 interface InstanceModelConfigProps {

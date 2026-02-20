@@ -9,13 +9,12 @@
  * - Usage analytics display in modal
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import ProviderGrid from "./ProviderGrid";
 import type { Settings } from "@/types/settings";
 import type { ProviderSavePayload } from "./ProviderGrid";
-import { PROVIDERS } from "./providerData";
 import { STORAGE_KEY } from "../ConfirmDialog";
 import { HEALTH_COLORS } from "./providerHealth";
 

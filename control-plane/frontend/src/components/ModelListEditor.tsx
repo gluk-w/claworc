@@ -1,3 +1,5 @@
+// TODO: This component is intended for future use by InstanceModelConfig.
+// It provides a tag-style editor for adding/removing model identifiers (e.g. "openai/gpt-4").
 import { useState } from "react";
 import { X, Plus } from "lucide-react";
 

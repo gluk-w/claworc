@@ -444,7 +444,7 @@ describe("ProviderConfigModal – interactions", () => {
   it("clears input fields after save", async () => {
     const onSave = vi.fn();
     // Re-render after save to check state reset
-    const { rerender } = render(
+    render(
       <ProviderConfigModal
         provider={testProvider}
         isOpen={true}

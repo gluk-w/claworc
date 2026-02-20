@@ -75,7 +75,7 @@ describe("ProviderGrid – visual design consistency", () => {
   // ── Save button transitions ──
 
   it("Save Changes button has transition-colors for smooth hover effect", async () => {
-    const { rerender } = render(
+    render(
       <MemoryRouter>
         <ProviderGrid
           settings={{

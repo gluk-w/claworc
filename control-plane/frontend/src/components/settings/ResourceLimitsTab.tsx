@@ -7,7 +7,7 @@ interface ResourceLimitsTabProps {
   onFieldChange: (field: string, value: string) => void;
 }
 
-const RESOURCE_FIELDS: { key: string; label: string }[] = [
+const RESOURCE_FIELDS: { key: keyof Settings; label: string }[] = [
   { key: "default_cpu_request", label: "Default CPU Request" },
   { key: "default_cpu_limit", label: "Default CPU Limit" },
   { key: "default_memory_request", label: "Default Memory Request" },
@@ -56,7 +56,7 @@ export default function ResourceLimitsTab({
             <input
               type="text"
               defaultValue={
-                (settings as Record<string, any>)[field.key] ?? ""
+                String(settings[field.key] ?? "")
               }
               onChange={(e) => handleChange(field.key, e.target.value)}
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
