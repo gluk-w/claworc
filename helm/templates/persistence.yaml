@@ -1,0 +1,43 @@
+{{- if .Values.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "claworc.fullname" . }}-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "claworc.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook: pre-install
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  storageClassName: {{ .Values.persistence.storageClass | default "" }}
+  volumeName: {{ include "claworc.fullname" . }}-data
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+---
+{{- if .Values.persistence.efs }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "claworc.fullname" . }}-data
+  labels:
+    {{- include "claworc.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook: pre-install
+spec:
+  capacity:
+    storage: {{ .Values.persistence.size }}
+  volumeMode: Filesystem
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: {{ .Values.persistence.storageClass | default "" }}
+  csi:
+    driver: efs.csi.aws.com
+    volumeHandle: {{ .Values.persistence.efs }}
+{{- end }}
+{{- end }}

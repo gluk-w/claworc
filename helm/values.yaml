@@ -3,10 +3,12 @@ replicaCount: 1
 config:
   databasePath: /app/data/claworc.db
   k8sNamespace: claworc
+  rpid: localhost
+  rpOrigins: http://localhost:8000
 
 service:
   type: NodePort
-  port: 8001
+  port: 8000
   nodePort: 30000
 
 persistence:
@@ -39,3 +41,22 @@ rbac:
 serviceAccount:
   create: true
   annotations: {}
+
+ingress:
+  enabled: true
+  ingressClassName: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+  hosts:
+    - host: example.com
+      paths: ["/"]
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+nodeSelector: {}
+
+affinity: {}
+
+tolerations: []
