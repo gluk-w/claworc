@@ -28,6 +28,7 @@ const testProvider: Provider = {
   description: "Claude models for advanced reasoning and analysis.",
   docsUrl: "https://console.anthropic.com/settings/keys",
   supportsBaseUrl: false,
+  brandColor: "#D4A574",
 };
 
 const testProviderWithBaseUrl: Provider = {
@@ -38,6 +39,7 @@ const testProviderWithBaseUrl: Provider = {
   description: "GPT and o-series models.",
   docsUrl: "https://platform.openai.com/api-keys",
   supportsBaseUrl: true,
+  brandColor: "#10A37F",
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────

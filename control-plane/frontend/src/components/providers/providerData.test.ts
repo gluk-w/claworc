@@ -135,4 +135,15 @@ describe("providerData", () => {
       expect(uniqueIds.size).toBe(ids.length);
     });
   });
+
+  describe("brand colors", () => {
+    it.each(PROVIDERS.map((p) => [p.name, p]))(
+      "%s has a valid hex brand color",
+      (_name, provider) => {
+        const p = provider as Provider;
+        expect(p.brandColor).toBeDefined();
+        expect(p.brandColor).toMatch(/^#[0-9A-Fa-f]{6}$/);
+      },
+    );
+  });
 });

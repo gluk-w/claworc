@@ -7,7 +7,10 @@ export default function ProviderCardSkeleton() {
     >
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="h-4 w-24 bg-gray-200 rounded" />
+        <div className="flex items-center gap-2">
+          <div className="h-6 w-6 bg-gray-200 rounded-md" />
+          <div className="h-4 w-20 bg-gray-200 rounded" />
+        </div>
         <div className="h-4 w-4 bg-gray-200 rounded" />
       </div>
 

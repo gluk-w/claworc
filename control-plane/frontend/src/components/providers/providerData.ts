@@ -17,6 +17,8 @@ export interface Provider {
   apiKeyPlaceholder?: string;
   /** Placeholder hint shown in the base URL input */
   baseUrlPlaceholder?: string;
+  /** Brand color hex code for visual identification */
+  brandColor: string;
 }
 
 export const PROVIDERS: Provider[] = [
@@ -30,6 +32,7 @@ export const PROVIDERS: Provider[] = [
     docsUrl: "https://console.anthropic.com/settings/keys",
     supportsBaseUrl: false,
     apiKeyPlaceholder: "sk-ant-api03-...",
+    brandColor: "#D4A574",
   },
   {
     id: "openai",
@@ -41,6 +44,7 @@ export const PROVIDERS: Provider[] = [
     supportsBaseUrl: true,
     apiKeyPlaceholder: "sk-...",
     baseUrlPlaceholder: "https://api.openai.com/v1",
+    brandColor: "#10A37F",
   },
   {
     id: "google",
@@ -51,6 +55,7 @@ export const PROVIDERS: Provider[] = [
     docsUrl: "https://aistudio.google.com/apikey",
     supportsBaseUrl: false,
     apiKeyPlaceholder: "AIza...",
+    brandColor: "#4285F4",
   },
   // Open Source / Inference
   {
@@ -61,6 +66,7 @@ export const PROVIDERS: Provider[] = [
     description: "Deploy efficient open-weight models for fast results.",
     docsUrl: "https://console.mistral.ai/api-keys/",
     supportsBaseUrl: false,
+    brandColor: "#F7D046",
   },
   {
     id: "groq",
@@ -71,6 +77,7 @@ export const PROVIDERS: Provider[] = [
     docsUrl: "https://console.groq.com/keys",
     supportsBaseUrl: false,
     apiKeyPlaceholder: "gsk_...",
+    brandColor: "#F55036",
   },
   {
     id: "deepseek",
@@ -81,6 +88,7 @@ export const PROVIDERS: Provider[] = [
     docsUrl: "https://platform.deepseek.com/api_keys",
     supportsBaseUrl: false,
     apiKeyPlaceholder: "sk-...",
+    brandColor: "#4D6BFE",
   },
   {
     id: "together",
@@ -90,6 +98,7 @@ export const PROVIDERS: Provider[] = [
     description: "Run open-source models via scalable serverless inference.",
     docsUrl: "https://api.together.xyz/settings/api-keys",
     supportsBaseUrl: false,
+    brandColor: "#6366F1",
   },
   {
     id: "fireworks",
@@ -100,6 +109,7 @@ export const PROVIDERS: Provider[] = [
     docsUrl: "https://fireworks.ai/api-keys",
     supportsBaseUrl: false,
     apiKeyPlaceholder: "fw_...",
+    brandColor: "#FF6B35",
   },
   {
     id: "cerebras",
@@ -110,6 +120,7 @@ export const PROVIDERS: Provider[] = [
     docsUrl: "https://cloud.cerebras.ai/",
     supportsBaseUrl: false,
     apiKeyPlaceholder: "csk-...",
+    brandColor: "#00A67E",
   },
   // Specialized
   {
@@ -121,6 +132,7 @@ export const PROVIDERS: Provider[] = [
     docsUrl: "https://console.x.ai/",
     supportsBaseUrl: false,
     apiKeyPlaceholder: "xai-...",
+    brandColor: "#1D9BF0",
   },
   {
     id: "cohere",
@@ -130,6 +142,7 @@ export const PROVIDERS: Provider[] = [
     description: "Build enterprise search, RAG, and embedding pipelines.",
     docsUrl: "https://dashboard.cohere.com/api-keys",
     supportsBaseUrl: false,
+    brandColor: "#39594D",
   },
   // Aggregators
   {
@@ -141,6 +154,7 @@ export const PROVIDERS: Provider[] = [
     docsUrl: "https://www.perplexity.ai/settings/api",
     supportsBaseUrl: false,
     apiKeyPlaceholder: "pplx-...",
+    brandColor: "#20808D",
   },
   {
     id: "openrouter",
@@ -151,6 +165,7 @@ export const PROVIDERS: Provider[] = [
     docsUrl: "https://openrouter.ai/keys",
     supportsBaseUrl: false,
     apiKeyPlaceholder: "sk-or-...",
+    brandColor: "#6366F1",
   },
   // Search & Tools
   {
@@ -161,5 +176,6 @@ export const PROVIDERS: Provider[] = [
     description: "Ground AI responses with real-time web search data.",
     docsUrl: "https://brave.com/search/api/",
     supportsBaseUrl: false,
+    brandColor: "#FB542B",
   },
 ];

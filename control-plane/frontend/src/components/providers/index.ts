@@ -6,3 +6,4 @@ export { default as ProviderCardSkeleton } from "./ProviderCardSkeleton";
 export { default as ProviderConfigModal } from "./ProviderConfigModal";
 export { PROVIDERS } from "./providerData";
 export type { Provider, ProviderCategory } from "./providerData";
+export { PROVIDER_ICONS, CATEGORY_ICONS } from "./providerIcons";

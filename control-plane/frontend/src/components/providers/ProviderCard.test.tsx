@@ -12,6 +12,7 @@ const testProvider: Provider = {
   description: "Claude models for advanced reasoning and analysis.",
   docsUrl: "https://console.anthropic.com/settings/keys",
   supportsBaseUrl: false,
+  brandColor: "#D4A574",
 };
 
 function renderCard(props: Partial<React.ComponentProps<typeof ProviderCard>> = {}) {
@@ -38,18 +39,16 @@ describe("ProviderCard – rendering", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows green border when isConfigured=true", () => {
+  it("shows brand color border when isConfigured=true", () => {
     renderCard({ isConfigured: true, maskedKey: "****7890" });
     const card = screen.getByLabelText("Anthropic provider (configured)");
-    expect(card.className).toContain("border-green-500");
-    expect(card.className).not.toContain("border-gray-200");
+    expect(card.style.borderColor).toBeTruthy();
   });
 
   it("shows gray border when isConfigured=false", () => {
     renderCard({ isConfigured: false });
     const card = screen.getByLabelText("Anthropic provider");
     expect(card.className).toContain("border-gray-200");
-    expect(card.className).not.toContain("border-green-500");
   });
 
   it("shows masked key badge when configured", () => {
@@ -205,10 +204,10 @@ describe("ProviderCard – accessibility", () => {
     expect(deleteBtn).toBeInTheDocument();
   });
 
-  it("marks green checkmark as aria-hidden", () => {
+  it("marks configured badge as aria-hidden", () => {
     renderCard({ isConfigured: true, maskedKey: "****7890" });
-    const checkmark = document.querySelector('[aria-hidden="true"]');
-    expect(checkmark).toBeInTheDocument();
-    expect(checkmark?.className).toContain("bg-green-500");
+    const badge = screen.getByTestId("configured-badge");
+    expect(badge).toHaveAttribute("aria-hidden", "true");
+    expect(badge.style.backgroundColor).toBeTruthy();
   });
 });

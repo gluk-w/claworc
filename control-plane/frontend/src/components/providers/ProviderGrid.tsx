@@ -3,6 +3,7 @@ import { KeyRound, Check } from "lucide-react";
 import type { Settings } from "@/types/settings";
 import { PROVIDERS } from "./providerData";
 import type { Provider, ProviderCategory } from "./providerData";
+import { CATEGORY_ICONS } from "./providerIcons";
 import ProviderCard from "./ProviderCard";
 import type { CardAnimationState } from "./ProviderCard";
 import ProviderCardSkeleton from "./ProviderCardSkeleton";
@@ -268,9 +269,17 @@ export default function ProviderGrid({
       {CATEGORY_ORDER.map((category) => {
         const providers = grouped.get(category);
         if (!providers || providers.length === 0) return null;
+        const CategoryIcon = CATEGORY_ICONS[category];
         return (
           <div key={category}>
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+              {CategoryIcon && (
+                <CategoryIcon
+                  size={14}
+                  aria-hidden="true"
+                  data-testid={`category-icon-${category.toLowerCase().replace(/[^a-z]+/g, "-")}`}
+                />
+              )}
               {category}
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

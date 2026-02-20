@@ -25,6 +25,7 @@ const testProvider: Provider = {
   supportsBaseUrl: true,
   apiKeyPlaceholder: "sk-...",
   baseUrlPlaceholder: "https://api.openai.com/v1",
+  brandColor: "#10A37F",
 };
 
 function renderModal(

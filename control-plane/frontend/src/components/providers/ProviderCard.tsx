@@ -1,5 +1,6 @@
 import { ExternalLink, Trash2, Check } from "lucide-react";
 import type { Provider } from "./providerData";
+import { PROVIDER_ICONS } from "./providerIcons";
 
 export type CardAnimationState = "idle" | "added" | "deleted";
 
@@ -30,6 +31,8 @@ export default function ProviderCard({
     }
   };
 
+  const IconComponent = PROVIDER_ICONS[provider.id];
+
   return (
     <div
       tabIndex={0}
@@ -37,7 +40,7 @@ export default function ProviderCard({
       onKeyDown={handleCardKeyDown}
       className={`relative bg-white rounded-lg border p-4 flex flex-col gap-3 transition-all duration-200 ease-in-out hover:shadow-md hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
         isConfigured
-          ? "border-green-500 bg-green-50/30"
+          ? ""
           : "border-gray-200"
       } ${
         animationState === "added"
@@ -46,13 +49,15 @@ export default function ProviderCard({
             ? "animate-provider-fade-out"
             : ""
       }`}
+      style={isConfigured ? { borderColor: provider.brandColor, backgroundColor: `${provider.brandColor}08` } : undefined}
     >
       {/* Configured badge – top-right corner */}
       {isConfigured && (
         <span
-          className="absolute -top-2 -right-2 inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-500 shadow-sm"
+          className="absolute -top-2 -right-2 inline-flex items-center justify-center w-6 h-6 rounded-full shadow-sm"
           aria-hidden="true"
           data-testid="configured-badge"
+          style={{ backgroundColor: provider.brandColor }}
         >
           <Check size={14} className="text-white" />
         </span>
@@ -60,9 +65,21 @@ export default function ProviderCard({
 
       {/* Header */}
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-gray-900">
-          {provider.name}
-        </span>
+        <div className="flex items-center gap-2">
+          {IconComponent && (
+            <span
+              className="inline-flex items-center justify-center w-6 h-6 rounded-md"
+              data-testid="provider-icon"
+              style={{ backgroundColor: `${provider.brandColor}15`, color: provider.brandColor }}
+              aria-hidden="true"
+            >
+              <IconComponent size={14} />
+            </span>
+          )}
+          <span className="text-sm font-medium text-gray-900">
+            {provider.name}
+          </span>
+        </div>
         <a
           href={provider.docsUrl}
           target="_blank"

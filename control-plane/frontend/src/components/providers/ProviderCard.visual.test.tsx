@@ -11,6 +11,7 @@ const testProvider: Provider = {
   description: "Claude models for advanced reasoning and analysis.",
   docsUrl: "https://console.anthropic.com/settings/keys",
   supportsBaseUrl: false,
+  brandColor: "#D4A574",
 };
 
 function renderCard(
@@ -83,14 +84,14 @@ describe("ProviderCard – visual design consistency", () => {
 
   // ── Configured badge (top-right corner) ──
 
-  it("renders a green checkmark badge at top-right when configured", () => {
+  it("renders a brand-colored checkmark badge at top-right when configured", () => {
     renderCard({ isConfigured: true, maskedKey: "****7890" });
     const badge = screen.getByTestId("configured-badge");
     expect(badge).toBeInTheDocument();
     expect(badge.className).toContain("absolute");
     expect(badge.className).toContain("-top-2");
     expect(badge.className).toContain("-right-2");
-    expect(badge.className).toContain("bg-green-500");
+    expect(badge.style.backgroundColor).toBeTruthy();
     expect(badge.className).toContain("rounded-full");
   });
 
@@ -113,10 +114,10 @@ describe("ProviderCard – visual design consistency", () => {
     expect(card.className).toContain("border-gray-200");
   });
 
-  it("uses green-500 border for configured cards", () => {
+  it("uses brand color border for configured cards", () => {
     renderCard({ isConfigured: true, maskedKey: "****7890" });
     const card = screen.getByLabelText("Anthropic provider (configured)");
-    expect(card.className).toContain("border-green-500");
+    expect(card.style.borderColor).toBeTruthy();
   });
 
   // ── Spacing ──

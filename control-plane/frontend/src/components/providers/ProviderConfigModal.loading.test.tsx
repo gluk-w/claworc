@@ -26,6 +26,7 @@ const testProvider: Provider = {
   description: "Claude models for advanced reasoning and analysis.",
   docsUrl: "https://console.anthropic.com/settings/keys",
   supportsBaseUrl: false,
+  brandColor: "#D4A574",
 };
 
 function renderModal(
