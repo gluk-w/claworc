@@ -92,20 +92,27 @@ jobs:
           fi
           echo "PASS: install.sh has correct LF line endings"
 
-      - name: Install Docker
+      - name: Install and start Docker
         run: |
+          # Install Docker Desktop
           brew install --cask docker
-          sudo /Applications/Docker.app/Contents/MacOS/Docker --unattended --install-privileged-components
-          open -a /Applications/Docker.app --args --unattended --accept-license
-          # Wait for Docker to start
+
+          # Start Docker Desktop in the background
+          open -a Docker
+
+          # Wait for Docker daemon to be ready
+          echo "Waiting for Docker to start..."
           for i in {1..60}; do
-            if docker info &>/dev/null; then
+            if docker info &>/dev/null 2>&1; then
               echo "Docker is ready"
               break
             fi
             echo "Waiting for Docker... ($i/60)"
-            sleep 2
+            sleep 3
           done
+
+          # Verify Docker is running
+          docker info
 
       - name: Run E2E Docker installation
         run: |
