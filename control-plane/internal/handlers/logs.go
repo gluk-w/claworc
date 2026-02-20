@@ -30,6 +30,26 @@ func StreamCreationLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Short-circuit for instances that are not in creation phase
+	switch inst.Status {
+	case "stopped", "failed", "error":
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			writeError(w, http.StatusInternalServerError, "Streaming not supported")
+			return
+		}
+		flusher.Flush()
+
+		fmt.Fprintf(w, "data: Instance is not in creation phase. Switch to Runtime logs or restart the instance to see creation logs.\n\n")
+		flusher.Flush()
+		return
+	}
+
 	orch := orchestrator.Get()
 	if orch == nil {
 		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")

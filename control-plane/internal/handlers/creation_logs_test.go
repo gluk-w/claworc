@@ -104,7 +104,12 @@ func setupTestDB(t *testing.T) {
 
 func createTestInstance(t *testing.T, name string) database.Instance {
 	t.Helper()
-	inst := database.Instance{Name: name, DisplayName: name, Status: "creating"}
+	return createTestInstanceWithStatus(t, name, "creating")
+}
+
+func createTestInstanceWithStatus(t *testing.T, name, status string) database.Instance {
+	t.Helper()
+	inst := database.Instance{Name: name, DisplayName: name, Status: status}
 	if err := database.DB.Create(&inst).Error; err != nil {
 		t.Fatalf("create test instance: %v", err)
 	}
@@ -245,6 +250,105 @@ func TestStreamCreationLogs_NoOrchestrator(t *testing.T) {
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", w.Code)
+	}
+}
+
+func TestStreamCreationLogs_StoppedInstance(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstanceWithStatus(t, "bot-stopped", "stopped")
+	createTestAdmin(t)
+
+	mock := &mockOrchestrator{}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 event, got %d: %v", len(lines), lines)
+	}
+	expectedMsg := "Instance is not in creation phase. Switch to Runtime logs or restart the instance to see creation logs."
+	if lines[0] != expectedMsg {
+		t.Errorf("expected %q, got %q", expectedMsg, lines[0])
+	}
+}
+
+func TestStreamCreationLogs_FailedInstance(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstanceWithStatus(t, "bot-failed", "failed")
+	createTestAdmin(t)
+
+	mock := &mockOrchestrator{}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 event, got %d: %v", len(lines), lines)
+	}
+	expectedMsg := "Instance is not in creation phase. Switch to Runtime logs or restart the instance to see creation logs."
+	if lines[0] != expectedMsg {
+		t.Errorf("expected %q, got %q", expectedMsg, lines[0])
+	}
+}
+
+func TestStreamCreationLogs_ErrorInstance(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstanceWithStatus(t, "bot-error", "error")
+	createTestAdmin(t)
+
+	mock := &mockOrchestrator{}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 event, got %d: %v", len(lines), lines)
+	}
+	expectedMsg := "Instance is not in creation phase. Switch to Runtime logs or restart the instance to see creation logs."
+	if lines[0] != expectedMsg {
+		t.Errorf("expected %q, got %q", expectedMsg, lines[0])
 	}
 }
 
