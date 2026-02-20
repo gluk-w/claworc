@@ -7,6 +7,7 @@ import type { Settings } from "@/types/settings";
 const emptySettings: Settings = {
   brave_api_key: "",
   api_keys: {},
+  base_urls: {},
   default_models: [],
   default_container_image: "",
   default_vnc_resolution: "",

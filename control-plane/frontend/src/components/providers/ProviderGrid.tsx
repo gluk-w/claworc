@@ -25,6 +25,7 @@ interface PendingChange {
 
 export interface ProviderSavePayload {
   api_keys?: Record<string, string>;
+  base_urls?: Record<string, string>;
   delete_api_keys?: string[];
 }
 
@@ -172,15 +173,30 @@ export default function ProviderGrid({
   const hasChanges =
     Object.keys(pendingChanges).length > 0 || pendingDeletes.length > 0;
 
+  /** Get the current base URL for a provider (pending or server) */
+  const getBaseUrl = (provider: Provider): string | undefined => {
+    const envVar = provider.envVarName;
+    const pending = pendingChanges[envVar];
+    if (pending?.baseUrl) return pending.baseUrl;
+    return settings.base_urls?.[envVar] || undefined;
+  };
+
   const handleSaveChanges = () => {
     const payload: ProviderSavePayload = {};
 
     const apiKeys: Record<string, string> = {};
+    const baseUrls: Record<string, string> = {};
     for (const [envVar, change] of Object.entries(pendingChanges)) {
       apiKeys[envVar] = change.apiKey;
+      if (change.baseUrl) {
+        baseUrls[envVar] = change.baseUrl;
+      }
     }
     if (Object.keys(apiKeys).length > 0) {
       payload.api_keys = apiKeys;
+    }
+    if (Object.keys(baseUrls).length > 0) {
+      payload.base_urls = baseUrls;
     }
 
     if (pendingDeletes.length > 0) {
@@ -307,6 +323,7 @@ export default function ProviderGrid({
           onClose={handleCloseModal}
           onSave={handleSave}
           currentMaskedKey={getMaskedKey(selectedProvider)}
+          currentBaseUrl={getBaseUrl(selectedProvider)}
           isSaving={isSaving}
         />
       )}

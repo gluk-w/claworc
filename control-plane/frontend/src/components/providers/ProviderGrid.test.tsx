@@ -12,6 +12,7 @@ import { STORAGE_KEY } from "../ConfirmDialog";
 const emptySettings: Settings = {
   brave_api_key: "",
   api_keys: {},
+  base_urls: {},
   default_models: [],
   default_container_image: "",
   default_vnc_resolution: "",
@@ -804,5 +805,78 @@ describe("ProviderGrid – confirmation dialog", () => {
     expect(screen.queryByText("Delete API Key")).not.toBeInTheDocument();
     // Save Changes should appear directly
     expect(screen.getByText("Save Changes")).toBeInTheDocument();
+  });
+});
+
+// ── Base URL persistence ──────────────────────────────────────────────
+
+describe("ProviderGrid – base URL persistence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ "delete-provider": true }));
+  });
+
+  it("includes base_urls in payload when a provider with base URL is saved", async () => {
+    const onSaveChanges = vi.fn<(p: ProviderSavePayload) => Promise<void>>(() =>
+      Promise.resolve(),
+    );
+    renderGrid(emptySettings, onSaveChanges);
+    const user = userEvent.setup();
+
+    // Find OpenAI (the provider that supports base URL)
+    const openaiCard = screen.getByText("OpenAI").closest("[class*='rounded-lg']") as HTMLElement;
+    await user.click(within(openaiCard).getByRole("button", { name: /configure/i }));
+
+    await user.type(screen.getByLabelText("API Key"), "sk-openai12345678");
+    await user.type(screen.getByLabelText(/Base URL/), "https://my-proxy.example.com/v1");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await user.click(screen.getByText("Save Changes"));
+
+    expect(onSaveChanges).toHaveBeenCalledTimes(1);
+    const payload = onSaveChanges.mock.calls[0]![0];
+    expect(payload.api_keys).toEqual({ OPENAI_API_KEY: "sk-openai12345678" });
+    expect(payload.base_urls).toEqual({ OPENAI_API_KEY: "https://my-proxy.example.com/v1" });
+  });
+
+  it("does not include base_urls when base URL field is empty", async () => {
+    const onSaveChanges = vi.fn<(p: ProviderSavePayload) => Promise<void>>(() =>
+      Promise.resolve(),
+    );
+    renderGrid(emptySettings, onSaveChanges);
+    const user = userEvent.setup();
+
+    // Configure OpenAI without base URL
+    const openaiCard = screen.getByText("OpenAI").closest("[class*='rounded-lg']") as HTMLElement;
+    await user.click(within(openaiCard).getByRole("button", { name: /configure/i }));
+
+    await user.type(screen.getByLabelText("API Key"), "sk-openai12345678");
+    // Don't type any base URL
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await user.click(screen.getByText("Save Changes"));
+
+    const payload = onSaveChanges.mock.calls[0]![0];
+    expect(payload.api_keys).toEqual({ OPENAI_API_KEY: "sk-openai12345678" });
+    expect(payload.base_urls).toBeUndefined();
+  });
+
+  it("reads base URLs from settings and passes to modal", async () => {
+    const settingsWithBaseUrl: Settings = {
+      ...emptySettings,
+      api_keys: { OPENAI_API_KEY: "****5678" },
+      base_urls: { OPENAI_API_KEY: "https://existing-proxy.example.com/v1" },
+    };
+    renderGrid(settingsWithBaseUrl);
+    const user = userEvent.setup();
+
+    // Click Update on OpenAI
+    const openaiCard = screen.getByText("OpenAI").closest("[class*='rounded-lg']") as HTMLElement;
+    await user.click(within(openaiCard).getByRole("button", { name: "Update" }));
+
+    // The base URL input should be pre-filled
+    const baseUrlInput = screen.getByLabelText(/Base URL/) as HTMLInputElement;
+    expect(baseUrlInput.value).toBe("https://existing-proxy.example.com/v1");
   });
 });

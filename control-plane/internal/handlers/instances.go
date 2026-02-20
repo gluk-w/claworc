@@ -152,8 +152,8 @@ func computeEffectiveModels(mc modelsConfig) []string {
 }
 
 // resolveInstanceModelsAndKeys builds the effective model list and collects all
-// decrypted API keys (global + instance overrides) for pushing to the running instance.
-func resolveInstanceModelsAndKeys(inst database.Instance) ([]string, map[string]string) {
+// decrypted API keys and base URLs (global + instance overrides) for pushing to the running instance.
+func resolveInstanceModelsAndKeys(inst database.Instance) ([]string, map[string]string, map[string]string) {
 	mc := parseModelsConfig(inst.ModelsConfig)
 	effective := computeEffectiveModels(mc)
 
@@ -210,7 +210,21 @@ func resolveInstanceModelsAndKeys(inst database.Instance) ([]string, map[string]
 		}
 	}
 
-	return effective, apiKeys
+	// Collect base URLs from settings (base_url:* prefix)
+	baseURLs := make(map[string]string)
+	var baseURLSettings []database.Setting
+	database.DB.Where("key LIKE ?", "base_url:%").Find(&baseURLSettings)
+	for _, s := range baseURLSettings {
+		keyName := strings.TrimPrefix(s.Key, "base_url:")
+		if s.Value != "" {
+			// Only include base URL if the corresponding API key is active
+			if _, hasKey := apiKeys[keyName]; hasKey {
+				baseURLs[keyName] = s.Value
+			}
+		}
+	}
+
+	return effective, apiKeys, baseURLs
 }
 
 func instanceToResponse(inst database.Instance, status string) instanceResponse {
@@ -554,8 +568,8 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 
 		// Push models and API keys to the instance (waits for container ready)
 		database.DB.First(&inst, inst.ID)
-		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
-		config.ConfigureInstance(ctx, orch, name, models, resolvedKeys)
+		models, resolvedKeys, resolvedBaseURLs := resolveInstanceModelsAndKeys(inst)
+		config.ConfigureInstance(ctx, orch, name, models, resolvedKeys, resolvedBaseURLs)
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -686,8 +700,8 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		orchStatus, _ = orch.GetInstanceStatus(r.Context(), inst.Name)
 	}
 	if orch != nil && orchStatus == "running" {
-		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
-		go config.ConfigureInstance(context.Background(), orch, inst.Name, models, resolvedKeys)
+		models, resolvedKeys, resolvedBaseURLs := resolveInstanceModelsAndKeys(inst)
+		go config.ConfigureInstance(context.Background(), orch, inst.Name, models, resolvedKeys, resolvedBaseURLs)
 	}
 
 	status := resolveStatus(&inst, orchStatus)
@@ -1024,8 +1038,8 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		// Push models and API keys to the running instance
 		// Re-fetch to get latest state
 		database.DB.First(&inst, inst.ID)
-		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
-		config.ConfigureInstance(ctx, orch, cloneName, models, resolvedKeys)
+		models, resolvedKeys, resolvedBaseURLs := resolveInstanceModelsAndKeys(inst)
+		config.ConfigureInstance(ctx, orch, cloneName, models, resolvedKeys, resolvedBaseURLs)
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))

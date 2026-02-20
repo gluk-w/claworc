@@ -20,14 +20,15 @@ type InstanceOps interface {
 
 const pathClaworcKeys = "/etc/default/claworc-keys"
 
-// ConfigureInstance writes API keys as environment variables and sets the
-// model configuration on a running instance.
+// ConfigureInstance writes API keys and base URLs as environment variables and
+// sets the model configuration on a running instance.
 //
 // API keys are written to /etc/default/claworc-keys as KEY=VALUE lines,
 // which the gateway service picks up via EnvironmentFile=.
+// Base URLs are written alongside as derived env vars (e.g. OPENAI_BASE_URL).
 //
 // Models are set via `openclaw config set agents.defaults.model ... --json`.
-func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models []string, apiKeys map[string]string) {
+func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models []string, apiKeys map[string]string, baseURLs map[string]string) {
 	if len(models) == 0 && len(apiKeys) == 0 {
 		return
 	}
@@ -38,11 +39,18 @@ func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models
 		return
 	}
 
-	// Write API keys as environment variables
+	// Write API keys (and base URLs) as environment variables
 	if len(apiKeys) > 0 {
 		var lines []string
 		for k, v := range apiKeys {
 			lines = append(lines, fmt.Sprintf("%s=%s", k, v))
+		}
+		// Append base URLs as derived env vars (e.g. OPENAI_API_KEY → OPENAI_BASE_URL)
+		for keyName, url := range baseURLs {
+			envVar := baseURLEnvVar(keyName)
+			if envVar != "" {
+				lines = append(lines, fmt.Sprintf("%s=%s", envVar, url))
+			}
 		}
 		data := []byte(strings.Join(lines, "\n") + "\n")
 		if err := ops.WriteFile(ctx, name, pathClaworcKeys, data); err != nil {
@@ -91,6 +99,15 @@ func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models
 		return
 	}
 	log.Printf("Models and API keys configured for %s", name)
+}
+
+// baseURLEnvVar derives the base URL environment variable name from an API key
+// env var name. For example, "OPENAI_API_KEY" → "OPENAI_BASE_URL".
+func baseURLEnvVar(apiKeyEnvVar string) string {
+	if strings.HasSuffix(apiKeyEnvVar, "_API_KEY") {
+		return strings.TrimSuffix(apiKeyEnvVar, "_API_KEY") + "_BASE_URL"
+	}
+	return ""
 }
 
 func waitForRunning(ctx context.Context, ops InstanceOps, name string, timeout time.Duration) bool {

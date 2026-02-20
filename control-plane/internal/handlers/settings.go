@@ -86,6 +86,18 @@ func settingsToResponse(raw map[string]string) map[string]interface{} {
 	}
 	result["api_keys"] = apiKeys
 
+	// Base URLs (base_url:* prefix) – stored as plain text
+	baseURLs := make(map[string]string)
+	for k, v := range raw {
+		if strings.HasPrefix(k, "base_url:") {
+			keyName := strings.TrimPrefix(k, "base_url:")
+			if v != "" {
+				baseURLs[keyName] = v
+			}
+		}
+	}
+	result["base_urls"] = baseURLs
+
 	return result
 }
 
@@ -145,13 +157,35 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Handle delete_api_keys
+	// Handle base_urls (stored as plain text, not encrypted)
+	if v, ok := raw["base_urls"]; ok {
+		urlsMap, ok := v.(map[string]interface{})
+		if !ok {
+			writeError(w, http.StatusBadRequest, "base_urls must be an object")
+			return
+		}
+		for keyName, urlVal := range urlsMap {
+			strVal, ok := urlVal.(string)
+			if !ok {
+				continue
+			}
+			settingKey := "base_url:" + keyName
+			if strVal != "" {
+				database.SetSetting(settingKey, strVal)
+			} else {
+				database.DeleteSetting(settingKey)
+			}
+		}
+	}
+
+	// Handle delete_api_keys (also removes associated base URLs)
 	if v, ok := raw["delete_api_keys"]; ok {
 		arr, ok := v.([]interface{})
 		if ok {
 			for _, item := range arr {
 				if keyName, ok := item.(string); ok {
 					database.DeleteSetting("api_key:" + keyName)
+					database.DeleteSetting("base_url:" + keyName)
 				}
 			}
 		}
@@ -175,7 +209,7 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Handle remaining plain settings
 	for key, val := range raw {
-		if key == "default_models" || key == "api_keys" || key == "delete_api_keys" || key == "brave_api_key" {
+		if key == "default_models" || key == "api_keys" || key == "delete_api_keys" || key == "brave_api_key" || key == "base_urls" {
 			continue
 		}
 		if strVal, ok := val.(string); ok {

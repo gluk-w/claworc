@@ -47,6 +47,10 @@ export default function LLMProvidersTab({
       }
     }
 
+    if (payload.base_urls) {
+      mapped.base_urls = payload.base_urls;
+    }
+
     if (payload.delete_api_keys) {
       mapped.delete_api_keys = payload.delete_api_keys;
     }

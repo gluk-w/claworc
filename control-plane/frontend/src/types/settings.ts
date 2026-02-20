@@ -1,6 +1,7 @@
 export interface Settings {
   brave_api_key: string;
   api_keys: Record<string, string>;
+  base_urls: Record<string, string>;
   default_models: string[];
   default_container_image: string;
   default_vnc_resolution: string;
@@ -16,6 +17,7 @@ export interface Settings {
 export interface SettingsUpdatePayload {
   default_models?: string[];
   api_keys?: Record<string, string>;
+  base_urls?: Record<string, string>;
   delete_api_keys?: string[];
   brave_api_key?: string;
   default_container_image?: string;

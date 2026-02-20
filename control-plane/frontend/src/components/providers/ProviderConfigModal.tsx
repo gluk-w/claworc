@@ -11,6 +11,7 @@ interface ProviderConfigModalProps {
   onClose: () => void;
   onSave: (apiKey: string, baseUrl?: string) => void;
   currentMaskedKey: string | null;
+  currentBaseUrl?: string;
   isSaving?: boolean;
 }
 
@@ -20,6 +21,7 @@ export default function ProviderConfigModal({
   onClose,
   onSave,
   currentMaskedKey,
+  currentBaseUrl,
   isSaving = false,
 }: ProviderConfigModalProps) {
   const [apiKey, setApiKey] = useState("");
@@ -53,6 +55,13 @@ export default function ProviderConfigModal({
     setShowKey(false);
     setTestResult("idle");
   }, [apiKey, baseUrl, onSave, provider.supportsBaseUrl]);
+
+  // Pre-fill base URL from current value when modal opens
+  useEffect(() => {
+    if (isOpen && currentBaseUrl && provider.supportsBaseUrl) {
+      setBaseUrl(currentBaseUrl);
+    }
+  }, [isOpen, currentBaseUrl, provider.supportsBaseUrl]);
 
   // Focus the API key input when the modal opens
   useEffect(() => {
@@ -253,9 +262,8 @@ export default function ProviderConfigModal({
                 className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder={provider.baseUrlPlaceholder ?? "https://your-proxy.example.com/v1"}
               />
-              <p id="base-url-note" className="mt-1 text-xs text-amber-600">
-                Note: Base URL configuration will be added in a future update.
-                For now, only the API key will be saved.
+              <p id="base-url-note" className="mt-1 text-xs text-gray-400">
+                Override the default API endpoint for proxies or custom deployments.
               </p>
             </div>
           )}

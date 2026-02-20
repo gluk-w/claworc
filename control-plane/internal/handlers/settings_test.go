@@ -296,6 +296,126 @@ func TestGetSettings_EmptyState(t *testing.T) {
 	}
 }
 
+func TestUpdateSettings_BaseURLs(t *testing.T) {
+	setupTestDB(t)
+
+	// Save a base URL alongside an API key
+	rec := putSettings(t, map[string]interface{}{
+		"api_keys": map[string]string{
+			"OPENAI_API_KEY": "sk-proj-abcdef1234567890",
+		},
+		"base_urls": map[string]string{
+			"OPENAI_API_KEY": "https://my-proxy.example.com/v1",
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify base URL is stored as plain text in the database
+	var setting database.Setting
+	if err := database.DB.Where("key = ?", "base_url:OPENAI_API_KEY").First(&setting).Error; err != nil {
+		t.Fatalf("base_url setting not found in db: %v", err)
+	}
+	if setting.Value != "https://my-proxy.example.com/v1" {
+		t.Fatalf("expected https://my-proxy.example.com/v1, got %s", setting.Value)
+	}
+
+	// Verify GET returns base URLs in the response
+	resp := getSettingsResponse(t)
+	baseURLs, ok := resp["base_urls"].(map[string]interface{})
+	if !ok {
+		t.Fatal("base_urls not a map in response")
+	}
+	url, ok := baseURLs["OPENAI_API_KEY"].(string)
+	if !ok {
+		t.Fatal("OPENAI_API_KEY not in base_urls response")
+	}
+	if url != "https://my-proxy.example.com/v1" {
+		t.Fatalf("expected https://my-proxy.example.com/v1, got %s", url)
+	}
+}
+
+func TestUpdateSettings_BaseURLDeletedWithAPIKey(t *testing.T) {
+	setupTestDB(t)
+
+	// Setup: add API key and base URL
+	putSettings(t, map[string]interface{}{
+		"api_keys": map[string]string{
+			"OPENAI_API_KEY": "sk-proj-abcdef1234567890",
+		},
+		"base_urls": map[string]string{
+			"OPENAI_API_KEY": "https://my-proxy.example.com/v1",
+		},
+	})
+
+	// Delete the API key — base URL should also be removed
+	rec := putSettings(t, map[string]interface{}{
+		"delete_api_keys": []string{"OPENAI_API_KEY"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	// Verify base URL is gone
+	resp := getSettingsResponse(t)
+	baseURLs, ok := resp["base_urls"].(map[string]interface{})
+	if !ok {
+		t.Fatal("base_urls not a map in response")
+	}
+	if _, exists := baseURLs["OPENAI_API_KEY"]; exists {
+		t.Fatal("base URL should have been deleted along with API key")
+	}
+}
+
+func TestUpdateSettings_BaseURLClearedWithEmptyString(t *testing.T) {
+	setupTestDB(t)
+
+	// Setup: add API key and base URL
+	putSettings(t, map[string]interface{}{
+		"api_keys": map[string]string{
+			"OPENAI_API_KEY": "sk-proj-abcdef1234567890",
+		},
+		"base_urls": map[string]string{
+			"OPENAI_API_KEY": "https://my-proxy.example.com/v1",
+		},
+	})
+
+	// Clear the base URL by sending empty string
+	rec := putSettings(t, map[string]interface{}{
+		"base_urls": map[string]string{
+			"OPENAI_API_KEY": "",
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	// Verify base URL is gone but API key remains
+	resp := getSettingsResponse(t)
+	baseURLs := resp["base_urls"].(map[string]interface{})
+	if _, exists := baseURLs["OPENAI_API_KEY"]; exists {
+		t.Fatal("base URL should have been cleared")
+	}
+	apiKeys := resp["api_keys"].(map[string]interface{})
+	if _, exists := apiKeys["OPENAI_API_KEY"]; !exists {
+		t.Fatal("API key should still exist")
+	}
+}
+
+func TestGetSettings_EmptyBaseURLs(t *testing.T) {
+	setupTestDB(t)
+
+	resp := getSettingsResponse(t)
+	baseURLs, ok := resp["base_urls"].(map[string]interface{})
+	if !ok {
+		t.Fatal("base_urls not a map in response")
+	}
+	if len(baseURLs) != 0 {
+		t.Fatalf("expected empty base_urls, got %v", baseURLs)
+	}
+}
+
 func TestUpdateSettings_PayloadFormat(t *testing.T) {
 	setupTestDB(t)
 

@@ -26,6 +26,7 @@ vi.mock("react-hot-toast", () => ({
 const mockSettings: Settings = {
   brave_api_key: "",
   api_keys: {},
+  base_urls: {},
   default_models: [],
   default_container_image: "ghcr.io/example/agent:latest",
   default_vnc_resolution: "1920x1080",
