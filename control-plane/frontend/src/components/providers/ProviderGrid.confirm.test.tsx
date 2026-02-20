@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import ProviderGrid from "./ProviderGrid";
 import type { Settings } from "@/types/settings";
 import type { ProviderSavePayload } from "./ProviderGrid";
@@ -44,11 +45,13 @@ function renderGrid(
   isSaving = false,
 ) {
   return render(
-    <ProviderGrid
-      settings={settings}
-      onSaveChanges={onSaveChanges}
-      isSaving={isSaving}
-    />,
+    <MemoryRouter>
+      <ProviderGrid
+        settings={settings}
+        onSaveChanges={onSaveChanges}
+        isSaving={isSaving}
+      />
+    </MemoryRouter>,
   );
 }
 

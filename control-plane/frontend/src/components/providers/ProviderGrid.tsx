@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
-import { KeyRound, Check } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { KeyRound, Check, Search, X } from "lucide-react";
 import type { Settings } from "@/types/settings";
 import { PROVIDERS } from "./providerData";
 import type { Provider, ProviderCategory } from "./providerData";
@@ -18,6 +19,8 @@ const CATEGORY_ORDER: ProviderCategory[] = [
   "Aggregators",
   "Search & Tools",
 ];
+
+export type ProviderFilterStatus = "all" | "configured" | "not-configured";
 
 interface PendingChange {
   apiKey: string;
@@ -43,6 +46,7 @@ export default function ProviderGrid({
   isSaving,
   isLoading = false,
 }: ProviderGridProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [pendingChanges, setPendingChanges] = useState<Record<string, PendingChange>>({});
@@ -52,6 +56,40 @@ export default function ProviderGrid({
   const [providerToDelete, setProviderToDelete] = useState<Provider | null>(null);
   const animationTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const saveSuccessTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Search and filter state from URL query params
+  const searchQuery = searchParams.get("q") ?? "";
+  const filterStatus = (searchParams.get("filter") as ProviderFilterStatus) || "all";
+
+  const setSearchQuery = useCallback(
+    (query: string) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (query) {
+          next.set("q", query);
+        } else {
+          next.delete("q");
+        }
+        return next;
+      }, { replace: true });
+    },
+    [setSearchParams],
+  );
+
+  const setFilterStatus = useCallback(
+    (status: ProviderFilterStatus) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (status !== "all") {
+          next.set("filter", status);
+        } else {
+          next.delete("filter");
+        }
+        return next;
+      }, { replace: true });
+    },
+    [setSearchParams],
+  );
 
   /** Schedule clearing an animation state after its duration */
   const scheduleAnimationClear = useCallback((envVar: string, delayMs: number) => {
@@ -102,17 +140,44 @@ export default function ProviderGrid({
     [settings, pendingChanges, pendingDeletes],
   );
 
-  /** Group providers by category */
+  /** Filter providers based on search query and status filter */
+  const filteredProviders = useMemo(() => {
+    let result = PROVIDERS;
+
+    // Search filter: match on name or description (case-insensitive)
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(
+        (p) =>
+          p.name.toLowerCase().includes(query) ||
+          p.description.toLowerCase().includes(query),
+      );
+    }
+
+    // Status filter
+    if (filterStatus === "configured") {
+      result = result.filter((p) => isConfigured(p));
+    } else if (filterStatus === "not-configured") {
+      result = result.filter((p) => !isConfigured(p));
+    }
+
+    return result;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, filterStatus, settings, pendingChanges, pendingDeletes]);
+
+  const hasActiveFilters = searchQuery !== "" || filterStatus !== "all";
+
+  /** Group filtered providers by category */
   const grouped = useMemo(() => {
     const map = new Map<ProviderCategory, Provider[]>();
     for (const cat of CATEGORY_ORDER) {
       map.set(cat, []);
     }
-    for (const p of PROVIDERS) {
+    for (const p of filteredProviders) {
       map.get(p.category)?.push(p);
     }
     return map;
-  }, []);
+  }, [filteredProviders]);
 
   const handleConfigure = (provider: Provider) => {
     setSelectedProvider(provider);
@@ -249,7 +314,49 @@ export default function ProviderGrid({
         {PROVIDERS.length} providers configured
       </p>
 
-      {configuredCount === 0 && (
+      {/* Search and filter controls */}
+      <div className="flex flex-col sm:flex-row gap-3" data-testid="provider-search-filter">
+        <div className="relative flex-1">
+          <Search
+            size={16}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+            aria-hidden="true"
+          />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search providers..."
+            aria-label="Search providers"
+            data-testid="provider-search-input"
+            className="w-full pl-9 pr-8 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              aria-label="Clear search"
+              data-testid="provider-search-clear"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+        <select
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value as ProviderFilterStatus)}
+          aria-label="Filter providers by status"
+          data-testid="provider-filter-select"
+          className="px-3 py-2 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+        >
+          <option value="all">Show: All</option>
+          <option value="configured">Show: Configured</option>
+          <option value="not-configured">Show: Not Configured</option>
+        </select>
+      </div>
+
+      {configuredCount === 0 && !hasActiveFilters && (
         <div
           className="flex flex-col items-center justify-center py-10 text-center"
           data-testid="provider-empty-state"
@@ -262,6 +369,24 @@ export default function ProviderGrid({
           </p>
           <p className="text-xs text-gray-500 mt-1">
             Get started by adding your first API key
+          </p>
+        </div>
+      )}
+
+      {/* No search results empty state */}
+      {hasActiveFilters && filteredProviders.length === 0 && (
+        <div
+          className="flex flex-col items-center justify-center py-10 text-center"
+          data-testid="provider-no-results"
+        >
+          <div className="flex items-center justify-center w-12 h-12 rounded-full bg-gray-100 mb-3">
+            <Search size={24} className="text-gray-400" />
+          </div>
+          <p className="text-sm font-medium text-gray-900">
+            No providers match your search
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            Try adjusting your search or filter criteria
           </p>
         </div>
       )}

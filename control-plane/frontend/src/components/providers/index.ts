@@ -1,5 +1,5 @@
 export { default as ProviderGrid } from "./ProviderGrid";
-export type { ProviderSavePayload } from "./ProviderGrid";
+export type { ProviderSavePayload, ProviderFilterStatus } from "./ProviderGrid";
 export { default as ProviderCard } from "./ProviderCard";
 export type { CardAnimationState } from "./ProviderCard";
 export { default as ProviderCardSkeleton } from "./ProviderCardSkeleton";

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import ProviderGrid from "./ProviderGrid";
 import type { Settings } from "@/types/settings";
 
@@ -21,12 +22,14 @@ const emptySettings: Settings = {
 
 function renderGrid(overrides: Partial<{ isLoading: boolean }> = {}) {
   return render(
-    <ProviderGrid
-      settings={emptySettings}
-      onSaveChanges={() => Promise.resolve()}
-      isSaving={false}
-      isLoading={overrides.isLoading ?? false}
-    />,
+    <MemoryRouter>
+      <ProviderGrid
+        settings={emptySettings}
+        onSaveChanges={() => Promise.resolve()}
+        isSaving={false}
+        isLoading={overrides.isLoading ?? false}
+      />
+    </MemoryRouter>,
   );
 }
 
@@ -67,14 +70,16 @@ describe("ProviderGrid – visual design consistency", () => {
 
   it("Save Changes button has transition-colors for smooth hover effect", async () => {
     const { rerender } = render(
-      <ProviderGrid
-        settings={{
-          ...emptySettings,
-          api_keys: { ANTHROPIC_API_KEY: "****7890" },
-        }}
-        onSaveChanges={() => Promise.resolve()}
-        isSaving={false}
-      />,
+      <MemoryRouter>
+        <ProviderGrid
+          settings={{
+            ...emptySettings,
+            api_keys: { ANTHROPIC_API_KEY: "****7890" },
+          }}
+          onSaveChanges={() => Promise.resolve()}
+          isSaving={false}
+        />
+      </MemoryRouter>,
     );
 
     // We need pending changes for the save button to appear.

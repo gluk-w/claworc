@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import ProviderGrid from "./ProviderGrid";
 import type { Settings } from "@/types/settings";
 import { PROVIDERS } from "./providerData";
@@ -25,11 +26,13 @@ const emptySettings: Settings = {
 
 function renderGrid(settings: Settings = emptySettings) {
   return render(
-    <ProviderGrid
-      settings={settings}
-      onSaveChanges={() => Promise.resolve()}
-      isSaving={false}
-    />,
+    <MemoryRouter>
+      <ProviderGrid
+        settings={settings}
+        onSaveChanges={() => Promise.resolve()}
+        isSaving={false}
+      />
+    </MemoryRouter>,
   );
 }
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import ProviderGrid from "./ProviderGrid";
 import type { Settings } from "@/types/settings";
 import type { ProviderSavePayload } from "./ProviderGrid";
@@ -30,13 +31,16 @@ function renderGrid(
   onSaveChanges: (payload: ProviderSavePayload) => Promise<void> = () =>
     Promise.resolve(),
   isSaving = false,
+  initialEntries: string[] = ["/settings"],
 ) {
   return render(
-    <ProviderGrid
-      settings={settings}
-      onSaveChanges={onSaveChanges}
-      isSaving={isSaving}
-    />,
+    <MemoryRouter initialEntries={initialEntries}>
+      <ProviderGrid
+        settings={settings}
+        onSaveChanges={onSaveChanges}
+        isSaving={isSaving}
+      />
+    </MemoryRouter>,
   );
 }
 
@@ -375,21 +379,25 @@ describe("ProviderGrid – save / delete flow", () => {
 
     // Re-render with isSaving=true
     const { rerender } = render(
-      <ProviderGrid
-        settings={emptySettings}
-        onSaveChanges={() => new Promise(() => {})}
-        isSaving={true}
-      />,
+      <MemoryRouter>
+        <ProviderGrid
+          settings={emptySettings}
+          onSaveChanges={() => new Promise(() => {})}
+          isSaving={true}
+        />
+      </MemoryRouter>,
     );
 
     // A fresh render with isSaving won't have pending state, so let's test via the prop
     // The isSaving prop controls the button state when changes exist
     rerender(
-      <ProviderGrid
-        settings={emptySettings}
-        onSaveChanges={() => new Promise(() => {})}
-        isSaving={true}
-      />,
+      <MemoryRouter>
+        <ProviderGrid
+          settings={emptySettings}
+          onSaveChanges={() => new Promise(() => {})}
+          isSaving={true}
+        />
+      </MemoryRouter>,
     );
   });
 
@@ -499,12 +507,14 @@ describe("ProviderGrid – rendering", () => {
 
   it("shows loading skeleton when isLoading is true", () => {
     render(
-      <ProviderGrid
-        settings={emptySettings}
-        onSaveChanges={() => Promise.resolve()}
-        isSaving={false}
-        isLoading={true}
-      />,
+      <MemoryRouter>
+        <ProviderGrid
+          settings={emptySettings}
+          onSaveChanges={() => Promise.resolve()}
+          isSaving={false}
+          isLoading={true}
+        />
+      </MemoryRouter>,
     );
     expect(screen.getByTestId("provider-grid-loading")).toBeInTheDocument();
     const skeletons = screen.getAllByTestId("provider-card-skeleton");

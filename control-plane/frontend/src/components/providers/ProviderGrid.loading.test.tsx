@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import ProviderGrid from "./ProviderGrid";
 import { PROVIDERS } from "./providerData";
 import type { Settings } from "@/types/settings";
@@ -23,12 +24,14 @@ const emptySettings: Settings = {
 describe("ProviderGrid – loading state", () => {
   it("shows skeleton cards when isLoading is true", () => {
     render(
-      <ProviderGrid
-        settings={emptySettings}
-        onSaveChanges={() => Promise.resolve()}
-        isSaving={false}
-        isLoading={true}
-      />,
+      <MemoryRouter>
+        <ProviderGrid
+          settings={emptySettings}
+          onSaveChanges={() => Promise.resolve()}
+          isSaving={false}
+          isLoading={true}
+        />
+      </MemoryRouter>,
     );
 
     expect(screen.getByTestId("provider-grid-loading")).toBeInTheDocument();
@@ -38,12 +41,14 @@ describe("ProviderGrid – loading state", () => {
 
   it("does not show provider names when loading", () => {
     render(
-      <ProviderGrid
-        settings={emptySettings}
-        onSaveChanges={() => Promise.resolve()}
-        isSaving={false}
-        isLoading={true}
-      />,
+      <MemoryRouter>
+        <ProviderGrid
+          settings={emptySettings}
+          onSaveChanges={() => Promise.resolve()}
+          isSaving={false}
+          isLoading={true}
+        />
+      </MemoryRouter>,
     );
 
     expect(screen.queryByText("Anthropic")).not.toBeInTheDocument();
@@ -52,12 +57,14 @@ describe("ProviderGrid – loading state", () => {
 
   it("does not show provider count summary when loading", () => {
     render(
-      <ProviderGrid
-        settings={emptySettings}
-        onSaveChanges={() => Promise.resolve()}
-        isSaving={false}
-        isLoading={true}
-      />,
+      <MemoryRouter>
+        <ProviderGrid
+          settings={emptySettings}
+          onSaveChanges={() => Promise.resolve()}
+          isSaving={false}
+          isLoading={true}
+        />
+      </MemoryRouter>,
     );
 
     expect(screen.queryByText(/providers configured/i)).not.toBeInTheDocument();
@@ -65,12 +72,14 @@ describe("ProviderGrid – loading state", () => {
 
   it("does not show Save Changes button when loading", () => {
     render(
-      <ProviderGrid
-        settings={emptySettings}
-        onSaveChanges={() => Promise.resolve()}
-        isSaving={false}
-        isLoading={true}
-      />,
+      <MemoryRouter>
+        <ProviderGrid
+          settings={emptySettings}
+          onSaveChanges={() => Promise.resolve()}
+          isSaving={false}
+          isLoading={true}
+        />
+      </MemoryRouter>,
     );
 
     expect(screen.queryByText("Save Changes")).not.toBeInTheDocument();
@@ -78,12 +87,14 @@ describe("ProviderGrid – loading state", () => {
 
   it("shows real content when isLoading is false", () => {
     render(
-      <ProviderGrid
-        settings={emptySettings}
-        onSaveChanges={() => Promise.resolve()}
-        isSaving={false}
-        isLoading={false}
-      />,
+      <MemoryRouter>
+        <ProviderGrid
+          settings={emptySettings}
+          onSaveChanges={() => Promise.resolve()}
+          isSaving={false}
+          isLoading={false}
+        />
+      </MemoryRouter>,
     );
 
     expect(screen.queryByTestId("provider-grid-loading")).not.toBeInTheDocument();
@@ -93,11 +104,13 @@ describe("ProviderGrid – loading state", () => {
 
   it("defaults isLoading to false when prop is omitted", () => {
     render(
-      <ProviderGrid
-        settings={emptySettings}
-        onSaveChanges={() => Promise.resolve()}
-        isSaving={false}
-      />,
+      <MemoryRouter>
+        <ProviderGrid
+          settings={emptySettings}
+          onSaveChanges={() => Promise.resolve()}
+          isSaving={false}
+        />
+      </MemoryRouter>,
     );
 
     expect(screen.queryByTestId("provider-grid-loading")).not.toBeInTheDocument();
