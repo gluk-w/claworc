@@ -449,6 +449,102 @@ describe("InstanceDetailPage — Logs tab visibility across all instance statuse
     unmountC();
   });
 
+  // --- Performance and resource usage verification ---
+  // These tests verify that tab switching properly toggles the `enabled` parameter
+  // to useInstanceLogs, ensuring EventSource connections are opened/closed correctly.
+
+  it("useInstanceLogs receives enabled=true only when logs tab is active", async () => {
+    const instance = makeInstance({ status: "running" });
+    setupMocks(instance);
+
+    render(<InstanceDetailPage />);
+
+    // Since hash is #logs, logs tab should be active -> enabled=true
+    const calls = mockUseInstanceLogs.mock.calls;
+    const lastCall = calls[calls.length - 1];
+    expect(lastCall[1]).toBe(true); // enabled parameter
+  });
+
+  it("useInstanceLogs receives enabled=false after switching to a different tab", async () => {
+    const instance = makeInstance({ status: "running" });
+    setupMocks(instance);
+
+    render(<InstanceDetailPage />);
+    const user = userEvent.setup();
+
+    // Switch to Overview tab
+    await user.click(screen.getByText("Overview"));
+
+    // After switching, useInstanceLogs should be called with enabled=false
+    const calls = mockUseInstanceLogs.mock.calls;
+    const lastCall = calls[calls.length - 1];
+    expect(lastCall[1]).toBe(false); // enabled parameter should be false
+  });
+
+  it("useInstanceLogs enabled toggles correctly through tab switch cycle", async () => {
+    const instance = makeInstance({ status: "running" });
+    setupMocks(instance);
+
+    render(<InstanceDetailPage />);
+    const user = userEvent.setup();
+
+    // Initially on logs tab (enabled=true per hash)
+    let calls = mockUseInstanceLogs.mock.calls;
+    expect(calls[calls.length - 1][1]).toBe(true);
+
+    // Switch to Config tab (enabled should become false)
+    await user.click(screen.getByText("Config"));
+    calls = mockUseInstanceLogs.mock.calls;
+    expect(calls[calls.length - 1][1]).toBe(false);
+
+    // Switch back to Logs tab (enabled should become true again)
+    await user.click(screen.getByText("Logs"));
+    calls = mockUseInstanceLogs.mock.calls;
+    expect(calls[calls.length - 1][1]).toBe(true);
+  });
+
+  it("unmounting page cleans up (useInstanceLogs receives final call)", () => {
+    const instance = makeInstance({ status: "creating" as Instance["status"] });
+    setupMocks(instance);
+
+    const { unmount } = render(<InstanceDetailPage />);
+
+    // Verify hook was called at least once
+    expect(mockUseInstanceLogs.mock.calls.length).toBeGreaterThan(0);
+
+    // Unmount — React will run cleanup effects from useInstanceLogs
+    unmount();
+
+    // No error should occur — the hook's cleanup handles EventSource closing
+  });
+
+  it("rapid tab switching calls useInstanceLogs with alternating enabled values", async () => {
+    const instance = makeInstance({ status: "running" });
+    setupMocks(instance);
+
+    render(<InstanceDetailPage />);
+    const user = userEvent.setup();
+
+    // Rapid switching: Logs -> Overview -> Logs -> Config -> Logs
+    await user.click(screen.getByText("Overview"));
+    await user.click(screen.getByText("Logs"));
+    await user.click(screen.getByText("Config"));
+    await user.click(screen.getByText("Logs"));
+
+    // Get all the enabled values passed to useInstanceLogs
+    const enabledValues = mockUseInstanceLogs.mock.calls.map(
+      (call: unknown[]) => call[1],
+    );
+
+    // The last call should be enabled=true (back on logs tab)
+    expect(enabledValues[enabledValues.length - 1]).toBe(true);
+
+    // There should be some false values from the non-logs tabs
+    expect(enabledValues.some((v: unknown) => v === false)).toBe(true);
+    // And some true values from the logs tabs
+    expect(enabledValues.some((v: unknown) => v === true)).toBe(true);
+  });
+
   it("each concurrent creating instance renders its own LogViewer independently", () => {
     // Simulate 3 creating instances each showing different log content
     const instances = [

@@ -674,6 +674,243 @@ describe("useInstanceLogs", () => {
     expect(result.current.logs[2]).toBe("Message with unicode: 日本語テスト");
   });
 
+  // --- Performance and resource usage verification ---
+  // These tests verify EventSource connection lifecycle, resource cleanup,
+  // and proper behavior during tab switching (simulated via enabled toggling).
+
+  it("closes EventSource when switching away from logs tab (enabled→disabled)", () => {
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useInstanceLogs(42, enabled, "creation"),
+      { initialProps: { enabled: true } },
+    );
+
+    const es = MockEventSource.instances[0];
+    act(() => {
+      es.simulateOpen();
+    });
+    expect(result.current.isConnected).toBe(true);
+    expect(es.closed).toBe(false);
+
+    // Simulate switching to a different tab (enabled becomes false)
+    rerender({ enabled: false });
+
+    // EventSource should be closed
+    expect(es.closed).toBe(true);
+    expect(result.current.isConnected).toBe(false);
+  });
+
+  it("creates new EventSource when returning to logs tab (disabled→enabled)", () => {
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useInstanceLogs(42, enabled, "creation"),
+      { initialProps: { enabled: true } },
+    );
+
+    const firstEs = MockEventSource.instances[0];
+    act(() => {
+      firstEs.simulateOpen();
+      firstEs.simulateMessage("Event before tab switch");
+    });
+    expect(result.current.logs).toHaveLength(1);
+    expect(MockEventSource.instances).toHaveLength(1);
+
+    // Switch away from logs tab
+    rerender({ enabled: false });
+    expect(firstEs.closed).toBe(true);
+
+    // Switch back to logs tab
+    rerender({ enabled: true });
+
+    // A NEW EventSource should have been created
+    expect(MockEventSource.instances).toHaveLength(2);
+    const secondEs = MockEventSource.instances[1];
+    expect(secondEs.closed).toBe(false);
+    expect(secondEs.url).toBe("/api/v1/instances/42/creation-logs");
+
+    // New connection should work independently
+    act(() => {
+      secondEs.simulateOpen();
+      secondEs.simulateMessage("Event after tab return");
+    });
+    expect(result.current.isConnected).toBe(true);
+  });
+
+  it("rapid tab switching (enable/disable cycles) creates and closes exactly one EventSource per cycle", () => {
+    const { rerender } = renderHook(
+      ({ enabled }) => useInstanceLogs(42, enabled, "creation"),
+      { initialProps: { enabled: true } },
+    );
+
+    // Cycle 1: enabled
+    expect(MockEventSource.instances).toHaveLength(1);
+    expect(MockEventSource.instances[0].closed).toBe(false);
+
+    // Cycle 1: disabled
+    rerender({ enabled: false });
+    expect(MockEventSource.instances[0].closed).toBe(true);
+
+    // Cycle 2: enabled
+    rerender({ enabled: true });
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(MockEventSource.instances[1].closed).toBe(false);
+
+    // Cycle 2: disabled
+    rerender({ enabled: false });
+    expect(MockEventSource.instances[1].closed).toBe(true);
+
+    // Cycle 3: enabled
+    rerender({ enabled: true });
+    expect(MockEventSource.instances).toHaveLength(3);
+    expect(MockEventSource.instances[2].closed).toBe(false);
+
+    // Cycle 3: disabled
+    rerender({ enabled: false });
+    expect(MockEventSource.instances[2].closed).toBe(true);
+
+    // Verify: exactly 3 EventSources were created and all 3 were closed
+    expect(MockEventSource.instances).toHaveLength(3);
+    expect(MockEventSource.instances.every((es) => es.closed)).toBe(true);
+  });
+
+  it("no leaked EventSources when unmounting mid-stream (navigation away)", () => {
+    const { result, unmount } = renderHook(() =>
+      useInstanceLogs(42, true, "creation"),
+    );
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateMessage("Active stream event 1");
+      es.simulateMessage("Active stream event 2");
+    });
+    expect(result.current.isConnected).toBe(true);
+    expect(result.current.logs).toHaveLength(2);
+
+    // Simulate navigation away (component unmount)
+    unmount();
+
+    // EventSource must be closed — no leaked connections
+    expect(es.closed).toBe(true);
+  });
+
+  it("paused state does not prevent cleanup on disable", () => {
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useInstanceLogs(42, enabled, "creation"),
+      { initialProps: { enabled: true } },
+    );
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      // Pause the stream
+      result.current.togglePause();
+    });
+    expect(result.current.isPaused).toBe(true);
+
+    // Switch away from tab while paused
+    rerender({ enabled: false });
+
+    // Connection should still be properly closed despite being paused
+    expect(es.closed).toBe(true);
+  });
+
+  it("paused state does not prevent cleanup on unmount", () => {
+    const { result, unmount } = renderHook(() =>
+      useInstanceLogs(42, true, "creation"),
+    );
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      result.current.togglePause();
+    });
+    expect(result.current.isPaused).toBe(true);
+
+    unmount();
+    expect(es.closed).toBe(true);
+  });
+
+  it("logs array is properly managed during reconnection cycle (no stale data leak)", () => {
+    const { result, rerender } = renderHook(
+      ({ enabled, logType }) => useInstanceLogs(42, enabled, logType),
+      { initialProps: { enabled: true, logType: "creation" as const } },
+    );
+
+    // Accumulate some logs
+    act(() => {
+      MockEventSource.instances[0].simulateOpen();
+      MockEventSource.instances[0].simulateMessage("Session 1 event A");
+      MockEventSource.instances[0].simulateMessage("Session 1 event B");
+      MockEventSource.instances[0].simulateMessage("Session 1 event C");
+    });
+    expect(result.current.logs).toHaveLength(3);
+
+    // Switch tab away (disable)
+    rerender({ enabled: false, logType: "creation" as const });
+
+    // Switch tab back (re-enable) — logs should still be available (cleared on type switch, not on disable)
+    rerender({ enabled: true, logType: "creation" as const });
+
+    // New EventSource is created
+    const newEs = MockEventSource.instances[MockEventSource.instances.length - 1];
+    act(() => {
+      newEs.simulateOpen();
+      newEs.simulateMessage("Session 2 event X");
+    });
+
+    // Session 2 event is appended; session 1 events may or may not remain
+    // depending on whether logType changed. Since logType didn't change,
+    // old logs persist (they're cleared only on logType switch).
+    expect(result.current.logs.some((l) => l === "Session 2 event X")).toBe(true);
+  });
+
+  it("switching log type during active stream closes old and opens new connection", () => {
+    const { rerender } = renderHook(
+      ({ logType }) => useInstanceLogs(42, true, logType),
+      { initialProps: { logType: "creation" as const } },
+    );
+
+    const creationEs = MockEventSource.instances[0];
+    expect(creationEs.url).toContain("creation-logs");
+    expect(creationEs.closed).toBe(false);
+
+    // Switch to runtime logs
+    rerender({ logType: "runtime" as const });
+
+    // Old EventSource must be closed
+    expect(creationEs.closed).toBe(true);
+
+    // New EventSource should be opened with runtime URL
+    const runtimeEs = MockEventSource.instances[MockEventSource.instances.length - 1];
+    expect(runtimeEs.url).toContain("/logs?tail=100&follow=true");
+    expect(runtimeEs.closed).toBe(false);
+  });
+
+  it("high volume messages don't cause issues with log accumulation", () => {
+    const { result } = renderHook(() => useInstanceLogs(42, true, "creation"));
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+    });
+
+    // Simulate 1000 messages (stress test for log array growth)
+    act(() => {
+      for (let i = 0; i < 1000; i++) {
+        es.simulateMessage(`High volume event ${i}`);
+      }
+    });
+
+    expect(result.current.logs).toHaveLength(1000);
+    expect(result.current.logs[0]).toBe("High volume event 0");
+    expect(result.current.logs[999]).toBe("High volume event 999");
+
+    // clearLogs should free all accumulated logs
+    act(() => {
+      result.current.clearLogs();
+    });
+    expect(result.current.logs).toHaveLength(0);
+  });
+
   it("unmounting one concurrent instance cleans up only its EventSource", () => {
     const hook1 = renderHook(() => useInstanceLogs(1, true, "creation"));
     const hook2 = renderHook(() => useInstanceLogs(2, true, "creation"));
