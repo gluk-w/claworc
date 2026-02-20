@@ -123,8 +123,9 @@ export default function ProviderConfigModal({
                 className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="https://your-proxy.example.com/v1"
               />
-              <p className="mt-1 text-xs text-gray-400">
-                Override for Azure OpenAI or custom proxy endpoints.
+              <p className="mt-1 text-xs text-amber-600">
+                Note: Base URL configuration will be added in a future update.
+                For now, only the API key will be saved.
               </p>
             </div>
           )}
