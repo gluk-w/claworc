@@ -123,6 +123,17 @@ export default function InstanceDetailPage() {
   // Log type state for filtering between runtime and creation logs
   const [logType, setLogType] = useState<LogType>("runtime");
 
+  // Smart default: switch to creation logs on first load if instance is creating
+  const logTypeInitializedRef = useRef(false);
+  useEffect(() => {
+    if (instance && !logTypeInitializedRef.current) {
+      logTypeInitializedRef.current = true;
+      if (instance.status === "creating") {
+        setLogType("creation");
+      }
+    }
+  }, [instance]);
+
   const logsHook = useInstanceLogs(instanceId, activeTab === "logs", logType);
   const termHook = useTerminal(instanceId, terminalActivated && instance?.status === "running");
   const desktopHook = useDesktop(instanceId, chromeActivated && instance?.status === "running");
