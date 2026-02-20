@@ -11,6 +11,8 @@ tmp
 node_modules
 pkg/mod
 dist
+coverage/
+*.tsbuildinfo
 
 
 test-results/
