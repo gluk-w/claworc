@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { AlertTriangle, Eye, EyeOff } from "lucide-react";
 import DynamicApiKeyEditor from "@/components/DynamicApiKeyEditor";
+import { ProviderGrid } from "@/components/providers";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import type { SettingsUpdatePayload } from "@/types/settings";
 
@@ -83,7 +84,15 @@ export default function SettingsPage() {
         overrides.
       </div>
 
-      <div className="space-y-8 max-w-2xl">
+      <div className="space-y-8 max-w-4xl">
+        {/* New Provider Grid */}
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="text-sm font-medium text-gray-900 mb-4">
+            Provider Configuration
+          </h3>
+          <ProviderGrid />
+        </div>
+
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h3 className="text-sm font-medium text-gray-900 mb-4">
             Model API Keys
