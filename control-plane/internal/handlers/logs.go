@@ -12,6 +12,26 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// StreamCreationLogs streams real-time pod creation events via SSE.
+//
+// Creation logs capture Kubernetes pod events (scheduling, image pulls),
+// container status transitions (waiting, running), and early container
+// stdout once the pod is ready. This gives users visibility into what
+// happens between requesting an instance and the instance becoming usable.
+//
+// These logs are separate from runtime logs because they come from
+// different data sources (K8s Event API and pod status vs. container
+// stdout) and are inherently ephemeral — they are not persisted and
+// exist only for the duration of the SSE stream.
+//
+// Expected lifecycle:
+//   - The stream is opened while the instance status is "creating".
+//   - The orchestrator polls pod events and container status on a ticker.
+//   - Once all containers are ready, the last N container log lines are
+//     emitted and the stream closes.
+//   - If the instance is already running/stopped/failed/error, a single
+//     informational message is sent and the stream closes immediately.
+//   - A 10-minute timeout in the orchestrator guards against stuck pods.
 func StreamCreationLogs(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
