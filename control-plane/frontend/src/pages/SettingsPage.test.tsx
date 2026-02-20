@@ -188,8 +188,8 @@ describe("SettingsPage", () => {
     renderPage();
     await screen.findByText("LLM Providers");
 
-    const nav = screen.getByRole("navigation", { name: "Settings tabs" });
-    expect(nav).toBeInTheDocument();
+    const tablist = screen.getByRole("tablist", { name: "Settings tabs" });
+    expect(tablist).toBeInTheDocument();
   });
 
   it("can switch back and forth between tabs", async () => {
@@ -347,15 +347,15 @@ describe("SettingsPage — integration", () => {
 
     await screen.findByText("LLM Providers");
 
-    // All tab triggers should be <button> elements, not <a> links
-    const nav = screen.getByRole("navigation", { name: "Settings tabs" });
-    const buttons = within(nav).getAllByRole("button");
-    expect(buttons).toHaveLength(3);
+    // All tab triggers should be <button> elements with role=tab, not <a> links
+    const tablist = screen.getByRole("tablist", { name: "Settings tabs" });
+    const tabs = within(tablist).getAllByRole("tab");
+    expect(tabs).toHaveLength(3);
 
-    // Verify none are anchor elements
-    for (const btn of buttons) {
-      expect(btn.tagName).toBe("BUTTON");
-      expect(btn).not.toHaveAttribute("href");
+    // Verify all are button elements (not anchors)
+    for (const tab of tabs) {
+      expect(tab.tagName).toBe("BUTTON");
+      expect(tab).not.toHaveAttribute("href");
     }
 
     // Switch tabs — since they're buttons (not router Links), URL won't change
@@ -371,9 +371,9 @@ describe("SettingsPage — integration", () => {
     renderPage();
     await screen.findByText("LLM Providers");
 
-    const nav = screen.getByRole("navigation", { name: "Settings tabs" });
-    // The nav uses flex layout with gap-0 for horizontal tabs
-    expect(nav.className).toContain("flex");
+    const tablist = screen.getByRole("tablist", { name: "Settings tabs" });
+    // The tablist uses flex layout with gap-0 for horizontal tabs
+    expect(tablist.className).toContain("flex");
   });
 
   it("displays pre-configured provider keys from settings on load", async () => {
