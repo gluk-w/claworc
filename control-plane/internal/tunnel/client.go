@@ -107,6 +107,13 @@ func (tc *TunnelClient) OpenChannel(ctx context.Context, channel string) (net.Co
 	return conn, nil
 }
 
+// IsClosed reports whether the underlying yamux session is nil or closed.
+func (tc *TunnelClient) IsClosed() bool {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	return tc.session == nil || tc.session.IsClosed()
+}
+
 // SetSession replaces the yamux session directly. Intended for testing.
 func (tc *TunnelClient) SetSession(session *yamux.Session) {
 	tc.mu.Lock()
