@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +24,18 @@ func setupTestManager(t *testing.T) {
 	old := Manager
 	Manager = NewTunnelManager()
 	t.Cleanup(func() { Manager = old })
+}
+
+// setFastBackoff overrides backoff durations for fast tests and restores on cleanup.
+func setFastBackoff(t *testing.T) {
+	t.Helper()
+	oldMin, oldMax := backoffMin, backoffMax
+	backoffMin = 5 * time.Millisecond
+	backoffMax = 40 * time.Millisecond
+	t.Cleanup(func() {
+		backoffMin = oldMin
+		backoffMax = oldMax
+	})
 }
 
 func TestConnectInstance_AlreadyConnected(t *testing.T) {
@@ -100,6 +113,7 @@ func TestDisconnectInstance_Nonexistent(t *testing.T) {
 
 func TestReconnectLoop_StopsOnCancel(t *testing.T) {
 	setupTestManager(t)
+	setFastBackoff(t)
 
 	inst := &database.Instance{Name: "bot-test"}
 	inst.ID = 10
@@ -108,7 +122,7 @@ func TestReconnectLoop_StopsOnCancel(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		ReconnectLoop(ctx, inst, stubResolver("", fmt.Errorf("no agent")), 10*time.Millisecond)
+		ReconnectLoop(ctx, inst, stubResolver("", fmt.Errorf("no agent")))
 		close(done)
 	}()
 
@@ -126,6 +140,7 @@ func TestReconnectLoop_StopsOnCancel(t *testing.T) {
 
 func TestReconnectLoop_ReconnectsOnClosedSession(t *testing.T) {
 	setupTestManager(t)
+	setFastBackoff(t)
 
 	// Create a closed session so IsClosed() returns true.
 	a, b := net.Pipe()
@@ -144,20 +159,20 @@ func TestReconnectLoop_ReconnectsOnClosedSession(t *testing.T) {
 	inst.ID = 11
 	inst.AgentCert = "-----BEGIN CERTIFICATE-----\nfoo\n-----END CERTIFICATE-----"
 
-	reconnectAttempts := 0
+	var reconnectAttempts int32
 	resolver := func(_ context.Context, _ string) (string, error) {
-		reconnectAttempts++
+		atomic.AddInt32(&reconnectAttempts, 1)
 		return "", fmt.Errorf("not a real agent")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		ReconnectLoop(ctx, inst, resolver, 10*time.Millisecond)
+		ReconnectLoop(ctx, inst, resolver)
 		close(done)
 	}()
 
-	time.Sleep(60 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	cancel()
 
 	select {
@@ -166,8 +181,50 @@ func TestReconnectLoop_ReconnectsOnClosedSession(t *testing.T) {
 		t.Fatal("ReconnectLoop did not stop after context cancel")
 	}
 
-	if reconnectAttempts == 0 {
+	if atomic.LoadInt32(&reconnectAttempts) == 0 {
 		t.Error("expected at least one reconnect attempt for closed session")
+	}
+}
+
+func TestReconnectLoop_ExponentialBackoff(t *testing.T) {
+	setupTestManager(t)
+	setFastBackoff(t)
+
+	inst := &database.Instance{Name: "bot-backoff"}
+	inst.ID = 20
+	inst.AgentCert = "-----BEGIN CERTIFICATE-----\nfoo\n-----END CERTIFICATE-----"
+
+	var timestamps []time.Time
+	resolver := func(_ context.Context, _ string) (string, error) {
+		timestamps = append(timestamps, time.Now())
+		return "", fmt.Errorf("always fail")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		ReconnectLoop(ctx, inst, resolver)
+		close(done)
+	}()
+
+	// With min=5ms, the sequence is 5ms, 10ms, 20ms, 40ms (capped).
+	// Total to get 4 attempts ≈ 5+10+20+40 = 75ms. Wait plenty.
+	time.Sleep(250 * time.Millisecond)
+	cancel()
+	<-done
+
+	if len(timestamps) < 3 {
+		t.Fatalf("expected at least 3 reconnect attempts, got %d", len(timestamps))
+	}
+
+	// Verify intervals are increasing (exponential).
+	for i := 2; i < len(timestamps); i++ {
+		prev := timestamps[i-1].Sub(timestamps[i-2])
+		curr := timestamps[i].Sub(timestamps[i-1])
+		// Allow some jitter (curr should be roughly >= prev)
+		if curr < prev/2 {
+			t.Errorf("interval %d (%v) shorter than half of interval %d (%v) — not exponential", i, curr, i-1, prev)
+		}
 	}
 }
 

@@ -55,6 +55,7 @@ func ConnectInstance(ctx context.Context, inst *database.Instance, resolver Addr
 	// Close any stale connection before storing the new one.
 	Manager.Remove(inst.ID)
 	Manager.Set(inst.ID, client)
+	client.StartPing(ctx)
 	log.Printf("[tunnel] instance %d (%s): connected", inst.ID, inst.Name)
 	return nil
 }
@@ -65,24 +66,41 @@ func DisconnectInstance(instanceID uint) {
 	log.Printf("[tunnel] instance %d: disconnected", instanceID)
 }
 
-// ReconnectLoop periodically checks the tunnel health and reconnects if needed.
-// It runs until ctx is cancelled. Callers should launch it in a goroutine.
-func ReconnectLoop(ctx context.Context, inst *database.Instance, resolver AddrResolver, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+// Backoff defaults for reconnection. Tests may override these.
+var (
+	backoffMin = 1 * time.Second
+	backoffMax = 60 * time.Second
+)
+
+// ReconnectLoop periodically checks the tunnel health and reconnects if needed
+// using exponential backoff (1s → 2s → 4s → … → 60s cap). The backoff resets
+// to 1s after a successful reconnect. It runs until ctx is cancelled.
+// Callers should launch it in a goroutine.
+func ReconnectLoop(ctx context.Context, inst *database.Instance, resolver AddrResolver) {
+	backoff := backoffMin
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-time.After(backoff):
 			existing := Manager.Get(inst.ID)
 			if existing != nil && !existing.IsClosed() {
-				continue // healthy
+				// Healthy — reset backoff and keep checking at base interval.
+				backoff = backoffMin
+				continue
 			}
-			log.Printf("[tunnel] instance %d (%s): session dead, reconnecting…", inst.ID, inst.Name)
+			log.Printf("[tunnel] instance %d (%s): session dead, reconnecting (backoff %s)…", inst.ID, inst.Name, backoff)
 			if err := ConnectInstance(ctx, inst, resolver); err != nil {
 				log.Printf("[tunnel] instance %d (%s): reconnect failed: %v", inst.ID, inst.Name, err)
+				// Exponential backoff on failure.
+				backoff *= 2
+				if backoff > backoffMax {
+					backoff = backoffMax
+				}
+			} else {
+				// Success — reset backoff.
+				backoff = backoffMin
 			}
 		}
 	}

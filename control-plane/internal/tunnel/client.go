@@ -1,13 +1,16 @@
 package tunnel
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/hashicorp/yamux"
@@ -138,4 +141,64 @@ func (tc *TunnelClient) Close() error {
 	err := tc.session.Close()
 	tc.session = nil
 	return err
+}
+
+// Ping defaults. Tests may override PingInterval.
+var PingInterval = 30 * time.Second
+
+const PingTimeout = 5 * time.Second
+
+// StartPing launches a goroutine that sends a "ping\n" message over the
+// tunnel every PingInterval. It expects the agent to respond with "pong\n"
+// within PingTimeout. On failure the yamux session is closed, which causes
+// IsClosed() to return true and the reconnect loop to trigger a reconnect.
+// The goroutine exits when ctx is cancelled or the session closes.
+func (tc *TunnelClient) StartPing(ctx context.Context) {
+	go tc.pingLoop(ctx)
+}
+
+func (tc *TunnelClient) pingLoop(ctx context.Context) {
+	ticker := time.NewTicker(PingInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if tc.IsClosed() {
+				return
+			}
+			if err := tc.sendPing(ctx); err != nil {
+				log.Printf("[tunnel] instance %d (%s): ping failed: %v — closing session",
+					tc.instanceID, tc.instanceName, err)
+				tc.Close()
+				return
+			}
+		}
+	}
+}
+
+func (tc *TunnelClient) sendPing(ctx context.Context) error {
+	conn, err := tc.OpenChannel(ctx, ChannelPing)
+	if err != nil {
+		return fmt.Errorf("open ping channel: %w", err)
+	}
+	defer conn.Close()
+
+	// Set a deadline for the pong response.
+	conn.SetReadDeadline(time.Now().Add(PingTimeout))
+
+	// Read the response line.
+	reader := bufio.NewReader(conn)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("read pong: %w", err)
+	}
+
+	if line != "pong\n" {
+		return fmt.Errorf("unexpected ping response: %q", line)
+	}
+
+	return nil
 }

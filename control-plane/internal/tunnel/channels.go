@@ -9,4 +9,5 @@ const (
 	ChannelTerminal = "terminal"
 	ChannelFiles    = "files"
 	ChannelLogs     = "logs"
+	ChannelPing     = "ping"
 )

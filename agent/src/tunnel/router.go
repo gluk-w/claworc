@@ -79,6 +79,15 @@ func readChannelHeader(r io.Reader) (string, error) {
 	}
 }
 
+// PingHandler returns a ChannelHandler that responds to health-check pings.
+// It writes "pong\n" and closes the stream.
+func PingHandler() ChannelHandler {
+	return func(conn net.Conn) {
+		defer conn.Close()
+		conn.Write([]byte("pong\n"))
+	}
+}
+
 // HTTPChannelHandler returns a ChannelHandler that serves HTTP/1.1
 // requests from the yamux stream using the given handler. Each stream
 // is treated as a single HTTP connection (supporting keep-alive).

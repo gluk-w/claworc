@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"sync"
-	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
@@ -48,7 +47,7 @@ func startTunnelForInstance(inst *database.Instance) {
 		log.Printf("[tunnel] initial connect for instance %d (%s) failed (will retry): %v", inst.ID, inst.Name, err)
 	}
 
-	go tunnel.ReconnectLoop(ctx, inst, resolver, 10*time.Second)
+	go tunnel.ReconnectLoop(ctx, inst, resolver)
 }
 
 // stopTunnelForInstance disconnects the tunnel and cancels the reconnect loop.

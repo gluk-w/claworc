@@ -34,7 +34,7 @@ func TestReadChannelHeader_Valid(t *testing.T) {
 }
 
 func TestReadChannelHeader_AllChannels(t *testing.T) {
-	for _, name := range []string{ChannelGateway, ChannelNeko, ChannelTerminal, ChannelFiles, ChannelLogs} {
+	for _, name := range []string{ChannelGateway, ChannelNeko, ChannelTerminal, ChannelFiles, ChannelLogs, ChannelPing} {
 		r := strings.NewReader(name + "\n")
 		ch, err := readChannelHeader(r)
 		if err != nil {
@@ -328,6 +328,83 @@ func TestSingleConnListener_Addr(t *testing.T) {
 	ln := newSingleConnListener(server)
 	if ln.Addr() == nil {
 		t.Error("Addr() returned nil")
+	}
+}
+
+// ---- PingHandler tests ----
+
+func TestPingHandler_RespondsPong(t *testing.T) {
+	resetHandlers()
+	defer resetHandlers()
+
+	RegisterChannel(ChannelPing, PingHandler())
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	yamuxServer, err := yamux.Server(serverConn, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer yamuxServer.Close()
+
+	yamuxClient, err := yamux.Client(clientConn, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer yamuxClient.Close()
+
+	// Client sends "ping\n" channel header.
+	clientStream, err := yamuxClient.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientStream.Close()
+
+	if _, err := clientStream.Write([]byte("ping\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Server accepts and routes.
+	serverStream, err := yamuxServer.AcceptStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		routeStream(serverStream)
+		close(done)
+	}()
+
+	// Read the "pong\n" response.
+	clientStream.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 5)
+	n, err := io.ReadFull(clientStream, buf)
+	if err != nil {
+		t.Fatalf("read pong: %v", err)
+	}
+	if string(buf[:n]) != "pong\n" {
+		t.Errorf("got %q, want %q", string(buf[:n]), "pong\n")
+	}
+
+	select {
+	case <-done:
+		// Handler returned after writing pong and closing.
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for ping handler to complete")
+	}
+}
+
+func TestReadChannelHeader_PingChannel(t *testing.T) {
+	r := strings.NewReader("ping\n")
+	ch, err := readChannelHeader(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ch != ChannelPing {
+		t.Errorf("got %q, want %q", ch, ChannelPing)
 	}
 }
 

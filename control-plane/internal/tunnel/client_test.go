@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"bufio"
+	"context"
 	"net"
 	"strings"
 	"testing"
@@ -63,7 +64,7 @@ func TestOpenChannel_WritesHeader(t *testing.T) {
 }
 
 func TestOpenChannel_AllChannels(t *testing.T) {
-	for _, ch := range []string{ChannelGateway, ChannelNeko, ChannelTerminal, ChannelFiles, ChannelLogs} {
+	for _, ch := range []string{ChannelGateway, ChannelNeko, ChannelTerminal, ChannelFiles, ChannelLogs, ChannelPing} {
 		t.Run(ch, func(t *testing.T) {
 			cli, srv := newYamuxPair(t)
 			tc := &TunnelClient{session: cli}
@@ -136,4 +137,127 @@ func TestOpenChannel_NotConnected(t *testing.T) {
 	if !strings.Contains(err.Error(), "not connected") {
 		t.Errorf("unexpected error: %v", err)
 	}
+}
+
+// ---- sendPing tests ----
+
+// pongServer accepts yamux streams on the server session, reads the
+// "ping\n" channel header, and writes "pong\n" back.
+func pongServer(t *testing.T, srv *yamux.Session) {
+	t.Helper()
+	go func() {
+		for {
+			stream, err := srv.AcceptStream()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer stream.Close()
+				reader := bufio.NewReader(stream)
+				header, err := reader.ReadString('\n')
+				if err != nil {
+					return
+				}
+				if strings.TrimSuffix(header, "\n") == ChannelPing {
+					stream.Write([]byte("pong\n"))
+				}
+			}()
+		}
+	}()
+}
+
+func TestSendPing_Success(t *testing.T) {
+	cli, srv := newYamuxPair(t)
+	pongServer(t, srv)
+
+	tc := &TunnelClient{instanceID: 1, instanceName: "test", session: cli}
+
+	err := tc.sendPing(t.Context())
+	if err != nil {
+		t.Fatalf("sendPing failed: %v", err)
+	}
+}
+
+func TestSendPing_ClosedSession(t *testing.T) {
+	a, b := net.Pipe()
+	cli, err := yamux.Client(a, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+	cli.Close()
+
+	tc := &TunnelClient{instanceID: 1, instanceName: "test", session: cli}
+
+	err = tc.sendPing(t.Context())
+	if err == nil {
+		t.Fatal("expected error on closed session")
+	}
+}
+
+func TestSendPing_BadResponse(t *testing.T) {
+	cli, srv := newYamuxPair(t)
+
+	// Server that sends wrong response.
+	go func() {
+		for {
+			stream, err := srv.AcceptStream()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer stream.Close()
+				reader := bufio.NewReader(stream)
+				reader.ReadString('\n') // consume header
+				stream.Write([]byte("wrong\n"))
+			}()
+		}
+	}()
+
+	tc := &TunnelClient{instanceID: 1, instanceName: "test", session: cli}
+
+	err := tc.sendPing(t.Context())
+	if err == nil {
+		t.Fatal("expected error for bad ping response")
+	}
+	if !strings.Contains(err.Error(), "unexpected ping response") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestStartPing_ClosesSessionOnFailure(t *testing.T) {
+	cli, srv := newYamuxPair(t)
+
+	// Server that never responds to pings (just closes the stream).
+	go func() {
+		for {
+			stream, err := srv.AcceptStream()
+			if err != nil {
+				return
+			}
+			stream.Close()
+		}
+	}()
+
+	tc := &TunnelClient{instanceID: 1, instanceName: "test", session: cli}
+
+	// Use a short ping interval for the test.
+	oldInterval := PingInterval
+	PingInterval = 10 * time.Millisecond
+	t.Cleanup(func() { PingInterval = oldInterval })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	tc.StartPing(ctx)
+
+	// Wait for the ping to fail and close the session.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if tc.IsClosed() {
+			return // success
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("session was not closed after ping failure")
 }

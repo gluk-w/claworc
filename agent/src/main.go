@@ -41,6 +41,7 @@ func main() {
 	tunnel.RegisterChannel(tunnel.ChannelTerminal, services.HandleTerminalStream)
 	tunnel.RegisterChannel(tunnel.ChannelFiles, services.HandleFilesStream)
 	tunnel.RegisterChannel(tunnel.ChannelLogs, services.HandleLogsStream)
+	tunnel.RegisterChannel(tunnel.ChannelPing, tunnel.PingHandler())
 
 	// Start the mTLS tunnel listener in a background goroutine.
 	go func() {
