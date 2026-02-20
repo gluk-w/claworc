@@ -1,0 +1,104 @@
+package tunnel
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"net"
+	"net/http"
+	"sync"
+
+	"github.com/coder/websocket"
+	"github.com/hashicorp/yamux"
+)
+
+// TunnelClient manages a single yamux-over-WebSocket tunnel to an agent instance.
+type TunnelClient struct {
+	instanceID   uint
+	instanceName string
+	session      *yamux.Session
+	mu           sync.Mutex
+}
+
+// NewTunnelClient creates a new TunnelClient for the given instance.
+func NewTunnelClient(instanceID uint, instanceName string) *TunnelClient {
+	return &TunnelClient{
+		instanceID:   instanceID,
+		instanceName: instanceName,
+	}
+}
+
+// Connect dials the agent's tunnel endpoint over WebSocket with mTLS and
+// establishes a yamux client session. The agentCertPEM is the PEM-encoded
+// certificate the agent presented during TLS; it acts as the pinned CA for
+// cert verification (no shared CA needed).
+func (tc *TunnelClient) Connect(ctx context.Context, agentAddr string, agentCertPEM string) error {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	if tc.session != nil {
+		return fmt.Errorf("tunnel client already connected to instance %d", tc.instanceID)
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(agentCertPEM)) {
+		return fmt.Errorf("failed to parse agent certificate PEM")
+	}
+
+	tlsCfg := &tls.Config{
+		RootCAs:    pool,
+		ServerName: fmt.Sprintf("agent-%s", tc.instanceName),
+		MinVersion: tls.VersionTLS12,
+	}
+
+	wsConn, _, err := websocket.Dial(ctx, fmt.Sprintf("wss://%s/tunnel", agentAddr), &websocket.DialOptions{
+		HTTPClient: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: tlsCfg,
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("websocket dial to %s: %w", agentAddr, err)
+	}
+
+	netConn := websocket.NetConn(ctx, wsConn, websocket.MessageBinary)
+
+	session, err := yamux.Client(netConn, nil)
+	if err != nil {
+		wsConn.CloseNow()
+		return fmt.Errorf("yamux client init: %w", err)
+	}
+
+	tc.session = session
+	return nil
+}
+
+// OpenStream opens a new yamux stream over the tunnel. The returned net.Conn
+// can be used for bidirectional communication with the agent.
+func (tc *TunnelClient) OpenStream(ctx context.Context) (net.Conn, error) {
+	tc.mu.Lock()
+	s := tc.session
+	tc.mu.Unlock()
+
+	if s == nil {
+		return nil, fmt.Errorf("tunnel client not connected for instance %d", tc.instanceID)
+	}
+
+	return s.Open()
+}
+
+// Close tears down the yamux session and underlying WebSocket connection.
+func (tc *TunnelClient) Close() error {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	if tc.session == nil {
+		return nil
+	}
+
+	err := tc.session.Close()
+	tc.session = nil
+	return err
+}

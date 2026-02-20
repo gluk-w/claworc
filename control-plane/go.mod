@@ -9,6 +9,8 @@ require (
 	github.com/fernet/fernet-go v0.0.0-20240119011108-303da6aec611
 	github.com/go-chi/chi/v5 v5.2.1
 	github.com/go-webauthn/webauthn v0.15.0
+	github.com/google/uuid v1.6.0
+	github.com/hashicorp/yamux v0.1.2
 	github.com/kelseyhightower/envconfig v1.4.0
 	golang.org/x/crypto v0.47.0
 	gorm.io/driver/sqlite v1.5.7
@@ -42,7 +44,6 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-tpm v0.9.6 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
