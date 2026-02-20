@@ -7,6 +7,7 @@ import (
 
 	"github.com/gluk-w/claworc/agent/config"
 	"github.com/gluk-w/claworc/agent/neko"
+	"github.com/gluk-w/claworc/agent/proxy"
 	"github.com/gluk-w/claworc/agent/server"
 	"github.com/gluk-w/claworc/agent/services"
 	"github.com/gluk-w/claworc/agent/tunnel"
@@ -32,6 +33,8 @@ func main() {
 	}
 
 	// Register tunnel channel handlers before starting the listener.
+	gwHandler := proxy.GatewayHandler(cfg.GatewayAddr)
+	tunnel.RegisterChannel(tunnel.ChannelGateway, tunnel.HTTPChannelHandler(gwHandler))
 	if nekoHandler != nil {
 		tunnel.RegisterChannel(tunnel.ChannelNeko, tunnel.HTTPChannelHandler(nekoHandler))
 	}

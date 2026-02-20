@@ -1,154 +1,46 @@
 package handlers
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/gluk-w/claworc/control-plane/internal/crypto"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
-	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/go-chi/chi/v5"
 )
 
-// defaultTransport is the fallback for in-cluster / Docker connectivity.
-var defaultTransport http.RoundTripper = &http.Transport{
-	MaxIdleConns:        50,
-	MaxIdleConnsPerHost: 10,
-	IdleConnTimeout:     90 * time.Second,
-}
-
-// getProxyClient returns an HTTP client that can reach service URLs.
-// When the orchestrator provides a custom transport (e.g. K8s API proxy
-// for out-of-cluster dev), it is used instead of the default.
-func getProxyClient() *http.Client {
-	orch := orchestrator.Get()
-	transport := defaultTransport
-	if orch != nil {
-		if t := orch.GetHTTPTransport(); t != nil {
-			transport = t
-		}
+// resolveGatewayToken looks up the instance and decrypts its gateway token.
+// Returns an empty token (not an error) when the DB is unavailable or the
+// instance has no token — the proxy can still function without auth.
+func resolveGatewayToken(instanceID int) (string, error) {
+	if database.DB == nil {
+		return "", nil
 	}
-	return &http.Client{
-		Timeout:   15 * time.Second,
-		Transport: transport,
-	}
-}
-
-// controlTargetCache caches resolved control proxy targets to avoid repeated
-// orchestrator API calls and token decryption for the same instance.
-var controlTargetCache = struct {
-	sync.RWMutex
-	entries map[uint]controlCacheEntry
-}{entries: make(map[uint]controlCacheEntry)}
-
-type controlCacheEntry struct {
-	httpURL   string
-	wsURL     string
-	token     string
-	expiresAt time.Time
-}
-
-const controlCacheTTL = 30 * time.Second
-
-func resolveControlTarget(ctx context.Context, instanceID int) (httpURL, wsURL, token string, err error) {
-	uid := uint(instanceID)
-
-	// Check cache
-	controlTargetCache.RLock()
-	if entry, ok := controlTargetCache.entries[uid]; ok && time.Now().Before(entry.expiresAt) {
-		controlTargetCache.RUnlock()
-		return entry.httpURL, entry.wsURL, entry.token, nil
-	}
-	controlTargetCache.RUnlock()
 
 	var inst database.Instance
 	if err := database.DB.First(&inst, instanceID).Error; err != nil {
-		return "", "", "", fmt.Errorf("instance not found")
+		return "", fmt.Errorf("instance not found")
 	}
 
-	orch := orchestrator.Get()
-	if orch == nil {
-		return "", "", "", fmt.Errorf("no orchestrator available")
+	if inst.GatewayToken == "" {
+		return "", nil
 	}
 
-	status, _ := orch.GetInstanceStatus(ctx, inst.Name)
-	if status != "running" {
-		return "", "", "", fmt.Errorf("instance not running")
-	}
-
-	gwURL, err := orch.GetGatewayWSURL(ctx, inst.Name)
+	tok, err := crypto.Decrypt(inst.GatewayToken)
 	if err != nil {
-		return "", "", "", err
+		return "", nil // return empty token rather than error
 	}
-
-	// Convert ws(s):// → http(s)://
-	httpBase := strings.Replace(gwURL, "wss://", "https://", 1)
-	httpBase = strings.Replace(httpBase, "ws://", "http://", 1)
-
-	// Decrypt gateway token
-	var tok string
-	if inst.GatewayToken != "" {
-		tok, _ = crypto.Decrypt(inst.GatewayToken)
-	}
-
-	// Store in cache
-	controlTargetCache.Lock()
-	controlTargetCache.entries[uid] = controlCacheEntry{
-		httpURL:   httpBase,
-		wsURL:     gwURL,
-		token:     tok,
-		expiresAt: time.Now().Add(controlCacheTTL),
-	}
-	controlTargetCache.Unlock()
-
-	return httpBase, gwURL, tok, nil
-}
-
-// gatewayHost derives the gateway's internal host:port from the WS URL.
-// For K8s API proxy URLs it reconstructs the cluster DNS name;
-// for direct URLs it returns scheme+host as-is.
-func gatewayHost(gwURL string) (origin, host string) {
-	u, err := url.Parse(gwURL)
-	if err != nil {
-		return "", ""
-	}
-
-	// K8s API proxy: .../api/v1/namespaces/{ns}/services/{svc}:{port}/proxy
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	var ns, svc, port string
-	for i := 0; i < len(parts)-1; i++ {
-		switch parts[i] {
-		case "namespaces":
-			ns = parts[i+1]
-		case "services":
-			sp := strings.SplitN(parts[i+1], ":", 2)
-			svc = sp[0]
-			if len(sp) > 1 {
-				port = sp[1]
-			}
-		}
-	}
-	if ns != "" && svc != "" && port != "" {
-		h := fmt.Sprintf("%s.%s.svc.cluster.local:%s", svc, ns, port)
-		return "http://" + h, h
-	}
-
-	// Direct URL (Docker / in-cluster)
-	scheme := "http"
-	if u.Scheme == "wss" || u.Scheme == "https" {
-		scheme = "https"
-	}
-	return fmt.Sprintf("%s://%s", scheme, u.Host), u.Host
+	return tok, nil
 }
 
 func ControlProxy(w http.ResponseWriter, r *http.Request) {
@@ -170,25 +62,60 @@ func ControlProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := chi.URLParam(r, "*")
+	controlHTTPProxy(w, r, uint(id))
+}
 
-	httpURL, _, _, err := resolveControlTarget(r.Context(), id)
+// controlHTTPProxy handles regular HTTP requests by opening a gateway tunnel
+// stream and performing a single HTTP round-trip over it.
+func controlHTTPProxy(w http.ResponseWriter, r *http.Request, instanceID uint) {
+	conn, err := openGatewayChannel(r.Context(), instanceID)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	defer conn.Close()
 
-	targetURL := fmt.Sprintf("%s/%s", httpURL, path)
-
+	path := chi.URLParam(r, "*")
+	targetURL := "/gateway/" + path
 	if r.URL.RawQuery != "" {
 		targetURL += "?" + r.URL.RawQuery
 	}
 
-	log.Printf("Control proxy: %s → %s", r.URL.Path, targetURL)
-	resp, err := getProxyClient().Get(targetURL)
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	token, _ := resolveGatewayToken(id)
+	if token != "" {
+		sep := "?"
+		if strings.Contains(targetURL, "?") {
+			sep = "&"
+		}
+		targetURL += sep + "token=" + token
+	}
+
+	// Write the HTTP request over the tunnel stream.
+	proxyReq, err := http.NewRequest(r.Method, targetURL, r.Body)
 	if err != nil {
-		log.Printf("Control proxy error: %v", err)
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("Cannot connect to gateway service: %v", err))
+		writeError(w, http.StatusInternalServerError, "failed to create proxy request")
+		return
+	}
+	proxyReq.Host = "gateway"
+	for _, h := range []string{"Accept", "Accept-Encoding", "Accept-Language", "Content-Type", "Range", "If-None-Match", "If-Modified-Since"} {
+		if v := r.Header.Get(h); v != "" {
+			proxyReq.Header.Set(h, v)
+		}
+	}
+
+	log.Printf("Control proxy: %s → tunnel (instance %d)", r.URL.Path, instanceID)
+	if err := proxyReq.Write(conn); err != nil {
+		log.Printf("Control proxy: write request error: %v", err)
+		writeError(w, http.StatusBadGateway, "failed to send request to gateway service")
+		return
+	}
+
+	// Read the HTTP response from the tunnel stream.
+	resp, err := http.ReadResponse(bufio.NewReader(conn), proxyReq)
+	if err != nil {
+		log.Printf("Control proxy: read response error: %v", err)
+		writeError(w, http.StatusBadGateway, "failed to read response from gateway service")
 		return
 	}
 	defer resp.Body.Close()
@@ -216,19 +143,27 @@ func controlWSProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, wsURL, token, err := resolveControlTarget(r.Context(), id)
+	conn, err := openGatewayChannel(r.Context(), uint(id))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	// conn is closed when the upstream WebSocket is closed below.
 
-	// Append token to upstream WS URL for authentication
+	token, _ := resolveGatewayToken(id)
+
+	// Build WebSocket URL with token for the agent-side gateway proxy.
+	path := chi.URLParam(r, "*")
+	wsURL := "ws://gateway/gateway/" + path
+	if r.URL.RawQuery != "" {
+		wsURL += "?" + r.URL.RawQuery
+	}
 	if token != "" {
+		sep := "?"
 		if strings.Contains(wsURL, "?") {
-			wsURL += "&token=" + token
-		} else {
-			wsURL += "?token=" + token
+			sep = "&"
 		}
+		wsURL += sep + "token=" + token
 	}
 
 	// Accept client WebSocket
@@ -237,39 +172,40 @@ func controlWSProxy(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.Printf("Control WS proxy: accept error: %v", err)
+		conn.Close()
 		return
 	}
 	defer clientConn.CloseNow()
 
-	// Connect to upstream gateway (no Origin/Host overrides, matching ChatProxy)
+	// Dial the upstream gateway WebSocket through the tunnel stream using a
+	// custom transport whose DialContext returns the pre-opened stream.
 	ctx := r.Context()
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	origin, host := gatewayHost(wsURL)
-	dialOpts := &websocket.DialOptions{
-		Host:       host,
-		HTTPHeader: http.Header{},
-	}
-	if origin != "" {
-		dialOpts.HTTPHeader.Set("Origin", origin)
-	}
-	orch := orchestrator.Get()
-	if orch != nil {
-		if t := orch.GetHTTPTransport(); t != nil {
-			dialOpts.HTTPClient = &http.Client{Transport: t}
-		}
+	streamUsed := false
+	transport := &http.Transport{
+		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+			if streamUsed {
+				return nil, fmt.Errorf("tunnel stream already consumed")
+			}
+			streamUsed = true
+			return conn, nil
+		},
 	}
 
-	log.Printf("Control WS proxy: %s → %s", r.URL.Path, wsURL)
-	upstreamConn, _, err := websocket.Dial(dialCtx, wsURL, dialOpts)
+	log.Printf("Control WS proxy: %s → tunnel (instance %d)", r.URL.Path, id)
+	upstreamConn, _, err := websocket.Dial(dialCtx, wsURL, &websocket.DialOptions{
+		HTTPClient: &http.Client{Transport: transport},
+	})
 	if err != nil {
 		log.Printf("Control WS proxy: upstream dial error: %v", err)
 		clientConn.Close(4502, "Cannot connect to gateway")
+		conn.Close()
 		return
 	}
 	defer upstreamConn.CloseNow()
-	log.Printf("Control WS proxy: upstream connected")
+	log.Printf("Control WS proxy: upstream connected via tunnel")
 
 	clientConn.SetReadLimit(4 * 1024 * 1024)
 	upstreamConn.SetReadLimit(4 * 1024 * 1024)

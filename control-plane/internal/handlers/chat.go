@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,12 +15,28 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/crypto"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
-	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/tunnel"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
 const chatSessionKey = "agent:main:main"
+
+// openGatewayChannel looks up the tunnel for the given instance and opens a
+// yamux stream with the "gateway" channel header. The returned net.Conn is
+// positioned after the header — ready for HTTP request/response I/O.
+func openGatewayChannel(ctx context.Context, instanceID uint) (net.Conn, error) {
+	if tunnel.Manager == nil {
+		return nil, fmt.Errorf("tunnel manager not initialised")
+	}
+
+	tc := tunnel.Manager.Get(instanceID)
+	if tc == nil {
+		return nil, fmt.Errorf("no tunnel connected for instance %d", instanceID)
+	}
+
+	return tc.OpenChannel(ctx, tunnel.ChannelGateway)
+}
 
 func ChatProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
@@ -52,26 +69,14 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check instance is running
-	orch := orchestrator.Get()
-	if orch == nil {
-		clientConn.Close(4500, "No orchestrator available")
-		return
-	}
-
-	status, _ := orch.GetInstanceStatus(ctx, inst.Name)
-	if status != "running" {
-		clientConn.Close(4003, "Instance not running")
-		return
-	}
-
-	// Get gateway URL
-	gwURL, err := orch.GetGatewayWSURL(ctx, inst.Name)
+	// Open gateway channel through the yamux tunnel.
+	conn, err := openGatewayChannel(ctx, uint(id))
 	if err != nil {
-		log.Printf("[chat] Failed to get gateway URL for %s: %v", inst.Name, err)
-		clientConn.Close(4500, truncate(err.Error(), 120))
+		log.Printf("[chat] Failed to open gateway channel for %s: %v", inst.Name, err)
+		clientConn.Close(4502, truncate(err.Error(), 120))
 		return
 	}
+	// conn is closed when the upstream WebSocket is closed below.
 
 	// Decrypt gateway token
 	var gatewayToken string
@@ -81,36 +86,36 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Append token to URL (matching controlWSProxy pattern)
+	// Build WebSocket URL with token for the agent-side gateway proxy.
+	gwURL := "ws://gateway/gateway"
 	if gatewayToken != "" {
-		if strings.Contains(gwURL, "?") {
-			gwURL += "&token=" + gatewayToken
-		} else {
-			gwURL += "?token=" + gatewayToken
-		}
+		gwURL += "?token=" + gatewayToken
 	}
 
-	// Connect to gateway
+	// Dial the upstream gateway WebSocket through the tunnel stream using a
+	// custom transport whose DialContext returns the pre-opened stream.
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	origin, host := gatewayHost(gwURL)
-	dialOpts := &websocket.DialOptions{
-		Host:       host,
-		HTTPHeader: http.Header{},
-	}
-	if origin != "" {
-		dialOpts.HTTPHeader.Set("Origin", origin)
-	}
-	if t := orch.GetHTTPTransport(); t != nil {
-		dialOpts.HTTPClient = &http.Client{Transport: t}
+	streamUsed := false
+	transport := &http.Transport{
+		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+			if streamUsed {
+				return nil, fmt.Errorf("tunnel stream already consumed")
+			}
+			streamUsed = true
+			return conn, nil
+		},
 	}
 
-	log.Printf("[chat] Connecting to gateway: %s", gwURL)
-	gwConn, _, err := websocket.Dial(dialCtx, gwURL, dialOpts)
+	log.Printf("[chat] Connecting to gateway via tunnel for instance %d", id)
+	gwConn, _, err := websocket.Dial(dialCtx, gwURL, &websocket.DialOptions{
+		HTTPClient: &http.Client{Transport: transport},
+	})
 	if err != nil {
-		log.Printf("[chat] Failed to connect to gateway at %s: %v", gwURL, err)
+		log.Printf("[chat] Failed to connect to gateway via tunnel: %v", err)
 		clientConn.Close(4502, "Cannot connect to gateway")
+		conn.Close()
 		return
 	}
 	defer gwConn.CloseNow()
