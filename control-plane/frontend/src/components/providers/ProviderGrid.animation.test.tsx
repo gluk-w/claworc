@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ProviderGrid from "./ProviderGrid";
 import type { Settings } from "@/types/settings";
 import type { ProviderSavePayload } from "./ProviderGrid";
+import { STORAGE_KEY } from "../ConfirmDialog";
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -45,6 +46,12 @@ function renderGrid(
 // ── Tests ──────────────────────────────────────────────────────────────
 
 describe("ProviderGrid – success feedback animations", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    // Suppress confirmation dialog so delete animation tests work directly
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ "delete-provider": true }));
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });

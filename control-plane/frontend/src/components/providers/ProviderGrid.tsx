@@ -7,6 +7,7 @@ import ProviderCard from "./ProviderCard";
 import type { CardAnimationState } from "./ProviderCard";
 import ProviderCardSkeleton from "./ProviderCardSkeleton";
 import ProviderConfigModal from "./ProviderConfigModal";
+import ConfirmDialog, { isSuppressed } from "../ConfirmDialog";
 
 /** Category display order */
 const CATEGORY_ORDER: ProviderCategory[] = [
@@ -46,6 +47,7 @@ export default function ProviderGrid({
   const [pendingDeletes, setPendingDeletes] = useState<string[]>([]);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [cardAnimations, setCardAnimations] = useState<Record<string, CardAnimationState>>({});
+  const [providerToDelete, setProviderToDelete] = useState<Provider | null>(null);
   const animationTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const saveSuccessTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -126,18 +128,40 @@ export default function ProviderGrid({
     setSelectedProvider(null);
   };
 
+  const executeDelete = useCallback(
+    (provider: Provider) => {
+      const envVar = provider.envVarName;
+      setCardAnimations((prev) => ({ ...prev, [envVar]: "deleted" }));
+      scheduleAnimationClear(envVar, 400);
+      setPendingDeletes((prev) =>
+        prev.includes(envVar) ? prev : [...prev, envVar],
+      );
+      setPendingChanges((prev) => {
+        const next = { ...prev };
+        delete next[envVar];
+        return next;
+      });
+    },
+    [scheduleAnimationClear],
+  );
+
   const handleDelete = (provider: Provider) => {
-    const envVar = provider.envVarName;
-    setCardAnimations((prev) => ({ ...prev, [envVar]: "deleted" }));
-    scheduleAnimationClear(envVar, 400);
-    setPendingDeletes((prev) =>
-      prev.includes(envVar) ? prev : [...prev, envVar],
-    );
-    setPendingChanges((prev) => {
-      const next = { ...prev };
-      delete next[envVar];
-      return next;
-    });
+    if (isSuppressed("delete-provider")) {
+      executeDelete(provider);
+    } else {
+      setProviderToDelete(provider);
+    }
+  };
+
+  const handleConfirmDelete = () => {
+    if (providerToDelete) {
+      executeDelete(providerToDelete);
+      setProviderToDelete(null);
+    }
+  };
+
+  const handleCancelDelete = () => {
+    setProviderToDelete(null);
   };
 
   const handleCloseModal = () => {
@@ -284,6 +308,18 @@ export default function ProviderGrid({
           onSave={handleSave}
           currentMaskedKey={getMaskedKey(selectedProvider)}
           isSaving={isSaving}
+        />
+      )}
+
+      {providerToDelete && (
+        <ConfirmDialog
+          title="Delete API Key"
+          message={`Are you sure you want to delete the ${providerToDelete.name} API key? This will affect all instances without overrides.`}
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          storageId="delete-provider"
+          onConfirm={handleConfirmDelete}
+          onCancel={handleCancelDelete}
         />
       )}
     </div>

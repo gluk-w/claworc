@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import ProviderGrid from "./ProviderGrid";
 import type { Settings } from "@/types/settings";
 import type { ProviderSavePayload } from "./ProviderGrid";
+import { STORAGE_KEY } from "../ConfirmDialog";
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -42,6 +43,9 @@ function renderGrid(
 describe("ProviderGrid – save / delete flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
+    // Suppress confirmation dialog so delete-flow tests work as before
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ "delete-provider": true }));
   });
 
   // ── Rendering ──
