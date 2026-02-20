@@ -368,4 +368,242 @@ describe("useInstanceLogs", () => {
     expect(hook2.result.current.logs).toHaveLength(1);
     expect(hook2.result.current.logs[0]).toBe("Instance 2: Image pulling");
   });
+
+  it("supports 3 concurrent instances with interleaved real-time events", () => {
+    const hook1 = renderHook(() => useInstanceLogs(1, true, "creation"));
+    const hook2 = renderHook(() => useInstanceLogs(2, true, "creation"));
+    const hook3 = renderHook(() => useInstanceLogs(3, true, "creation"));
+
+    const es1 = MockEventSource.instances[0];
+    const es2 = MockEventSource.instances[1];
+    const es3 = MockEventSource.instances[2];
+
+    expect(es1.url).toBe("/api/v1/instances/1/creation-logs");
+    expect(es2.url).toBe("/api/v1/instances/2/creation-logs");
+    expect(es3.url).toBe("/api/v1/instances/3/creation-logs");
+
+    // Open all connections
+    act(() => {
+      es1.simulateOpen();
+      es2.simulateOpen();
+      es3.simulateOpen();
+    });
+
+    // Interleave events across all 3 streams
+    act(() => {
+      es1.simulateMessage("Instance 1: Scheduling");
+      es2.simulateMessage("Instance 2: Scheduling");
+      es3.simulateMessage("Instance 3: Scheduling");
+    });
+
+    act(() => {
+      es2.simulateMessage("Instance 2: Pulling image");
+      es1.simulateMessage("Instance 1: Pulling image");
+      es3.simulateMessage("Instance 3: Pulling image");
+    });
+
+    act(() => {
+      es3.simulateMessage("Instance 3: Container creating");
+      es1.simulateMessage("Instance 1: Ready");
+      es2.simulateMessage("Instance 2: Ready");
+      es3.simulateMessage("Instance 3: Ready");
+    });
+
+    // Verify each hook only has its own events
+    expect(hook1.result.current.logs).toHaveLength(3);
+    expect(hook1.result.current.logs).toEqual([
+      "Instance 1: Scheduling",
+      "Instance 1: Pulling image",
+      "Instance 1: Ready",
+    ]);
+
+    expect(hook2.result.current.logs).toHaveLength(3);
+    expect(hook2.result.current.logs).toEqual([
+      "Instance 2: Scheduling",
+      "Instance 2: Pulling image",
+      "Instance 2: Ready",
+    ]);
+
+    expect(hook3.result.current.logs).toHaveLength(4);
+    expect(hook3.result.current.logs).toEqual([
+      "Instance 3: Scheduling",
+      "Instance 3: Pulling image",
+      "Instance 3: Container creating",
+      "Instance 3: Ready",
+    ]);
+  });
+
+  it("one instance disconnecting does not affect other concurrent streams", () => {
+    const hook1 = renderHook(() => useInstanceLogs(1, true, "creation"));
+    const hook2 = renderHook(() => useInstanceLogs(2, true, "creation"));
+    const hook3 = renderHook(() => useInstanceLogs(3, true, "creation"));
+
+    const es1 = MockEventSource.instances[0];
+    const es2 = MockEventSource.instances[1];
+    const es3 = MockEventSource.instances[2];
+
+    act(() => {
+      es1.simulateOpen();
+      es2.simulateOpen();
+      es3.simulateOpen();
+    });
+
+    // All get first event
+    act(() => {
+      es1.simulateMessage("Instance 1: Event A");
+      es2.simulateMessage("Instance 2: Event A");
+      es3.simulateMessage("Instance 3: Event A");
+    });
+
+    // Instance 1 errors out (disconnects)
+    act(() => {
+      es1.simulateError();
+    });
+    expect(hook1.result.current.isConnected).toBe(false);
+
+    // Instances 2 and 3 continue receiving events unaffected
+    act(() => {
+      es2.simulateMessage("Instance 2: Event B");
+      es3.simulateMessage("Instance 3: Event B");
+    });
+
+    act(() => {
+      es2.simulateMessage("Instance 2: Event C");
+      es3.simulateMessage("Instance 3: Event C");
+    });
+
+    // Instance 2 and 3 still connected with all their events
+    expect(hook2.result.current.isConnected).toBe(true);
+    expect(hook2.result.current.logs).toHaveLength(3);
+    expect(hook2.result.current.logs).toEqual([
+      "Instance 2: Event A",
+      "Instance 2: Event B",
+      "Instance 2: Event C",
+    ]);
+
+    expect(hook3.result.current.isConnected).toBe(true);
+    expect(hook3.result.current.logs).toHaveLength(3);
+    expect(hook3.result.current.logs).toEqual([
+      "Instance 3: Event A",
+      "Instance 3: Event B",
+      "Instance 3: Event C",
+    ]);
+
+    // Instance 1 still only has 1 event from before disconnect
+    expect(hook1.result.current.logs).toHaveLength(1);
+  });
+
+  it("concurrent instances with different log types maintain separate streams", () => {
+    const hook1 = renderHook(() => useInstanceLogs(1, true, "creation"));
+    const hook2 = renderHook(() => useInstanceLogs(2, true, "runtime"));
+    const hook3 = renderHook(() => useInstanceLogs(3, true, "creation"));
+
+    const es1 = MockEventSource.instances[0];
+    const es2 = MockEventSource.instances[1];
+    const es3 = MockEventSource.instances[2];
+
+    // Verify different URLs
+    expect(es1.url).toBe("/api/v1/instances/1/creation-logs");
+    expect(es2.url).toBe("/api/v1/instances/2/logs?tail=100&follow=true");
+    expect(es3.url).toBe("/api/v1/instances/3/creation-logs");
+
+    act(() => {
+      es1.simulateOpen();
+      es2.simulateOpen();
+      es3.simulateOpen();
+    });
+
+    // Interleave creation and runtime events
+    act(() => {
+      es1.simulateMessage("Pod scheduling");
+      es2.simulateMessage("Runtime log line 1");
+      es3.simulateMessage("Container status: created");
+    });
+
+    act(() => {
+      es1.simulateMessage("Pod is running");
+      es2.simulateMessage("Runtime log line 2");
+      es3.simulateMessage("Health: healthy");
+    });
+
+    expect(hook1.result.current.logs).toEqual([
+      "Pod scheduling",
+      "Pod is running",
+    ]);
+    expect(hook2.result.current.logs).toEqual([
+      "Runtime log line 1",
+      "Runtime log line 2",
+    ]);
+    expect(hook3.result.current.logs).toEqual([
+      "Container status: created",
+      "Health: healthy",
+    ]);
+  });
+
+  it("pausing one concurrent instance does not affect others", () => {
+    const hook1 = renderHook(() => useInstanceLogs(1, true, "creation"));
+    const hook2 = renderHook(() => useInstanceLogs(2, true, "creation"));
+
+    const es1 = MockEventSource.instances[0];
+    const es2 = MockEventSource.instances[1];
+
+    act(() => {
+      es1.simulateOpen();
+      es2.simulateOpen();
+    });
+
+    act(() => {
+      es1.simulateMessage("Instance 1: Event A");
+      es2.simulateMessage("Instance 2: Event A");
+    });
+
+    // Pause instance 1
+    act(() => {
+      hook1.result.current.togglePause();
+    });
+    expect(hook1.result.current.isPaused).toBe(true);
+    expect(hook2.result.current.isPaused).toBe(false);
+
+    // Send more events - instance 1 should miss them, instance 2 should get them
+    act(() => {
+      es1.simulateMessage("Instance 1: Event B (missed)");
+      es2.simulateMessage("Instance 2: Event B");
+    });
+
+    expect(hook1.result.current.logs).toHaveLength(1);
+    expect(hook2.result.current.logs).toHaveLength(2);
+    expect(hook2.result.current.logs[1]).toBe("Instance 2: Event B");
+  });
+
+  it("unmounting one concurrent instance cleans up only its EventSource", () => {
+    const hook1 = renderHook(() => useInstanceLogs(1, true, "creation"));
+    const hook2 = renderHook(() => useInstanceLogs(2, true, "creation"));
+    const hook3 = renderHook(() => useInstanceLogs(3, true, "creation"));
+
+    const es1 = MockEventSource.instances[0];
+    const es2 = MockEventSource.instances[1];
+    const es3 = MockEventSource.instances[2];
+
+    // Unmount instance 2 (simulate navigating away from that tab)
+    hook2.unmount();
+    expect(es2.closed).toBe(true);
+
+    // Instances 1 and 3 EventSources should still be open
+    expect(es1.closed).toBe(false);
+    expect(es3.closed).toBe(false);
+
+    // They should still receive events
+    act(() => {
+      es1.simulateOpen();
+      es3.simulateOpen();
+    });
+
+    act(() => {
+      es1.simulateMessage("Instance 1: Still streaming");
+      es3.simulateMessage("Instance 3: Still streaming");
+    });
+
+    expect(hook1.result.current.logs).toHaveLength(1);
+    expect(hook3.result.current.logs).toHaveLength(1);
+  });
 });

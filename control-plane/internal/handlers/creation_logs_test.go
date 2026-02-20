@@ -92,6 +92,11 @@ func setupTestDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
+	// Limit to 1 connection so all goroutines share the same in-memory DB
+	// (SQLite :memory: databases are per-connection by default).
+	sqlDB, _ := database.DB.DB()
+	sqlDB.SetMaxOpenConns(1)
+
 	database.DB.AutoMigrate(&database.Instance{}, &database.Setting{}, &database.User{}, &database.UserInstance{})
 
 	// Enable auth-disabled mode so RequireAuth injects the admin user from DB
@@ -1252,6 +1257,281 @@ func (m *concurrentMockOrchestrator) StreamCreationLogs(_ context.Context, name 
 		return ch, nil
 	}
 	return nil, fmt.Errorf("no channel for instance %s", name)
+}
+
+// --- Concurrent instance creation logging tests ---
+// These tests verify that multiple instances can stream creation logs simultaneously
+// with truly parallel HTTP connections, without cross-contamination or blocking.
+
+// TestStreamCreationLogs_ConcurrentStreaming verifies that 3 instances stream
+// creation logs in parallel via a real HTTP server, each receiving only its own
+// events without cross-contamination.
+func TestStreamCreationLogs_ConcurrentStreaming(t *testing.T) {
+	setupTestDB(t)
+	inst1 := createTestInstance(t, "bot-conc-1")
+	inst2 := createTestInstance(t, "bot-conc-2")
+	inst3 := createTestInstance(t, "bot-conc-3")
+	createTestAdmin(t)
+
+	ch1 := make(chan string, 20)
+	ch2 := make(chan string, 20)
+	ch3 := make(chan string, 20)
+
+	mock := &concurrentMockOrchestrator{
+		channels: map[string]chan string{
+			"bot-conc-1": ch1,
+			"bot-conc-2": ch2,
+			"bot-conc-3": ch3,
+		},
+	}
+	orchestrator.SetForTest(mock)
+
+	// Pre-fill channels with interleaved events (simulates events arriving
+	// in mixed order across instances) then close them.
+	ch1 <- "Instance 1: Scheduling pod"
+	ch2 <- "Instance 2: Scheduling pod"
+	ch3 <- "Instance 3: Scheduling pod"
+	ch2 <- "Instance 2: Pulling image"
+	ch1 <- "Instance 1: Pulling image"
+	ch3 <- "Instance 3: Pulling image"
+	ch3 <- "Instance 3: Container creating"
+	ch1 <- "Instance 1: Pod running"
+	ch2 <- "Instance 2: Pod running"
+	ch3 <- "Instance 3: Pod running"
+	close(ch1)
+	close(ch2)
+	close(ch3)
+
+	router := newRouter()
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	type result struct {
+		instName string
+		lines    []string
+		err      error
+	}
+	results := make(chan result, 3)
+
+	// Launch 3 concurrent SSE readers against the real HTTP server
+	for _, tc := range []struct {
+		inst database.Instance
+		name string
+	}{
+		{inst1, "bot-conc-1"},
+		{inst2, "bot-conc-2"},
+		{inst3, "bot-conc-3"},
+	} {
+		go func(inst database.Instance, name string) {
+			resp, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst.ID))
+			if err != nil {
+				results <- result{name, nil, err}
+				return
+			}
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			results <- result{name, parseSSEData(string(body)), nil}
+		}(tc.inst, tc.name)
+	}
+
+	// Collect results from all 3 streams
+	collected := map[string][]string{}
+	for i := 0; i < 3; i++ {
+		r := <-results
+		if r.err != nil {
+			t.Fatalf("%s: HTTP error: %v", r.instName, r.err)
+		}
+		collected[r.instName] = r.lines
+	}
+
+	// Verify instance 1: 3 events, all prefixed with "Instance 1:"
+	if len(collected["bot-conc-1"]) != 3 {
+		t.Fatalf("bot-conc-1: expected 3 events, got %d: %v", len(collected["bot-conc-1"]), collected["bot-conc-1"])
+	}
+	for _, line := range collected["bot-conc-1"] {
+		if !strings.HasPrefix(line, "Instance 1:") {
+			t.Errorf("bot-conc-1: unexpected event %q (expected prefix 'Instance 1:')", line)
+		}
+	}
+
+	// Verify instance 2: 3 events, all prefixed with "Instance 2:"
+	if len(collected["bot-conc-2"]) != 3 {
+		t.Fatalf("bot-conc-2: expected 3 events, got %d: %v", len(collected["bot-conc-2"]), collected["bot-conc-2"])
+	}
+	for _, line := range collected["bot-conc-2"] {
+		if !strings.HasPrefix(line, "Instance 2:") {
+			t.Errorf("bot-conc-2: unexpected event %q (expected prefix 'Instance 2:')", line)
+		}
+	}
+
+	// Verify instance 3: 4 events, all prefixed with "Instance 3:"
+	if len(collected["bot-conc-3"]) != 4 {
+		t.Fatalf("bot-conc-3: expected 4 events, got %d: %v", len(collected["bot-conc-3"]), collected["bot-conc-3"])
+	}
+	for _, line := range collected["bot-conc-3"] {
+		if !strings.HasPrefix(line, "Instance 3:") {
+			t.Errorf("bot-conc-3: unexpected event %q (expected prefix 'Instance 3:')", line)
+		}
+	}
+}
+
+// TestStreamCreationLogs_ConcurrentNoBlocking verifies that a slow-streaming instance
+// does not block a fast-streaming instance — the fast one completes independently
+// while the slow one continues streaming.
+func TestStreamCreationLogs_ConcurrentNoBlocking(t *testing.T) {
+	setupTestDB(t)
+	instFast := createTestInstance(t, "bot-fast-conc")
+	instSlow := createTestInstance(t, "bot-slow-conc")
+	createTestAdmin(t)
+
+	chFast := make(chan string, 10)
+	chSlow := make(chan string, 10)
+
+	mock := &concurrentMockOrchestrator{
+		channels: map[string]chan string{
+			"bot-fast-conc": chFast,
+			"bot-slow-conc": chSlow,
+		},
+	}
+	orchestrator.SetForTest(mock)
+
+	// Pre-fill fast channel with all events and close it
+	chFast <- "Fast: Pod ready"
+	close(chFast)
+
+	// Pre-fill slow channel with first event only (don't close yet)
+	chSlow <- "Slow: Still pulling image..."
+
+	router := newRouter()
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	fastDone := make(chan []string, 1)
+	slowDone := make(chan []string, 1)
+
+	// Start both streams concurrently
+	go func() {
+		resp, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, instFast.ID))
+		if err != nil {
+			t.Errorf("fast stream error: %v", err)
+			fastDone <- nil
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		fastDone <- parseSSEData(string(body))
+	}()
+
+	go func() {
+		resp, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, instSlow.ID))
+		if err != nil {
+			t.Errorf("slow stream error: %v", err)
+			slowDone <- nil
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		slowDone <- parseSSEData(string(body))
+	}()
+
+	// Fast stream should complete without waiting for slow stream
+	fastLines := <-fastDone
+	if len(fastLines) != 1 {
+		t.Fatalf("fast stream: expected 1 event, got %d: %v", len(fastLines), fastLines)
+	}
+	if fastLines[0] != "Fast: Pod ready" {
+		t.Errorf("fast stream: expected 'Fast: Pod ready', got %q", fastLines[0])
+	}
+
+	// Now complete the slow stream (send remaining events and close)
+	chSlow <- "Slow: Image pulled"
+	chSlow <- "Slow: Pod running"
+	close(chSlow)
+
+	slowLines := <-slowDone
+	if len(slowLines) != 3 {
+		t.Fatalf("slow stream: expected 3 events, got %d: %v", len(slowLines), slowLines)
+	}
+	for _, line := range slowLines {
+		if !strings.HasPrefix(line, "Slow:") {
+			t.Errorf("slow stream: unexpected event %q (expected prefix 'Slow:')", line)
+		}
+	}
+}
+
+// TestStreamCreationLogs_ConcurrentClientDisconnect verifies that one client disconnecting
+// does not affect other concurrent streams.
+func TestStreamCreationLogs_ConcurrentClientDisconnect(t *testing.T) {
+	setupTestDB(t)
+	inst1 := createTestInstance(t, "bot-disc-1")
+	inst2 := createTestInstance(t, "bot-disc-2")
+	createTestAdmin(t)
+
+	ch1 := make(chan string, 10)
+	ch2 := make(chan string, 10)
+
+	mock := &concurrentMockOrchestrator{
+		channels: map[string]chan string{
+			"bot-disc-1": ch1,
+			"bot-disc-2": ch2,
+		},
+	}
+	orchestrator.SetForTest(mock)
+
+	// Pre-fill stream 2 with all events and close it
+	ch2 <- "Stream 2: First event"
+	ch2 <- "Stream 2: Second event"
+	ch2 <- "Stream 2: Third event"
+	close(ch2)
+
+	// Stream 1 gets an event but stays open (will be cancelled)
+	ch1 <- "Stream 1: First event"
+
+	router := newRouter()
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	stream2Done := make(chan []string, 1)
+
+	// Start stream 1 with a cancellable context
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	req1, _ := http.NewRequestWithContext(ctx1, "GET", fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst1.ID), nil)
+
+	go func() {
+		resp, err := http.DefaultClient.Do(req1)
+		if err != nil {
+			return // Expected after cancel
+		}
+		resp.Body.Close()
+	}()
+
+	// Start stream 2
+	go func() {
+		resp, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst2.ID))
+		if err != nil {
+			t.Errorf("stream 2 error: %v", err)
+			stream2Done <- nil
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		stream2Done <- parseSSEData(string(body))
+	}()
+
+	// Cancel stream 1 (simulate client disconnect)
+	cancel1()
+	close(ch1)
+
+	// Stream 2 should complete with all 3 events despite stream 1 disconnect
+	lines2 := <-stream2Done
+	if len(lines2) != 3 {
+		t.Fatalf("stream 2: expected 3 events, got %d: %v", len(lines2), lines2)
+	}
+	for _, line := range lines2 {
+		if !strings.HasPrefix(line, "Stream 2:") {
+			t.Errorf("stream 2: unexpected event %q (expected prefix 'Stream 2:')", line)
+		}
+	}
 }
 
 // parseSSEData extracts "data: ..." lines from SSE output.

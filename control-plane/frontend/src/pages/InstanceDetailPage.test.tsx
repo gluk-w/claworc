@@ -349,4 +349,154 @@ describe("InstanceDetailPage — Logs tab visibility across all instance statuse
     const lastCall = calls[calls.length - 1];
     expect(lastCall[2]).toBe("creation");
   });
+
+  // --- Concurrent instance creation logging tests ---
+  // These verify that multiple InstanceDetailPage renders (simulating separate
+  // browser tabs) call useInstanceLogs with correct, independent parameters.
+
+  it("multiple creating instances each get their own creation log stream", () => {
+    // Render 3 instances sequentially (simulating 3 browser tabs)
+    // Each should call useInstanceLogs with its own instance ID and logType "creation"
+    const logsCalls: unknown[][] = [];
+    mockUseInstanceLogs.mockImplementation((...args: unknown[]) => {
+      logsCalls.push(args);
+      return {
+        logs: [],
+        clearLogs: vi.fn(),
+        isPaused: false,
+        togglePause: vi.fn(),
+        isConnected: false,
+      };
+    });
+
+    // Instance 1 (creating)
+    const inst1 = makeInstance({
+      id: 1,
+      name: "bot-conc-1",
+      status: "creating" as Instance["status"],
+    });
+    setupMocks(inst1);
+    const { unmount: unmount1 } = render(<InstanceDetailPage />);
+
+    // Instance 2 (creating) — reset mock to track new calls
+    logsCalls.length = 0;
+    const inst2 = makeInstance({
+      id: 2,
+      name: "bot-conc-2",
+      status: "creating" as Instance["status"],
+    });
+    setupMocks(inst2);
+    const { unmount: unmount2 } = render(<InstanceDetailPage />);
+
+    // Instance 3 (creating) — reset mock to track new calls
+    logsCalls.length = 0;
+    const inst3 = makeInstance({
+      id: 3,
+      name: "bot-conc-3",
+      status: "creating" as Instance["status"],
+    });
+    setupMocks(inst3);
+    const { unmount: unmount3 } = render(<InstanceDetailPage />);
+
+    // Each render should have called useInstanceLogs with logType "creation"
+    // since all instances have status "creating"
+    const allCalls = mockUseInstanceLogs.mock.calls;
+    const creationCalls = allCalls.filter(
+      (call: unknown[]) => call[2] === "creation",
+    );
+    expect(creationCalls.length).toBeGreaterThanOrEqual(3);
+
+    unmount1();
+    unmount2();
+    unmount3();
+  });
+
+  it("concurrent instances with different statuses get correct log types", () => {
+    // Instance A (creating) should get logType "creation"
+    const instA = makeInstance({
+      id: 10,
+      status: "creating" as Instance["status"],
+    });
+    setupMocks(instA);
+    const { unmount: unmountA } = render(<InstanceDetailPage />);
+
+    const callsAfterA = mockUseInstanceLogs.mock.calls;
+    const lastCallA = callsAfterA[callsAfterA.length - 1];
+    expect(lastCallA[2]).toBe("creation");
+    unmountA();
+
+    // Instance B (running) should get logType "runtime"
+    const instB = makeInstance({ id: 20, status: "running" });
+    setupMocks(instB);
+    const { unmount: unmountB } = render(<InstanceDetailPage />);
+
+    const callsAfterB = mockUseInstanceLogs.mock.calls;
+    const lastCallB = callsAfterB[callsAfterB.length - 1];
+    expect(lastCallB[2]).toBe("runtime");
+    unmountB();
+
+    // Instance C (creating) should get logType "creation"
+    const instC = makeInstance({
+      id: 30,
+      status: "creating" as Instance["status"],
+    });
+    setupMocks(instC);
+    const { unmount: unmountC } = render(<InstanceDetailPage />);
+
+    const callsAfterC = mockUseInstanceLogs.mock.calls;
+    const lastCallC = callsAfterC[callsAfterC.length - 1];
+    expect(lastCallC[2]).toBe("creation");
+    unmountC();
+  });
+
+  it("each concurrent creating instance renders its own LogViewer independently", () => {
+    // Simulate 3 creating instances each showing different log content
+    const instances = [
+      { id: 1, logs: ["Instance 1: Scheduling pod"] },
+      { id: 2, logs: ["Instance 2: Pulling image", "Instance 2: Ready"] },
+      {
+        id: 3,
+        logs: [
+          "Instance 3: Container creating",
+          "Instance 3: Health: starting",
+          "Instance 3: Ready",
+        ],
+      },
+    ];
+
+    for (const { id, logs } of instances) {
+      const instance = makeInstance({
+        id,
+        name: `bot-conc-${id}`,
+        status: "creating" as Instance["status"],
+      });
+      mockUseInstance.mockReturnValue({ data: instance, isLoading: false });
+      mockUseSettings.mockReturnValue({ data: { api_keys: {} } });
+      mockUseInstanceLogs.mockReturnValue({
+        logs,
+        clearLogs: vi.fn(),
+        isPaused: false,
+        togglePause: vi.fn(),
+        isConnected: true,
+      });
+
+      const { unmount } = render(<InstanceDetailPage />);
+
+      // Each render should show its own logs, not logs from other instances
+      for (const logLine of logs) {
+        expect(screen.getByText(logLine)).toBeInTheDocument();
+      }
+
+      // The other instances' logs should NOT be present
+      for (const other of instances) {
+        if (other.id !== id) {
+          for (const otherLog of other.logs) {
+            expect(screen.queryByText(otherLog)).not.toBeInTheDocument();
+          }
+        }
+      }
+
+      unmount();
+    }
+  });
 });
