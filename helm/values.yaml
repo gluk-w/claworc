@@ -42,6 +42,19 @@ serviceAccount:
   create: true
   annotations: {}
 
+ingress:
+  enabled: true
+  ingressClassName: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+  hosts:
+    - host: example.com
+      paths: ["/"]
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
 nodeSelector: {}
 
 affinity: {}
