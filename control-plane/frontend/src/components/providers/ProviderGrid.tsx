@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
-import { useSettings } from "@/hooks/useSettings";
+import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
+import type { SettingsUpdatePayload } from "@/types/settings";
 import { PROVIDERS } from "./providerData";
 import type { Provider, ProviderCategory } from "./providerData";
 import ProviderCard from "./ProviderCard";
@@ -21,6 +22,7 @@ interface PendingChange {
 
 export default function ProviderGrid() {
   const { data: settings } = useSettings();
+  const updateMutation = useUpdateSettings();
 
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -107,6 +109,38 @@ export default function ProviderGrid() {
     setSelectedProvider(null);
   };
 
+  const hasChanges =
+    Object.keys(pendingChanges).length > 0 || pendingDeletes.length > 0;
+
+  const handleSaveChanges = () => {
+    const payload: SettingsUpdatePayload = {};
+
+    // Build api_keys from pendingChanges (excluding Brave which uses its own field)
+    const apiKeys: Record<string, string> = {};
+    for (const [envVar, change] of Object.entries(pendingChanges)) {
+      if (envVar === "BRAVE_API_KEY") {
+        payload.brave_api_key = change.apiKey;
+      } else {
+        apiKeys[envVar] = change.apiKey;
+      }
+    }
+    if (Object.keys(apiKeys).length > 0) {
+      payload.api_keys = apiKeys;
+    }
+
+    // Build delete_api_keys from pendingDeletes
+    if (pendingDeletes.length > 0) {
+      payload.delete_api_keys = pendingDeletes;
+    }
+
+    updateMutation.mutate(payload, {
+      onSuccess: () => {
+        setPendingChanges({});
+        setPendingDeletes([]);
+      },
+    });
+  };
+
   return (
     <div className="space-y-6">
       <p className="text-sm text-gray-600">
@@ -137,6 +171,18 @@ export default function ProviderGrid() {
           </div>
         );
       })}
+
+      {hasChanges && (
+        <div className="flex justify-end pt-4 border-t border-gray-200">
+          <button
+            onClick={handleSaveChanges}
+            disabled={updateMutation.isPending}
+            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {updateMutation.isPending ? "Saving..." : "Save Changes"}
+          </button>
+        </div>
+      )}
 
       {selectedProvider && (
         <ProviderConfigModal
