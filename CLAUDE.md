@@ -38,7 +38,9 @@ The project consists of the following components:
 
 **Crypto** (`internal/crypto/crypto.go`): API keys encrypted at rest in SQLite using Fernet. The Fernet key is auto-generated on first run and stored in the `settings` table.
 
-**Frontend**: React 18 + TypeScript + Vite + TailwindCSS v4. Uses TanStack React Query for data fetching (5s polling on instance list), React Router for SPA routing, Monaco Editor for JSON config editing, Axios for API calls. The `@` import alias maps to `src/`.
+**Frontend**: React 18 + TypeScript + Vite + TailwindCSS v4. Uses TanStack React Query for data fetching (5s polling on instance list), React Router for SPA routing, Monaco Editor for JSON config editing, Axios for API calls. The `@` import alias maps to `src/`. See `control-plane/frontend/README.md` for detailed frontend documentation.
+
+**Provider management** (`frontend/src/components/providers/`): Card-based UI for configuring API keys for 14 LLM and tool providers. Key files: `providerData.ts` (provider registry), `ProviderGrid.tsx` (main grid), `ProviderCard.tsx` (individual cards), `ProviderConfigModal.tsx` (key entry modal). To add a new provider, add an entry to the `PROVIDERS` array in `providerData.ts`.
 
 **Agent image**: Ubuntu 24.04 with systemd as PID 1 running services using systemd.
 
