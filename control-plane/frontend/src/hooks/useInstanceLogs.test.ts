@@ -942,4 +942,222 @@ describe("useInstanceLogs", () => {
     expect(hook1.result.current.logs).toHaveLength(1);
     expect(hook3.result.current.logs).toHaveLength(1);
   });
+
+  // --- Final integration smoke test ---
+
+  describe("Smoke Test — Complete user journey", () => {
+    it("simulates full creation → runtime → toggle lifecycle", () => {
+      // Phase 1: Start with creation logs (instance is "creating")
+      const { result, rerender } = renderHook(
+        ({ logType }: { logType: "runtime" | "creation" }) =>
+          useInstanceLogs(1, true, logType),
+        { initialProps: { logType: "creation" as const } },
+      );
+
+      expect(MockEventSource.instances).toHaveLength(1);
+      expect(MockEventSource.instances[0].url).toBe(
+        "/api/v1/instances/1/creation-logs",
+      );
+
+      const creationES = MockEventSource.instances[0];
+
+      // Simulate connection open + creation events streaming in real-time
+      act(() => {
+        creationES.simulateOpen();
+      });
+      expect(result.current.isConnected).toBe(true);
+
+      act(() => {
+        creationES.simulateMessage(
+          "[STATUS] Waiting for pod to be scheduled...",
+        );
+        creationES.simulateMessage(
+          "[EVENT] kubelet: Successfully assigned claworc/bot-smoke to node-1",
+        );
+        creationES.simulateMessage(
+          '[EVENT] kubelet: Pulling image "ghcr.io/example/agent:latest"',
+        );
+        creationES.simulateMessage(
+          "[EVENT] kubelet: Successfully pulled image in 12.3s",
+        );
+        creationES.simulateMessage(
+          "[EVENT] kubelet: Created container agent",
+        );
+        creationES.simulateMessage(
+          "[EVENT] kubelet: Started container agent",
+        );
+        creationES.simulateMessage(
+          "[READY] All containers are running and ready",
+        );
+      });
+
+      expect(result.current.logs).toHaveLength(7);
+      expect(result.current.logs[0]).toContain("Waiting for pod");
+      expect(result.current.logs[6]).toContain("running and ready");
+
+      // Phase 2: Instance becomes "running" — auto-switch to runtime logs
+      rerender({ logType: "runtime" });
+
+      // Creation EventSource should be closed
+      expect(creationES.closed).toBe(true);
+
+      // New EventSource for runtime logs
+      expect(MockEventSource.instances).toHaveLength(2);
+      const runtimeES = MockEventSource.instances[1];
+      expect(runtimeES.url).toBe(
+        "/api/v1/instances/1/logs?tail=100&follow=true",
+      );
+
+      // Logs cleared on type switch
+      expect(result.current.logs).toHaveLength(0);
+
+      // Simulate runtime events
+      act(() => {
+        runtimeES.simulateOpen();
+      });
+      expect(result.current.isConnected).toBe(true);
+
+      act(() => {
+        runtimeES.simulateMessage(
+          "2026-02-20T10:00:01Z Starting openclaw-gateway...",
+        );
+        runtimeES.simulateMessage(
+          "2026-02-20T10:00:02Z Gateway listening on :8080",
+        );
+        runtimeES.simulateMessage(
+          "2026-02-20T10:00:03Z Connected to Chrome debugger",
+        );
+      });
+
+      expect(result.current.logs).toHaveLength(3);
+      expect(result.current.logs[0]).toContain("Starting openclaw-gateway");
+
+      // Phase 3: User toggles back to creation logs
+      rerender({ logType: "creation" });
+
+      expect(runtimeES.closed).toBe(true);
+      expect(MockEventSource.instances).toHaveLength(3);
+      const creationES2 = MockEventSource.instances[2];
+      expect(creationES2.url).toBe(
+        "/api/v1/instances/1/creation-logs",
+      );
+
+      // Logs cleared again
+      expect(result.current.logs).toHaveLength(0);
+
+      // Simulate guidance message from backend (instance is now running)
+      act(() => {
+        creationES2.simulateOpen();
+        creationES2.simulateMessage(
+          "Instance is not in creation phase. Switch to Runtime logs or restart the instance to see creation logs.",
+        );
+      });
+
+      expect(result.current.logs).toHaveLength(1);
+      expect(result.current.logs[0]).toContain("not in creation phase");
+
+      // Phase 4: User switches back to runtime
+      rerender({ logType: "runtime" });
+
+      expect(creationES2.closed).toBe(true);
+      expect(MockEventSource.instances).toHaveLength(4);
+      const runtimeES2 = MockEventSource.instances[3];
+      expect(runtimeES2.url).toBe(
+        "/api/v1/instances/1/logs?tail=100&follow=true",
+      );
+
+      // Logs cleared, fresh connection
+      expect(result.current.logs).toHaveLength(0);
+    });
+
+    it("simulates pause, clear, and resume during creation streaming", () => {
+      const { result } = renderHook(() =>
+        useInstanceLogs(1, true, "creation"),
+      );
+      const es = MockEventSource.instances[0];
+
+      act(() => {
+        es.simulateOpen();
+      });
+
+      // Stream some events
+      act(() => {
+        es.simulateMessage("Event 1: Pod scheduling");
+        es.simulateMessage("Event 2: Image pulling");
+      });
+      expect(result.current.logs).toHaveLength(2);
+
+      // Pause — new messages should not accumulate
+      act(() => {
+        result.current.togglePause();
+      });
+      expect(result.current.isPaused).toBe(true);
+
+      act(() => {
+        es.simulateMessage("Event 3: Missed during pause");
+      });
+      expect(result.current.logs).toHaveLength(2); // Still 2
+
+      // Resume
+      act(() => {
+        result.current.togglePause();
+      });
+      expect(result.current.isPaused).toBe(false);
+
+      act(() => {
+        es.simulateMessage("Event 4: After resume");
+      });
+      expect(result.current.logs).toHaveLength(3);
+
+      // Clear logs
+      act(() => {
+        result.current.clearLogs();
+      });
+      expect(result.current.logs).toHaveLength(0);
+
+      // New events still accumulate after clear
+      act(() => {
+        es.simulateMessage("Event 5: Fresh start");
+      });
+      expect(result.current.logs).toHaveLength(1);
+      expect(result.current.logs[0]).toBe("Event 5: Fresh start");
+    });
+
+    it("simulates tab switch away and back (enable/disable cycle)", () => {
+      const { result, rerender } = renderHook(
+        ({ enabled }: { enabled: boolean }) =>
+          useInstanceLogs(1, enabled, "creation"),
+        { initialProps: { enabled: true } },
+      );
+
+      const es1 = MockEventSource.instances[0];
+
+      act(() => {
+        es1.simulateOpen();
+        es1.simulateMessage("Creation event 1");
+      });
+      expect(result.current.logs).toHaveLength(1);
+      expect(result.current.isConnected).toBe(true);
+
+      // Switch away from Logs tab (disable)
+      rerender({ enabled: false });
+      expect(es1.closed).toBe(true);
+      expect(result.current.isConnected).toBe(false);
+
+      // Switch back to Logs tab (enable)
+      rerender({ enabled: true });
+      expect(MockEventSource.instances).toHaveLength(2);
+      const es2 = MockEventSource.instances[1];
+      expect(es2.closed).toBe(false);
+
+      // New connection, logs persist from previous session
+      act(() => {
+        es2.simulateOpen();
+        es2.simulateMessage("Creation event 2");
+      });
+      expect(result.current.isConnected).toBe(true);
+      // Note: logs from previous session are still present since we didn't change logType
+      expect(result.current.logs).toHaveLength(2);
+    });
+  });
 });

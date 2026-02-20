@@ -596,3 +596,166 @@ describe("InstanceDetailPage — Logs tab visibility across all instance statuse
     }
   });
 });
+
+// --- Final integration smoke test ---
+// Simulates the complete user journey through InstanceDetailPage:
+//   1. Instance appears as "creating" → logType auto-set to "creation"
+//   2. Logs tab is accessible, shows Runtime/Creation toggle
+//   3. Instance transitions to "running" → logType auto-switches to "runtime"
+//   4. User toggles back to "Creation" → sees guidance message
+//   5. User toggles to "Runtime" → sees runtime logs
+//   6. User switches away from Logs tab → connection disabled
+//   7. User returns to Logs tab → connection re-enabled
+
+describe("Smoke Test — Complete user journey through InstanceDetailPage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("full journey: creating → logs tab → running → auto-switch → toggle → tab switch", async () => {
+    const user = userEvent.setup();
+
+    // Phase 1: Instance is "creating", Logs tab active (via hash)
+    const creatingInstance = makeInstance({
+      status: "creating" as Instance["status"],
+    });
+    setupMocks(creatingInstance);
+
+    const { rerender } = render(<InstanceDetailPage />);
+
+    // Logs tab is accessible and not disabled
+    const logsTab = screen.getByRole("button", { name: "Logs" });
+    expect(logsTab).toBeInTheDocument();
+    expect(logsTab).not.toBeDisabled();
+
+    // LogViewer renders with Runtime/Creation toggle
+    expect(screen.getByText("Runtime")).toBeInTheDocument();
+    expect(screen.getByText("Creation")).toBeInTheDocument();
+
+    // logType auto-selected to "creation" for creating instance
+    let calls = mockUseInstanceLogs.mock.calls;
+    expect(calls[calls.length - 1][2]).toBe("creation");
+    // enabled=true because logs tab is active
+    expect(calls[calls.length - 1][1]).toBe(true);
+
+    // Phase 2: Instance transitions to "running"
+    const runningInstance = makeInstance({ status: "running" });
+    mockUseInstance.mockReturnValue({
+      data: runningInstance,
+      isLoading: false,
+    });
+
+    rerender(<InstanceDetailPage />);
+
+    // Auto-switch: logType should change from "creation" to "runtime"
+    calls = mockUseInstanceLogs.mock.calls;
+    expect(calls[calls.length - 1][2]).toBe("runtime");
+
+    // Phase 3: User manually toggles to "Creation" logs
+    await user.click(screen.getByText("Creation"));
+    calls = mockUseInstanceLogs.mock.calls;
+    expect(calls[calls.length - 1][2]).toBe("creation");
+
+    // Phase 4: User toggles back to "Runtime" logs
+    await user.click(screen.getByText("Runtime"));
+    calls = mockUseInstanceLogs.mock.calls;
+    expect(calls[calls.length - 1][2]).toBe("runtime");
+
+    // Phase 5: User switches away from Logs tab
+    await user.click(screen.getByText("Overview"));
+    calls = mockUseInstanceLogs.mock.calls;
+    expect(calls[calls.length - 1][1]).toBe(false); // enabled=false
+
+    // Phase 6: User returns to Logs tab
+    await user.click(screen.getByText("Logs"));
+    calls = mockUseInstanceLogs.mock.calls;
+    expect(calls[calls.length - 1][1]).toBe(true); // enabled=true
+    expect(calls[calls.length - 1][2]).toBe("runtime"); // still runtime
+  });
+
+  it("full journey with creation log content and guidance messages", async () => {
+    // Phase 1: Creating instance with streaming creation events
+    const creatingInstance = makeInstance({
+      status: "creating" as Instance["status"],
+    });
+    mockUseInstance.mockReturnValue({
+      data: creatingInstance,
+      isLoading: false,
+    });
+    mockUseSettings.mockReturnValue({ data: { api_keys: {} } });
+    mockUseInstanceLogs.mockReturnValue({
+      logs: [
+        "[STATUS] Waiting for pod to be scheduled...",
+        "[EVENT] kubelet: Pulling image",
+        "[EVENT] kubelet: Started container agent",
+        "[READY] All containers are running and ready",
+      ],
+      clearLogs: vi.fn(),
+      isPaused: false,
+      togglePause: vi.fn(),
+      isConnected: true,
+    });
+
+    const { rerender, unmount } = render(<InstanceDetailPage />);
+
+    // All creation events visible
+    expect(
+      screen.getByText("[STATUS] Waiting for pod to be scheduled..."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("[READY] All containers are running and ready"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Connected")).toBeInTheDocument();
+
+    // Phase 2: Transition to running with runtime logs
+    const runningInstance = makeInstance({ status: "running" });
+    mockUseInstance.mockReturnValue({
+      data: runningInstance,
+      isLoading: false,
+    });
+    mockUseInstanceLogs.mockReturnValue({
+      logs: [
+        "Starting openclaw-gateway...",
+        "Gateway listening on :8080",
+      ],
+      clearLogs: vi.fn(),
+      isPaused: false,
+      togglePause: vi.fn(),
+      isConnected: true,
+    });
+
+    rerender(<InstanceDetailPage />);
+
+    // Runtime logs now displayed
+    expect(
+      screen.getByText("Starting openclaw-gateway..."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Gateway listening on :8080"),
+    ).toBeInTheDocument();
+
+    unmount();
+  });
+
+  it("status badge reflects instance state throughout journey", () => {
+    // Creating state
+    const creatingInstance = makeInstance({
+      status: "creating" as Instance["status"],
+    });
+    setupMocks(creatingInstance);
+
+    const { rerender, unmount } = render(<InstanceDetailPage />);
+    expect(screen.getByText("creating")).toBeInTheDocument();
+
+    // Transition to running
+    const runningInstance = makeInstance({ status: "running" });
+    mockUseInstance.mockReturnValue({
+      data: runningInstance,
+      isLoading: false,
+    });
+    rerender(<InstanceDetailPage />);
+    expect(screen.getByText("running")).toBeInTheDocument();
+
+    unmount();
+  });
+});

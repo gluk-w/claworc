@@ -2219,6 +2219,181 @@ func TestStreamCreationLogs_HighVolumeStreaming(t *testing.T) {
 	}
 }
 
+// --- Final integration smoke test ---
+// Simulates the complete user journey end-to-end:
+//  1. Instance is created with "creating" status
+//  2. User opens creation logs → receives real-time streaming events
+//  3. Instance transitions to "running"
+//  4. User accesses creation-logs again → receives guidance message
+//  5. User views runtime logs → receives application log events
+//  6. User toggles back to creation logs → guidance message again
+
+// smokeTestOrchestrator extends mockOrchestrator with runtime log support.
+type smokeTestOrchestrator struct {
+	mockOrchestrator
+	runtimeLogsCh  chan string
+	runtimeLogsErr error
+}
+
+func (s *smokeTestOrchestrator) StreamInstanceLogs(_ context.Context, _ string, _ int, _ bool) (<-chan string, error) {
+	if s.runtimeLogsErr != nil {
+		return nil, s.runtimeLogsErr
+	}
+	return s.runtimeLogsCh, nil
+}
+
+func newFullRouter() chi.Router {
+	r := chi.NewRouter()
+	r.Use(middleware.RequireAuth(sessionStore))
+	r.Get("/instances/{id}/creation-logs", handlers.StreamCreationLogs)
+	r.Get("/instances/{id}/logs", handlers.StreamLogs)
+	return r
+}
+
+func TestSmokeTest_CompleteUserJourney(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-smoke")
+	createTestAdmin(t)
+
+	// Prepare creation log events (simulating K8s pod creation sequence)
+	creationCh := make(chan string, 10)
+	creationCh <- "[STATUS] Waiting for pod to be scheduled..."
+	creationCh <- "[EVENT] kubelet: Successfully assigned claworc/bot-smoke to node-1"
+	creationCh <- "[EVENT] kubelet: Pulling image \"ghcr.io/example/agent:latest\""
+	creationCh <- "[EVENT] kubelet: Successfully pulled image in 12.3s"
+	creationCh <- "[EVENT] kubelet: Created container agent"
+	creationCh <- "[EVENT] kubelet: Started container agent"
+	creationCh <- "[READY] All containers are running and ready"
+	close(creationCh)
+
+	// Prepare runtime log events
+	runtimeCh := make(chan string, 10)
+	runtimeCh <- "2026-02-20T10:00:01Z Starting openclaw-gateway..."
+	runtimeCh <- "2026-02-20T10:00:02Z Gateway listening on :8080"
+	runtimeCh <- "2026-02-20T10:00:03Z Connected to Chrome debugger"
+	close(runtimeCh)
+
+	mock := &smokeTestOrchestrator{
+		mockOrchestrator: mockOrchestrator{creationLogsCh: creationCh},
+		runtimeLogsCh:    runtimeCh,
+	}
+	orchestrator.SetForTest(mock)
+
+	router := newFullRouter()
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	// === Phase 1: Stream creation logs while instance is "creating" ===
+	resp, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst.ID))
+	if err != nil {
+		t.Fatalf("Phase 1 (creation-logs): request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Phase 1: expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("Phase 1: expected text/event-stream, got %q", ct)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	creationLines := parseSSEData(string(body))
+
+	expectedCreation := []string{
+		"[STATUS] Waiting for pod to be scheduled...",
+		"[EVENT] kubelet: Successfully assigned claworc/bot-smoke to node-1",
+		`[EVENT] kubelet: Pulling image "ghcr.io/example/agent:latest"`,
+		"[EVENT] kubelet: Successfully pulled image in 12.3s",
+		"[EVENT] kubelet: Created container agent",
+		"[EVENT] kubelet: Started container agent",
+		"[READY] All containers are running and ready",
+	}
+	if len(creationLines) != len(expectedCreation) {
+		t.Fatalf("Phase 1: expected %d creation events, got %d: %v",
+			len(expectedCreation), len(creationLines), creationLines)
+	}
+	for i, exp := range expectedCreation {
+		if creationLines[i] != exp {
+			t.Errorf("Phase 1: event %d: expected %q, got %q", i, exp, creationLines[i])
+		}
+	}
+
+	// === Phase 2: Instance transitions to "running" ===
+	database.DB.Model(&inst).Update("status", "running")
+
+	// Accessing creation-logs for a running instance returns guidance message
+	resp2, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst.ID))
+	if err != nil {
+		t.Fatalf("Phase 2 (creation-logs after running): request failed: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("Phase 2: expected 200, got %d", resp2.StatusCode)
+	}
+
+	body2, _ := io.ReadAll(resp2.Body)
+	guidanceLines := parseSSEData(string(body2))
+
+	if len(guidanceLines) != 1 {
+		t.Fatalf("Phase 2: expected 1 guidance event, got %d: %v", len(guidanceLines), guidanceLines)
+	}
+	expectedGuidance := "Instance is not in creation phase. Switch to Runtime logs or restart the instance to see creation logs."
+	if guidanceLines[0] != expectedGuidance {
+		t.Errorf("Phase 2: expected guidance %q, got %q", expectedGuidance, guidanceLines[0])
+	}
+
+	// === Phase 3: View runtime logs ===
+	resp3, err := http.Get(fmt.Sprintf("%s/instances/%d/logs?tail=100&follow=true", ts.URL, inst.ID))
+	if err != nil {
+		t.Fatalf("Phase 3 (runtime logs): request failed: %v", err)
+	}
+	defer resp3.Body.Close()
+
+	if resp3.StatusCode != http.StatusOK {
+		body3, _ := io.ReadAll(resp3.Body)
+		t.Fatalf("Phase 3: expected 200, got %d: %s", resp3.StatusCode, string(body3))
+	}
+	if ct := resp3.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("Phase 3: expected text/event-stream, got %q", ct)
+	}
+
+	body3, _ := io.ReadAll(resp3.Body)
+	runtimeLines := parseSSEData(string(body3))
+
+	expectedRuntime := []string{
+		"2026-02-20T10:00:01Z Starting openclaw-gateway...",
+		"2026-02-20T10:00:02Z Gateway listening on :8080",
+		"2026-02-20T10:00:03Z Connected to Chrome debugger",
+	}
+	if len(runtimeLines) != len(expectedRuntime) {
+		t.Fatalf("Phase 3: expected %d runtime events, got %d: %v",
+			len(expectedRuntime), len(runtimeLines), runtimeLines)
+	}
+	for i, exp := range expectedRuntime {
+		if runtimeLines[i] != exp {
+			t.Errorf("Phase 3: event %d: expected %q, got %q", i, exp, runtimeLines[i])
+		}
+	}
+
+	// === Phase 4: Toggle back to creation logs (still running) ===
+	// Re-request creation-logs to verify same guidance message
+	resp4, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst.ID))
+	if err != nil {
+		t.Fatalf("Phase 4 (creation-logs toggle back): request failed: %v", err)
+	}
+	defer resp4.Body.Close()
+
+	body4, _ := io.ReadAll(resp4.Body)
+	toggleLines := parseSSEData(string(body4))
+
+	if len(toggleLines) != 1 || toggleLines[0] != expectedGuidance {
+		t.Errorf("Phase 4: expected guidance message on toggle back, got %v", toggleLines)
+	}
+}
+
 // parseSSEData extracts "data: ..." lines from SSE output.
 func parseSSEData(body string) []string {
 	var lines []string
