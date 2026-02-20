@@ -169,7 +169,7 @@ export default function ProviderConfigModal({
             type="button"
             onClick={handleClose}
             aria-label="Close dialog"
-            className="text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+            className="text-gray-400 hover:text-gray-600 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-md"
           >
             <X size={18} />
           </button>
@@ -201,7 +201,7 @@ export default function ProviderConfigModal({
                 type="button"
                 onClick={() => setShowKey(!showKey)}
                 aria-label={showKey ? "Hide API key" : "Show API key"}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-md"
               >
                 {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
@@ -241,7 +241,7 @@ export default function ProviderConfigModal({
             href={provider.docsUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-md"
           >
             <ExternalLink size={12} />
             Get an API key from {provider.name}
@@ -266,7 +266,7 @@ export default function ProviderConfigModal({
             type="button"
             onClick={handleTestConnection}
             disabled={!apiKey.trim() || isTesting}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             {isTesting && <Loader2 size={12} className="animate-spin" />}
             {isTesting ? "Checking..." : "Test Connection"}
@@ -275,7 +275,7 @@ export default function ProviderConfigModal({
             <button
               type="button"
               onClick={handleClose}
-              className="px-3 py-1.5 text-xs text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="px-3 py-1.5 text-xs text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               Cancel
             </button>
@@ -283,7 +283,7 @@ export default function ProviderConfigModal({
               type="button"
               onClick={handleSave}
               disabled={saveDisabled}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               {isSaving && <Loader2 size={12} className="animate-spin" />}
               {isSaving ? "Saving..." : "Save"}

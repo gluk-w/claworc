@@ -143,7 +143,7 @@ export default function ProviderGrid({
 
   if (isLoading) {
     return (
-      <div className="space-y-6" data-testid="provider-grid-loading">
+      <div className="space-y-4" data-testid="provider-grid-loading">
         <div className="h-4 w-48 bg-gray-200 rounded animate-pulse" />
         {CATEGORY_ORDER.map((category) => {
           const providers = grouped.get(category);
@@ -164,7 +164,7 @@ export default function ProviderGrid({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <p className="text-sm text-gray-600" data-testid="provider-count-summary">
         <span className="font-medium text-gray-900">{configuredCount}</span> of{" "}
         {PROVIDERS.length} providers configured
@@ -216,7 +216,7 @@ export default function ProviderGrid({
           <button
             onClick={handleSaveChanges}
             disabled={isSaving}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             {isSaving ? "Saving..." : "Save Changes"}
           </button>

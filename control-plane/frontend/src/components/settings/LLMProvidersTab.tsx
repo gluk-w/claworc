@@ -56,7 +56,7 @@ export default function LLMProvidersTab({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-800">
         <AlertTriangle size={16} className="shrink-0" />
         Changing global API keys will update all instances that don't have
