@@ -83,7 +83,15 @@ export default function LogViewer({
       </div>
       <div className="flex-1 overflow-auto bg-gray-900 p-3 font-mono text-xs text-gray-300 min-h-[300px]">
         {logs.length === 0 ? (
-          <div className="text-gray-500">Waiting for logs...</div>
+          <div className="text-gray-500">
+            {logType === "creation"
+              ? isConnected
+                ? "No creation events yet. Container may not be starting..."
+                : "Waiting for container creation events..."
+              : isConnected
+                ? "No logs yet. The instance may still be starting..."
+                : "Waiting for logs..."}
+          </div>
         ) : (
           logs.map((line, i) => (
             <div key={i} className="whitespace-pre-wrap leading-5">
