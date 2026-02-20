@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -49,11 +49,11 @@ function makeQueryClient() {
   });
 }
 
-function renderPage() {
+function renderPage(initialPath = "/settings") {
   const qc = makeQueryClient();
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialPath]}>
         <SettingsPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -209,5 +209,253 @@ describe("SettingsPage", () => {
     // Go back to LLM Providers
     await user.click(screen.getByText("LLM Providers"));
     expect(screen.getByText("Provider Configuration")).toBeInTheDocument();
+  });
+});
+
+// ── Integration: End-to-end tab save flows ──────────────────────────
+
+describe("SettingsPage — integration", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchSettings.mockResolvedValue(mockSettings);
+    mockUpdateSettings.mockResolvedValue(mockSettings);
+  });
+
+  it("saves resource limits through the Resource Limits tab", async () => {
+    renderPage();
+    const user = userEvent.setup();
+
+    // Wait for load, then switch to Resource Limits tab
+    await screen.findByText("LLM Providers");
+    await user.click(screen.getByText("Resource Limits"));
+
+    // Change a resource field (clear first since defaultValue is pre-filled)
+    const inputs = screen.getAllByRole("textbox");
+    await user.clear(inputs[0]!);
+    await user.type(inputs[0]!, "1000m");
+
+    // Save
+    const saveBtn = screen.getByRole("button", { name: "Save Settings" });
+    expect(saveBtn).not.toBeDisabled();
+    await user.click(saveBtn);
+
+    expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+    const payload = mockUpdateSettings.mock.calls[0]![0];
+    expect(payload.default_cpu_request).toBe("1000m");
+  });
+
+  it("saves agent image settings through the Agent Image tab", async () => {
+    renderPage();
+    const user = userEvent.setup();
+
+    await screen.findByText("LLM Providers");
+    await user.click(screen.getByText("Agent Image"));
+
+    // Clear first since defaultValue is pre-filled
+    const inputs = screen.getAllByRole("textbox");
+    await user.clear(inputs[0]!);
+    await user.type(inputs[0]!, "custom-image:v2");
+
+    const saveBtn = screen.getByRole("button", { name: "Save Settings" });
+    expect(saveBtn).not.toBeDisabled();
+    await user.click(saveBtn);
+
+    expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+    const payload = mockUpdateSettings.mock.calls[0]![0];
+    expect(payload.default_container_image).toBe("custom-image:v2");
+  });
+
+  it("saves a provider key through the LLM Providers tab", async () => {
+    renderPage();
+    const user = userEvent.setup();
+
+    // Wait for providers tab (default)
+    await screen.findByText("Provider Configuration");
+
+    // Click first Configure button (Anthropic)
+    const configureButtons = screen.getAllByRole("button", {
+      name: /configure/i,
+    });
+    await user.click(configureButtons[0]!);
+
+    // Enter API key and save in modal
+    await user.type(
+      screen.getByPlaceholderText("Enter API key"),
+      "sk-ant-integration-test-key",
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    // Click the global "Save Changes" button
+    await user.click(screen.getByText("Save Changes"));
+
+    expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+    const payload = mockUpdateSettings.mock.calls[0]![0];
+    expect(payload.api_keys).toHaveProperty("ANTHROPIC_API_KEY");
+  });
+
+  it("tabs have independent save state — editing one does not affect another", async () => {
+    renderPage();
+    const user = userEvent.setup();
+
+    // Wait for load
+    await screen.findByText("LLM Providers");
+
+    // Go to Resource Limits, make a change
+    await user.click(screen.getByText("Resource Limits"));
+    const resourceInputs = screen.getAllByRole("textbox");
+    await user.type(resourceInputs[0]!, "999m");
+
+    // Resource Limits save button should be enabled
+    const resSave = screen.getByRole("button", { name: "Save Settings" });
+    expect(resSave).not.toBeDisabled();
+
+    // Switch to Agent Image tab — its save button should be disabled (no changes)
+    await user.click(screen.getByText("Agent Image"));
+    const imgSave = screen.getByRole("button", { name: "Save Settings" });
+    expect(imgSave).toBeDisabled();
+
+    // The resource limit changes should not have triggered an update call
+    expect(mockUpdateSettings).not.toHaveBeenCalled();
+  });
+
+  it("each tab renders its own save button independently", async () => {
+    renderPage();
+    const user = userEvent.setup();
+
+    await screen.findByText("LLM Providers");
+
+    // LLM Providers tab — no save button visible (ProviderGrid only shows it when changes exist)
+    expect(screen.queryByText("Save Changes")).not.toBeInTheDocument();
+    expect(screen.queryByText("Save Settings")).not.toBeInTheDocument();
+
+    // Resource Limits tab — save button present but disabled
+    await user.click(screen.getByText("Resource Limits"));
+    expect(
+      screen.getByRole("button", { name: "Save Settings" }),
+    ).toBeDisabled();
+
+    // Agent Image tab — save button present but disabled
+    await user.click(screen.getByText("Agent Image"));
+    expect(
+      screen.getByRole("button", { name: "Save Settings" }),
+    ).toBeDisabled();
+  });
+
+  it("tab navigation uses buttons (not links) so URL does not change", async () => {
+    renderPage("/settings");
+    const user = userEvent.setup();
+
+    await screen.findByText("LLM Providers");
+
+    // All tab triggers should be <button> elements, not <a> links
+    const nav = screen.getByRole("navigation", { name: "Settings tabs" });
+    const buttons = within(nav).getAllByRole("button");
+    expect(buttons).toHaveLength(3);
+
+    // Verify none are anchor elements
+    for (const btn of buttons) {
+      expect(btn.tagName).toBe("BUTTON");
+      expect(btn).not.toHaveAttribute("href");
+    }
+
+    // Switch tabs — since they're buttons (not router Links), URL won't change
+    await user.click(screen.getByText("Resource Limits"));
+    await user.click(screen.getByText("Agent Image"));
+    await user.click(screen.getByText("LLM Providers"));
+
+    // No navigation occurred — we can still find content (would crash if route changed)
+    expect(screen.getByText("Provider Configuration")).toBeInTheDocument();
+  });
+
+  it("tab bar uses horizontal flex layout for responsive overflow", async () => {
+    renderPage();
+    await screen.findByText("LLM Providers");
+
+    const nav = screen.getByRole("navigation", { name: "Settings tabs" });
+    // The nav uses flex layout with gap-0 for horizontal tabs
+    expect(nav.className).toContain("flex");
+  });
+
+  it("displays pre-configured provider keys from settings on load", async () => {
+    mockFetchSettings.mockResolvedValue({
+      ...mockSettings,
+      api_keys: {
+        ANTHROPIC_API_KEY: "****7890",
+        OPENAI_API_KEY: "****abcd",
+      },
+      brave_api_key: "****qrst",
+    });
+
+    renderPage();
+
+    // Wait for providers tab to load
+    await screen.findByText("Provider Configuration");
+
+    // All masked keys should be visible
+    expect(screen.getByText("****7890")).toBeInTheDocument();
+    expect(screen.getByText("****abcd")).toBeInTheDocument();
+    expect(screen.getByText("****qrst")).toBeInTheDocument();
+  });
+
+  it("displays pre-configured resource limits on the Resource Limits tab", async () => {
+    renderPage();
+    const user = userEvent.setup();
+
+    await screen.findByText("LLM Providers");
+    await user.click(screen.getByText("Resource Limits"));
+
+    // Verify existing settings values are shown
+    const inputs = screen.getAllByRole("textbox");
+    const values = inputs.map(
+      (input) => (input as HTMLInputElement).defaultValue,
+    );
+    expect(values).toContain("250m");
+    expect(values).toContain("500m");
+    expect(values).toContain("256Mi");
+    expect(values).toContain("512Mi");
+    expect(values).toContain("1Gi");
+  });
+
+  it("displays pre-configured agent image settings on the Agent Image tab", async () => {
+    renderPage();
+    const user = userEvent.setup();
+
+    await screen.findByText("LLM Providers");
+    await user.click(screen.getByText("Agent Image"));
+
+    const inputs = screen.getAllByRole("textbox");
+    const values = inputs.map(
+      (input) => (input as HTMLInputElement).defaultValue,
+    );
+    expect(values).toContain("ghcr.io/example/agent:latest");
+    expect(values).toContain("1920x1080");
+  });
+
+  it("shows warning banner only on LLM Providers tab", async () => {
+    renderPage();
+    const user = userEvent.setup();
+
+    await screen.findByText("LLM Providers");
+
+    // Warning banner visible on LLM Providers tab
+    expect(
+      screen.getByText(/changing global api keys will update all instances/i),
+    ).toBeInTheDocument();
+
+    // Switch to Resource Limits — no warning banner
+    await user.click(screen.getByText("Resource Limits"));
+    expect(
+      screen.queryByText(
+        /changing global api keys will update all instances/i,
+      ),
+    ).not.toBeInTheDocument();
+
+    // Switch to Agent Image — no warning banner
+    await user.click(screen.getByText("Agent Image"));
+    expect(
+      screen.queryByText(
+        /changing global api keys will update all instances/i,
+      ),
+    ).not.toBeInTheDocument();
   });
 });
