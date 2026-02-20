@@ -17,15 +17,10 @@ import (
 // Sessions stores active yamux sessions keyed by remote address.
 var Sessions sync.Map
 
-// StreamHandler is called for each accepted yamux stream. Override in
-// tests to install custom behavior (e.g., echo). The default logs and
-// closes the stream.
-var StreamHandler func(stream *yamux.Stream) = defaultStreamHandler
-
-func defaultStreamHandler(stream *yamux.Stream) {
-	log.Printf("tunnel: stream %d accepted (closing — no handlers registered yet)", stream.StreamID())
-	stream.Close()
-}
+// StreamHandler is called for each accepted yamux stream. The default
+// reads a channel header and routes to the registered ChannelHandler.
+// Override in tests to install custom behavior (e.g., echo).
+var StreamHandler func(stream *yamux.Stream) = routeStream
 
 // ListenTunnel starts a TLS listener on cfg.TunnelAddr that accepts
 // inbound WebSocket connections from the control plane and wraps each
