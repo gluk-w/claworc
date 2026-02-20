@@ -1,3 +1,8 @@
+FROM golang:1.24-alpine AS proxy-builder
+WORKDIR /src
+COPY src/ .
+RUN go mod download && CGO_ENABLED=0 go build -o /claworc-proxy ./
+
 FROM lscr.io/linuxserver/chromium:latest
 
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
@@ -14,8 +19,10 @@ COPY autostart /defaults/autostart
 COPY default.conf /defaults/default.conf
 COPY browser.json /defaults/browser.json
 COPY rootfs/ /
+COPY --from=proxy-builder /claworc-proxy /usr/local/bin/claworc-proxy
 
 RUN chmod +x /etc/s6-overlay/s6-rc.d/svc-openclaw/run \
+    && chmod +x /etc/s6-overlay/s6-rc.d/svc-proxy/run \
     && chmod +x /custom-cont-init.d/50-force-autostart
 
 ENV START_DOCKER=false
