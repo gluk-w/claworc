@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Pause, Play, Trash2, Wifi, WifiOff } from "lucide-react";
+import type { LogType } from "@/hooks/useInstanceLogs";
 
 interface LogViewerProps {
   logs: string[];
@@ -7,6 +8,8 @@ interface LogViewerProps {
   isConnected: boolean;
   onTogglePause: () => void;
   onClear: () => void;
+  logType: LogType;
+  onLogTypeChange: (type: LogType) => void;
 }
 
 export default function LogViewer({
@@ -15,6 +18,8 @@ export default function LogViewer({
   isConnected,
   onTogglePause,
   onClear,
+  logType,
+  onLogTypeChange,
 }: LogViewerProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -41,6 +46,28 @@ export default function LogViewer({
         >
           <Trash2 size={14} />
         </button>
+        <div className="flex items-center gap-0.5 ml-2">
+          <button
+            onClick={() => onLogTypeChange("runtime")}
+            className={`px-2 py-0.5 text-xs rounded-l font-medium transition-colors ${
+              logType === "runtime"
+                ? "bg-gray-600 text-white"
+                : "bg-gray-700 text-gray-400 hover:text-gray-200"
+            }`}
+          >
+            Runtime
+          </button>
+          <button
+            onClick={() => onLogTypeChange("creation")}
+            className={`px-2 py-0.5 text-xs rounded-r font-medium transition-colors ${
+              logType === "creation"
+                ? "bg-gray-600 text-white"
+                : "bg-gray-700 text-gray-400 hover:text-gray-200"
+            }`}
+          >
+            Creation
+          </button>
+        </div>
         <div className="flex-1" />
         <span className="flex items-center gap-1 text-xs text-gray-400">
           {isConnected ? (

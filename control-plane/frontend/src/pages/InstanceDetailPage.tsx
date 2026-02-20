@@ -24,6 +24,7 @@ import {
 } from "@/hooks/useInstances";
 import { useSettings } from "@/hooks/useSettings";
 import { useInstanceLogs } from "@/hooks/useInstanceLogs";
+import type { LogType } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useDesktop } from "@/hooks/useDesktop";
 import { useChat } from "@/hooks/useChat";
@@ -119,7 +120,10 @@ export default function InstanceDetailPage() {
   const [chatOpen, setChatOpen] = useState(false);
   const chatInitSentRef = useRef(false);
 
-  const logsHook = useInstanceLogs(instanceId, activeTab === "logs");
+  // Log type state for filtering between runtime and creation logs
+  const [logType, setLogType] = useState<LogType>("runtime");
+
+  const logsHook = useInstanceLogs(instanceId, activeTab === "logs", logType);
   const termHook = useTerminal(instanceId, terminalActivated && instance?.status === "running");
   const desktopHook = useDesktop(instanceId, chromeActivated && instance?.status === "running");
   const chatHook = useChat(instanceId, chatOpen && chromeActivated && instance?.status === "running");
@@ -142,6 +146,17 @@ export default function InstanceDetailPage() {
       chatInitSentRef.current = false;
     }
   }, [chatOpen]);
+
+  // Auto-switch from creation to runtime logs when instance becomes running
+  const prevStatusRef = useRef(instance?.status);
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    const curr = instance?.status;
+    prevStatusRef.current = curr;
+    if (prev === "creating" && curr === "running" && logType === "creation") {
+      setLogType("runtime");
+    }
+  }, [instance?.status, logType]);
 
   if (isLoading) {
     return <div className="text-center py-12 text-gray-500">Loading...</div>;
@@ -536,6 +551,8 @@ export default function InstanceDetailPage() {
             isConnected={logsHook.isConnected}
             onTogglePause={logsHook.togglePause}
             onClear={logsHook.clearLogs}
+            logType={logType}
+            onLogTypeChange={setLogType}
           />
         </div>
       )}

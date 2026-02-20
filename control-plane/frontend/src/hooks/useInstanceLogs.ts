@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export function useInstanceLogs(id: number, enabled: boolean) {
+export type LogType = "runtime" | "creation";
+
+export function useInstanceLogs(
+  id: number,
+  enabled: boolean,
+  logType: LogType = "runtime",
+) {
   const [logs, setLogs] = useState<string[]>([]);
   const [isPaused, setIsPaused] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -21,9 +27,12 @@ export function useInstanceLogs(id: number, enabled: boolean) {
       return;
     }
 
-    const es = new EventSource(
-      `/api/v1/instances/${id}/logs?tail=100&follow=true`,
-    );
+    const url =
+      logType === "creation"
+        ? `/api/v1/instances/${id}/creation-logs`
+        : `/api/v1/instances/${id}/logs?tail=100&follow=true`;
+
+    const es = new EventSource(url);
     eventSourceRef.current = es;
 
     es.onopen = () => setIsConnected(true);
@@ -44,7 +53,12 @@ export function useInstanceLogs(id: number, enabled: boolean) {
       eventSourceRef.current = null;
       setIsConnected(false);
     };
-  }, [id, enabled]);
+  }, [id, enabled, logType]);
+
+  // Clear logs when switching log types so streams don't mix
+  useEffect(() => {
+    setLogs([]);
+  }, [logType]);
 
   const clearLogs = useCallback(() => setLogs([]), []);
   const togglePause = useCallback(() => setIsPaused((p) => !p), []);
