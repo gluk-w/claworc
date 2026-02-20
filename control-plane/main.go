@@ -121,6 +121,7 @@ func main() {
 			r.Post("/instances/{id}/restart", handlers.RestartInstance)
 			r.Get("/instances/{id}/config", handlers.GetInstanceConfig)
 			r.Put("/instances/{id}/config", handlers.UpdateInstanceConfig)
+			r.Get("/instances/{id}/tunnel-status", handlers.TunnelStatus)
 			r.Get("/instances/{id}/logs", handlers.StreamLogs)
 
 			// Files

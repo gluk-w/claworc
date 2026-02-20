@@ -26,6 +26,7 @@ export interface Instance {
   has_resolution_override: boolean;
   control_url: string;
   gateway_token: string;
+  tunnel_connected: boolean;
   sort_order: number;
   created_at: string;
   updated_at: string;

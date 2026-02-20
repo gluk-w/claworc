@@ -54,7 +54,16 @@ export default function InstanceRow({
         </Link>
       </td>
       <td className="px-4 py-3">
-        <StatusBadge status={instance.status} />
+        <div className="flex items-center gap-2">
+          <StatusBadge status={instance.status} />
+          {instance.status === "running" && (
+            <span
+              data-testid="tunnel-indicator"
+              title={instance.tunnel_connected ? "Tunnel connected" : "Tunnel disconnected"}
+              className={`inline-block h-2 w-2 rounded-full ${instance.tunnel_connected ? "bg-green-500" : "bg-red-500"}`}
+            />
+          )}
+        </div>
       </td>
       <td className="px-4 py-3 text-sm text-gray-500">{createdAt}</td>
       <td className="px-4 py-3">

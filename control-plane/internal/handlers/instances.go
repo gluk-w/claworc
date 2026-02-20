@@ -18,6 +18,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/tunnel"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -71,6 +72,7 @@ type instanceResponse struct {
 	HasResolutionOverride bool            `json:"has_resolution_override"`
 	ControlURL            string          `json:"control_url"`
 	GatewayToken          string          `json:"gateway_token"`
+	TunnelConnected       bool            `json:"tunnel_connected"`
 	SortOrder             int             `json:"sort_order"`
 	CreatedAt             string          `json:"created_at"`
 	UpdatedAt             string          `json:"updated_at"`
@@ -213,6 +215,16 @@ func resolveInstanceModelsAndKeys(inst database.Instance) ([]string, map[string]
 	return effective, apiKeys
 }
 
+// isTunnelConnected reports whether the tunnel for the given instance is
+// connected and the yamux session is still alive.
+func isTunnelConnected(instanceID uint) bool {
+	if tunnel.Manager == nil {
+		return false
+	}
+	tc := tunnel.Manager.Get(instanceID)
+	return tc != nil && !tc.IsClosed()
+}
+
 func instanceToResponse(inst database.Instance, status string) instanceResponse {
 	var containerImage *string
 	if inst.ContainerImage != "" {
@@ -254,6 +266,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		HasResolutionOverride: inst.VNCResolution != "",
 		ControlURL:            fmt.Sprintf("/api/v1/instances/%d/control/", inst.ID),
 		GatewayToken:          gatewayToken,
+		TunnelConnected:       isTunnelConnected(inst.ID),
 		SortOrder:             inst.SortOrder,
 		CreatedAt:             formatTimestamp(inst.CreatedAt),
 		UpdatedAt:             formatTimestamp(inst.UpdatedAt),
@@ -1093,6 +1106,29 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
+}
+
+func TunnelStatus(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{
+		"connected": isTunnelConnected(inst.ID),
+	})
 }
 
 func ReorderInstances(w http.ResponseWriter, r *http.Request) {
