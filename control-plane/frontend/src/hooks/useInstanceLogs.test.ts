@@ -575,6 +575,105 @@ describe("useInstanceLogs", () => {
     expect(hook2.result.current.logs[1]).toBe("Instance 2: Event B");
   });
 
+  // --- Error handling and edge cases ---
+
+  it("preserves existing logs when EventSource errors after accumulating messages", () => {
+    const { result } = renderHook(() => useInstanceLogs(42, true, "creation"));
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateMessage("Event 1");
+      es.simulateMessage("Event 2");
+      es.simulateMessage("Event 3");
+    });
+    expect(result.current.logs).toHaveLength(3);
+
+    // Connection error should not clear accumulated logs
+    act(() => {
+      es.simulateError();
+    });
+    expect(result.current.isConnected).toBe(false);
+    expect(result.current.logs).toHaveLength(3);
+    expect(result.current.logs).toEqual(["Event 1", "Event 2", "Event 3"]);
+  });
+
+  it("handles error messages from backend (e.g., not in creation phase)", () => {
+    const { result } = renderHook(() => useInstanceLogs(42, true, "creation"));
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateMessage(
+        "Instance is not in creation phase. Switch to Runtime logs or restart the instance to see creation logs.",
+      );
+    });
+
+    expect(result.current.logs).toHaveLength(1);
+    expect(result.current.logs[0]).toContain("not in creation phase");
+  });
+
+  it("handles creation failure error events from the orchestrator", () => {
+    const { result } = renderHook(() => useInstanceLogs(42, true, "creation"));
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateMessage("Waiting for pod creation...");
+      es.simulateMessage("Pod scheduled to node worker-1");
+      es.simulateMessage(
+        "Error: Insufficient memory on node worker-1",
+      );
+      es.simulateMessage("Pod evicted: OOMKilled");
+      es.simulateMessage("Instance creation failed: pod terminated with error");
+    });
+
+    expect(result.current.logs).toHaveLength(5);
+    expect(result.current.logs[2]).toContain("Insufficient memory");
+    expect(result.current.logs[3]).toContain("OOMKilled");
+    expect(result.current.logs[4]).toContain("creation failed");
+  });
+
+  it("accumulates many log messages during long-running creation", () => {
+    const { result } = renderHook(() => useInstanceLogs(42, true, "creation"));
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+    });
+
+    // Simulate 50 log messages (long-running creation with many poll updates)
+    act(() => {
+      es.simulateMessage("Waiting for pod creation...");
+      for (let i = 1; i <= 48; i++) {
+        es.simulateMessage(`Still pulling image... (${i}/48 attempts)`);
+      }
+      es.simulateMessage("Pod is running and ready");
+    });
+
+    expect(result.current.logs).toHaveLength(50);
+    expect(result.current.logs[0]).toBe("Waiting for pod creation...");
+    expect(result.current.logs[49]).toBe("Pod is running and ready");
+  });
+
+  it("handles special characters in log messages", () => {
+    const { result } = renderHook(() => useInstanceLogs(42, true, "creation"));
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateMessage("Message with <html> entities & symbols");
+      es.simulateMessage('Message with "quotes" and \'single\'');
+      es.simulateMessage("Message with unicode: 日本語テスト");
+    });
+
+    expect(result.current.logs).toHaveLength(3);
+    expect(result.current.logs[0]).toBe(
+      "Message with <html> entities & symbols",
+    );
+    expect(result.current.logs[2]).toBe("Message with unicode: 日本語テスト");
+  });
+
   it("unmounting one concurrent instance cleans up only its EventSource", () => {
     const hook1 = renderHook(() => useInstanceLogs(1, true, "creation"));
     const hook2 = renderHook(() => useInstanceLogs(2, true, "creation"));

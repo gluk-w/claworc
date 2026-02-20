@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -1531,6 +1532,377 @@ func TestStreamCreationLogs_ConcurrentClientDisconnect(t *testing.T) {
 		if !strings.HasPrefix(line, "Stream 2:") {
 			t.Errorf("stream 2: unexpected event %q (expected prefix 'Stream 2:')", line)
 		}
+	}
+}
+
+// --- Error handling and edge case verification tests ---
+// These tests verify proper handling of error conditions, edge cases,
+// and graceful behavior under unusual circumstances.
+
+// TestStreamCreationLogs_ErrorResponseFormat verifies that all error responses
+// return well-formed JSON with a "detail" field.
+func TestStreamCreationLogs_ErrorResponseFormat(t *testing.T) {
+	cases := []struct {
+		name           string
+		url            string
+		setup          func(t *testing.T)
+		expectedStatus int
+		expectedDetail string
+	}{
+		{
+			name: "invalid ID returns JSON error",
+			url:  "/instances/abc/creation-logs",
+			setup: func(t *testing.T) {
+				setupTestDB(t)
+				createTestAdmin(t)
+				orchestrator.SetForTest(&mockOrchestrator{})
+			},
+			expectedStatus: http.StatusBadRequest,
+			expectedDetail: "Invalid instance ID",
+		},
+		{
+			name: "non-existent instance returns JSON error",
+			url:  "/instances/99999/creation-logs",
+			setup: func(t *testing.T) {
+				setupTestDB(t)
+				createTestAdmin(t)
+				orchestrator.SetForTest(&mockOrchestrator{})
+			},
+			expectedStatus: http.StatusNotFound,
+			expectedDetail: "Instance not found",
+		},
+		{
+			name: "no orchestrator returns JSON error",
+			url:  "", // set dynamically
+			setup: func(t *testing.T) {
+				setupTestDB(t)
+				createTestAdmin(t)
+				orchestrator.SetForTest(nil)
+			},
+			expectedStatus: http.StatusServiceUnavailable,
+			expectedDetail: "No orchestrator available",
+		},
+		{
+			name: "orchestrator error returns JSON error",
+			url:  "", // set dynamically
+			setup: func(t *testing.T) {
+				setupTestDB(t)
+				createTestAdmin(t)
+				orchestrator.SetForTest(&mockOrchestrator{creationLogsErr: fmt.Errorf("k8s unreachable")})
+			},
+			expectedStatus: http.StatusInternalServerError,
+			expectedDetail: "Failed to stream creation logs: k8s unreachable",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.setup(t)
+			router := newRouter()
+
+			url := tc.url
+			if url == "" {
+				inst := createTestInstance(t, fmt.Sprintf("bot-err-%s", strings.ReplaceAll(tc.name, " ", "-")))
+				url = fmt.Sprintf("/instances/%d/creation-logs", inst.ID)
+			}
+
+			req := httptest.NewRequest("GET", url, nil)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			if w.Code != tc.expectedStatus {
+				t.Fatalf("expected status %d, got %d", tc.expectedStatus, w.Code)
+			}
+
+			// Verify JSON response body
+			var body map[string]string
+			if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+				t.Fatalf("expected JSON error response, got parse error: %v (body: %s)", err, w.Body.String())
+			}
+			if body["detail"] != tc.expectedDetail {
+				t.Errorf("expected detail %q, got %q", tc.expectedDetail, body["detail"])
+			}
+			if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+				t.Errorf("expected Content-Type application/json, got %q", ct)
+			}
+		})
+	}
+}
+
+// TestStreamCreationLogs_NegativeAndZeroIDs verifies edge cases for instance ID values.
+func TestStreamCreationLogs_NegativeAndZeroIDs(t *testing.T) {
+	setupTestDB(t)
+	createTestAdmin(t)
+	orchestrator.SetForTest(&mockOrchestrator{})
+
+	router := newRouter()
+
+	ids := []struct {
+		id     string
+		status int
+	}{
+		{"-1", http.StatusNotFound},   // negative ID: valid int but no matching instance
+		{"0", http.StatusNotFound},    // zero ID: valid int but no matching instance
+		{"999999", http.StatusNotFound}, // large ID: valid int but no matching instance
+	}
+
+	for _, tc := range ids {
+		t.Run("id="+tc.id, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/instances/"+tc.id+"/creation-logs", nil)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			if w.Code != tc.status {
+				t.Errorf("ID %s: expected %d, got %d", tc.id, tc.status, w.Code)
+			}
+		})
+	}
+}
+
+// TestStreamCreationLogs_LongRunningCreation simulates an instance stuck in "creating"
+// for a long time, streaming many events before the orchestrator eventually closes
+// the channel (simulating the 10-minute timeout guard).
+func TestStreamCreationLogs_LongRunningCreation(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-long-running")
+	createTestAdmin(t)
+
+	// Simulate a long-running creation: many status updates before timeout
+	ch := make(chan string, 50)
+	ch <- "Waiting for pod creation..."
+	ch <- "Pod scheduled to node worker-1"
+	ch <- "Pulling image ghcr.io/openclaw/agent:latest (this may take a while)"
+	// Simulate many poll-cycle status updates
+	for i := 1; i <= 20; i++ {
+		ch <- fmt.Sprintf("Still pulling image... (%d/20 attempts)", i)
+	}
+	ch <- "Successfully pulled image ghcr.io/openclaw/agent:latest"
+	ch <- "Container main: Creating"
+	ch <- "Container main: Running"
+	ch <- "Pod is running and ready"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+
+	// 3 initial + 20 poll + 4 final = 27 total events
+	expectedCount := 27
+	if len(lines) != expectedCount {
+		t.Fatalf("expected %d events for long-running creation, got %d", expectedCount, len(lines))
+	}
+	if lines[0] != "Waiting for pod creation..." {
+		t.Errorf("first event: expected waiting message, got %q", lines[0])
+	}
+	if lines[len(lines)-1] != "Pod is running and ready" {
+		t.Errorf("last event: expected ready message, got %q", lines[len(lines)-1])
+	}
+	// Verify streaming continued through all poll cycles
+	if !strings.Contains(lines[10], "Still pulling image... (8/20 attempts)") {
+		t.Errorf("mid-stream event: expected poll message, got %q", lines[10])
+	}
+}
+
+// TestStreamCreationLogs_OrchestratorTimeoutMessage verifies that a stream that ends
+// with a timeout message (from the orchestrator's 10-minute guard) is delivered
+// correctly to the client.
+func TestStreamCreationLogs_OrchestratorTimeoutMessage(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-orch-timeout")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Waiting for pod creation..."
+	ch <- "Pod scheduled to node worker-1"
+	ch <- "Pulling image ghcr.io/openclaw/agent:latest"
+	ch <- "Timed out waiting for pod to become ready (10m0s)"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 events, got %d: %v", len(lines), lines)
+	}
+	// The timeout message should be the last event before channel close
+	if lines[3] != "Timed out waiting for pod to become ready (10m0s)" {
+		t.Errorf("expected timeout message as last event, got %q", lines[3])
+	}
+}
+
+// TestStreamCreationLogs_SequentialRequestsSameInstance verifies that making
+// sequential requests for the same instance each get their own independent stream.
+func TestStreamCreationLogs_SequentialRequestsSameInstance(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-seq")
+	createTestAdmin(t)
+
+	// First request: instance is creating, gets some events
+	ch1 := make(chan string, 10)
+	ch1 <- "First request: Scheduling"
+	ch1 <- "First request: Ready"
+	close(ch1)
+
+	mock := &mockOrchestrator{creationLogsCh: ch1}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req1 := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+
+	body1, _ := io.ReadAll(w1.Result().Body)
+	lines1 := parseSSEData(string(body1))
+	if len(lines1) != 2 {
+		t.Fatalf("first request: expected 2 events, got %d: %v", len(lines1), lines1)
+	}
+
+	// Second request: new channel with different events
+	ch2 := make(chan string, 10)
+	ch2 <- "Second request: Already running"
+	close(ch2)
+
+	mock2 := &mockOrchestrator{creationLogsCh: ch2}
+	orchestrator.SetForTest(mock2)
+
+	req2 := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+
+	body2, _ := io.ReadAll(w2.Result().Body)
+	lines2 := parseSSEData(string(body2))
+	if len(lines2) != 1 {
+		t.Fatalf("second request: expected 1 event, got %d: %v", len(lines2), lines2)
+	}
+	if lines2[0] != "Second request: Already running" {
+		t.Errorf("second request: expected new event, got %q", lines2[0])
+	}
+}
+
+// TestStreamCreationLogs_SpecialCharactersInSSE verifies that special characters
+// in log messages (newlines, colons, HTML entities) are transmitted correctly via SSE.
+func TestStreamCreationLogs_SpecialCharactersInSSE(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-special-chars")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Normal message"
+	ch <- "Message with colons: key: value: nested"
+	ch <- "Message with <html> entities & symbols"
+	ch <- "Message with unicode: 日本語テスト"
+	ch <- "Message with quotes: \"double\" and 'single'"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 events, got %d: %v", len(lines), lines)
+	}
+	if lines[1] != "Message with colons: key: value: nested" {
+		t.Errorf("colons not preserved: got %q", lines[1])
+	}
+	if lines[2] != "Message with <html> entities & symbols" {
+		t.Errorf("HTML entities not preserved: got %q", lines[2])
+	}
+	if lines[3] != "Message with unicode: 日本語テスト" {
+		t.Errorf("unicode not preserved: got %q", lines[3])
+	}
+}
+
+// TestStreamCreationLogs_FailedInstanceShowsCreationErrors verifies that when an
+// instance fails during creation, the error events from the orchestrator are
+// properly streamed before the channel closes.
+func TestStreamCreationLogs_FailedInstanceShowsCreationErrors(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-create-fail")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Waiting for pod creation..."
+	ch <- "Pod scheduled to node worker-1"
+	ch <- "Error: Insufficient memory on node worker-1"
+	ch <- "Pod evicted: OOMKilled"
+	ch <- "Instance creation failed: pod terminated with error"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 events showing creation errors, got %d: %v", len(lines), lines)
+	}
+	// Verify error events are properly streamed
+	if !strings.Contains(lines[2], "Insufficient memory") {
+		t.Errorf("expected memory error in event 2, got %q", lines[2])
+	}
+	if !strings.Contains(lines[3], "OOMKilled") {
+		t.Errorf("expected OOMKilled in event 3, got %q", lines[3])
+	}
+	if !strings.Contains(lines[4], "creation failed") {
+		t.Errorf("expected creation failed message in event 4, got %q", lines[4])
 	}
 }
 

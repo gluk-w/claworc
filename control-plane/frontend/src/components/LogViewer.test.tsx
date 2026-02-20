@@ -237,6 +237,70 @@ describe("LogViewer", () => {
     ).toBeInTheDocument();
   });
 
+  // --- Error handling and edge cases ---
+
+  it("renders creation failure error messages correctly", () => {
+    const errorLogs = [
+      "Waiting for pod creation...",
+      "Pod scheduled to node worker-1",
+      "Error: Insufficient memory on node worker-1",
+      "Pod evicted: OOMKilled",
+      "Instance creation failed: pod terminated with error",
+    ];
+    render(
+      <LogViewer {...defaultProps} logType="creation" logs={errorLogs} />,
+    );
+    expect(
+      screen.getByText("Error: Insufficient memory on node worker-1"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Pod evicted: OOMKilled")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Instance creation failed: pod terminated with error",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("renders orchestrator timeout messages correctly", () => {
+    const timeoutLogs = [
+      "Waiting for pod creation...",
+      "Pulling image ghcr.io/openclaw/agent:latest",
+      "Timed out waiting for pod to become ready (10m0s)",
+    ];
+    render(
+      <LogViewer {...defaultProps} logType="creation" logs={timeoutLogs} />,
+    );
+    expect(
+      screen.getByText(
+        "Timed out waiting for pod to become ready (10m0s)",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the backend 'not in creation phase' guidance message", () => {
+    const guidanceLogs = [
+      "Instance is not in creation phase. Switch to Runtime logs or restart the instance to see creation logs.",
+    ];
+    render(
+      <LogViewer {...defaultProps} logType="creation" logs={guidanceLogs} />,
+    );
+    expect(
+      screen.getByText(/not in creation phase/),
+    ).toBeInTheDocument();
+  });
+
+  it("handles a large number of log lines without crashing", () => {
+    const manyLogs = Array.from(
+      { length: 200 },
+      (_, i) => `Log line ${i + 1}: Status update`,
+    );
+    render(
+      <LogViewer {...defaultProps} logType="creation" logs={manyLogs} />,
+    );
+    expect(screen.getByText("Log line 1: Status update")).toBeInTheDocument();
+    expect(screen.getByText("Log line 200: Status update")).toBeInTheDocument();
+  });
+
   // --- Auto-scroll behavior ---
 
   it("has a bottom ref div for auto-scroll anchoring", () => {
