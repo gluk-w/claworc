@@ -631,6 +631,55 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 
 	shmSize := resource.MustParse("2Gi")
 
+	podSpec := corev1.PodSpec{
+		Containers: []corev1.Container{{
+			Name:            "moltbot",
+			Image:           params.ContainerImage,
+			ImagePullPolicy: corev1.PullAlways,
+			SecurityContext: &corev1.SecurityContext{Privileged: &privileged},
+			Ports: []corev1.ContainerPort{
+				{Name: "http", ContainerPort: 3000},
+			},
+			Env: envVars,
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse(params.CPURequest),
+					corev1.ResourceMemory: resource.MustParse(params.MemoryRequest),
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse(params.CPULimit),
+					corev1.ResourceMemory: resource.MustParse(params.MemoryLimit),
+				},
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "chrome-data", MountPath: "/config/chrome-data"},
+				{Name: "homebrew-data", MountPath: "/home/linuxbrew/.linuxbrew"},
+				{Name: "openclaw-data", MountPath: "/config/.openclaw"},
+				{Name: "dshm", MountPath: "/dev/shm"},
+			},
+			LivenessProbe: &corev1.Probe{
+				ProbeHandler:        corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(3000)}},
+				InitialDelaySeconds: 60,
+				PeriodSeconds:       30,
+			},
+			ReadinessProbe: &corev1.Probe{
+				ProbeHandler:        corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/", Port: intstr.FromInt32(3000)}},
+				InitialDelaySeconds: 60,
+				PeriodSeconds:       10,
+			},
+		}},
+		Volumes: []corev1.Volume{
+			{Name: "homebrew-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-homebrew"}}},
+			{Name: "openclaw-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-openclaw"}}},
+			{Name: "chrome-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-chrome"}}},
+			{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &shmSize}}},
+		},
+	}
+
+	if params.ImagePullSecret != "" {
+		podSpec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: params.ImagePullSecret}}
+	}
+
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      params.Name,
@@ -643,51 +692,7 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": params.Name}},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": params.Name, "managed-by": "claworc"}},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{
-						Name:            "moltbot",
-						Image:           params.ContainerImage,
-						ImagePullPolicy: corev1.PullAlways,
-						SecurityContext: &corev1.SecurityContext{Privileged: &privileged},
-						Ports: []corev1.ContainerPort{
-							{Name: "http", ContainerPort: 3000},
-						},
-						Env: envVars,
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse(params.CPURequest),
-								corev1.ResourceMemory: resource.MustParse(params.MemoryRequest),
-							},
-							Limits: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse(params.CPULimit),
-								corev1.ResourceMemory: resource.MustParse(params.MemoryLimit),
-							},
-						},
-						VolumeMounts: []corev1.VolumeMount{
-							{Name: "chrome-data", MountPath: "/config/chrome-data"},
-							{Name: "homebrew-data", MountPath: "/home/linuxbrew/.linuxbrew"},
-							{Name: "openclaw-data", MountPath: "/config/.openclaw"},
-							{Name: "dshm", MountPath: "/dev/shm"},
-						},
-						LivenessProbe: &corev1.Probe{
-							ProbeHandler:        corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(3000)}},
-							InitialDelaySeconds: 60,
-							PeriodSeconds:       30,
-						},
-						ReadinessProbe: &corev1.Probe{
-							ProbeHandler:        corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/", Port: intstr.FromInt32(3000)}},
-							InitialDelaySeconds: 30,
-							PeriodSeconds:       10,
-						},
-					}},
-					Volumes: []corev1.Volume{
-						{Name: "homebrew-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-homebrew"}}},
-						{Name: "openclaw-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-openclaw"}}},
-						{Name: "chrome-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-chrome"}}},
-						{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &shmSize}}},
-					},
-					ImagePullSecrets: []corev1.LocalObjectReference{{Name: "ghcr-secret"}},
-				},
+				Spec:       podSpec,
 			},
 		},
 	}
