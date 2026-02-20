@@ -392,17 +392,28 @@ func (k *KubernetesOrchestrator) StreamCreationLogs(ctx context.Context, name st
 
 		seen := make(map[string]bool)
 
-		send := func(msg string) bool {
-			if seen[msg] {
+		// formatLog formats a log line with a timestamp and type prefix.
+		formatLog := func(ts time.Time, tag, msg string) string {
+			return fmt.Sprintf("[%s] [%s] %s", ts.Format("2006-01-02 15:04:05"), tag, msg)
+		}
+
+		// send emits a formatted message, deduplicating by a stable key.
+		send := func(key, formatted string) bool {
+			if seen[key] {
 				return true
 			}
-			seen[msg] = true
+			seen[key] = true
 			select {
-			case ch <- msg:
+			case ch <- formatted:
 				return true
 			case <-ctx.Done():
 				return false
 			}
+		}
+
+		// sendStatus is a shorthand for STATUS-tagged messages timestamped now.
+		sendStatus := func(msg string) bool {
+			return send(msg, formatLog(time.Now(), "STATUS", msg))
 		}
 
 		for {
@@ -410,7 +421,7 @@ func (k *KubernetesOrchestrator) StreamCreationLogs(ctx context.Context, name st
 			case <-ctx.Done():
 				return
 			case <-timeout:
-				send("Timed out waiting for pod to become ready")
+				sendStatus("Timed out waiting for pod to become ready")
 				return
 			case <-ticker.C:
 			}
@@ -419,7 +430,7 @@ func (k *KubernetesOrchestrator) StreamCreationLogs(ctx context.Context, name st
 				LabelSelector: fmt.Sprintf("app=%s", name),
 			})
 			if err != nil || len(pods.Items) == 0 {
-				send("Waiting for pod creation...")
+				sendStatus("Waiting for pod creation...")
 				continue
 			}
 
@@ -431,8 +442,16 @@ func (k *KubernetesOrchestrator) StreamCreationLogs(ctx context.Context, name st
 			})
 			if err == nil {
 				for _, event := range events.Items {
-					msg := fmt.Sprintf("[%s] %s: %s", event.Reason, event.Source.Component, event.Message)
-					if !send(msg) {
+					key := fmt.Sprintf("event:%s:%s:%s", event.Reason, event.Source.Component, event.Message)
+					ts := event.LastTimestamp.Time
+					if ts.IsZero() {
+						ts = event.EventTime.Time
+					}
+					if ts.IsZero() {
+						ts = time.Now()
+					}
+					msg := fmt.Sprintf("%s: %s", event.Source.Component, event.Message)
+					if !send(key, formatLog(ts, "EVENT", msg)) {
 						return
 					}
 				}
@@ -445,7 +464,8 @@ func (k *KubernetesOrchestrator) StreamCreationLogs(ctx context.Context, name st
 					if cs.State.Waiting.Message != "" {
 						msg += " - " + cs.State.Waiting.Message
 					}
-					if !send(msg) {
+					key := fmt.Sprintf("status:%s", msg)
+					if !send(key, formatLog(time.Now(), "STATUS", msg)) {
 						return
 					}
 				}
@@ -470,8 +490,9 @@ func (k *KubernetesOrchestrator) StreamCreationLogs(ctx context.Context, name st
 					if err == nil {
 						scanner := bufio.NewScanner(logStream)
 						for scanner.Scan() {
+							formatted := formatLog(time.Now(), "LOG", scanner.Text())
 							select {
-							case ch <- scanner.Text():
+							case ch <- formatted:
 							case <-ctx.Done():
 								logStream.Close()
 								return
@@ -479,7 +500,7 @@ func (k *KubernetesOrchestrator) StreamCreationLogs(ctx context.Context, name st
 						}
 						logStream.Close()
 					}
-					send("Pod is running and ready")
+					sendStatus("Pod is running and ready")
 					return
 				}
 			}
