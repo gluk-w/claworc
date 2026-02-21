@@ -1,25 +1,3 @@
-// Package sshterminal provides SSH-based interactive terminal sessions.
-//
-// It wraps golang.org/x/crypto/ssh to provide PTY-enabled shell sessions
-// with bidirectional I/O and dynamic terminal resizing. Sessions are created
-// over an existing SSH client connection (typically obtained from SSHManager),
-// enabling connection multiplexing across all SSH-based features.
-//
-// Usage:
-//
-//	session, err := sshterminal.CreateInteractiveSession(sshClient, "/bin/bash")
-//	if err != nil { ... }
-//	defer session.Close()
-//
-//	// Write user input to the shell
-//	session.Stdin.Write([]byte("ls -la\n"))
-//
-//	// Read shell output
-//	buf := make([]byte, 4096)
-//	n, _ := session.Stdout.Read(buf)
-//
-//	// Resize the terminal
-//	session.Resize(120, 40)
 package sshterminal
 
 import (

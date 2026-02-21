@@ -9,7 +9,10 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 )
 
-// Rate limiting defaults.
+// Rate limiting defaults. Two independent mechanisms protect against connection storms:
+//   - Sliding-window rate limit: max attempts per minute per instance.
+//   - Consecutive failure block: after N failures in a row, the instance is
+//     temporarily blocked for BlockDuration.
 const (
 	DefaultMaxAttemptsPerMinute = 10
 	DefaultMaxConsecFailures    = 5

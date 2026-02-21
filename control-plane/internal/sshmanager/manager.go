@@ -15,18 +15,22 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 )
 
-// Default keepalive interval for SSH connections.
+// Default keepalive interval for SSH connections. The keepalive loop sends an
+// SSH keepalive request followed by a command-based health check at this interval.
 const defaultKeepaliveInterval = 30 * time.Second
 
 // HealthCheckTimeout is the maximum time allowed for a single health check command.
+// If the "echo ping" command does not complete within this window, the connection
+// is considered unhealthy and reconnection is triggered.
 const HealthCheckTimeout = 5 * time.Second
 
-// Default reconnection parameters.
+// Reconnection parameters control the exponential backoff strategy:
+// delay = min(reconnectBaseDelay * reconnectBackoffFactor^attempt, reconnectMaxDelay)
 const (
 	DefaultMaxRetries      = 10
-	reconnectBaseDelay     = 1 * time.Second
-	reconnectMaxDelay      = 16 * time.Second
-	reconnectBackoffFactor = 2
+	reconnectBaseDelay     = 1 * time.Second  // Initial delay between reconnection attempts
+	reconnectMaxDelay      = 16 * time.Second // Maximum delay between attempts
+	reconnectBackoffFactor = 2                // Multiplier applied after each failed attempt
 )
 
 

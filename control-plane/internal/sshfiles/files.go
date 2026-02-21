@@ -1,15 +1,3 @@
-// Package sshfiles provides SSH-based file operations for remote instances.
-//
-// Performance characteristics (SSH exec vs previous K8s/Docker exec approach):
-//   - SSH exec reuses a persistent multiplexed connection per instance, avoiding
-//     the per-request overhead of K8s exec (which creates a new SPDY stream and
-//     authenticates with the API server each time). Typical SSH command execution
-//     takes 1-5ms on loopback vs 20-100ms for K8s exec.
-//   - File writes via stdin piping ("cat > path") avoid shell argument length
-//     limits that required base64 encoding in the K8s exec approach, eliminating
-//     ~33% data overhead for binary files.
-//   - All operations log their duration at the [sshfiles] log prefix for
-//     monitoring. Handler-level timing is logged at [files] prefix.
 package sshfiles
 
 import (

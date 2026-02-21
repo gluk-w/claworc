@@ -174,14 +174,21 @@ func (c *countingConn) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// Default health check and reconnection parameters.
+// Health check and reconnection parameters.
+//
+// Two tiers of health monitoring run concurrently:
+//   - Per-instance monitor (defaultHealthCheckInterval): detects closed tunnels
+//     and triggers reconnection with exponential backoff.
+//   - Global health check (tunnelHealthCheckInterval): probes all tunnel ports
+//     via TCP and closes unresponsive tunnels so per-instance monitors can
+//     recreate them.
 const (
-	defaultHealthCheckInterval = 10 * time.Second
-	tunnelHealthCheckInterval  = 60 * time.Second
-	tunnelHealthProbeTimeout   = 5 * time.Second
-	reconnectBaseDelay         = 1 * time.Second
-	reconnectMaxDelay          = 60 * time.Second
-	reconnectBackoffFactor     = 2
+	defaultHealthCheckInterval = 10 * time.Second // Per-instance monitor interval
+	tunnelHealthCheckInterval  = 60 * time.Second // Global probe-all-tunnels interval
+	tunnelHealthProbeTimeout   = 5 * time.Second  // TCP dial timeout for port probe
+	reconnectBaseDelay         = 1 * time.Second   // Initial reconnection backoff delay
+	reconnectMaxDelay          = 60 * time.Second  // Maximum reconnection backoff delay
+	reconnectBackoffFactor     = 2                  // Backoff multiplier per failed attempt
 )
 
 // TunnelManager creates and tracks SSH tunnels for agent instances.
@@ -724,8 +731,11 @@ func (tm *TunnelManager) incrementReconnects(instanceName string) {
 }
 
 // bidirectionalCopy pipes data between two connections until one side closes or errors.
+// It spawns two goroutines (a→b and b→a). When either direction finishes (EOF or error)
+// or the context is cancelled, both connections are closed to unblock the other goroutine,
+// then we wait for the second copy to finish to avoid goroutine leaks.
 func bidirectionalCopy(ctx context.Context, a, b net.Conn) {
-	done := make(chan struct{}, 2)
+	done := make(chan struct{}, 2) // buffered for 2 so both goroutines can signal without blocking
 	cp := func(dst, src net.Conn) {
 		defer func() { done <- struct{}{} }()
 		io.Copy(dst, src)
@@ -733,10 +743,12 @@ func bidirectionalCopy(ctx context.Context, a, b net.Conn) {
 	go cp(a, b)
 	go cp(b, a)
 
+	// Wait for the first copy to finish or context cancellation
 	select {
 	case <-done:
 	case <-ctx.Done():
 	}
+	// Close both connections to unblock the other copy goroutine
 	a.Close()
 	b.Close()
 	// Wait for the second copy to finish

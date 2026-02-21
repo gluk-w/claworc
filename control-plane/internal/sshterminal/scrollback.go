@@ -1,9 +1,3 @@
-// Package sshterminal provides SSH-based interactive terminal sessions.
-//
-// scrollback.go implements a thread-safe circular output buffer that stores
-// terminal output for session persistence. When a user disconnects and
-// reconnects, the scrollback is replayed so they can see what happened
-// while they were away.
 package sshterminal
 
 import (

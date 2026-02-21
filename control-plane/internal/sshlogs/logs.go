@@ -1,25 +1,3 @@
-// Package sshlogs provides SSH-based log streaming for remote instances.
-//
-// Performance characteristics (SSH exec vs previous K8s/Docker exec approach):
-//   - SSH exec reuses a persistent multiplexed connection per instance, avoiding
-//     the per-request overhead of K8s exec (which creates a new SPDY stream and
-//     authenticates with the API server each time).
-//   - Streaming with "tail -F" maintains a single SSH session for the duration,
-//     providing real-time log delivery with minimal latency.
-//   - All operations log their duration at the [sshlogs] log prefix for monitoring.
-//
-// Log rotation handling:
-//
-// By default, follow-mode streaming uses "tail -F" (equivalent to --follow=name
-// --retry). This follows the log file by name rather than by file descriptor,
-// so when a log rotation tool (e.g. logrotate) renames the current log file and
-// creates a new one with the same name, tail automatically detects the change
-// and switches to the new file. This ensures continuous streaming across log
-// rotations without requiring client reconnection.
-//
-// The alternative "tail -f" (--follow=descriptor) can be selected via
-// StreamOptions.FollowByName=false if needed, but it will stop delivering new
-// lines after rotation since it tracks the old (renamed) file descriptor.
 package sshlogs
 
 import (
