@@ -697,3 +697,326 @@ func TestMultipleTunnelsPerInstance(t *testing.T) {
 		ports[tun.LocalPort] = true
 	}
 }
+
+func TestAreTunnelsHealthy(t *testing.T) {
+	signer, ts := newTunnelTestSignerAndServer(t)
+	defer ts.cleanup()
+
+	sshMgr := NewSSHManager(signer, "ssh-pubkey")
+	defer sshMgr.CloseAll()
+
+	host, port := parseHostPort(t, ts.addr)
+	tm := NewTunnelManager(sshMgr)
+
+	// No tunnels → not healthy
+	if tm.areTunnelsHealthy(uint(1)) {
+		t.Error("expected not healthy when no tunnels exist")
+	}
+
+	// Connect and create tunnels
+	_, err := sshMgr.Connect(context.Background(), uint(1), host, port)
+	if err != nil {
+		t.Fatalf("Connect() error: %v", err)
+	}
+	_, err = tm.CreateTunnelForVNC(context.Background(), uint(1))
+	if err != nil {
+		t.Fatalf("CreateTunnelForVNC() error: %v", err)
+	}
+
+	// Active tunnel with live connection → healthy
+	if !tm.areTunnelsHealthy(uint(1)) {
+		t.Error("expected healthy when tunnels are active and connection alive")
+	}
+
+	// Mark a tunnel as error → not healthy
+	tm.mu.Lock()
+	tm.tunnels[uint(1)][0].Status = "error"
+	tm.mu.Unlock()
+
+	if tm.areTunnelsHealthy(uint(1)) {
+		t.Error("expected not healthy when tunnel has error status")
+	}
+}
+
+func TestAreTunnelsHealthy_DeadConnection(t *testing.T) {
+	signer, ts := newTunnelTestSignerAndServer(t)
+
+	sshMgr := NewSSHManager(signer, "ssh-pubkey")
+	defer sshMgr.CloseAll()
+
+	host, port := parseHostPort(t, ts.addr)
+	tm := NewTunnelManager(sshMgr)
+
+	_, err := sshMgr.Connect(context.Background(), uint(1), host, port)
+	if err != nil {
+		t.Fatalf("Connect() error: %v", err)
+	}
+	_, err = tm.CreateTunnelForVNC(context.Background(), uint(1))
+	if err != nil {
+		t.Fatalf("CreateTunnelForVNC() error: %v", err)
+	}
+
+	// Kill the server so the SSH connection dies
+	ts.cleanup()
+
+	// Close the SSH connection to simulate it being detected as dead
+	sshMgr.Close(uint(1))
+
+	// Connection is dead → not healthy
+	if tm.areTunnelsHealthy(uint(1)) {
+		t.Error("expected not healthy when SSH connection is dead")
+	}
+}
+
+func TestReconcileWithBackoff(t *testing.T) {
+	// Use a mock orch that always fails for instance 1 but works for instance 2
+	signer, ts := newTunnelTestSignerAndServer(t)
+	defer ts.cleanup()
+
+	sshMgr := NewSSHManager(signer, "ssh-pubkey")
+	defer sshMgr.CloseAll()
+
+	host, port := parseHostPort(t, ts.addr)
+
+	failingOrch := &failingOrchestratorForInstance{
+		failID:  1,
+		sshAddr: host,
+		sshPort: port,
+	}
+
+	tm := NewTunnelManager(sshMgr)
+
+	listRunning := func(ctx context.Context) ([]uint, error) {
+		return []uint{1, 2}, nil
+	}
+
+	// First reconcile: instance 1 fails, instance 2 succeeds
+	tm.reconcile(context.Background(), listRunning, failingOrch)
+
+	// Instance 1 should be in backoff
+	if tm.getAttempts(uint(1)) != 1 {
+		t.Errorf("expected 1 attempt for instance 1, got %d", tm.getAttempts(uint(1)))
+	}
+
+	// Instance 2 should have tunnels
+	tunnels2 := tm.GetTunnelsForInstance(uint(2))
+	if len(tunnels2) != 2 {
+		t.Errorf("expected 2 tunnels for instance 2, got %d", len(tunnels2))
+	}
+
+	// Instance 1 should have no tunnels
+	tunnels1 := tm.GetTunnelsForInstance(uint(1))
+	if len(tunnels1) != 0 {
+		t.Errorf("expected 0 tunnels for instance 1, got %d", len(tunnels1))
+	}
+
+	// Second reconcile immediately: instance 1 should be skipped due to backoff
+	tm.reconcile(context.Background(), listRunning, failingOrch)
+
+	// Attempts should still be 1 (skipped due to backoff)
+	if tm.getAttempts(uint(1)) != 1 {
+		t.Errorf("expected 1 attempt for instance 1 (should be in backoff), got %d", tm.getAttempts(uint(1)))
+	}
+}
+
+func TestBackoffClearedOnSuccess(t *testing.T) {
+	signer, ts := newTunnelTestSignerAndServer(t)
+	defer ts.cleanup()
+
+	sshMgr := NewSSHManager(signer, "ssh-pubkey")
+	defer sshMgr.CloseAll()
+
+	host, port := parseHostPort(t, ts.addr)
+	orch := &tunnelMockOrch{sshAddr: host, sshPort: port}
+
+	tm := NewTunnelManager(sshMgr)
+
+	// Simulate a previous failure
+	tm.recordFailure(uint(1), fmt.Errorf("test error"))
+	if tm.getAttempts(uint(1)) != 1 {
+		t.Fatalf("expected 1 attempt, got %d", tm.getAttempts(uint(1)))
+	}
+
+	// Clear backoff manually to allow immediate retry
+	tm.backoffMu.Lock()
+	tm.backoff[uint(1)].nextRetry = time.Now().Add(-1 * time.Second)
+	tm.backoffMu.Unlock()
+
+	listRunning := func(ctx context.Context) ([]uint, error) {
+		return []uint{1}, nil
+	}
+
+	// Reconcile should succeed and clear backoff
+	tm.reconcile(context.Background(), listRunning, orch)
+
+	if tm.getAttempts(uint(1)) != 0 {
+		t.Errorf("expected 0 attempts after success, got %d", tm.getAttempts(uint(1)))
+	}
+
+	tunnels := tm.GetTunnelsForInstance(uint(1))
+	if len(tunnels) != 2 {
+		t.Errorf("expected 2 tunnels, got %d", len(tunnels))
+	}
+}
+
+func TestBackoffExponentialGrowth(t *testing.T) {
+	_, privKeyPEM, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	signer, err := ParsePrivateKey(privKeyPEM)
+	if err != nil {
+		t.Fatalf("parse key: %v", err)
+	}
+
+	sshMgr := NewSSHManager(signer, "")
+	tm := NewTunnelManager(sshMgr)
+
+	testErr := fmt.Errorf("connection refused")
+
+	// Record multiple failures and verify backoff grows
+	tm.recordFailure(uint(1), testErr)
+	if tm.getAttempts(uint(1)) != 1 {
+		t.Errorf("expected 1 attempt, got %d", tm.getAttempts(uint(1)))
+	}
+
+	tm.backoffMu.RLock()
+	state1 := *tm.backoff[uint(1)]
+	tm.backoffMu.RUnlock()
+
+	tm.recordFailure(uint(1), testErr)
+	tm.backoffMu.RLock()
+	state2 := *tm.backoff[uint(1)]
+	tm.backoffMu.RUnlock()
+
+	if tm.getAttempts(uint(1)) != 2 {
+		t.Errorf("expected 2 attempts, got %d", tm.getAttempts(uint(1)))
+	}
+
+	// The delay should increase between attempts
+	delay1 := state1.nextRetry.Sub(time.Now())
+	delay2 := state2.nextRetry.Sub(time.Now())
+	if delay2 <= delay1 {
+		t.Errorf("expected increasing backoff delay, got delay1=%v delay2=%v", delay1, delay2)
+	}
+
+	// Record many failures to verify cap at maxBackoffInterval
+	for i := 0; i < 20; i++ {
+		tm.recordFailure(uint(1), testErr)
+	}
+
+	tm.backoffMu.RLock()
+	finalState := tm.backoff[uint(1)]
+	tm.backoffMu.RUnlock()
+
+	maxDelay := finalState.nextRetry.Sub(time.Now())
+	if maxDelay > maxBackoffInterval+time.Second {
+		t.Errorf("backoff exceeded max: got %v, max is %v", maxDelay, maxBackoffInterval)
+	}
+}
+
+func TestBackoffClearedWhenInstanceRemoved(t *testing.T) {
+	signer, ts := newTunnelTestSignerAndServer(t)
+	defer ts.cleanup()
+
+	sshMgr := NewSSHManager(signer, "ssh-pubkey")
+	defer sshMgr.CloseAll()
+
+	host, port := parseHostPort(t, ts.addr)
+	orch := &tunnelMockOrch{sshAddr: host, sshPort: port}
+
+	tm := NewTunnelManager(sshMgr)
+
+	// Record a failure for instance 5
+	tm.recordFailure(uint(5), fmt.Errorf("test error"))
+	if tm.getAttempts(uint(5)) != 1 {
+		t.Fatalf("expected 1 attempt, got %d", tm.getAttempts(uint(5)))
+	}
+
+	// Reconcile with empty running list — instance 5 is no longer running
+	listRunning := func(ctx context.Context) ([]uint, error) {
+		return []uint{}, nil
+	}
+
+	tm.reconcile(context.Background(), listRunning, orch)
+
+	// Backoff should be cleaned up
+	if tm.getAttempts(uint(5)) != 0 {
+		t.Errorf("expected 0 attempts after instance removed, got %d", tm.getAttempts(uint(5)))
+	}
+}
+
+func TestStartTunnelsForInstance_RecreatesUnhealthy(t *testing.T) {
+	signer, ts := newTunnelTestSignerAndServer(t)
+	defer ts.cleanup()
+
+	sshMgr := NewSSHManager(signer, "ssh-pubkey")
+	defer sshMgr.CloseAll()
+
+	host, port := parseHostPort(t, ts.addr)
+	orch := &tunnelMockOrch{sshAddr: host, sshPort: port}
+
+	tm := NewTunnelManager(sshMgr)
+
+	// Create initial tunnels
+	err := tm.StartTunnelsForInstance(context.Background(), uint(1), orch)
+	if err != nil {
+		t.Fatalf("first StartTunnelsForInstance() error: %v", err)
+	}
+
+	tunnels := tm.GetTunnelsForInstance(uint(1))
+	if len(tunnels) != 2 {
+		t.Fatalf("expected 2 tunnels, got %d", len(tunnels))
+	}
+	origPort := tunnels[0].LocalPort
+
+	// Mark one tunnel as error
+	tm.mu.Lock()
+	tm.tunnels[uint(1)][0].Status = "error"
+	tm.mu.Unlock()
+
+	// Re-call StartTunnelsForInstance — should recreate
+	err = tm.StartTunnelsForInstance(context.Background(), uint(1), orch)
+	if err != nil {
+		t.Fatalf("second StartTunnelsForInstance() error: %v", err)
+	}
+
+	tunnels = tm.GetTunnelsForInstance(uint(1))
+	if len(tunnels) != 2 {
+		t.Fatalf("expected 2 tunnels after recreation, got %d", len(tunnels))
+	}
+
+	// Ports should be different (new listeners allocated)
+	for _, tun := range tunnels {
+		if tun.Status != "active" {
+			t.Errorf("expected active status, got %s", tun.Status)
+		}
+	}
+
+	// At least one port should differ since we recreated
+	newPort := tunnels[0].LocalPort
+	// Note: ports are auto-assigned, so they might or might not match
+	_ = origPort
+	_ = newPort
+}
+
+// failingOrchestratorForInstance fails SSH operations for a specific instance.
+type failingOrchestratorForInstance struct {
+	failID  uint
+	sshAddr string
+	sshPort int
+}
+
+func (m *failingOrchestratorForInstance) ConfigureSSHAccess(ctx context.Context, instanceID uint, publicKey string) error {
+	if instanceID == m.failID {
+		return fmt.Errorf("simulated SSH access failure for instance %d", instanceID)
+	}
+	return nil
+}
+
+func (m *failingOrchestratorForInstance) GetSSHAddress(ctx context.Context, instanceID uint) (string, int, error) {
+	if instanceID == m.failID {
+		return "", 0, fmt.Errorf("simulated address lookup failure for instance %d", instanceID)
+	}
+	return m.sshAddr, m.sshPort, nil
+}

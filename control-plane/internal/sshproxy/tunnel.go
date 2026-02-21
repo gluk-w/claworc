@@ -24,6 +24,12 @@ import (
 const (
 	// tunnelCheckInterval is how often the background goroutine checks tunnel health.
 	tunnelCheckInterval = 60 * time.Second
+
+	// maxBackoffInterval caps the exponential backoff for reconnection attempts.
+	maxBackoffInterval = 5 * time.Minute
+
+	// initialBackoffInterval is the starting delay after the first failure.
+	initialBackoffInterval = 5 * time.Second
 )
 
 // TunnelType represents the direction of the tunnel.
@@ -57,6 +63,13 @@ type ActiveTunnel struct {
 	cancel   context.CancelFunc
 }
 
+// reconnectState tracks exponential backoff for reconnection attempts per instance.
+type reconnectState struct {
+	attempts  int       // number of consecutive failures
+	nextRetry time.Time // earliest time to retry
+	lastError string    // last error message
+}
+
 // TunnelManager manages SSH tunnels for all instances, keyed by instance ID (uint).
 // Instance IDs are stable across renames, so tunnels remain valid even if a user
 // changes the display name. TunnelManager depends on SSHManager for SSH connections:
@@ -69,6 +82,9 @@ type TunnelManager struct {
 	mu      sync.RWMutex
 	tunnels map[uint][]*ActiveTunnel // keyed by instance ID; IDs are stable across renames
 
+	backoffMu sync.RWMutex
+	backoff   map[uint]*reconnectState // per-instance reconnection backoff
+
 	cancel context.CancelFunc
 }
 
@@ -78,6 +94,7 @@ func NewTunnelManager(sshMgr *SSHManager) *TunnelManager {
 	return &TunnelManager{
 		sshMgr:  sshMgr,
 		tunnels: make(map[uint][]*ActiveTunnel),
+		backoff: make(map[uint]*reconnectState),
 	}
 }
 
@@ -154,7 +171,9 @@ func (tm *TunnelManager) CreateTunnelForGateway(ctx context.Context, instanceID 
 
 // StartTunnelsForInstance establishes all required tunnels for an instance ID.
 // It delegates to SSHManager.EnsureConnected for on-demand SSH access before
-// creating tunnels.
+// creating tunnels. If tunnels already exist and are healthy (both status and
+// underlying SSH connection verified), this is a no-op. Unhealthy tunnels are
+// torn down and recreated.
 func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID uint, orch Orchestrator) error {
 	// Ensure SSH connection is established (uploads key on-demand)
 	_, err := tm.sshMgr.EnsureConnected(ctx, instanceID, orch)
@@ -162,24 +181,17 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID
 		return fmt.Errorf("ensure connected for instance %d: %w", instanceID, err)
 	}
 
-	// Check if tunnels already exist
+	// Check if tunnels already exist and are healthy
+	if tm.areTunnelsHealthy(instanceID) {
+		return nil
+	}
+
+	// Tear down any existing tunnels before recreating
 	tm.mu.RLock()
 	existing := tm.tunnels[instanceID]
 	tm.mu.RUnlock()
-
 	if len(existing) > 0 {
-		// Tunnels already exist; check if they're healthy
-		allHealthy := true
-		for _, t := range existing {
-			if t.Status != "active" {
-				allHealthy = false
-				break
-			}
-		}
-		if allHealthy {
-			return nil
-		}
-		// Some tunnels are unhealthy; tear down and recreate
+		log.Printf("Recreating tunnels for instance %d (unhealthy tunnels detected)", instanceID)
 		tm.StopTunnelsForInstance(instanceID)
 	}
 
@@ -197,6 +209,40 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID
 	}
 
 	return nil
+}
+
+// areTunnelsHealthy checks if all tunnels for an instance are healthy.
+// It verifies both the tunnel status field and whether the underlying SSH
+// connection is still alive (via a keepalive probe).
+func (tm *TunnelManager) areTunnelsHealthy(instanceID uint) bool {
+	tm.mu.RLock()
+	existing := tm.tunnels[instanceID]
+	tm.mu.RUnlock()
+
+	if len(existing) == 0 {
+		return false
+	}
+
+	// Verify the SSH connection is still alive
+	if !tm.sshMgr.IsConnected(instanceID) {
+		log.Printf("SSH connection lost for instance %d, tunnels need recreation", instanceID)
+		return false
+	}
+
+	for _, t := range existing {
+		if t.Status != "active" {
+			return false
+		}
+	}
+
+	// Update LastCheck on healthy tunnels
+	tm.mu.Lock()
+	for _, t := range tm.tunnels[instanceID] {
+		t.LastCheck = time.Now()
+	}
+	tm.mu.Unlock()
+
+	return true
 }
 
 // StopTunnelsForInstance closes all tunnels for the given instance ID and cleans up state.
@@ -408,6 +454,8 @@ func (tm *TunnelManager) StartBackgroundManager(ctx context.Context, listRunning
 }
 
 // reconcile ensures tunnels are up for running instances and removed for stopped ones.
+// It uses exponential backoff per instance to avoid retrying too aggressively on
+// persistent failures (e.g., instance not reachable, SSH auth rejected).
 func (tm *TunnelManager) reconcile(ctx context.Context, listRunning InstanceLister, orch Orchestrator) {
 	running, err := listRunning(ctx)
 	if err != nil {
@@ -433,12 +481,37 @@ func (tm *TunnelManager) reconcile(ctx context.Context, listRunning InstanceList
 	for _, id := range toRemove {
 		log.Printf("Tunnel reconcile: removing tunnels for stopped instance %d", id)
 		tm.StopTunnelsForInstance(id)
+		tm.clearBackoff(id)
 	}
 
+	// Clean up backoff state for instances that are no longer running
+	tm.backoffMu.Lock()
+	for id := range tm.backoff {
+		if !runningSet[id] {
+			delete(tm.backoff, id)
+		}
+	}
+	tm.backoffMu.Unlock()
+
 	// Ensure tunnels exist for running instances
+	now := time.Now()
 	for _, id := range running {
+		// Check backoff before attempting reconnection
+		if tm.isInBackoff(id, now) {
+			continue
+		}
+
 		if err := tm.StartTunnelsForInstance(ctx, id, orch); err != nil {
-			log.Printf("Tunnel reconcile: failed to start tunnels for instance %d: %v", id, err)
+			tm.recordFailure(id, err)
+			log.Printf("Tunnel reconcile: failed to start tunnels for instance %d (attempt %d): %v",
+				id, tm.getAttempts(id), err)
+		} else {
+			// Success — clear any backoff state
+			if tm.getAttempts(id) > 0 {
+				log.Printf("Tunnel reconcile: reconnection succeeded for instance %d after %d failed attempts",
+					id, tm.getAttempts(id))
+			}
+			tm.clearBackoff(id)
 		}
 	}
 
@@ -454,6 +527,68 @@ func (tm *TunnelManager) reconcile(ctx context.Context, listRunning InstanceList
 		log.Printf("Tunnel reconcile: %d tunnels across %d instances (%d running)",
 			totalTunnels, len(tm.tunnels), len(running))
 	}
+}
+
+// isInBackoff returns true if the instance should not be retried yet.
+func (tm *TunnelManager) isInBackoff(instanceID uint, now time.Time) bool {
+	tm.backoffMu.RLock()
+	defer tm.backoffMu.RUnlock()
+
+	state, ok := tm.backoff[instanceID]
+	if !ok {
+		return false
+	}
+	return now.Before(state.nextRetry)
+}
+
+// recordFailure increments the failure count and sets the next retry time
+// using exponential backoff capped at maxBackoffInterval.
+func (tm *TunnelManager) recordFailure(instanceID uint, err error) {
+	tm.backoffMu.Lock()
+	defer tm.backoffMu.Unlock()
+
+	state, ok := tm.backoff[instanceID]
+	if !ok {
+		state = &reconnectState{}
+		tm.backoff[instanceID] = state
+	}
+
+	state.attempts++
+	state.lastError = err.Error()
+
+	// Exponential backoff: initialBackoffInterval * 2^(attempts-1), capped at maxBackoffInterval
+	delay := initialBackoffInterval
+	for i := 1; i < state.attempts; i++ {
+		delay *= 2
+		if delay > maxBackoffInterval {
+			delay = maxBackoffInterval
+			break
+		}
+	}
+	state.nextRetry = time.Now().Add(delay)
+
+	log.Printf("Tunnel reconcile: instance %d backoff set to %s (attempt %d, next retry at %s)",
+		instanceID, delay, state.attempts, state.nextRetry.Format(time.RFC3339))
+}
+
+// clearBackoff removes the backoff state for an instance after success or removal.
+func (tm *TunnelManager) clearBackoff(instanceID uint) {
+	tm.backoffMu.Lock()
+	defer tm.backoffMu.Unlock()
+
+	delete(tm.backoff, instanceID)
+}
+
+// getAttempts returns the number of consecutive failures for an instance.
+func (tm *TunnelManager) getAttempts(instanceID uint) int {
+	tm.backoffMu.RLock()
+	defer tm.backoffMu.RUnlock()
+
+	state, ok := tm.backoff[instanceID]
+	if !ok {
+		return 0
+	}
+	return state.attempts
 }
 
 // addTunnel adds a tunnel to the instance's tunnel list.
