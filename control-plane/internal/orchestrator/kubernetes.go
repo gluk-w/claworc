@@ -107,7 +107,15 @@ func (k *KubernetesOrchestrator) CreateInstance(ctx context.Context, params Crea
 		go k.configureGatewayToken(context.Background(), params.Name, token)
 	}
 
+	if params.SSHPublicKey != "" {
+		go k.configureSSHPublicKey(context.Background(), params.Name, params.SSHPublicKey)
+	}
+
 	return nil
+}
+
+func (k *KubernetesOrchestrator) configureSSHPublicKey(ctx context.Context, name, publicKey string) {
+	configureSSHAuthorizedKey(ctx, k.ExecInInstance, name, publicKey, k.waitForPodRunning)
 }
 
 func (k *KubernetesOrchestrator) waitForPodRunning(ctx context.Context, name string, timeout time.Duration) (string, bool) {

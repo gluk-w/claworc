@@ -232,7 +232,15 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 		go d.configureGatewayToken(context.Background(), params.Name, token)
 	}
 
+	if params.SSHPublicKey != "" {
+		go d.configureSSHPublicKey(context.Background(), params.Name, params.SSHPublicKey)
+	}
+
 	return nil
+}
+
+func (d *DockerOrchestrator) configureSSHPublicKey(ctx context.Context, name, publicKey string) {
+	configureSSHAuthorizedKey(ctx, d.ExecInInstance, name, publicKey, d.waitForContainerRunning)
 }
 
 func (d *DockerOrchestrator) waitForContainerRunning(ctx context.Context, name string, timeout time.Duration) (string, bool) {

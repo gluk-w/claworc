@@ -50,6 +50,42 @@ func configureGatewayToken(ctx context.Context, execFn ExecFunc, name, token str
 	log.Printf("Gateway token configured for %s (image: %s)", logutil.SanitizeForLog(name), logutil.SanitizeForLog(imageInfo))
 }
 
+// configureSSHAuthorizedKey waits for the container to be running, then writes
+// the given SSH public key to /root/.ssh/authorized_keys with proper permissions.
+func configureSSHAuthorizedKey(ctx context.Context, execFn ExecFunc, name, publicKey string, waitFn WaitFunc) {
+	_, ready := waitFn(ctx, name, 120*time.Second)
+	if !ready {
+		log.Printf("Timed out waiting for %s to start; SSH public key not configured", logutil.SanitizeForLog(name))
+		return
+	}
+
+	// Create /root/.ssh directory with 700 permissions
+	_, stderr, code, err := execFn(ctx, name, []string{"sh", "-c", "mkdir -p /root/.ssh && chmod 700 /root/.ssh"})
+	if err != nil {
+		log.Printf("Error creating .ssh dir for %s: %v", logutil.SanitizeForLog(name), err)
+		return
+	}
+	if code != 0 {
+		log.Printf("Failed to create .ssh dir for %s: %s", logutil.SanitizeForLog(name), logutil.SanitizeForLog(stderr))
+		return
+	}
+
+	// Write the authorized_keys file using base64 to avoid shell escaping issues
+	b64 := base64.StdEncoding.EncodeToString([]byte(publicKey))
+	cmd := []string{"sh", "-c", fmt.Sprintf("echo '%s' | base64 -d > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys", b64)}
+	_, stderr, code, err = execFn(ctx, name, cmd)
+	if err != nil {
+		log.Printf("Error writing authorized_keys for %s: %v", logutil.SanitizeForLog(name), err)
+		return
+	}
+	if code != 0 {
+		log.Printf("Failed to write authorized_keys for %s: %s", logutil.SanitizeForLog(name), logutil.SanitizeForLog(stderr))
+		return
+	}
+
+	log.Printf("SSH public key configured for %s", logutil.SanitizeForLog(name))
+}
+
 func updateInstanceConfig(ctx context.Context, execFn ExecFunc, name string, configJSON string) error {
 	b64 := base64.StdEncoding.EncodeToString([]byte(configJSON))
 	cmd := []string{"sh", "-c", fmt.Sprintf("echo '%s' | base64 -d > %s", b64, PathOpenClawConfig)}

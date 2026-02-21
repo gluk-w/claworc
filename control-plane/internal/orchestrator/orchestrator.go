@@ -70,6 +70,7 @@ type CreateParams struct {
 	ContainerImage  string
 	VNCResolution   string
 	EnvVars         map[string]string
+	SSHPublicKey    string // Public key to install in agent's authorized_keys
 }
 
 type FileEntry struct {

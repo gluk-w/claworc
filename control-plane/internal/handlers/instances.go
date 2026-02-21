@@ -19,6 +19,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshkeys"
 	"github.com/gluk-w/claworc/control-plane/internal/sshtunnel"
 	"github.com/go-chi/chi/v5"
 )
@@ -474,28 +475,53 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		modelsConfigJSON = "{}"
 	}
 
+	// Generate SSH key pair for the instance
+	sshPubKey, sshPrivKey, err := sshkeys.GenerateKeyPair()
+	if err != nil {
+		log.Printf("Failed to generate SSH key pair for %s: %v", logutil.SanitizeForLog(name), err)
+		writeError(w, http.StatusInternalServerError, "Failed to generate SSH keys")
+		return
+	}
+
+	sshKeyPath, err := sshkeys.SavePrivateKey(name, sshPrivKey)
+	if err != nil {
+		log.Printf("Failed to save SSH private key for %s: %v", logutil.SanitizeForLog(name), err)
+		writeError(w, http.StatusInternalServerError, "Failed to save SSH key")
+		return
+	}
+
+	sshAuthorizedKey, err := sshkeys.FormatPublicKeyForAuthorizedKeys(sshPubKey)
+	if err != nil {
+		log.Printf("Failed to format SSH public key for %s: %v", logutil.SanitizeForLog(name), err)
+		writeError(w, http.StatusInternalServerError, "Failed to format SSH key")
+		return
+	}
+
 	// Compute next sort_order
 	var maxSortOrder int
 	database.DB.Model(&database.Instance{}).Select("COALESCE(MAX(sort_order), 0)").Scan(&maxSortOrder)
 
 	inst := database.Instance{
-		Name:            name,
-		DisplayName:     body.DisplayName,
-		Status:          "creating",
-		CPURequest:      body.CPURequest,
-		CPULimit:        body.CPULimit,
-		MemoryRequest:   body.MemoryRequest,
-		MemoryLimit:     body.MemoryLimit,
-		StorageHomebrew: body.StorageHomebrew,
-		StorageClawd:    body.StorageClawd,
-		StorageChrome:   body.StorageChrome,
-		BraveAPIKey:     encBraveKey,
-		ContainerImage:  containerImage,
-		VNCResolution:   vncResolution,
-		GatewayToken:    encGatewayToken,
-		ModelsConfig:    modelsConfigJSON,
-		DefaultModel:    body.DefaultModel,
-		SortOrder:       maxSortOrder + 1,
+		Name:              name,
+		DisplayName:       body.DisplayName,
+		Status:            "creating",
+		CPURequest:        body.CPURequest,
+		CPULimit:          body.CPULimit,
+		MemoryRequest:     body.MemoryRequest,
+		MemoryLimit:       body.MemoryLimit,
+		StorageHomebrew:   body.StorageHomebrew,
+		StorageClawd:      body.StorageClawd,
+		StorageChrome:     body.StorageChrome,
+		BraveAPIKey:       encBraveKey,
+		ContainerImage:    containerImage,
+		VNCResolution:     vncResolution,
+		GatewayToken:      encGatewayToken,
+		ModelsConfig:      modelsConfigJSON,
+		DefaultModel:      body.DefaultModel,
+		SSHPublicKey:      string(sshPubKey),
+		SSHPrivateKeyPath: sshKeyPath,
+		SSHPort:           22,
+		SortOrder:         maxSortOrder + 1,
 	}
 
 	if err := database.DB.Create(&inst).Error; err != nil {
@@ -543,6 +569,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			ContainerImage:  effectiveImage,
 			VNCResolution:   effectiveResolution,
 			EnvVars:         envVars,
+			SSHPublicKey:    sshAuthorizedKey,
 		})
 		if err != nil {
 			log.Printf("Failed to create container resources for %s: %v", logutil.SanitizeForLog(name), err)
@@ -712,6 +739,13 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 	if orch := orchestrator.Get(); orch != nil {
 		if err := orch.DeleteInstance(r.Context(), inst.Name); err != nil {
 			log.Printf("Failed to delete container resources for %s – proceeding with DB cleanup: %v", logutil.SanitizeForLog(inst.Name), err)
+		}
+	}
+
+	// Clean up SSH private key file
+	if inst.SSHPrivateKeyPath != "" {
+		if err := sshkeys.DeletePrivateKey(inst.SSHPrivateKeyPath); err != nil {
+			log.Printf("Failed to delete SSH private key for %s: %v", logutil.SanitizeForLog(inst.Name), err)
 		}
 	}
 
@@ -935,28 +969,53 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate SSH key pair for the clone
+	clonePubKey, clonePrivKey, err := sshkeys.GenerateKeyPair()
+	if err != nil {
+		log.Printf("Failed to generate SSH key pair for clone %s: %v", logutil.SanitizeForLog(cloneName), err)
+		writeError(w, http.StatusInternalServerError, "Failed to generate SSH keys")
+		return
+	}
+
+	cloneKeyPath, err := sshkeys.SavePrivateKey(cloneName, clonePrivKey)
+	if err != nil {
+		log.Printf("Failed to save SSH private key for clone %s: %v", logutil.SanitizeForLog(cloneName), err)
+		writeError(w, http.StatusInternalServerError, "Failed to save SSH key")
+		return
+	}
+
+	cloneAuthorizedKey, err := sshkeys.FormatPublicKeyForAuthorizedKeys(clonePubKey)
+	if err != nil {
+		log.Printf("Failed to format SSH public key for clone %s: %v", logutil.SanitizeForLog(cloneName), err)
+		writeError(w, http.StatusInternalServerError, "Failed to format SSH key")
+		return
+	}
+
 	// Compute next sort_order
 	var maxSortOrder int
 	database.DB.Model(&database.Instance{}).Select("COALESCE(MAX(sort_order), 0)").Scan(&maxSortOrder)
 
 	inst := database.Instance{
-		Name:            cloneName,
-		DisplayName:     cloneDisplayName,
-		Status:          "creating",
-		CPURequest:      src.CPURequest,
-		CPULimit:        src.CPULimit,
-		MemoryRequest:   src.MemoryRequest,
-		MemoryLimit:     src.MemoryLimit,
-		StorageHomebrew: src.StorageHomebrew,
-		StorageClawd:    src.StorageClawd,
-		StorageChrome:   src.StorageChrome,
-		BraveAPIKey:     src.BraveAPIKey,
-		ContainerImage:  src.ContainerImage,
-		VNCResolution:   src.VNCResolution,
-		GatewayToken:    encGatewayToken,
-		ModelsConfig:    src.ModelsConfig,
-		DefaultModel:    src.DefaultModel,
-		SortOrder:       maxSortOrder + 1,
+		Name:              cloneName,
+		DisplayName:       cloneDisplayName,
+		Status:            "creating",
+		CPURequest:        src.CPURequest,
+		CPULimit:          src.CPULimit,
+		MemoryRequest:     src.MemoryRequest,
+		MemoryLimit:       src.MemoryLimit,
+		StorageHomebrew:   src.StorageHomebrew,
+		StorageClawd:      src.StorageClawd,
+		StorageChrome:     src.StorageChrome,
+		BraveAPIKey:       src.BraveAPIKey,
+		ContainerImage:    src.ContainerImage,
+		VNCResolution:     src.VNCResolution,
+		GatewayToken:      encGatewayToken,
+		ModelsConfig:      src.ModelsConfig,
+		DefaultModel:      src.DefaultModel,
+		SSHPublicKey:      string(clonePubKey),
+		SSHPrivateKeyPath: cloneKeyPath,
+		SSHPort:           22,
+		SortOrder:         maxSortOrder + 1,
 	}
 
 	if err := database.DB.Create(&inst).Error; err != nil {
@@ -1005,6 +1064,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			ContainerImage:  effectiveImage,
 			VNCResolution:   effectiveResolution,
 			EnvVars:         envVars,
+			SSHPublicKey:    cloneAuthorizedKey,
 		})
 		if err != nil {
 			log.Printf("Failed to create container for clone %s: %v", cloneName, err)
