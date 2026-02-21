@@ -62,7 +62,7 @@ type TunnelManager struct {
 	sshMgr *SSHManager
 
 	mu      sync.RWMutex
-	tunnels map[string][]*ActiveTunnel // instanceName -> tunnels
+	tunnels map[uint][]*ActiveTunnel // instanceID -> tunnels
 
 	cancel context.CancelFunc
 }
@@ -72,7 +72,7 @@ type TunnelManager struct {
 func NewTunnelManager(sshMgr *SSHManager) *TunnelManager {
 	return &TunnelManager{
 		sshMgr:  sshMgr,
-		tunnels: make(map[string][]*ActiveTunnel),
+		tunnels: make(map[uint][]*ActiveTunnel),
 	}
 }
 
@@ -80,10 +80,10 @@ func NewTunnelManager(sshMgr *SSHManager) *TunnelManager {
 // traffic from a remote port on the agent to a local port on the control plane.
 // It allocates a free local port, starts a local listener, and for each incoming
 // connection on that listener, opens a channel to the remote port via SSH.
-func (tm *TunnelManager) CreateReverseTunnel(ctx context.Context, instanceName, label string, remotePort, localPort int) (int, error) {
-	client, ok := tm.sshMgr.GetConnection(instanceName)
+func (tm *TunnelManager) CreateReverseTunnel(ctx context.Context, instanceID uint, label string, remotePort, localPort int) (int, error) {
+	client, ok := tm.sshMgr.GetConnection(instanceID)
 	if !ok {
-		return 0, fmt.Errorf("no SSH connection for instance %s", instanceName)
+		return 0, fmt.Errorf("no SSH connection for instance %d", instanceID)
 	}
 
 	// Bind a local listener
@@ -111,52 +111,52 @@ func (tm *TunnelManager) CreateReverseTunnel(ctx context.Context, instanceName, 
 		cancel:    tunnelCancel,
 	}
 
-	tm.addTunnel(instanceName, tunnel)
+	tm.addTunnel(instanceID, tunnel)
 
 	// Accept connections and forward to remote via SSH
-	go tm.acceptLoop(tunnelCtx, tunnel, listener, client, remotePort, instanceName)
+	go tm.acceptLoop(tunnelCtx, tunnel, listener, client, remotePort, instanceID)
 
 	return boundPort, nil
 }
 
 // CreateTunnelForVNC creates a reverse tunnel for the agent's VNC/Selkies service (port 3000).
-func (tm *TunnelManager) CreateTunnelForVNC(ctx context.Context, instanceName string) (int, error) {
-	port, err := tm.CreateReverseTunnel(ctx, instanceName, "VNC", 3000, 0)
+func (tm *TunnelManager) CreateTunnelForVNC(ctx context.Context, instanceID uint) (int, error) {
+	port, err := tm.CreateReverseTunnel(ctx, instanceID, "VNC", 3000, 0)
 	if err != nil {
-		return 0, fmt.Errorf("create VNC tunnel for %s: %w", instanceName, err)
+		return 0, fmt.Errorf("create VNC tunnel for instance %d: %w", instanceID, err)
 	}
 
-	log.Printf("VNC tunnel for %s: localhost:%d -> agent:3000", instanceName, port)
+	log.Printf("VNC tunnel for instance %d: localhost:%d -> agent:3000", instanceID, port)
 	return port, nil
 }
 
 // CreateTunnelForGateway creates a reverse tunnel for the agent's gateway service.
-func (tm *TunnelManager) CreateTunnelForGateway(ctx context.Context, instanceName string, gatewayPort int) (int, error) {
+func (tm *TunnelManager) CreateTunnelForGateway(ctx context.Context, instanceID uint, gatewayPort int) (int, error) {
 	if gatewayPort == 0 {
 		gatewayPort = 8080
 	}
 
-	port, err := tm.CreateReverseTunnel(ctx, instanceName, "Gateway", gatewayPort, 0)
+	port, err := tm.CreateReverseTunnel(ctx, instanceID, "Gateway", gatewayPort, 0)
 	if err != nil {
-		return 0, fmt.Errorf("create Gateway tunnel for %s: %w", instanceName, err)
+		return 0, fmt.Errorf("create Gateway tunnel for instance %d: %w", instanceID, err)
 	}
 
-	log.Printf("Gateway tunnel for %s: localhost:%d -> agent:%d", instanceName, port, gatewayPort)
+	log.Printf("Gateway tunnel for instance %d: localhost:%d -> agent:%d", instanceID, port, gatewayPort)
 	return port, nil
 }
 
 // StartTunnelsForInstance establishes all required tunnels for an instance.
 // It uses EnsureConnected to set up SSH access before creating tunnels.
-func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceName string, orch Orchestrator) error {
+func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID uint, orch Orchestrator) error {
 	// Ensure SSH connection is established (uploads key on-demand)
-	_, err := tm.sshMgr.EnsureConnected(ctx, instanceName, orch)
+	_, err := tm.sshMgr.EnsureConnected(ctx, instanceID, orch)
 	if err != nil {
-		return fmt.Errorf("ensure connected for %s: %w", instanceName, err)
+		return fmt.Errorf("ensure connected for instance %d: %w", instanceID, err)
 	}
 
 	// Check if tunnels already exist
 	tm.mu.RLock()
-	existing := tm.tunnels[instanceName]
+	existing := tm.tunnels[instanceID]
 	tm.mu.RUnlock()
 
 	if len(existing) > 0 {
@@ -172,31 +172,31 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceNa
 			return nil
 		}
 		// Some tunnels are unhealthy; tear down and recreate
-		tm.StopTunnelsForInstance(instanceName)
+		tm.StopTunnelsForInstance(instanceID)
 	}
 
 	// Create VNC tunnel
-	_, err = tm.CreateTunnelForVNC(ctx, instanceName)
+	_, err = tm.CreateTunnelForVNC(ctx, instanceID)
 	if err != nil {
-		log.Printf("Failed to create VNC tunnel for %s: %v", instanceName, err)
+		log.Printf("Failed to create VNC tunnel for instance %d: %v", instanceID, err)
 		// Continue to try gateway tunnel
 	}
 
 	// Create Gateway tunnel
-	_, err = tm.CreateTunnelForGateway(ctx, instanceName, 0)
+	_, err = tm.CreateTunnelForGateway(ctx, instanceID, 0)
 	if err != nil {
-		log.Printf("Failed to create Gateway tunnel for %s: %v", instanceName, err)
+		log.Printf("Failed to create Gateway tunnel for instance %d: %v", instanceID, err)
 	}
 
 	return nil
 }
 
 // StopTunnelsForInstance closes all tunnels for an instance and cleans up state.
-func (tm *TunnelManager) StopTunnelsForInstance(instanceName string) error {
+func (tm *TunnelManager) StopTunnelsForInstance(instanceID uint) error {
 	tm.mu.Lock()
-	tunnels, ok := tm.tunnels[instanceName]
+	tunnels, ok := tm.tunnels[instanceID]
 	if ok {
-		delete(tm.tunnels, instanceName)
+		delete(tm.tunnels, instanceID)
 	}
 	tm.mu.Unlock()
 
@@ -211,7 +211,7 @@ func (tm *TunnelManager) StopTunnelsForInstance(instanceName string) error {
 		}
 	}
 
-	log.Printf("Stopped %d tunnels for %s", len(tunnels), instanceName)
+	log.Printf("Stopped %d tunnels for instance %d", len(tunnels), instanceID)
 	return nil
 }
 
@@ -223,7 +223,7 @@ func (tm *TunnelManager) StopAll() {
 
 	tm.mu.Lock()
 	allTunnels := tm.tunnels
-	tm.tunnels = make(map[string][]*ActiveTunnel)
+	tm.tunnels = make(map[uint][]*ActiveTunnel)
 	tm.mu.Unlock()
 
 	count := 0
@@ -241,11 +241,11 @@ func (tm *TunnelManager) StopAll() {
 }
 
 // GetTunnelsForInstance returns a copy of the active tunnels for an instance.
-func (tm *TunnelManager) GetTunnelsForInstance(instanceName string) []ActiveTunnel {
+func (tm *TunnelManager) GetTunnelsForInstance(instanceID uint) []ActiveTunnel {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
-	tunnels := tm.tunnels[instanceName]
+	tunnels := tm.tunnels[instanceID]
 	result := make([]ActiveTunnel, len(tunnels))
 	for i, t := range tunnels {
 		result[i] = ActiveTunnel{
@@ -261,11 +261,11 @@ func (tm *TunnelManager) GetTunnelsForInstance(instanceName string) []ActiveTunn
 }
 
 // GetVNCLocalPort returns the local port for the VNC tunnel of an instance, or 0 if not found.
-func (tm *TunnelManager) GetVNCLocalPort(instanceName string) int {
+func (tm *TunnelManager) GetVNCLocalPort(instanceID uint) int {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
-	for _, t := range tm.tunnels[instanceName] {
+	for _, t := range tm.tunnels[instanceID] {
 		if t.Label == "VNC" && t.Status == "active" {
 			return t.LocalPort
 		}
@@ -274,11 +274,11 @@ func (tm *TunnelManager) GetVNCLocalPort(instanceName string) int {
 }
 
 // GetGatewayLocalPort returns the local port for the Gateway tunnel of an instance, or 0 if not found.
-func (tm *TunnelManager) GetGatewayLocalPort(instanceName string) int {
+func (tm *TunnelManager) GetGatewayLocalPort(instanceID uint) int {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
-	for _, t := range tm.tunnels[instanceName] {
+	for _, t := range tm.tunnels[instanceID] {
 		if t.Label == "Gateway" && t.Status == "active" {
 			return t.LocalPort
 		}
@@ -288,7 +288,7 @@ func (tm *TunnelManager) GetGatewayLocalPort(instanceName string) int {
 
 // acceptLoop accepts connections on the local listener and forwards them to the
 // remote port over SSH. Each accepted connection is handled in a goroutine.
-func (tm *TunnelManager) acceptLoop(ctx context.Context, tunnel *ActiveTunnel, listener net.Listener, client *ssh.Client, remotePort int, instanceName string) {
+func (tm *TunnelManager) acceptLoop(ctx context.Context, tunnel *ActiveTunnel, listener net.Listener, client *ssh.Client, remotePort int, instanceID uint) {
 	defer listener.Close()
 
 	for {
@@ -311,23 +311,23 @@ func (tm *TunnelManager) acceptLoop(ctx context.Context, tunnel *ActiveTunnel, l
 			if ctx.Err() != nil {
 				return
 			}
-			log.Printf("Tunnel accept error for %s:%d: %v", instanceName, remotePort, err)
-			tm.setTunnelStatus(instanceName, tunnel, "error", err.Error())
+			log.Printf("Tunnel accept error for instance %d:%d: %v", instanceID, remotePort, err)
+			tm.setTunnelStatus(instanceID, tunnel, "error", err.Error())
 			return
 		}
 
-		go tm.forwardConnection(ctx, conn, client, remotePort, instanceName, tunnel)
+		go tm.forwardConnection(ctx, conn, client, remotePort, instanceID, tunnel)
 	}
 }
 
 // forwardConnection forwards a single local connection to the remote port over SSH.
-func (tm *TunnelManager) forwardConnection(ctx context.Context, localConn net.Conn, client *ssh.Client, remotePort int, instanceName string, tunnel *ActiveTunnel) {
+func (tm *TunnelManager) forwardConnection(ctx context.Context, localConn net.Conn, client *ssh.Client, remotePort int, instanceID uint, tunnel *ActiveTunnel) {
 	defer localConn.Close()
 
 	remoteAddr := fmt.Sprintf("127.0.0.1:%d", remotePort)
 	remoteConn, err := client.Dial("tcp", remoteAddr)
 	if err != nil {
-		log.Printf("SSH dial to %s:%d failed for %s: %v", "127.0.0.1", remotePort, instanceName, err)
+		log.Printf("SSH dial to %s:%d failed for instance %d: %v", "127.0.0.1", remotePort, instanceID, err)
 		return
 	}
 	defer remoteConn.Close()
@@ -352,7 +352,7 @@ func (tm *TunnelManager) forwardConnection(ctx context.Context, localConn net.Co
 }
 
 // setTunnelStatus updates the status of a tunnel.
-func (tm *TunnelManager) setTunnelStatus(instanceName string, tunnel *ActiveTunnel, status, errMsg string) {
+func (tm *TunnelManager) setTunnelStatus(instanceID uint, tunnel *ActiveTunnel, status, errMsg string) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
@@ -361,9 +361,9 @@ func (tm *TunnelManager) setTunnelStatus(instanceName string, tunnel *ActiveTunn
 	tunnel.LastCheck = time.Now()
 }
 
-// InstanceLister provides a way to get currently running instance names.
+// InstanceLister provides a way to get currently running instance IDs.
 // This decouples the tunnel manager from the database package.
-type InstanceLister func(ctx context.Context) ([]string, error)
+type InstanceLister func(ctx context.Context) ([]uint, error)
 
 // StartBackgroundManager starts a background goroutine that maintains tunnels
 // for all running instances. It periodically:
@@ -407,30 +407,30 @@ func (tm *TunnelManager) reconcile(ctx context.Context, listRunning InstanceList
 		return
 	}
 
-	runningSet := make(map[string]bool, len(running))
-	for _, name := range running {
-		runningSet[name] = true
+	runningSet := make(map[uint]bool, len(running))
+	for _, id := range running {
+		runningSet[id] = true
 	}
 
 	// Remove tunnels for instances that are no longer running
 	tm.mu.RLock()
-	var toRemove []string
-	for name := range tm.tunnels {
-		if !runningSet[name] {
-			toRemove = append(toRemove, name)
+	var toRemove []uint
+	for id := range tm.tunnels {
+		if !runningSet[id] {
+			toRemove = append(toRemove, id)
 		}
 	}
 	tm.mu.RUnlock()
 
-	for _, name := range toRemove {
-		log.Printf("Tunnel reconcile: removing tunnels for stopped instance %s", name)
-		tm.StopTunnelsForInstance(name)
+	for _, id := range toRemove {
+		log.Printf("Tunnel reconcile: removing tunnels for stopped instance %d", id)
+		tm.StopTunnelsForInstance(id)
 	}
 
 	// Ensure tunnels exist for running instances
-	for _, name := range running {
-		if err := tm.StartTunnelsForInstance(ctx, name, orch); err != nil {
-			log.Printf("Tunnel reconcile: failed to start tunnels for %s: %v", name, err)
+	for _, id := range running {
+		if err := tm.StartTunnelsForInstance(ctx, id, orch); err != nil {
+			log.Printf("Tunnel reconcile: failed to start tunnels for instance %d: %v", id, err)
 		}
 	}
 
@@ -449,9 +449,9 @@ func (tm *TunnelManager) reconcile(ctx context.Context, listRunning InstanceList
 }
 
 // addTunnel adds a tunnel to the instance's tunnel list.
-func (tm *TunnelManager) addTunnel(instanceName string, tunnel *ActiveTunnel) {
+func (tm *TunnelManager) addTunnel(instanceID uint, tunnel *ActiveTunnel) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
-	tm.tunnels[instanceName] = append(tm.tunnels[instanceName], tunnel)
+	tm.tunnels[instanceID] = append(tm.tunnels[instanceID], tunnel)
 }
