@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/crypto"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
@@ -1174,10 +1176,17 @@ func GetTunnelStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type sshTestResponse struct {
-	Status     string `json:"status"`
-	Output     string `json:"output,omitempty"`
-	LatencyMs  int64  `json:"latency_ms"`
-	Error      string `json:"error,omitempty"`
+	Success      bool            `json:"success"`
+	LatencyMs    int64           `json:"latency_ms"`
+	TunnelStatus []sshTunnelTest `json:"tunnel_status"`
+	CommandTest  bool            `json:"command_test"`
+	Error        string          `json:"error,omitempty"`
+}
+
+type sshTunnelTest struct {
+	Service string `json:"service"`
+	Healthy bool   `json:"healthy"`
+	Error   string `json:"error,omitempty"`
 }
 
 func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
@@ -1218,8 +1227,9 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 	host, port, err := orch.GetInstanceSSHEndpoint(r.Context(), inst.Name)
 	if err != nil {
 		writeJSON(w, http.StatusOK, sshTestResponse{
-			Status: "error",
-			Error:  fmt.Sprintf("Failed to get SSH endpoint: %v", err),
+			Success:      false,
+			TunnelStatus: []sshTunnelTest{},
+			Error:        fmt.Sprintf("Failed to get SSH endpoint: %v", err),
 		})
 		return
 	}
@@ -1230,9 +1240,10 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
 		writeJSON(w, http.StatusOK, sshTestResponse{
-			Status:    "error",
-			LatencyMs: latency,
-			Error:     fmt.Sprintf("SSH connection failed: %v", err),
+			Success:      false,
+			LatencyMs:    latency,
+			TunnelStatus: []sshTunnelTest{},
+			Error:        fmt.Sprintf("SSH connection failed: %v", err),
 		})
 		return
 	}
@@ -1241,30 +1252,52 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
 		writeJSON(w, http.StatusOK, sshTestResponse{
-			Status:    "error",
-			LatencyMs: latency,
-			Error:     fmt.Sprintf("Failed to create SSH session: %v", err),
+			Success:      false,
+			LatencyMs:    latency,
+			TunnelStatus: []sshTunnelTest{},
+			Error:        fmt.Sprintf("Failed to create SSH session: %v", err),
 		})
 		return
 	}
 	defer session.Close()
 
-	output, err := session.CombinedOutput("echo 'SSH test successful'")
+	_, cmdErr := session.CombinedOutput("echo 'SSH test successful'")
 	latency := time.Since(start).Milliseconds()
 
-	if err != nil {
+	commandTest := cmdErr == nil
+
+	// Collect tunnel status
+	tunnelStatuses := []sshTunnelTest{}
+	if tm := sshtunnel.GetTunnelManager(); tm != nil {
+		tunnelMetrics := tm.GetTunnelMetrics(inst.Name)
+		for _, m := range tunnelMetrics {
+			ts := sshTunnelTest{
+				Service: string(m.Service),
+				Healthy: m.Healthy,
+			}
+			if m.LastError != "" {
+				ts.Error = m.LastError
+			}
+			tunnelStatuses = append(tunnelStatuses, ts)
+		}
+	}
+
+	if cmdErr != nil {
 		writeJSON(w, http.StatusOK, sshTestResponse{
-			Status:    "error",
-			LatencyMs: latency,
-			Error:     fmt.Sprintf("Command execution failed: %v", err),
+			Success:      false,
+			LatencyMs:    latency,
+			TunnelStatus: tunnelStatuses,
+			CommandTest:  commandTest,
+			Error:        fmt.Sprintf("Command execution failed: %v", cmdErr),
 		})
 		return
 	}
 
 	writeJSON(w, http.StatusOK, sshTestResponse{
-		Status:    "success",
-		Output:    strings.TrimSpace(string(output)),
-		LatencyMs: latency,
+		Success:      true,
+		LatencyMs:    latency,
+		TunnelStatus: tunnelStatuses,
+		CommandTest:  commandTest,
 	})
 }
 
@@ -1423,6 +1456,7 @@ type sshEventsResponse struct {
 // GetSSHEvents returns the SSH connection event history for an instance.
 // Events include connections, disconnections, health check failures,
 // reconnection attempts and outcomes. Useful for debugging connection issues.
+// Supports ?limit=N query parameter (default: 50, max: 100).
 func GetSSHEvents(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
@@ -1441,6 +1475,16 @@ func GetSSHEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	limit := 50
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+			if limit > 100 {
+				limit = 100
+			}
+		}
+	}
+
 	sm := sshtunnel.GetSSHManager()
 
 	resp := sshEventsResponse{
@@ -1448,7 +1492,7 @@ func GetSSHEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if sm != nil {
-		events := sm.GetEvents(inst.Name)
+		events := sm.GetRecentEvents(inst.Name, limit)
 		for _, e := range events {
 			resp.Events = append(resp.Events, sshEventResponse{
 				InstanceName: e.InstanceName,
@@ -1460,4 +1504,132 @@ func GetSSHEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// --- SSH Reconnect ---
+
+type sshReconnectResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// SSHReconnect forces a reconnection of the SSH connection for an instance.
+func SSHReconnect(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	sm := sshtunnel.GetSSHManager()
+	if sm == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	if inst.SSHPrivateKeyPath == "" {
+		writeJSON(w, http.StatusOK, sshReconnectResponse{
+			Success: false,
+			Message: "Instance has no SSH key configured",
+		})
+		return
+	}
+
+	// Close existing connection if any
+	if sm.HasClient(inst.Name) {
+		_ = sm.Close(inst.Name)
+	}
+
+	host, port, err := orch.GetInstanceSSHEndpoint(r.Context(), inst.Name)
+	if err != nil {
+		writeJSON(w, http.StatusOK, sshReconnectResponse{
+			Success: false,
+			Message: fmt.Sprintf("Failed to get SSH endpoint: %v", err),
+		})
+		return
+	}
+
+	_, err = sm.Connect(r.Context(), inst.Name, host, port, inst.SSHPrivateKeyPath)
+	if err != nil {
+		writeJSON(w, http.StatusOK, sshReconnectResponse{
+			Success: false,
+			Message: fmt.Sprintf("Reconnection failed: %v", err),
+		})
+		return
+	}
+
+	// Restart tunnels for the instance
+	if tm := sshtunnel.GetTunnelManager(); tm != nil {
+		tm.StopTunnelsForInstance(inst.Name)
+		if tunnelErr := tm.StartTunnelsForInstance(r.Context(), inst.Name); tunnelErr != nil {
+			log.Printf("[ssh-reconnect] tunnels failed after reconnect for %s: %v", logutil.SanitizeForLog(inst.Name), tunnelErr)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, sshReconnectResponse{
+		Success: true,
+		Message: "SSH connection re-established successfully",
+	})
+}
+
+// --- SSH Fingerprint ---
+
+type sshFingerprintResponse struct {
+	Fingerprint string `json:"fingerprint"`
+	Algorithm   string `json:"algorithm"`
+}
+
+// GetSSHFingerprint returns the SSH public key fingerprint for an instance.
+func GetSSHFingerprint(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	if inst.SSHPublicKey == "" {
+		writeError(w, http.StatusBadRequest, "Instance has no SSH key configured")
+		return
+	}
+
+	pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(inst.SSHPublicKey))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to parse SSH public key")
+		return
+	}
+
+	fingerprint := ssh.FingerprintSHA256(pubKey)
+
+	writeJSON(w, http.StatusOK, sshFingerprintResponse{
+		Fingerprint: fingerprint,
+		Algorithm:   pubKey.Type(),
+	})
 }

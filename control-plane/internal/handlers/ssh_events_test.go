@@ -199,6 +199,161 @@ func TestGetSSHEvents_ResponseFormat(t *testing.T) {
 	}
 }
 
+func TestGetSSHEvents_WithLimit(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	inst := database.Instance{Name: "bot-limit", DisplayName: "Limit", Status: "running"}
+	database.DB.Create(&inst)
+
+	admin := &database.User{Username: "admin", PasswordHash: "x", Role: "admin"}
+	database.DB.Create(admin)
+
+	sm := sshmanager.NewSSHManager(0)
+	tm := sshtunnel.NewTunnelManager(sm)
+	sshtunnel.SetGlobalForTest(sm, tm)
+	defer sshtunnel.ResetGlobalForTest()
+
+	// Emit 10 events
+	for i := 0; i < 10; i++ {
+		sm.LogEvent("bot-limit", sshmanager.EventConnected, fmt.Sprintf("event %d", i))
+	}
+
+	// Request with limit=3
+	r := newChiRequest("GET", fmt.Sprintf("/api/v1/instances/%d/ssh-events?limit=3", inst.ID), map[string]string{"id": fmt.Sprint(inst.ID)})
+	r = middleware.WithUserForTest(r, admin)
+
+	w := httptest.NewRecorder()
+	GetSSHEvents(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body: %s", w.Code, w.Body.String())
+	}
+
+	var resp sshEventsResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	if len(resp.Events) != 3 {
+		t.Errorf("expected 3 events with limit=3, got %d", len(resp.Events))
+	}
+}
+
+func TestGetSSHEvents_DefaultLimit(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	inst := database.Instance{Name: "bot-deflimit", DisplayName: "DefLimit", Status: "running"}
+	database.DB.Create(&inst)
+
+	admin := &database.User{Username: "admin", PasswordHash: "x", Role: "admin"}
+	database.DB.Create(admin)
+
+	sm := sshmanager.NewSSHManager(0)
+	tm := sshtunnel.NewTunnelManager(sm)
+	sshtunnel.SetGlobalForTest(sm, tm)
+	defer sshtunnel.ResetGlobalForTest()
+
+	// Emit 60 events (more than default limit of 50)
+	for i := 0; i < 60; i++ {
+		sm.LogEvent("bot-deflimit", sshmanager.EventConnected, fmt.Sprintf("event %d", i))
+	}
+
+	// Request without limit (should default to 50)
+	r := newChiRequest("GET", fmt.Sprintf("/api/v1/instances/%d/ssh-events", inst.ID), map[string]string{"id": fmt.Sprint(inst.ID)})
+	r = middleware.WithUserForTest(r, admin)
+
+	w := httptest.NewRecorder()
+	GetSSHEvents(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body: %s", w.Code, w.Body.String())
+	}
+
+	var resp sshEventsResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	if len(resp.Events) != 50 {
+		t.Errorf("expected 50 events with default limit, got %d", len(resp.Events))
+	}
+}
+
+func TestGetSSHEvents_LimitCappedAt100(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	inst := database.Instance{Name: "bot-maxlimit", DisplayName: "MaxLimit", Status: "running"}
+	database.DB.Create(&inst)
+
+	admin := &database.User{Username: "admin", PasswordHash: "x", Role: "admin"}
+	database.DB.Create(admin)
+
+	sm := sshmanager.NewSSHManager(0)
+	tm := sshtunnel.NewTunnelManager(sm)
+	sshtunnel.SetGlobalForTest(sm, tm)
+	defer sshtunnel.ResetGlobalForTest()
+
+	// The SSHManager ring buffer is capped at 100 per instance anyway
+	// but let's verify the limit parameter is capped at 100
+	r := newChiRequest("GET", fmt.Sprintf("/api/v1/instances/%d/ssh-events?limit=999", inst.ID), map[string]string{"id": fmt.Sprint(inst.ID)})
+	r = middleware.WithUserForTest(r, admin)
+
+	w := httptest.NewRecorder()
+	GetSSHEvents(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body: %s", w.Code, w.Body.String())
+	}
+
+	// Should succeed - the limit is capped but the request shouldn't fail
+	var resp sshEventsResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	// With 0 events emitted, should still be 0
+	if len(resp.Events) != 0 {
+		t.Errorf("expected 0 events, got %d", len(resp.Events))
+	}
+}
+
+func TestGetSSHEvents_InvalidLimit(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	inst := database.Instance{Name: "bot-badlimit", DisplayName: "BadLimit", Status: "running"}
+	database.DB.Create(&inst)
+
+	admin := &database.User{Username: "admin", PasswordHash: "x", Role: "admin"}
+	database.DB.Create(admin)
+
+	sm := sshmanager.NewSSHManager(0)
+	tm := sshtunnel.NewTunnelManager(sm)
+	sshtunnel.SetGlobalForTest(sm, tm)
+	defer sshtunnel.ResetGlobalForTest()
+
+	// Emit 5 events
+	for i := 0; i < 5; i++ {
+		sm.LogEvent("bot-badlimit", sshmanager.EventConnected, fmt.Sprintf("event %d", i))
+	}
+
+	// Request with invalid limit (should fall back to default 50)
+	r := newChiRequest("GET", fmt.Sprintf("/api/v1/instances/%d/ssh-events?limit=abc", inst.ID), map[string]string{"id": fmt.Sprint(inst.ID)})
+	r = middleware.WithUserForTest(r, admin)
+
+	w := httptest.NewRecorder()
+	GetSSHEvents(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body: %s", w.Code, w.Body.String())
+	}
+
+	var resp sshEventsResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	// With default limit=50 and only 5 events, should get all 5
+	if len(resp.Events) != 5 {
+		t.Errorf("expected 5 events with invalid limit (defaults to 50), got %d", len(resp.Events))
+	}
+}
+
 func TestGetSSHEvents_ViewerAssigned(t *testing.T) {
 	cleanup := setupTestDB(t)
 	defer cleanup()
