@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"os/signal"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/sshterminal"
 	"github.com/go-chi/chi/v5"
@@ -60,6 +62,34 @@ func main() {
 	tunnelMgr := sshproxy.NewTunnelManager(sshMgr)
 	handlers.TunnelMgr = tunnelMgr
 	log.Printf("SSH manager initialized (public key: %d bytes)", len(sshPublicKey))
+
+	// Init SSH audit logger
+	retentionDays := 90
+	if retStr, err := database.GetSetting("ssh_audit_retention_days"); err == nil {
+		if d, err := strconv.Atoi(retStr); err == nil && d > 0 {
+			retentionDays = d
+		}
+	}
+	auditor, err := sshaudit.NewAuditor(database.DB, retentionDays)
+	if err != nil {
+		log.Fatalf("SSH audit init: %v", err)
+	}
+	handlers.AuditLog = auditor
+	cancelAuditCleanup := auditor.StartRetentionCleanup(ctx)
+	_ = cancelAuditCleanup
+
+	// Register audit listener for SSH connection events
+	sshMgr.OnEvent(func(event sshproxy.ConnectionEvent) {
+		switch event.Type {
+		case sshproxy.EventConnected, sshproxy.EventReconnected:
+			auditor.LogConnection(event.InstanceID, "system", event.Details)
+		case sshproxy.EventDisconnected:
+			auditor.LogDisconnection(event.InstanceID, "system", event.Details)
+		case sshproxy.EventKeyUploaded:
+			auditor.LogKeyUpload(event.InstanceID, event.Details)
+		}
+	})
+	log.Printf("SSH audit logger initialized (retention=%d days)", retentionDays)
 
 	// Init terminal session manager
 	sessionTimeout, err := time.ParseDuration(config.Cfg.TerminalSessionTimeout)
@@ -209,6 +239,7 @@ func main() {
 				r.Get("/settings", handlers.GetSettings)
 				r.Put("/settings", handlers.UpdateSettings)
 				r.Post("/settings/rotate-ssh-key", handlers.RotateSSHKey)
+				r.Get("/audit-logs", handlers.GetAuditLogs)
 
 				// User management
 				r.Get("/users", handlers.ListUsers)

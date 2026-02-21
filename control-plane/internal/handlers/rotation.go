@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
 	"github.com/gluk-w/claworc/control-plane/internal/sshkeys"
 	"gorm.io/gorm"
 )
@@ -48,6 +50,18 @@ func RotateSSHKey(w http.ResponseWriter, r *http.Request) {
 
 	// Record rotation timestamp
 	database.SetSetting("ssh_key_last_rotation", result.Timestamp.UTC().Format(time.RFC3339))
+
+	// Audit log the key rotation
+	successCount := 0
+	for _, s := range result.InstanceStatuses {
+		if s.Success {
+			successCount++
+		}
+	}
+	auditLog(sshaudit.EventKeyRotation, 0, getUsername(r),
+		fmt.Sprintf("old=%s, new=%s, instances=%d/%d succeeded",
+			result.OldFingerprint, result.NewFingerprint,
+			successCount, len(result.InstanceStatuses)))
 
 	writeJSON(w, http.StatusOK, result)
 }
@@ -146,4 +160,16 @@ func checkAndRotateKeys(ctx context.Context) {
 	} else {
 		log.Printf("SSH key rotation job: automatic rotation partial success (new fingerprint: %s)", result.NewFingerprint)
 	}
+
+	// Audit log the automatic rotation
+	successCount := 0
+	for _, s := range result.InstanceStatuses {
+		if s.Success {
+			successCount++
+		}
+	}
+	auditLog(sshaudit.EventKeyRotation, 0, "system",
+		fmt.Sprintf("auto-rotation: old=%s, new=%s, instances=%d/%d succeeded",
+			result.OldFingerprint, result.NewFingerprint,
+			successCount, len(result.InstanceStatuses)))
 }

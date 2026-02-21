@@ -62,7 +62,8 @@ func seedDefaults() error {
 		"default_vnc_resolution":   "1920x1080",
 		"orchestrator_backend":     "auto",
 		"default_models":                "[]",
-		"ssh_key_rotation_policy_days": "90",
+		"ssh_key_rotation_policy_days":  "90",
+		"ssh_audit_retention_days":      "90",
 	}
 
 	for key, value := range defaults {

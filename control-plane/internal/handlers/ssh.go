@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/go-chi/chi/v5"
 )
@@ -98,6 +100,9 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	auditLog(sshaudit.EventCommandExec, inst.ID, getUsername(r),
+		fmt.Sprintf("command=echo SSH test, latency=%dms, result=success", latency))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":     "ok",

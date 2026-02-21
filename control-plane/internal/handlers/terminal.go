@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
 	"github.com/gluk-w/claworc/control-plane/internal/sshterminal"
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/crypto/ssh"
@@ -164,8 +166,10 @@ func handleManagedTerminal(ctx context.Context, clientConn *websocket.Conn, r *h
 			return
 		}
 		log.Printf("Terminal session created: session=%s instance=%d", ms.ID, instanceID)
+		auditLog(sshaudit.EventTerminalSession, instanceID, getUsername(r), fmt.Sprintf("session_started, session_id=%s", ms.ID))
 	} else {
 		log.Printf("Terminal session reconnected: session=%s instance=%d", ms.ID, instanceID)
+		auditLog(sshaudit.EventTerminalSession, instanceID, getUsername(r), fmt.Sprintf("session_reconnected, session_id=%s", ms.ID))
 	}
 
 	clientConn.SetReadLimit(1024 * 1024)
@@ -185,6 +189,7 @@ func handleManagedTerminal(ctx context.Context, clientConn *websocket.Conn, r *h
 	defer func() {
 		ms.Detach()
 		log.Printf("Terminal session detached: session=%s instance=%d", ms.ID, instanceID)
+		auditLog(sshaudit.EventTerminalSession, instanceID, getUsername(r), fmt.Sprintf("session_detached, session_id=%s", ms.ID))
 	}()
 
 	if len(history) > 0 {
