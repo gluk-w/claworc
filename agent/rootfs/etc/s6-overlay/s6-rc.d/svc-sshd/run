@@ -6,6 +6,11 @@ if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
     ssh-keygen -A
 fi
 
+# Remove any legacy host key types that ssh-keygen -A may have created.
+# We only keep Ed25519 (strongest) and RSA (widest compatibility).
+rm -f /etc/ssh/ssh_host_dsa_key /etc/ssh/ssh_host_dsa_key.pub \
+      /etc/ssh/ssh_host_ecdsa_key /etc/ssh/ssh_host_ecdsa_key.pub
+
 # Create the privilege separation directory required by sshd
 mkdir -p /run/sshd
 
@@ -18,7 +23,13 @@ if [ -f /root/.ssh/authorized_keys ]; then
     chmod 600 /root/.ssh/authorized_keys
 fi
 
-echo "Starting SSH daemon..."
+echo "Starting SSH daemon (hardened configuration)..."
 # Run sshd in foreground mode (-D) so s6 can supervise it.
-# Redirect stderr to log file for SSH-based log streaming (-e sends logs to stderr).
+# -e sends logs to stderr instead of syslog; we redirect to the log file
+# so the control plane's SSH-based log streamer can read them.
+#
+# SyslogFacility AUTH and LogLevel INFO are set in sshd_config.d/claworc.conf
+# and control the log format/verbosity. To enable syslog-based centralized
+# monitoring, remove the -e flag and ensure a syslog daemon (rsyslog, etc.)
+# is running in the container.
 exec /usr/sbin/sshd -D -e 2>> /var/log/sshd.log
