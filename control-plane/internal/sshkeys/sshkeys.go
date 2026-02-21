@@ -101,3 +101,38 @@ func ParsePrivateKey(privateKeyPEM []byte) (ssh.Signer, error) {
 	}
 	return signer, nil
 }
+
+// EnsureKeyPair checks for an existing SSH key pair in the given directory.
+// If none exists, it generates and saves a new one. It then loads and returns
+// the parsed private key signer and the public key string.
+func EnsureKeyPair(dir string) (ssh.Signer, string, error) {
+	if KeyPairExists(dir) {
+		log.Printf("SSH key pair loaded from %s", dir)
+	} else {
+		pubKey, privKey, err := GenerateKeyPair()
+		if err != nil {
+			return nil, "", fmt.Errorf("generate ssh key pair: %w", err)
+		}
+		if err := SaveKeyPair(dir, privKey, pubKey); err != nil {
+			return nil, "", fmt.Errorf("save ssh key pair: %w", err)
+		}
+		log.Printf("SSH key pair generated and saved to %s", dir)
+	}
+
+	privKeyPEM, err := LoadPrivateKey(dir)
+	if err != nil {
+		return nil, "", fmt.Errorf("load private key: %w", err)
+	}
+
+	signer, err := ParsePrivateKey(privKeyPEM)
+	if err != nil {
+		return nil, "", fmt.Errorf("parse private key: %w", err)
+	}
+
+	pubKey, err := LoadPublicKey(dir)
+	if err != nil {
+		return nil, "", fmt.Errorf("load public key: %w", err)
+	}
+
+	return signer, pubKey, nil
+}

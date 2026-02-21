@@ -19,6 +19,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshkeys"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
@@ -47,6 +48,15 @@ func main() {
 	defer database.Close()
 
 	log.Printf("Config: AuthDisabled=%v, RPID=%s, RPOrigins=%v", config.Cfg.AuthDisabled, config.Cfg.RPID, config.Cfg.RPOrigins)
+
+	// Init global SSH key pair
+	sshSigner, sshPublicKey, err := sshkeys.EnsureKeyPair(config.Cfg.DataPath)
+	if err != nil {
+		log.Fatalf("SSH key init: %v", err)
+	}
+	// sshSigner and sshPublicKey will be used by SSHManager in future tasks
+	_ = sshSigner
+	_ = sshPublicKey
 
 	// Init WebAuthn
 	if err := auth.InitWebAuthn(config.Cfg.RPID, config.Cfg.RPOrigins); err != nil {

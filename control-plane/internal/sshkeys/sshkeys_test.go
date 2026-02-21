@@ -296,3 +296,99 @@ func TestParsePrivateKey_RoundTrip(t *testing.T) {
 		t.Errorf("fingerprint mismatch: signer=%s, parsed=%s", signerFingerprint, parsedFingerprint)
 	}
 }
+
+func TestEnsureKeyPair_FirstRun(t *testing.T) {
+	dir := t.TempDir()
+
+	// No keys exist yet
+	if KeyPairExists(dir) {
+		t.Fatal("expected no keys before first run")
+	}
+
+	signer, pubKey, err := EnsureKeyPair(dir)
+	if err != nil {
+		t.Fatalf("EnsureKeyPair() error: %v", err)
+	}
+	if signer == nil {
+		t.Fatal("EnsureKeyPair() returned nil signer")
+	}
+	if pubKey == "" {
+		t.Fatal("EnsureKeyPair() returned empty public key")
+	}
+
+	// Keys should now exist on disk
+	if !KeyPairExists(dir) {
+		t.Fatal("expected keys to exist after EnsureKeyPair")
+	}
+
+	// Signer should be ED25519
+	if signer.PublicKey().Type() != "ssh-ed25519" {
+		t.Errorf("key type: got %s, want ssh-ed25519", signer.PublicKey().Type())
+	}
+
+	// Public key should be valid OpenSSH format
+	_, _, _, _, err = ssh.ParseAuthorizedKey([]byte(pubKey))
+	if err != nil {
+		t.Fatalf("returned public key is not valid OpenSSH format: %v", err)
+	}
+}
+
+func TestEnsureKeyPair_SecondRunPersistence(t *testing.T) {
+	dir := t.TempDir()
+
+	// First run: generate keys
+	signer1, pubKey1, err := EnsureKeyPair(dir)
+	if err != nil {
+		t.Fatalf("first EnsureKeyPair() error: %v", err)
+	}
+
+	// Second run: should load same keys
+	signer2, pubKey2, err := EnsureKeyPair(dir)
+	if err != nil {
+		t.Fatalf("second EnsureKeyPair() error: %v", err)
+	}
+
+	// Public keys should be identical
+	if pubKey1 != pubKey2 {
+		t.Error("public key changed between runs")
+	}
+
+	// Signer fingerprints should match
+	fp1 := ssh.FingerprintSHA256(signer1.PublicKey())
+	fp2 := ssh.FingerprintSHA256(signer2.PublicKey())
+	if fp1 != fp2 {
+		t.Errorf("signer fingerprint changed between runs: %s != %s", fp1, fp2)
+	}
+}
+
+func TestEnsureKeyPair_FilePermissions(t *testing.T) {
+	dir := t.TempDir()
+
+	_, _, err := EnsureKeyPair(dir)
+	if err != nil {
+		t.Fatalf("EnsureKeyPair() error: %v", err)
+	}
+
+	privInfo, err := os.Stat(filepath.Join(dir, privateKeyFile))
+	if err != nil {
+		t.Fatalf("stat private key: %v", err)
+	}
+	if perm := privInfo.Mode().Perm(); perm != 0600 {
+		t.Errorf("private key permissions: got %o, want 0600", perm)
+	}
+
+	pubInfo, err := os.Stat(filepath.Join(dir, publicKeyFile))
+	if err != nil {
+		t.Fatalf("stat public key: %v", err)
+	}
+	if perm := pubInfo.Mode().Perm(); perm != 0644 {
+		t.Errorf("public key permissions: got %o, want 0644", perm)
+	}
+}
+
+func TestEnsureKeyPair_MissingDirectory(t *testing.T) {
+	_, _, err := EnsureKeyPair("/nonexistent/path/that/does/not/exist")
+	if err == nil {
+		t.Error("EnsureKeyPair() expected error for missing directory")
+	}
+}
