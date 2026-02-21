@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import StatusBadge from "@/components/StatusBadge";
 import ActionButtons from "@/components/ActionButtons";
 import ProviderTable from "@/components/ProviderTable";
@@ -10,6 +10,8 @@ import TerminalPanel from "@/components/TerminalPanel";
 import VncPanel from "@/components/VncPanel";
 import ChatPanel from "@/components/ChatPanel";
 import FileBrowser from "@/components/FileBrowser";
+import SSHStatus from "@/components/SSHStatus";
+import SSHTunnelList from "@/components/SSHTunnelList";
 import {
   useInstance,
   useStartInstance,
@@ -23,6 +25,7 @@ import {
   useRestartedToast,
 } from "@/hooks/useInstances";
 import { useSettings } from "@/hooks/useSettings";
+import { useSSHStatus } from "@/hooks/useSSH";
 import { useInstanceLogs } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useDesktop } from "@/hooks/useDesktop";
@@ -74,6 +77,10 @@ export default function InstanceDetailPage() {
   // Terminal/Chrome are mounted once the user first visits the tab, then stay mounted
   const [terminalActivated, setTerminalActivated] = useState(getTabFromHash() === "terminal");
   const [chromeActivated, setChromeActivated] = useState(getTabFromHash() === "chrome");
+
+  // SSH tunnel detail toggle
+  const [sshTunnelsExpanded, setSSHTunnelsExpanded] = useState(false);
+  const { data: sshStatus } = useSSHStatus(instanceId, instance?.status === "running");
 
   // API key editing state
   const [editingKeys, setEditingKeys] = useState(false);
@@ -353,6 +360,36 @@ export default function InstanceDetailPage() {
               ))}
             </div>
           </div>
+
+          {/* SSH Connection Status Section */}
+          {instance.status === "running" && (
+            <>
+              <SSHStatus instanceId={instanceId} enabled={instance.status === "running"} />
+              {sshStatus && sshStatus.tunnels.length > 0 && (
+                <div className="bg-white rounded-lg border border-gray-200 p-6">
+                  <button
+                    onClick={() => setSSHTunnelsExpanded(!sshTunnelsExpanded)}
+                    className="flex items-center gap-2 text-sm font-medium text-gray-900 w-full"
+                  >
+                    {sshTunnelsExpanded ? (
+                      <ChevronDown size={16} className="text-gray-500" />
+                    ) : (
+                      <ChevronRight size={16} className="text-gray-500" />
+                    )}
+                    Tunnel Details
+                    <span className="text-xs font-normal text-gray-500">
+                      ({sshStatus.tunnels.length} active)
+                    </span>
+                  </button>
+                  {sshTunnelsExpanded && (
+                    <div className="mt-4">
+                      <SSHTunnelList tunnels={sshStatus.tunnels} />
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
 
           {/* API Key Overrides Section */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
