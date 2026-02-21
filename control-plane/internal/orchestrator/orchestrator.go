@@ -30,8 +30,8 @@ type ContainerOrchestrator interface {
 	CloneVolumes(ctx context.Context, srcName, dstName string) error
 
 	// SSH
-	ConfigureSSHAccess(ctx context.Context, name string, publicKey string) error
-	GetSSHAddress(ctx context.Context, name string) (host string, port int, err error)
+	ConfigureSSHAccess(ctx context.Context, instanceID uint, publicKey string) error
+	GetSSHAddress(ctx context.Context, instanceID uint) (host string, port int, err error)
 
 	// Exec & Files
 	ExecInInstance(ctx context.Context, name string, cmd []string) (stdout string, stderr string, exitCode int, err error)

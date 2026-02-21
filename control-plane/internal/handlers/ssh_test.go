@@ -142,10 +142,10 @@ func (m *mockOrchestrator) StreamInstanceLogs(_ context.Context, _ string, _ int
 	return nil, nil
 }
 func (m *mockOrchestrator) CloneVolumes(_ context.Context, _, _ string) error { return nil }
-func (m *mockOrchestrator) ConfigureSSHAccess(_ context.Context, _ string, _ string) error {
+func (m *mockOrchestrator) ConfigureSSHAccess(_ context.Context, _ uint, _ string) error {
 	return m.configureErr
 }
-func (m *mockOrchestrator) GetSSHAddress(_ context.Context, _ string) (string, int, error) {
+func (m *mockOrchestrator) GetSSHAddress(_ context.Context, _ uint) (string, int, error) {
 	if m.addressErr != nil {
 		return "", 0, m.addressErr
 	}

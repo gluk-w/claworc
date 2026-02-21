@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/config"
+	"github.com/gluk-w/claworc/control-plane/internal/database"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -312,23 +313,31 @@ func (k *KubernetesOrchestrator) GetInstanceStatus(ctx context.Context, name str
 	}
 }
 
-func (k *KubernetesOrchestrator) ConfigureSSHAccess(ctx context.Context, name string, publicKey string) error {
-	return configureSSHAccess(ctx, k.ExecInInstance, name, publicKey)
+func (k *KubernetesOrchestrator) ConfigureSSHAccess(ctx context.Context, instanceID uint, publicKey string) error {
+	var inst database.Instance
+	if err := database.DB.First(&inst, instanceID).Error; err != nil {
+		return fmt.Errorf("instance %d not found: %w", instanceID, err)
+	}
+	return configureSSHAccess(ctx, k.ExecInInstance, inst.Name, publicKey)
 }
 
-func (k *KubernetesOrchestrator) GetSSHAddress(ctx context.Context, name string) (string, int, error) {
+func (k *KubernetesOrchestrator) GetSSHAddress(ctx context.Context, instanceID uint) (string, int, error) {
+	var inst database.Instance
+	if err := database.DB.First(&inst, instanceID).Error; err != nil {
+		return "", 0, fmt.Errorf("instance %d not found: %w", instanceID, err)
+	}
 	pods, err := k.clientset.CoreV1().Pods(k.ns()).List(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("app=%s", name),
+		LabelSelector: fmt.Sprintf("app=%s", inst.Name),
 	})
 	if err != nil {
-		return "", 0, fmt.Errorf("list pods: %w", err)
+		return "", 0, fmt.Errorf("list pods for instance %d: %w", instanceID, err)
 	}
 	if len(pods.Items) == 0 {
-		return "", 0, fmt.Errorf("no pods found for instance %s", name)
+		return "", 0, fmt.Errorf("no pods found for instance %d", instanceID)
 	}
 	pod := pods.Items[0]
 	if pod.Status.PodIP == "" {
-		return "", 0, fmt.Errorf("pod %s has no IP assigned", pod.Name)
+		return "", 0, fmt.Errorf("pod %s has no IP assigned (instance %d)", pod.Name, instanceID)
 	}
 	return pod.Status.PodIP, 22, nil
 }

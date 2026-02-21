@@ -17,6 +17,7 @@ import (
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/go-units"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
+	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 )
 
@@ -381,21 +382,29 @@ func (d *DockerOrchestrator) GetInstanceStatus(ctx context.Context, name string)
 	}
 }
 
-func (d *DockerOrchestrator) ConfigureSSHAccess(ctx context.Context, name string, publicKey string) error {
-	return configureSSHAccess(ctx, d.ExecInInstance, name, publicKey)
+func (d *DockerOrchestrator) ConfigureSSHAccess(ctx context.Context, instanceID uint, publicKey string) error {
+	var inst database.Instance
+	if err := database.DB.First(&inst, instanceID).Error; err != nil {
+		return fmt.Errorf("instance %d not found: %w", instanceID, err)
+	}
+	return configureSSHAccess(ctx, d.ExecInInstance, inst.Name, publicKey)
 }
 
-func (d *DockerOrchestrator) GetSSHAddress(ctx context.Context, name string) (string, int, error) {
-	inspect, err := d.client.ContainerInspect(ctx, name)
+func (d *DockerOrchestrator) GetSSHAddress(ctx context.Context, instanceID uint) (string, int, error) {
+	var inst database.Instance
+	if err := database.DB.First(&inst, instanceID).Error; err != nil {
+		return "", 0, fmt.Errorf("instance %d not found: %w", instanceID, err)
+	}
+	inspect, err := d.client.ContainerInspect(ctx, inst.Name)
 	if err != nil {
-		return "", 0, fmt.Errorf("inspect container: %w", err)
+		return "", 0, fmt.Errorf("inspect container for instance %d: %w", instanceID, err)
 	}
 	for _, net := range inspect.NetworkSettings.Networks {
 		if net.IPAddress != "" {
 			return net.IPAddress, 22, nil
 		}
 	}
-	return "", 0, fmt.Errorf("cannot determine container IP for %s", name)
+	return "", 0, fmt.Errorf("cannot determine container IP for instance %d", instanceID)
 }
 
 func (d *DockerOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {
