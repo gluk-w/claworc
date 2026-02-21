@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -8,7 +9,8 @@ import (
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
-	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshlogs"
+	"github.com/gluk-w/claworc/control-plane/internal/sshtunnel"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -31,6 +33,12 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 		follow = false
 	}
 
+	// Parse log type; default to openclaw
+	logType := sshlogs.LogType(r.URL.Query().Get("log_type"))
+	if logType == "" {
+		logType = sshlogs.LogTypeOpenClaw
+	}
+
 	var inst database.Instance
 	if err := database.DB.First(&inst, id).Error; err != nil {
 		writeError(w, http.StatusNotFound, "Instance not found")
@@ -42,13 +50,36 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.Get()
-	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+	// Parse custom log paths from instance config
+	var customPaths map[string]string
+	if inst.LogPaths != "" && inst.LogPaths != "{}" {
+		if err := json.Unmarshal([]byte(inst.LogPaths), &customPaths); err != nil {
+			log.Printf("Failed to parse LogPaths for instance %s: %v", inst.Name, err)
+			// Continue with default paths
+		}
+	}
+
+	// Resolve log file path
+	logPath, ok := sshlogs.ResolveLogPath(logType, customPaths)
+	if !ok {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Unknown log type: %s", logType))
 		return
 	}
 
-	ch, err := orch.StreamInstanceLogs(r.Context(), inst.Name, tail, follow)
+	// Get SSH client for the instance
+	sm := sshtunnel.GetSSHManager()
+	if sm == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	sshClient, err := sm.GetClient(inst.Name)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("No SSH connection for instance: %v", err))
+		return
+	}
+
+	ch, err := sshlogs.StreamLogs(r.Context(), sshClient, logPath, tail, follow)
 	if err != nil {
 		log.Printf("Failed to stream logs for %s: %v", inst.Name, err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to stream logs: %v", err))
