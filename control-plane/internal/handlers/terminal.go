@@ -11,6 +11,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshterminal"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -55,15 +56,21 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, _ := orch.GetInstanceStatus(ctx, inst.Name)
-	if status != "running" {
-		clientConn.Close(4003, "Instance not running")
+	if SSHMgr == nil {
+		clientConn.Close(4500, "SSH manager not initialized")
 		return
 	}
 
-	session, err := orch.ExecInteractive(ctx, inst.Name, []string{"su", "-", "abc"})
+	sshClient, err := SSHMgr.EnsureConnected(ctx, inst.ID, orch)
 	if err != nil {
-		log.Printf("Failed to start exec session for %s: %v", inst.Name, err)
+		log.Printf("Failed to get SSH connection for instance %d: %v", inst.ID, err)
+		clientConn.Close(4500, "Failed to establish SSH connection")
+		return
+	}
+
+	session, err := sshterminal.CreateInteractiveSession(sshClient, "su - abc")
+	if err != nil {
+		log.Printf("Failed to start SSH terminal session for instance %d: %v", inst.ID, err)
 		clientConn.Close(4500, "Failed to start shell")
 		return
 	}
