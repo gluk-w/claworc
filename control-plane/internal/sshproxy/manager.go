@@ -62,6 +62,9 @@ type SSHManager struct {
 	orch           Orchestrator                // orchestrator for reconnection key upload and address lookup
 	eventListeners []EventListener             // connection state change listeners
 	reconnecting   map[uint]context.CancelFunc // active reconnection goroutines, keyed by instance ID
+
+	// Connection state tracking (has its own mutex)
+	stateTracker *stateTracker
 }
 
 // managedConn wraps an SSH client with its cancel function for stopping keepalive.
@@ -79,6 +82,7 @@ func NewSSHManager(privateKey ssh.Signer, publicKey string) *SSHManager {
 		publicKey:    publicKey,
 		conns:        make(map[uint]*managedConn),
 		reconnecting: make(map[uint]context.CancelFunc),
+		stateTracker: newStateTracker(),
 	}
 }
 
@@ -97,16 +101,20 @@ func (m *SSHManager) Connect(ctx context.Context, instanceID uint, host string, 
 
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 
+	m.stateTracker.setState(instanceID, StateConnecting, fmt.Sprintf("connecting to %s", addr))
+
 	// Use context for connection timeout
 	dialer := net.Dialer{Timeout: connectTimeout}
 	netConn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
+		m.stateTracker.setState(instanceID, StateDisconnected, fmt.Sprintf("dial failed: %v", err))
 		return nil, fmt.Errorf("dial %s: %w", addr, err)
 	}
 
 	sshConn, chans, reqs, err := ssh.NewClientConn(netConn, addr, cfg)
 	if err != nil {
 		netConn.Close()
+		m.stateTracker.setState(instanceID, StateDisconnected, fmt.Sprintf("ssh handshake failed: %v", err))
 		return nil, fmt.Errorf("ssh handshake with %s: %w", addr, err)
 	}
 
@@ -133,6 +141,7 @@ func (m *SSHManager) Connect(ctx context.Context, instanceID uint, host string, 
 
 	go m.keepalive(keepCtx, instanceID, client)
 
+	m.stateTracker.setState(instanceID, StateConnected, fmt.Sprintf("connected to %s", addr))
 	log.Printf("SSH connected to instance %d (%s)", instanceID, addr)
 	return client, nil
 }
@@ -163,8 +172,10 @@ func (m *SSHManager) Close(instanceID uint) error {
 
 	mc.cancel()
 	if err := mc.client.Close(); err != nil {
+		m.stateTracker.setState(instanceID, StateDisconnected, fmt.Sprintf("closed with error: %v", err))
 		return fmt.Errorf("close ssh connection for instance %d: %w", instanceID, err)
 	}
+	m.stateTracker.setState(instanceID, StateDisconnected, "connection closed")
 	log.Printf("SSH disconnected from instance %d", instanceID)
 	return nil
 }
@@ -258,6 +269,7 @@ func (m *SSHManager) keepalive(ctx context.Context, instanceID uint, client *ssh
 				}
 				m.mu.Unlock()
 				reason := fmt.Sprintf("keepalive failed: %v", err)
+				m.stateTracker.setState(instanceID, StateDisconnected, reason)
 				m.emitEvent(ConnectionEvent{
 					InstanceID: instanceID,
 					Type:       EventDisconnected,

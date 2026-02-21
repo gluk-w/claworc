@@ -149,8 +149,9 @@ func (m *SSHManager) checkAllConnections() {
 	for _, id := range instanceIDs {
 		if err := m.HealthCheck(id); err != nil {
 			log.Printf("SSH health check failed for instance %d: %v", id, err)
-			m.Close(id)
 			reason := fmt.Sprintf("health check failed: %v", err)
+			m.stateTracker.setState(id, StateDisconnected, reason)
+			m.Close(id)
 			m.emitEvent(ConnectionEvent{
 				InstanceID: id,
 				Type:       EventDisconnected,

@@ -1,4 +1,4 @@
-package sshfiles
+package sshproxy
 
 import (
 	"encoding/base64"
@@ -10,8 +10,6 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/ssh"
-
-	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 )
 
 // testFS simulates a simple in-memory filesystem for the test SSH server.
@@ -200,10 +198,10 @@ func extractQuotedArg(s string) string {
 
 // testSSHServer starts an in-process SSH server backed by the given testFS.
 // It handles exec requests by dispatching to the filesystem.
-func testSSHServer(t *testing.T, authorizedKey ssh.PublicKey, fs *testFS) (addr string, cleanup func()) {
+func testSSHServerWithFS(t *testing.T, authorizedKey ssh.PublicKey, fs *testFS) (addr string, cleanup func()) {
 	t.Helper()
 
-	_, hostKeyPEM, err := sshproxy.GenerateKeyPair()
+	_, hostKeyPEM, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate host key: %v", err)
 	}
@@ -340,16 +338,16 @@ func handleTestSession(ch ssh.Channel, requests <-chan *ssh.Request, fs *testFS)
 func newTestClient(t *testing.T, fs *testFS) (*ssh.Client, func()) {
 	t.Helper()
 
-	_, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	_, privKeyPEM, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate key pair: %v", err)
 	}
-	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	signer, err := ParsePrivateKey(privKeyPEM)
 	if err != nil {
 		t.Fatalf("parse private key: %v", err)
 	}
 
-	addr, cleanup := testSSHServer(t, signer.PublicKey(), fs)
+	addr, cleanup := testSSHServerWithFS(t, signer.PublicKey(), fs)
 
 	host, portStr, _ := net.SplitHostPort(addr)
 	var port int
@@ -730,17 +728,17 @@ func TestExecuteCommandWithStdin_EmptyInput(t *testing.T) {
 }
 
 func TestExecuteCommandWithStdin_ClosedClient(t *testing.T) {
-	_, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	_, privKeyPEM, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate key pair: %v", err)
 	}
-	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	signer, err := ParsePrivateKey(privKeyPEM)
 	if err != nil {
 		t.Fatalf("parse private key: %v", err)
 	}
 
 	fs := newTestFS()
-	addr, cleanup := testSSHServer(t, signer.PublicKey(), fs)
+	addr, cleanup := testSSHServerWithFS(t, signer.PublicKey(), fs)
 	defer cleanup()
 
 	cfg := &ssh.ClientConfig{
@@ -1174,17 +1172,17 @@ func TestReadFile_EmptyPath(t *testing.T) {
 }
 
 func TestListDirectory_ClosedClient(t *testing.T) {
-	_, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	_, privKeyPEM, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate key pair: %v", err)
 	}
-	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	signer, err := ParsePrivateKey(privKeyPEM)
 	if err != nil {
 		t.Fatalf("parse private key: %v", err)
 	}
 
 	fs := newTestFS()
-	addr, cleanup := testSSHServer(t, signer.PublicKey(), fs)
+	addr, cleanup := testSSHServerWithFS(t, signer.PublicKey(), fs)
 	defer cleanup()
 
 	cfg := &ssh.ClientConfig{
@@ -1205,17 +1203,17 @@ func TestListDirectory_ClosedClient(t *testing.T) {
 }
 
 func TestWriteFile_ClosedClient(t *testing.T) {
-	_, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	_, privKeyPEM, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate key pair: %v", err)
 	}
-	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	signer, err := ParsePrivateKey(privKeyPEM)
 	if err != nil {
 		t.Fatalf("parse private key: %v", err)
 	}
 
 	fs := newTestFS()
-	addr, cleanup := testSSHServer(t, signer.PublicKey(), fs)
+	addr, cleanup := testSSHServerWithFS(t, signer.PublicKey(), fs)
 	defer cleanup()
 
 	cfg := &ssh.ClientConfig{
@@ -1236,17 +1234,17 @@ func TestWriteFile_ClosedClient(t *testing.T) {
 }
 
 func TestCreateDirectory_ClosedClient(t *testing.T) {
-	_, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	_, privKeyPEM, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate key pair: %v", err)
 	}
-	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	signer, err := ParsePrivateKey(privKeyPEM)
 	if err != nil {
 		t.Fatalf("parse private key: %v", err)
 	}
 
 	fs := newTestFS()
-	addr, cleanup := testSSHServer(t, signer.PublicKey(), fs)
+	addr, cleanup := testSSHServerWithFS(t, signer.PublicKey(), fs)
 	defer cleanup()
 
 	cfg := &ssh.ClientConfig{

@@ -100,6 +100,7 @@ func (m *SSHManager) ReconnectWithBackoff(ctx context.Context, instanceID uint, 
 func (m *SSHManager) reconnectWithBackoff(ctx context.Context, instanceID uint, maxRetries int, orch Orchestrator, reason string) error {
 	log.Printf("SSH reconnecting to instance %d (reason: %s)", instanceID, reason)
 
+	m.stateTracker.setState(instanceID, StateReconnecting, reason)
 	m.emitEvent(ConnectionEvent{
 		InstanceID: instanceID,
 		Type:       EventReconnecting,
@@ -176,6 +177,7 @@ func (m *SSHManager) reconnectWithBackoff(ctx context.Context, instanceID uint, 
 	// All retries exhausted — callers can register an EventListener for
 	// EventReconnectFailed to mark the instance offline in the database.
 	log.Printf("SSH reconnection to instance %d failed after %d attempts: %v", instanceID, maxRetries, lastErr)
+	m.stateTracker.setState(instanceID, StateFailed, fmt.Sprintf("gave up after %d attempts: %v", maxRetries, lastErr))
 	m.emitEvent(ConnectionEvent{
 		InstanceID: instanceID,
 		Type:       EventReconnectFailed,
