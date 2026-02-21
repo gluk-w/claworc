@@ -24,8 +24,10 @@ type testLogServer struct {
 func newTestLogServer() *testLogServer {
 	return &testLogServer{
 		files: map[string]string{
-			"/var/log/syslog":   "line1\nline2\nline3\nline4\nline5\n",
-			"/var/log/auth.log": "auth-line1\nauth-line2\n",
+			"/var/log/syslog":                "line1\nline2\nline3\nline4\nline5\n",
+			"/var/log/auth.log":              "auth-line1\nauth-line2\n",
+			"/var/log/claworc/openclaw.log":  "oc-line1\noc-line2\noc-line3\n",
+			"/var/log/claworc/sshd.log":      "sshd-line1\n",
 		},
 	}
 }
@@ -501,10 +503,12 @@ func TestGetAvailableLogFiles_SomeExist(t *testing.T) {
 		t.Fatalf("GetAvailableLogFiles error: %v", err)
 	}
 
-	// Server has /var/log/syslog and /var/log/auth.log
+	// Server has syslog, auth.log, and claworc service logs
 	expected := map[string]bool{
-		"/var/log/syslog":   true,
-		"/var/log/auth.log": true,
+		"/var/log/syslog":               true,
+		"/var/log/auth.log":             true,
+		"/var/log/claworc/openclaw.log": true,
+		"/var/log/claworc/sshd.log":     true,
 	}
 
 	for _, f := range files {
@@ -547,6 +551,108 @@ func TestGetAvailableLogFiles_ClosedClient(t *testing.T) {
 	_, err := GetAvailableLogFiles(client)
 	if err == nil {
 		t.Fatal("expected error with closed client")
+	}
+}
+
+// --- ResolveLogPath tests ---
+
+func TestResolveLogPath_Defaults(t *testing.T) {
+	tests := []struct {
+		logType  LogType
+		expected string
+	}{
+		{LogTypeOpenClaw, LogPathOpenClaw},
+		{LogTypeSSHD, LogPathSSHD},
+		{LogTypeSystem, LogPathSyslog},
+		{LogTypeAuth, LogPathAuth},
+	}
+	for _, tt := range tests {
+		got := ResolveLogPath(tt.logType, nil)
+		if got != tt.expected {
+			t.Errorf("ResolveLogPath(%q, nil) = %q, want %q", tt.logType, got, tt.expected)
+		}
+	}
+}
+
+func TestResolveLogPath_CustomOverride(t *testing.T) {
+	custom := map[LogType]string{
+		LogTypeOpenClaw: "/custom/openclaw.log",
+	}
+
+	// Custom path should be used
+	got := ResolveLogPath(LogTypeOpenClaw, custom)
+	if got != "/custom/openclaw.log" {
+		t.Errorf("expected custom path, got %q", got)
+	}
+
+	// Non-overridden type should fall back to default
+	got = ResolveLogPath(LogTypeSystem, custom)
+	if got != LogPathSyslog {
+		t.Errorf("expected default path %q, got %q", LogPathSyslog, got)
+	}
+}
+
+func TestResolveLogPath_UnknownType(t *testing.T) {
+	got := ResolveLogPath("nonexistent", nil)
+	if got != "" {
+		t.Errorf("expected empty string for unknown type, got %q", got)
+	}
+}
+
+func TestAllLogTypes(t *testing.T) {
+	types := AllLogTypes()
+	if len(types) != 4 {
+		t.Fatalf("expected 4 log types, got %d", len(types))
+	}
+	// Verify all types have default paths
+	for _, lt := range types {
+		if _, ok := DefaultLogPaths[lt]; !ok {
+			t.Errorf("log type %q missing from DefaultLogPaths", lt)
+		}
+	}
+}
+
+func TestLogPathConstants(t *testing.T) {
+	// Verify the path constants match what's in DefaultLogPaths
+	if DefaultLogPaths[LogTypeOpenClaw] != "/var/log/claworc/openclaw.log" {
+		t.Errorf("unexpected openclaw path: %s", DefaultLogPaths[LogTypeOpenClaw])
+	}
+	if DefaultLogPaths[LogTypeSSHD] != "/var/log/claworc/sshd.log" {
+		t.Errorf("unexpected sshd path: %s", DefaultLogPaths[LogTypeSSHD])
+	}
+	if DefaultLogPaths[LogTypeSystem] != "/var/log/syslog" {
+		t.Errorf("unexpected syslog path: %s", DefaultLogPaths[LogTypeSystem])
+	}
+	if DefaultLogPaths[LogTypeAuth] != "/var/log/auth.log" {
+		t.Errorf("unexpected auth path: %s", DefaultLogPaths[LogTypeAuth])
+	}
+}
+
+// --- StreamLogs with claworc paths ---
+
+func TestStreamLogs_OpenClawLog(t *testing.T) {
+	srv := newTestLogServer()
+	client, cleanup := startTestSSHServer(t, srv)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ch, err := StreamLogs(ctx, client, LogPathOpenClaw, 100, false)
+	if err != nil {
+		t.Fatalf("StreamLogs error: %v", err)
+	}
+
+	var lines []string
+	for line := range ch {
+		lines = append(lines, line)
+	}
+
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines, got %d: %v", len(lines), lines)
+	}
+	if lines[0] != "oc-line1" {
+		t.Errorf("expected 'oc-line1', got %q", lines[0])
 	}
 }
 

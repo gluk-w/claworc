@@ -11,4 +11,6 @@ mkdir -p /root/.ssh
 chmod 700 /root/.ssh
 
 echo "Starting sshd in foreground..."
-exec /usr/sbin/sshd -D -e
+# Redirect stderr to log file for SSH-based log streaming.
+# The -e flag sends sshd debug info to stderr.
+exec /usr/sbin/sshd -D -e >> /var/log/claworc/sshd.log 2>&1
