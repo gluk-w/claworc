@@ -504,3 +504,306 @@ func TestSSHConnectionTest_NoSSHManager(t *testing.T) {
 		t.Errorf("expected 'SSH manager not initialized', got %v", result["error"])
 	}
 }
+
+// --- GetTunnelStatus tests ---
+
+func TestGetTunnelStatus_NoTunnels(t *testing.T) {
+	setupTestDB(t)
+
+	_, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key pair: %v", err)
+	}
+	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+
+	SSHMgr = sshproxy.NewSSHManager(signer, "")
+	TunnelMgr = sshproxy.NewTunnelManager(SSHMgr)
+	defer SSHMgr.CloseAll()
+
+	inst := createTestInstance(t, "bot-test", "Test")
+	user := createTestUser(t, "admin")
+
+	req := buildRequest(t, "GET", "/api/v1/instances/1/tunnels", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
+	w := httptest.NewRecorder()
+
+	GetTunnelStatus(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	result := parseResponse(t, w)
+	tunnels, ok := result["tunnels"].([]interface{})
+	if !ok {
+		t.Fatalf("expected tunnels to be an array, got %T", result["tunnels"])
+	}
+	if len(tunnels) != 0 {
+		t.Errorf("expected 0 tunnels, got %d", len(tunnels))
+	}
+}
+
+func TestGetTunnelStatus_MultipleTunnels(t *testing.T) {
+	setupTestDB(t)
+
+	pubKeyBytes, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key pair: %v", err)
+	}
+	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+
+	addr, cleanup := testSSHServer(t, signer.PublicKey())
+	defer cleanup()
+
+	host, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	mgr := sshproxy.NewSSHManager(signer, string(pubKeyBytes))
+	SSHMgr = mgr
+	defer mgr.CloseAll()
+
+	inst := createTestInstance(t, "bot-test", "Test")
+
+	// Connect SSH and create tunnels
+	_, err = mgr.Connect(context.Background(), inst.ID, host, port)
+	if err != nil {
+		t.Fatalf("SSH connect: %v", err)
+	}
+
+	tm := sshproxy.NewTunnelManager(mgr)
+	TunnelMgr = tm
+
+	_, err = tm.CreateTunnelForVNC(context.Background(), inst.ID)
+	if err != nil {
+		t.Fatalf("create VNC tunnel: %v", err)
+	}
+	_, err = tm.CreateTunnelForGateway(context.Background(), inst.ID, 0)
+	if err != nil {
+		t.Fatalf("create Gateway tunnel: %v", err)
+	}
+
+	user := createTestUser(t, "admin")
+
+	req := buildRequest(t, "GET", "/api/v1/instances/1/tunnels", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
+	w := httptest.NewRecorder()
+
+	GetTunnelStatus(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	result := parseResponse(t, w)
+	tunnels, ok := result["tunnels"].([]interface{})
+	if !ok {
+		t.Fatalf("expected tunnels to be an array, got %T", result["tunnels"])
+	}
+	if len(tunnels) != 2 {
+		t.Fatalf("expected 2 tunnels, got %d", len(tunnels))
+	}
+
+	// Verify response fields for each tunnel
+	labels := map[string]bool{}
+	for _, raw := range tunnels {
+		tun, ok := raw.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected tunnel to be an object, got %T", raw)
+		}
+
+		// Verify all expected fields are present
+		for _, field := range []string{"label", "type", "local_port", "remote_port", "status", "last_check"} {
+			if _, exists := tun[field]; !exists {
+				t.Errorf("tunnel missing field %q", field)
+			}
+		}
+
+		label, _ := tun["label"].(string)
+		labels[label] = true
+
+		if tun["type"] != "reverse" {
+			t.Errorf("expected type 'reverse', got %v", tun["type"])
+		}
+		if tun["status"] != "active" {
+			t.Errorf("expected status 'active', got %v", tun["status"])
+		}
+		if localPort, ok := tun["local_port"].(float64); !ok || localPort == 0 {
+			t.Errorf("expected non-zero local_port, got %v", tun["local_port"])
+		}
+	}
+
+	if !labels["VNC"] {
+		t.Error("missing VNC tunnel in response")
+	}
+	if !labels["Gateway"] {
+		t.Error("missing Gateway tunnel in response")
+	}
+}
+
+func TestGetTunnelStatus_ResponseFormat(t *testing.T) {
+	setupTestDB(t)
+
+	pubKeyBytes, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key pair: %v", err)
+	}
+	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+
+	addr, cleanup := testSSHServer(t, signer.PublicKey())
+	defer cleanup()
+
+	host, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	mgr := sshproxy.NewSSHManager(signer, string(pubKeyBytes))
+	SSHMgr = mgr
+	defer mgr.CloseAll()
+
+	inst := createTestInstance(t, "bot-test", "Test")
+
+	_, err = mgr.Connect(context.Background(), inst.ID, host, port)
+	if err != nil {
+		t.Fatalf("SSH connect: %v", err)
+	}
+
+	tm := sshproxy.NewTunnelManager(mgr)
+	TunnelMgr = tm
+
+	_, err = tm.CreateTunnelForVNC(context.Background(), inst.ID)
+	if err != nil {
+		t.Fatalf("create VNC tunnel: %v", err)
+	}
+
+	user := createTestUser(t, "admin")
+
+	req := buildRequest(t, "GET", "/api/v1/instances/1/tunnels", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
+	w := httptest.NewRecorder()
+
+	GetTunnelStatus(w, req)
+
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected Content-Type application/json, got %s", ct)
+	}
+
+	result := parseResponse(t, w)
+	tunnels := result["tunnels"].([]interface{})
+	tun := tunnels[0].(map[string]interface{})
+
+	// Verify VNC tunnel details
+	if tun["label"] != "VNC" {
+		t.Errorf("expected label 'VNC', got %v", tun["label"])
+	}
+	if tun["type"] != "reverse" {
+		t.Errorf("expected type 'reverse', got %v", tun["type"])
+	}
+	if remotePort, ok := tun["remote_port"].(float64); !ok || int(remotePort) != 3000 {
+		t.Errorf("expected remote_port 3000, got %v", tun["remote_port"])
+	}
+	if tun["status"] != "active" {
+		t.Errorf("expected status 'active', got %v", tun["status"])
+	}
+	// last_check should be a valid RFC3339 string
+	lastCheck, ok := tun["last_check"].(string)
+	if !ok || lastCheck == "" {
+		t.Errorf("expected non-empty last_check string, got %v", tun["last_check"])
+	}
+}
+
+func TestGetTunnelStatus_Forbidden(t *testing.T) {
+	setupTestDB(t)
+
+	_, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key pair: %v", err)
+	}
+	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+
+	SSHMgr = sshproxy.NewSSHManager(signer, "")
+	TunnelMgr = sshproxy.NewTunnelManager(SSHMgr)
+	defer SSHMgr.CloseAll()
+
+	inst := createTestInstance(t, "bot-test", "Test")
+	user := createTestUser(t, "user") // non-admin, not assigned
+
+	req := buildRequest(t, "GET", "/api/v1/instances/1/tunnels", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
+	w := httptest.NewRecorder()
+
+	GetTunnelStatus(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d", w.Code)
+	}
+
+	result := parseResponse(t, w)
+	if result["detail"] != "Access denied" {
+		t.Errorf("expected 'Access denied', got %v", result["detail"])
+	}
+}
+
+func TestGetTunnelStatus_InstanceNotFound(t *testing.T) {
+	setupTestDB(t)
+
+	user := createTestUser(t, "admin")
+	req := buildRequest(t, "GET", "/api/v1/instances/999/tunnels", user, map[string]string{"id": "999"})
+	w := httptest.NewRecorder()
+
+	GetTunnelStatus(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", w.Code)
+	}
+
+	result := parseResponse(t, w)
+	if result["detail"] != "Instance not found" {
+		t.Errorf("expected 'Instance not found', got %v", result["detail"])
+	}
+}
+
+func TestGetTunnelStatus_InvalidID(t *testing.T) {
+	setupTestDB(t)
+
+	user := createTestUser(t, "admin")
+	req := buildRequest(t, "GET", "/api/v1/instances/notanumber/tunnels", user, map[string]string{"id": "notanumber"})
+	w := httptest.NewRecorder()
+
+	GetTunnelStatus(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", w.Code)
+	}
+}
+
+func TestGetTunnelStatus_NoTunnelManager(t *testing.T) {
+	setupTestDB(t)
+
+	inst := createTestInstance(t, "bot-test", "Test")
+	user := createTestUser(t, "admin")
+
+	TunnelMgr = nil
+
+	req := buildRequest(t, "GET", "/api/v1/instances/1/tunnels", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
+	w := httptest.NewRecorder()
+
+	GetTunnelStatus(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d", w.Code)
+	}
+
+	result := parseResponse(t, w)
+	if result["error"] != "Tunnel manager not initialized" {
+		t.Errorf("expected 'Tunnel manager not initialized', got %v", result["error"])
+	}
+}
