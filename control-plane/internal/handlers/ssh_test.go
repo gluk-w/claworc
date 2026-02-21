@@ -21,7 +21,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// --- test SSH server (mirrors sshmanager test helpers) ---
+// --- test SSH server (mirrors sshproxy test helpers) ---
 
 func testSSHServer(t *testing.T, authorizedKey ssh.PublicKey) (string, func()) {
 	t.Helper()

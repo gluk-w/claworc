@@ -103,7 +103,7 @@ local-clean:
 
 ssh-integration-test:
 	docker build -t claworc-agent:local agent/
-	cd control-plane && go test -tags docker_integration -v -timeout 300s ./internal/sshmanager/ -run TestIntegration
+	cd control-plane && go test -tags docker_integration -v -timeout 300s ./internal/sshproxy/ -run TestIntegration
 
 e2e-docker-tests:
 	./scripts/run_tests.sh
