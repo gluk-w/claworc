@@ -3,6 +3,7 @@ package sshfiles
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -266,6 +267,28 @@ func handleTestSession(ch ssh.Channel, requests <-chan *ssh.Request, fs *testFS)
 			cmdLen := uint32(req.Payload[0])<<24 | uint32(req.Payload[1])<<16 | uint32(req.Payload[2])<<8 | uint32(req.Payload[3])
 			cmd := string(req.Payload[4 : 4+cmdLen])
 
+			if req.WantReply {
+				req.Reply(true, nil)
+			}
+
+			// Check if this is a stdin-consuming command (e.g. cat > '/path')
+			if strings.HasPrefix(cmd, "cat > ") {
+				path := extractShellArg(cmd, "cat > ")
+				stdinData, readErr := io.ReadAll(ch)
+				exitCode := 0
+				if readErr != nil {
+					ch.Stderr().Write([]byte(fmt.Sprintf("read stdin: %v", readErr)))
+					exitCode = 1
+				} else {
+					fs.mu.Lock()
+					fs.files[path] = stdinData
+					fs.mu.Unlock()
+				}
+				exitPayload := []byte{byte(exitCode >> 24), byte(exitCode >> 16), byte(exitCode >> 8), byte(exitCode)}
+				ch.SendRequest("exit-status", false, exitPayload)
+				return
+			}
+
 			stdout, exitCode := fs.handleExec(cmd)
 
 			if exitCode != 0 {
@@ -279,9 +302,6 @@ func handleTestSession(ch ssh.Channel, requests <-chan *ssh.Request, fs *testFS)
 			exitPayload := []byte{byte(exitCode >> 24), byte(exitCode >> 16), byte(exitCode >> 8), byte(exitCode)}
 			ch.SendRequest("exit-status", false, exitPayload)
 
-			if req.WantReply {
-				req.Reply(true, nil)
-			}
 			return
 		}
 		if req.WantReply {
@@ -612,14 +632,78 @@ func TestShellQuote(t *testing.T) {
 
 // --- executeCommandWithStdin tests ---
 
-func TestExecuteCommandWithStdin(t *testing.T) {
-	// executeCommandWithStdin uses session.Start + stdin pipe which requires
-	// a slightly different server handler. Since our test server only handles
-	// "exec" type commands (not stdin piping), we test this at a simpler level.
-	// The WriteFile function (which would use this for an alternative impl)
-	// is already tested above via the base64 chunking approach.
-	//
-	// Here we verify the function handles a closed client gracefully.
+func TestExecuteCommandWithStdin_Success(t *testing.T) {
+	fs := newTestFS()
+	client, cleanup := newTestClient(t, fs)
+	defer cleanup()
+
+	content := []byte("hello from stdin")
+	err := executeCommandWithStdin(client, "cat > '/tmp/stdin_test.txt'", content)
+	if err != nil {
+		t.Fatalf("executeCommandWithStdin error: %v", err)
+	}
+
+	fs.mu.Lock()
+	got, ok := fs.files["/tmp/stdin_test.txt"]
+	fs.mu.Unlock()
+	if !ok {
+		t.Fatal("file not created via stdin piping")
+	}
+	if string(got) != string(content) {
+		t.Errorf("expected %q, got %q", string(content), string(got))
+	}
+}
+
+func TestExecuteCommandWithStdin_BinaryData(t *testing.T) {
+	fs := newTestFS()
+	client, cleanup := newTestClient(t, fs)
+	defer cleanup()
+
+	// Binary data with null bytes and high bytes
+	content := []byte{0x00, 0x01, 0x02, 0xFE, 0xFF, 0x00, 0x80}
+	err := executeCommandWithStdin(client, "cat > '/tmp/binary.bin'", content)
+	if err != nil {
+		t.Fatalf("executeCommandWithStdin error: %v", err)
+	}
+
+	fs.mu.Lock()
+	got, ok := fs.files["/tmp/binary.bin"]
+	fs.mu.Unlock()
+	if !ok {
+		t.Fatal("binary file not created via stdin piping")
+	}
+	if len(got) != len(content) {
+		t.Fatalf("expected %d bytes, got %d", len(content), len(got))
+	}
+	for i := range content {
+		if got[i] != content[i] {
+			t.Fatalf("byte mismatch at offset %d: expected 0x%02x, got 0x%02x", i, content[i], got[i])
+		}
+	}
+}
+
+func TestExecuteCommandWithStdin_EmptyInput(t *testing.T) {
+	fs := newTestFS()
+	client, cleanup := newTestClient(t, fs)
+	defer cleanup()
+
+	err := executeCommandWithStdin(client, "cat > '/tmp/empty_stdin.txt'", []byte{})
+	if err != nil {
+		t.Fatalf("executeCommandWithStdin error: %v", err)
+	}
+
+	fs.mu.Lock()
+	got, ok := fs.files["/tmp/empty_stdin.txt"]
+	fs.mu.Unlock()
+	if !ok {
+		t.Fatal("empty file not created via stdin piping")
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty file, got %d bytes", len(got))
+	}
+}
+
+func TestExecuteCommandWithStdin_ClosedClient(t *testing.T) {
 	_, privKeyPEM, err := sshproxy.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate key pair: %v", err)
