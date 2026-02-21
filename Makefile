@@ -16,7 +16,7 @@ HELM_NAMESPACE := claworc
 .PHONY: agent agent-build agent-test agent-push dashboard docker-prune release \
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-stop \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
-	ssh-integration-test
+	ssh-integration-test ssh-file-integration-test
 
 agent: agent-build agent-test agent-push
 
@@ -104,6 +104,10 @@ local-clean:
 ssh-integration-test:
 	docker build -t claworc-agent:local agent/
 	cd control-plane && go test -tags docker_integration -v -timeout 300s ./internal/sshproxy/ -run TestIntegration
+
+ssh-file-integration-test:
+	docker build -t claworc-agent:local agent/
+	cd tests && npm run test:ssh -- --testPathPattern file.test
 
 e2e-docker-tests:
 	./scripts/run_tests.sh
