@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -287,4 +288,41 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen]
+}
+
+// gatewayHost derives the gateway's internal host:port from the WS URL.
+// For K8s API proxy URLs it reconstructs the cluster DNS name;
+// for direct URLs it returns scheme+host as-is.
+func gatewayHost(gwURL string) (origin, host string) {
+	u, err := url.Parse(gwURL)
+	if err != nil {
+		return "", ""
+	}
+
+	// K8s API proxy: .../api/v1/namespaces/{ns}/services/{svc}:{port}/proxy
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	var ns, svc, port string
+	for i := 0; i < len(parts)-1; i++ {
+		switch parts[i] {
+		case "namespaces":
+			ns = parts[i+1]
+		case "services":
+			sp := strings.SplitN(parts[i+1], ":", 2)
+			svc = sp[0]
+			if len(sp) > 1 {
+				port = sp[1]
+			}
+		}
+	}
+	if ns != "" && svc != "" && port != "" {
+		h := fmt.Sprintf("%s.%s.svc.cluster.local:%s", svc, ns, port)
+		return "http://" + h, h
+	}
+
+	// Direct URL (Docker / in-cluster)
+	scheme := "http"
+	if u.Scheme == "wss" || u.Scheme == "https" {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s", scheme, u.Host), u.Host
 }
