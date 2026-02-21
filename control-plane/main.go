@@ -57,6 +57,7 @@ func main() {
 	}
 	sshMgr := sshproxy.NewSSHManager(sshSigner, sshPublicKey)
 	handlers.SSHMgr = sshMgr
+	sshMgr.StartHealthChecker(ctx)
 	tunnelMgr := sshproxy.NewTunnelManager(sshMgr)
 	handlers.TunnelMgr = tunnelMgr
 	log.Printf("SSH manager initialized (public key: %d bytes)", len(sshPublicKey))

@@ -54,12 +54,15 @@ type SSHManager struct {
 
 	mu    sync.RWMutex
 	conns map[uint]*managedConn // keyed by instance ID; IDs are stable across renames
+
+	healthCancel context.CancelFunc // cancel function for the background health checker
 }
 
 // managedConn wraps an SSH client with its cancel function for stopping keepalive.
 type managedConn struct {
-	client *ssh.Client
-	cancel context.CancelFunc
+	client  *ssh.Client
+	cancel  context.CancelFunc
+	metrics *ConnectionMetrics
 }
 
 // NewSSHManager creates a new SSHManager with the given private key signer
@@ -114,6 +117,9 @@ func (m *SSHManager) Connect(ctx context.Context, instanceID uint, host string, 
 	mc := &managedConn{
 		client: client,
 		cancel: keepCancel,
+		metrics: &ConnectionMetrics{
+			ConnectedAt: time.Now(),
+		},
 	}
 	m.conns[instanceID] = mc
 	m.mu.Unlock()
@@ -158,6 +164,8 @@ func (m *SSHManager) Close(instanceID uint) error {
 
 // CloseAll closes all SSH connections. Used during shutdown.
 func (m *SSHManager) CloseAll() error {
+	m.StopHealthChecker()
+
 	m.mu.Lock()
 	conns := m.conns
 	m.conns = make(map[uint]*managedConn)
