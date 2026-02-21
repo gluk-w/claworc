@@ -12,6 +12,58 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// AllowedShells is the set of shells permitted for interactive sessions.
+// Any shell not in this list will be rejected by CreateInteractiveSession.
+var AllowedShells = map[string]bool{
+	"/bin/bash": true,
+	"/bin/sh":   true,
+	"/bin/zsh":  true,
+}
+
+// MaxInputMessageSize is the maximum size in bytes for a single terminal input
+// message. Messages exceeding this limit are rejected to prevent DoS.
+const MaxInputMessageSize = 64 * 1024 // 64 KB
+
+// MaxResizeCols and MaxResizeRows define upper bounds for terminal resize
+// requests. Values beyond these are rejected to prevent abuse.
+const (
+	MaxResizeCols uint16 = 500
+	MaxResizeRows uint16 = 500
+)
+
+// ValidateShell checks if the given shell command is in the AllowedShells
+// whitelist. If the shell is empty (defaults to /bin/bash), it is accepted.
+// Commands like "su - user" are allowed when the base command is an allowed
+// shell or a known safe command.
+func ValidateShell(shell string) error {
+	if shell == "" {
+		return nil // defaults to /bin/bash
+	}
+
+	// Allow exact matches from the whitelist
+	if AllowedShells[shell] {
+		return nil
+	}
+
+	// Allow "su" commands (used to switch to agent user)
+	// Only "su" and "su - <user>" forms are permitted
+	if len(shell) >= 2 && shell[:2] == "su" {
+		// Must be exactly "su" or start with "su " or "su\t"
+		if len(shell) == 2 || shell[2] == ' ' || shell[2] == '\t' {
+			// Reject if it contains shell metacharacters that could enable injection
+			for _, c := range shell {
+				switch c {
+				case ';', '&', '|', '$', '`', '(', ')', '{', '}', '<', '>', '\n', '\\', '"', '\'', '!':
+					return fmt.Errorf("shell command %q contains forbidden character %q", shell, string(c))
+				}
+			}
+			return nil
+		}
+	}
+
+	return fmt.Errorf("shell %q is not in the allowed list", shell)
+}
+
 // TerminalSession wraps an SSH session with PTY support for interactive shell access.
 type TerminalSession struct {
 	Stdin   io.WriteCloser
@@ -30,8 +82,13 @@ func (ts *TerminalSession) Close() error {
 }
 
 // CreateInteractiveSession opens a new SSH session with a PTY and starts the
-// specified shell. If shell is empty, it defaults to "/bin/bash".
+// specified shell. If shell is empty, it defaults to "/bin/bash". The shell
+// must be in AllowedShells or be a permitted "su" command; otherwise an error
+// is returned to prevent command injection.
 func CreateInteractiveSession(client *ssh.Client, shell string) (*TerminalSession, error) {
+	if err := ValidateShell(shell); err != nil {
+		return nil, fmt.Errorf("validate shell: %w", err)
+	}
 	if shell == "" {
 		shell = "/bin/bash"
 	}

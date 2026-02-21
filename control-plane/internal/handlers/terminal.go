@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
@@ -15,6 +16,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/crypto/ssh"
 )
+
+// terminalRateLimit defines the maximum number of messages allowed per second
+// per WebSocket connection. Messages beyond this rate are dropped.
+const terminalRateLimit = 200
+
+// terminalRateBurst is the token bucket burst size, allowing short bursts
+// of rapid input (e.g., paste operations) before rate limiting kicks in.
+const terminalRateBurst = 200
 
 // TermSessionMgr is set from main.go during init. When non-nil, terminal
 // sessions persist after WebSocket disconnect and support reconnection.
@@ -90,6 +99,42 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// tokenBucket implements a simple token bucket rate limiter for terminal messages.
+type tokenBucket struct {
+	tokens     int
+	maxTokens  int
+	refillRate int // tokens added per second
+	lastRefill time.Time
+}
+
+func newTokenBucket(maxTokens, refillRate int) *tokenBucket {
+	return &tokenBucket{
+		tokens:     maxTokens,
+		maxTokens:  maxTokens,
+		refillRate: refillRate,
+		lastRefill: time.Now(),
+	}
+}
+
+// allow checks if a message is allowed and consumes a token.
+func (tb *tokenBucket) allow() bool {
+	now := time.Now()
+	elapsed := now.Sub(tb.lastRefill)
+	tb.lastRefill = now
+
+	// Refill tokens based on elapsed time
+	tb.tokens += int(elapsed.Seconds() * float64(tb.refillRate))
+	if tb.tokens > tb.maxTokens {
+		tb.tokens = tb.maxTokens
+	}
+
+	if tb.tokens <= 0 {
+		return false
+	}
+	tb.tokens--
+	return true
+}
+
 // handleManagedTerminal uses SessionManager for session persistence, multiple
 // concurrent sessions, history replay, and optional recording.
 func handleManagedTerminal(ctx context.Context, clientConn *websocket.Conn, r *http.Request, sshClient *ssh.Client, instanceID uint) {
@@ -114,10 +159,13 @@ func handleManagedTerminal(ctx context.Context, clientConn *websocket.Conn, r *h
 		var createErr error
 		ms, createErr = TermSessionMgr.CreateSession(sshClient, instanceID, "su - abc")
 		if createErr != nil {
-			log.Printf("Failed to create terminal session for instance %d: %v", instanceID, createErr)
+			log.Printf("Terminal session creation failed for instance %d: %v", instanceID, createErr)
 			clientConn.Close(4500, "Failed to start shell")
 			return
 		}
+		log.Printf("Terminal session created: session=%s instance=%d", ms.ID, instanceID)
+	} else {
+		log.Printf("Terminal session reconnected: session=%s instance=%d", ms.ID, instanceID)
 	}
 
 	clientConn.SetReadLimit(1024 * 1024)
@@ -134,7 +182,10 @@ func handleManagedTerminal(ctx context.Context, clientConn *websocket.Conn, r *h
 	// Attach and replay history
 	wsWriter := &wsOutputWriter{conn: clientConn, ctx: ctx}
 	history := ms.Attach(wsWriter)
-	defer ms.Detach()
+	defer func() {
+		ms.Detach()
+		log.Printf("Terminal session detached: session=%s instance=%d", ms.ID, instanceID)
+	}()
 
 	if len(history) > 0 {
 		if err := clientConn.Write(ctx, websocket.MessageBinary, history); err != nil {
@@ -154,6 +205,9 @@ func handleManagedTerminal(ctx context.Context, clientConn *websocket.Conn, r *h
 		}
 	}()
 
+	// Rate limiter for this connection
+	limiter := newTokenBucket(terminalRateBurst, terminalRateLimit)
+
 	// Browser -> Shell stdin
 	func() {
 		defer relayCancel()
@@ -162,7 +216,18 @@ func handleManagedTerminal(ctx context.Context, clientConn *websocket.Conn, r *h
 			if err != nil {
 				return
 			}
+
+			// Rate limit: drop messages that exceed the allowed rate
+			if !limiter.allow() {
+				continue
+			}
+
 			if msgType == websocket.MessageBinary {
+				// Enforce per-message input size limit
+				if len(data) > sshterminal.MaxInputMessageSize {
+					log.Printf("Terminal input message too large: session=%s size=%d limit=%d", ms.ID, len(data), sshterminal.MaxInputMessageSize)
+					continue
+				}
 				if _, err := ms.WriteInput(data); err != nil {
 					return
 				}
@@ -172,7 +237,16 @@ func handleManagedTerminal(ctx context.Context, clientConn *websocket.Conn, r *h
 					continue
 				}
 				if msg.Type == "resize" && msg.Cols > 0 && msg.Rows > 0 {
-					ms.Resize(msg.Cols, msg.Rows)
+					// Clamp resize dimensions to safe upper bounds
+					cols := msg.Cols
+					rows := msg.Rows
+					if cols > sshterminal.MaxResizeCols {
+						cols = sshterminal.MaxResizeCols
+					}
+					if rows > sshterminal.MaxResizeRows {
+						rows = sshterminal.MaxResizeRows
+					}
+					ms.Resize(cols, rows)
 				}
 			}
 		}
@@ -185,11 +259,13 @@ func handleManagedTerminal(ctx context.Context, clientConn *websocket.Conn, r *h
 func handleLegacyTerminal(ctx context.Context, clientConn *websocket.Conn, sshClient *ssh.Client) {
 	session, err := sshterminal.CreateInteractiveSession(sshClient, "su - abc")
 	if err != nil {
-		log.Printf("Failed to start SSH terminal session: %v", err)
+		log.Printf("Legacy terminal session creation failed: %v", err)
 		clientConn.Close(4500, "Failed to start shell")
 		return
 	}
 	defer session.Close()
+
+	log.Printf("Legacy terminal session started")
 
 	clientConn.SetReadLimit(1024 * 1024)
 
@@ -213,6 +289,9 @@ func handleLegacyTerminal(ctx context.Context, clientConn *websocket.Conn, sshCl
 		}
 	}()
 
+	// Rate limiter for this connection
+	limiter := newTokenBucket(terminalRateBurst, terminalRateLimit)
+
 	// Browser -> Shell stdin
 	func() {
 		defer relayCancel()
@@ -221,7 +300,17 @@ func handleLegacyTerminal(ctx context.Context, clientConn *websocket.Conn, sshCl
 			if err != nil {
 				return
 			}
+
+			// Rate limit: drop messages that exceed the allowed rate
+			if !limiter.allow() {
+				continue
+			}
+
 			if msgType == websocket.MessageBinary {
+				// Enforce per-message input size limit
+				if len(data) > sshterminal.MaxInputMessageSize {
+					continue
+				}
 				if _, err := session.Stdin.Write(data); err != nil {
 					return
 				}
@@ -231,12 +320,21 @@ func handleLegacyTerminal(ctx context.Context, clientConn *websocket.Conn, sshCl
 					continue
 				}
 				if msg.Type == "resize" && msg.Cols > 0 && msg.Rows > 0 {
-					session.Resize(msg.Cols, msg.Rows)
+					cols := msg.Cols
+					rows := msg.Rows
+					if cols > sshterminal.MaxResizeCols {
+						cols = sshterminal.MaxResizeCols
+					}
+					if rows > sshterminal.MaxResizeRows {
+						rows = sshterminal.MaxResizeRows
+					}
+					session.Resize(cols, rows)
 				}
 			}
 		}
 	}()
 
+	log.Printf("Legacy terminal session ended")
 	clientConn.Close(websocket.StatusNormalClosure, "")
 }
 

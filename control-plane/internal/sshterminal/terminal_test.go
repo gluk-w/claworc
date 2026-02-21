@@ -197,6 +197,73 @@ func readUntil(t *testing.T, r io.Reader, target string, timeout time.Duration) 
 	}
 }
 
+// --- Shell Validation Tests ---
+
+func TestValidateShell_AllowedShells(t *testing.T) {
+	allowed := []string{
+		"",          // empty defaults to /bin/bash
+		"/bin/bash",
+		"/bin/sh",
+		"/bin/zsh",
+		"su - abc",  // su with user switch
+		"su",        // bare su
+		"su abc",    // su with user
+		"su - root",
+	}
+	for _, shell := range allowed {
+		if err := ValidateShell(shell); err != nil {
+			t.Errorf("ValidateShell(%q) = %v, want nil", shell, err)
+		}
+	}
+}
+
+func TestValidateShell_RejectedShells(t *testing.T) {
+	rejected := []string{
+		"/usr/bin/python3",
+		"/tmp/evil",
+		"bash",
+		"rm -rf /",
+		"/bin/bash; rm -rf /",
+		"su; rm -rf /",
+		"su - abc; cat /etc/passwd",
+		"su - abc && evil",
+		"su - abc | tee /tmp/log",
+		"su - abc$(whoami)",
+		"su - abc`whoami`",
+		"su - abc > /tmp/out",
+		"su - abc < /dev/null",
+		"/bin/bash\nrm -rf /",
+		"sudo bash",
+		"su\\n-c evil",
+	}
+	for _, shell := range rejected {
+		if err := ValidateShell(shell); err == nil {
+			t.Errorf("ValidateShell(%q) = nil, want error", shell)
+		}
+	}
+}
+
+func TestCreateInteractiveSession_RejectsInvalidShell(t *testing.T) {
+	client := newTestClient(t)
+
+	_, err := CreateInteractiveSession(client, "/usr/bin/python3")
+	if err == nil {
+		t.Fatal("CreateInteractiveSession should reject invalid shell")
+	}
+	if !strings.Contains(err.Error(), "validate shell") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateInteractiveSession_RejectsInjectionAttempt(t *testing.T) {
+	client := newTestClient(t)
+
+	_, err := CreateInteractiveSession(client, "/bin/bash; rm -rf /")
+	if err == nil {
+		t.Fatal("CreateInteractiveSession should reject shell with semicolon injection")
+	}
+}
+
 func TestCreateInteractiveSession_DefaultShell(t *testing.T) {
 	client := newTestClient(t)
 

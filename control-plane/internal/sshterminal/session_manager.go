@@ -111,7 +111,8 @@ func NewSessionManager(cfg SessionManagerConfig) *SessionManager {
 
 // CreateSession opens a new SSH terminal session for the given instance and
 // registers it with the manager. The session starts in a detached state; call
-// Attach to connect a WebSocket client.
+// Attach to connect a WebSocket client. The shell parameter is validated
+// against AllowedShells before the session is created.
 func (sm *SessionManager) CreateSession(client *ssh.Client, instanceID uint, shell string) (*ManagedSession, error) {
 	ts, err := CreateInteractiveSession(client, shell)
 	if err != nil {
@@ -195,6 +196,7 @@ func (sm *SessionManager) CloseSession(id string) error {
 	delete(sm.sessions, id)
 	sm.mu.Unlock()
 
+	log.Printf("Terminal session closed: session=%s instance=%d", id, ms.InstanceID)
 	return ms.close()
 }
 

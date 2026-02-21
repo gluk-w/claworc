@@ -1179,6 +1179,94 @@ func TestManagedTerminal_SessionAlreadyAttached(t *testing.T) {
 	conn1.Close(websocket.StatusNormalClosure, "")
 }
 
+// --- Security Hardening Tests ---
+
+func TestTokenBucket_RateLimiting(t *testing.T) {
+	// Small bucket: 5 tokens, refill 10/sec
+	tb := newTokenBucket(5, 10)
+
+	// First 5 should be allowed (burst)
+	for i := 0; i < 5; i++ {
+		if !tb.allow() {
+			t.Errorf("message %d should be allowed (within burst)", i)
+		}
+	}
+
+	// 6th should be denied (bucket empty)
+	if tb.allow() {
+		t.Error("message 6 should be denied (bucket empty)")
+	}
+
+	// After waiting, tokens should refill
+	time.Sleep(200 * time.Millisecond) // ~2 tokens refilled at 10/sec
+	if !tb.allow() {
+		t.Error("message after refill should be allowed")
+	}
+}
+
+func TestManagedTerminal_OversizedInputDropped(t *testing.T) {
+	proxyServer, _ := setupManagedTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.CloseNow()
+	conn.SetReadLimit(2 * 1024 * 1024)
+
+	readSessionInfoWS(t, conn, ctx)
+	readUntilWS(t, conn, ctx, "PTY:true", 3*time.Second)
+
+	// Send a message larger than MaxInputMessageSize (64KB)
+	oversized := strings.Repeat("X", sshterminal.MaxInputMessageSize+1)
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte(oversized)); err != nil {
+		t.Fatalf("write oversized: %v", err)
+	}
+
+	// Send a normal message after to verify session still works
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte("after_oversize")); err != nil {
+		t.Fatalf("write after_oversize: %v", err)
+	}
+	readUntilWS(t, conn, ctx, "echo:after_oversize", 3*time.Second)
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestManagedTerminal_ResizeClamped(t *testing.T) {
+	proxyServer, _ := setupManagedTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.CloseNow()
+
+	readSessionInfoWS(t, conn, ctx)
+	readUntilWS(t, conn, ctx, "PTY:true", 3*time.Second)
+
+	// Send resize with dimensions exceeding max — should be clamped
+	hugeResize, _ := json.Marshal(termResizeMsg{Type: "resize", Cols: 9999, Rows: 9999})
+	if err := conn.Write(ctx, websocket.MessageText, hugeResize); err != nil {
+		t.Fatalf("write huge resize: %v", err)
+	}
+
+	// The SSH server echoes "resize:COLSxROWS" — should be clamped to 500x500
+	output := readUntilWS(t, conn, ctx, "resize:", 3*time.Second)
+	if !strings.Contains(output, "resize:500x500") {
+		t.Errorf("resize should be clamped to 500x500, got: %q", output)
+	}
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
 func TestManagedTerminal_ResizeAfterReconnect(t *testing.T) {
 	proxyServer, _ := setupManagedTerminalTest(t)
 
