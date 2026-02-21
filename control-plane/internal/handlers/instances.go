@@ -19,6 +19,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshtunnel"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -1030,6 +1031,72 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
+}
+
+type tunnelInfo struct {
+	Service    string `json:"service"`
+	Type       string `json:"type"`
+	LocalPort  int    `json:"local_port"`
+	RemotePort int    `json:"remote_port"`
+	Status     string `json:"status"`
+	StartedAt  string `json:"started_at"`
+	LastCheck  string `json:"last_check,omitempty"`
+	LastError  string `json:"last_error,omitempty"`
+}
+
+func GetTunnelStatus(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	tm := sshtunnel.GetTunnelManager()
+	if tm == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"tunnels": []tunnelInfo{}})
+		return
+	}
+
+	tunnels := tm.GetTunnels(inst.Name)
+	infos := make([]tunnelInfo, 0, len(tunnels))
+	for _, t := range tunnels {
+		status := "active"
+		if t.IsClosed() {
+			status = "closed"
+		}
+
+		info := tunnelInfo{
+			Service:    string(t.Config.Service),
+			Type:       string(t.Config.Type),
+			LocalPort:  t.LocalPort,
+			RemotePort: t.Config.RemotePort,
+			Status:     status,
+			StartedAt:  formatTimestamp(t.StartedAt),
+		}
+
+		lastCheck, lastErr := t.LastCheck()
+		if !lastCheck.IsZero() {
+			info.LastCheck = formatTimestamp(lastCheck)
+		}
+		if lastErr != nil {
+			info.LastError = lastErr.Error()
+		}
+
+		infos = append(infos, info)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"tunnels": infos})
 }
 
 func ReorderInstances(w http.ResponseWriter, r *http.Request) {
