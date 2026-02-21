@@ -74,6 +74,9 @@ type SSHManager struct {
 	eventsMu sync.RWMutex
 	events   map[string][]ConnectionEvent
 
+	// rate limiting
+	rateLimiter *RateLimiter
+
 	// keepalive lifecycle
 	keepaliveCtx    context.Context
 	keepaliveCancel context.CancelFunc
@@ -91,6 +94,7 @@ func NewSSHManager(maxConnections int) *SSHManager {
 		reconnecting:    make(map[string]bool),
 		stateTracker:    NewConnectionStateTracker(),
 		events:          make(map[string][]ConnectionEvent),
+		rateLimiter:     NewRateLimiter(DefaultRateLimitConfig()),
 		maxConnections:  maxConnections,
 		keepaliveCtx:    ctx,
 		keepaliveCancel: cancel,
@@ -112,6 +116,12 @@ func (m *SSHManager) Connect(ctx context.Context, instanceName, host string, por
 	}
 	if port <= 0 || port > 65535 {
 		return nil, fmt.Errorf("connect: invalid port %d", port)
+	}
+
+	// Check rate limit before proceeding
+	if err := m.rateLimiter.Allow(instanceName); err != nil {
+		m.emitEvent(instanceName, EventRateLimited, err.Error())
+		return nil, fmt.Errorf("connect: %w", err)
 	}
 
 	// Check connection limit before proceeding
@@ -161,13 +171,18 @@ func (m *SSHManager) Connect(ctx context.Context, instanceName, host string, por
 	select {
 	case <-ctx.Done():
 		m.stateTracker.SetState(instanceName, StateDisconnected)
+		m.rateLimiter.RecordFailure(instanceName)
 		return nil, fmt.Errorf("connect: context cancelled: %w", ctx.Err())
 	case <-dialDone:
 		if dialErr != nil {
 			m.stateTracker.SetState(instanceName, StateDisconnected)
+			m.rateLimiter.RecordFailure(instanceName)
 			return nil, fmt.Errorf("connect to %s: %w", logutil.SanitizeForLog(addr), dialErr)
 		}
 	}
+
+	// Record successful connection (resets consecutive failure counter)
+	m.rateLimiter.RecordSuccess(instanceName)
 
 	// Close any existing connection for this instance
 	m.mu.Lock()
@@ -622,5 +637,20 @@ func (m *SSHManager) GetAllConnectionStates() map[string]ConnectionState {
 // OnConnectionStateChange registers a callback for connection state changes.
 func (m *SSHManager) OnConnectionStateChange(cb StateCallback) {
 	m.stateTracker.OnStateChange(cb)
+}
+
+// GetRateLimitStatus returns the current rate limit status for the given instance.
+func (m *SSHManager) GetRateLimitStatus(instanceName string) RateLimitStatus {
+	return m.rateLimiter.GetStatus(instanceName)
+}
+
+// ResetRateLimit clears the rate limiting state for the given instance.
+func (m *SSHManager) ResetRateLimit(instanceName string) {
+	m.rateLimiter.Reset(instanceName)
+}
+
+// GetRateLimiter returns the rate limiter for direct access (e.g., in tests).
+func (m *SSHManager) GetRateLimiter() *RateLimiter {
+	return m.rateLimiter
 }
 
