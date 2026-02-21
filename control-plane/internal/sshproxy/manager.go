@@ -65,6 +65,9 @@ type SSHManager struct {
 
 	// Connection state tracking (has its own mutex)
 	stateTracker *stateTracker
+
+	// Connection event log (has its own mutex)
+	eventLog *eventLog
 }
 
 // managedConn wraps an SSH client with its cancel function for stopping keepalive.
@@ -83,6 +86,7 @@ func NewSSHManager(privateKey ssh.Signer, publicKey string) *SSHManager {
 		conns:        make(map[uint]*managedConn),
 		reconnecting: make(map[uint]context.CancelFunc),
 		stateTracker: newStateTracker(),
+		eventLog:     newEventLog(),
 	}
 }
 

@@ -150,6 +150,12 @@ func (m *SSHManager) checkAllConnections() {
 		if err := m.HealthCheck(id); err != nil {
 			log.Printf("SSH health check failed for instance %d: %v", id, err)
 			reason := fmt.Sprintf("health check failed: %v", err)
+			m.emitEvent(ConnectionEvent{
+				InstanceID: id,
+				Type:       EventHealthCheckFailed,
+				Timestamp:  time.Now(),
+				Details:    reason,
+			})
 			m.stateTracker.setState(id, StateDisconnected, reason)
 			m.Close(id)
 			m.emitEvent(ConnectionEvent{

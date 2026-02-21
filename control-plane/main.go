@@ -166,6 +166,7 @@ func main() {
 			r.Get("/instances/{id}/logs", handlers.StreamLogs)
 			r.Get("/instances/{id}/ssh-test", handlers.SSHConnectionTest)
 			r.Get("/instances/{id}/ssh-status", handlers.GetSSHStatus)
+			r.Get("/instances/{id}/ssh-events", handlers.GetSSHEvents)
 			r.Get("/instances/{id}/tunnels", handlers.GetTunnelStatus)
 
 			// Files

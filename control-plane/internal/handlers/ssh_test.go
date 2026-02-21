@@ -1277,3 +1277,205 @@ func TestGetSSHStatus_RecentEventsLimitedTo10(t *testing.T) {
 		t.Errorf("expected at most 10 recent events, got %d", len(events))
 	}
 }
+
+// --- GetSSHEvents tests ---
+
+func TestGetSSHEvents_Empty(t *testing.T) {
+	setupTestDB(t)
+
+	_, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key pair: %v", err)
+	}
+	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+
+	SSHMgr = sshproxy.NewSSHManager(signer, "")
+	defer SSHMgr.CloseAll()
+
+	inst := createTestInstance(t, "bot-test", "Test")
+	user := createTestUser(t, "admin")
+
+	req := buildRequest(t, "GET", "/api/v1/instances/1/ssh-events", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
+	w := httptest.NewRecorder()
+
+	GetSSHEvents(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	result := parseResponse(t, w)
+	events, ok := result["events"].([]interface{})
+	if !ok {
+		t.Fatalf("expected events to be an array, got %T", result["events"])
+	}
+	if len(events) != 0 {
+		t.Errorf("expected 0 events, got %d", len(events))
+	}
+}
+
+func TestGetSSHEvents_WithEvents(t *testing.T) {
+	setupTestDB(t)
+
+	_, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key pair: %v", err)
+	}
+	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+
+	mgr := sshproxy.NewSSHManager(signer, "")
+	SSHMgr = mgr
+	defer mgr.CloseAll()
+
+	inst := createTestInstance(t, "bot-test", "Test")
+
+	// Log some events
+	mgr.LogEvent(inst.ID, sshproxy.EventConnected, "connected to host")
+	mgr.LogEvent(inst.ID, sshproxy.EventDisconnected, "connection lost")
+	mgr.LogEvent(inst.ID, sshproxy.EventReconnecting, "attempting reconnect")
+
+	user := createTestUser(t, "admin")
+
+	req := buildRequest(t, "GET", "/api/v1/instances/1/ssh-events", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
+	w := httptest.NewRecorder()
+
+	GetSSHEvents(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	result := parseResponse(t, w)
+	events, ok := result["events"].([]interface{})
+	if !ok {
+		t.Fatalf("expected events to be an array, got %T", result["events"])
+	}
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+
+	// Verify event structure
+	first := events[0].(map[string]interface{})
+	for _, field := range []string{"type", "timestamp", "details"} {
+		if _, exists := first[field]; !exists {
+			t.Errorf("event missing field %q", field)
+		}
+	}
+
+	if first["type"] != "connected" {
+		t.Errorf("first event type = %v, want 'connected'", first["type"])
+	}
+	if first["details"] != "connected to host" {
+		t.Errorf("first event details = %v, want 'connected to host'", first["details"])
+	}
+}
+
+func TestGetSSHEvents_ResponseFormat(t *testing.T) {
+	setupTestDB(t)
+
+	_, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key pair: %v", err)
+	}
+	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+
+	mgr := sshproxy.NewSSHManager(signer, "")
+	SSHMgr = mgr
+	defer mgr.CloseAll()
+
+	inst := createTestInstance(t, "bot-test", "Test")
+	mgr.LogEvent(inst.ID, sshproxy.EventKeyUploaded, "key uploaded")
+
+	user := createTestUser(t, "admin")
+
+	req := buildRequest(t, "GET", "/api/v1/instances/1/ssh-events", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
+	w := httptest.NewRecorder()
+
+	GetSSHEvents(w, req)
+
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected Content-Type application/json, got %s", ct)
+	}
+
+	result := parseResponse(t, w)
+	if _, exists := result["events"]; !exists {
+		t.Error("response missing 'events' field")
+	}
+}
+
+func TestGetSSHEvents_InstanceNotFound(t *testing.T) {
+	setupTestDB(t)
+
+	SSHMgr = sshproxy.NewSSHManager(nil, "")
+
+	user := createTestUser(t, "admin")
+	req := buildRequest(t, "GET", "/api/v1/instances/999/ssh-events", user, map[string]string{"id": "999"})
+	w := httptest.NewRecorder()
+
+	GetSSHEvents(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", w.Code)
+	}
+}
+
+func TestGetSSHEvents_Forbidden(t *testing.T) {
+	setupTestDB(t)
+
+	SSHMgr = sshproxy.NewSSHManager(nil, "")
+
+	inst := createTestInstance(t, "bot-test", "Test")
+	user := createTestUser(t, "user") // non-admin, not assigned
+
+	req := buildRequest(t, "GET", "/api/v1/instances/1/ssh-events", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
+	w := httptest.NewRecorder()
+
+	GetSSHEvents(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d", w.Code)
+	}
+}
+
+func TestGetSSHEvents_InvalidID(t *testing.T) {
+	setupTestDB(t)
+
+	SSHMgr = sshproxy.NewSSHManager(nil, "")
+
+	user := createTestUser(t, "admin")
+	req := buildRequest(t, "GET", "/api/v1/instances/notanumber/ssh-events", user, map[string]string{"id": "notanumber"})
+	w := httptest.NewRecorder()
+
+	GetSSHEvents(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", w.Code)
+	}
+}
+
+func TestGetSSHEvents_NoSSHManager(t *testing.T) {
+	setupTestDB(t)
+
+	inst := createTestInstance(t, "bot-test", "Test")
+	user := createTestUser(t, "admin")
+
+	SSHMgr = nil
+
+	req := buildRequest(t, "GET", "/api/v1/instances/1/ssh-events", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
+	w := httptest.NewRecorder()
+
+	GetSSHEvents(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d", w.Code)
+	}
+}

@@ -284,3 +284,50 @@ func GetTunnelStatus(w http.ResponseWriter, r *http.Request) {
 		"tunnels": resp,
 	})
 }
+
+// GetSSHEvents returns the SSH connection event history for an instance.
+// Events include connections, disconnections, health check failures,
+// reconnection attempts, and public key uploads.
+func GetSSHEvents(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	events := SSHMgr.GetEventHistory(inst.ID)
+	resp := make([]sshEventEntry, 0, len(events))
+	for _, e := range events {
+		resp = append(resp, sshEventEntry{
+			Type:      string(e.Type),
+			Timestamp: e.Timestamp.UTC().Format(time.RFC3339),
+			Details:   e.Details,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"events": resp,
+	})
+}
+
+type sshEventEntry struct {
+	Type      string `json:"type"`
+	Timestamp string `json:"timestamp"`
+	Details   string `json:"details"`
+}

@@ -65,8 +65,13 @@ func (m *SSHManager) OnEvent(listener EventListener) {
 	m.eventListeners = append(m.eventListeners, listener)
 }
 
-// emitEvent sends a connection event to all registered listeners.
+// emitEvent sends a connection event to all registered listeners and
+// records it in the event log for later retrieval.
 func (m *SSHManager) emitEvent(event ConnectionEvent) {
+	// Record in persistent event log
+	m.eventLog.recordEvent(event)
+
+	// Notify listeners
 	m.reconnMu.RLock()
 	listeners := make([]EventListener, len(m.eventListeners))
 	copy(listeners, m.eventListeners)
