@@ -54,6 +54,19 @@ type TunnelConfig struct {
 	Service    ServiceLabel   // Purpose of this tunnel (vnc, gateway, custom)
 }
 
+// TunnelMetrics contains health and performance metrics for a tunnel.
+type TunnelMetrics struct {
+	Service             ServiceLabel `json:"service"`
+	LocalPort           int          `json:"local_port"`
+	RemotePort          int          `json:"remote_port"`
+	CreatedAt           time.Time    `json:"created_at"`
+	LastCheck           time.Time    `json:"last_check"`
+	LastSuccessfulCheck time.Time    `json:"last_successful_check"`
+	LastError           string       `json:"last_error,omitempty"`
+	BytesTransferred    int64        `json:"bytes_transferred"`
+	Healthy             bool         `json:"healthy"`
+}
+
 // ActiveTunnel represents a running tunnel with its configuration and lifecycle controls.
 type ActiveTunnel struct {
 	Config    TunnelConfig
@@ -65,6 +78,9 @@ type ActiveTunnel struct {
 	closed    bool
 	lastCheck time.Time
 	lastError error
+	// Health metrics
+	lastSuccessfulCheck time.Time
+	bytesTransferred    int64
 }
 
 // Close shuts down the active tunnel.
@@ -104,11 +120,65 @@ func (t *ActiveTunnel) updateHealthCheck(err error) {
 	defer t.mu.Unlock()
 	t.lastCheck = time.Now()
 	t.lastError = err
+	if err == nil {
+		t.lastSuccessfulCheck = time.Now()
+	}
+}
+
+// Metrics returns a snapshot of the tunnel's health and performance metrics.
+func (t *ActiveTunnel) Metrics() TunnelMetrics {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	m := TunnelMetrics{
+		Service:             t.Config.Service,
+		LocalPort:           t.LocalPort,
+		RemotePort:          t.Config.RemotePort,
+		CreatedAt:           t.StartedAt,
+		LastCheck:           t.lastCheck,
+		LastSuccessfulCheck: t.lastSuccessfulCheck,
+		BytesTransferred:    t.bytesTransferred,
+		Healthy:             !t.closed && (t.lastError == nil || t.lastCheck.IsZero()),
+	}
+	if t.lastError != nil {
+		m.LastError = t.lastError.Error()
+	}
+	return m
+}
+
+// addBytesTransferred adds n bytes to the tunnel's transfer counter.
+func (t *ActiveTunnel) addBytesTransferred(n int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.bytesTransferred += n
+}
+
+// countingConn wraps a net.Conn to track bytes transferred through a tunnel.
+type countingConn struct {
+	net.Conn
+	tunnel *ActiveTunnel
+}
+
+func (c *countingConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if n > 0 {
+		c.tunnel.addBytesTransferred(int64(n))
+	}
+	return n, err
+}
+
+func (c *countingConn) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	if n > 0 {
+		c.tunnel.addBytesTransferred(int64(n))
+	}
+	return n, err
 }
 
 // Default health check and reconnection parameters.
 const (
 	defaultHealthCheckInterval = 10 * time.Second
+	tunnelHealthCheckInterval  = 60 * time.Second
+	tunnelHealthProbeTimeout   = 5 * time.Second
 	reconnectBaseDelay         = 1 * time.Second
 	reconnectMaxDelay          = 60 * time.Second
 	reconnectBackoffFactor     = 2
@@ -119,6 +189,11 @@ const (
 // so adding VNC + Gateway tunnels does not create additional SSH sessions.
 // Each tunnel binds an ephemeral local port (127.0.0.1:0) and forwards
 // inbound connections through the SSH channel to the agent's service port.
+//
+// A background goroutine probes all active tunnel ports every 60 seconds
+// and closes tunnels whose local listeners are no longer accepting connections.
+// Per-instance monitors (started via StartTunnelsForInstance) then detect the
+// closed tunnels and attempt reconnection with exponential backoff.
 //
 // Performance: On loopback, SSH tunnel overhead is ~55µs per HTTP request
 // and supports >27,000 req/s with 10 concurrent clients. WebSocket messages
@@ -131,15 +206,33 @@ type TunnelManager struct {
 
 	monMu    sync.Mutex
 	monitors map[string]context.CancelFunc // per-instance health monitor cancellers
+
+	// Global health check lifecycle
+	healthCtx    context.Context
+	healthCancel context.CancelFunc
+	healthWg     sync.WaitGroup
+
+	// Per-instance reconnection counters
+	metricsMu  sync.RWMutex
+	reconnects map[string]int64
 }
 
 // NewTunnelManager creates a TunnelManager backed by the given SSHManager.
+// It starts a background health check goroutine that probes all active tunnel
+// ports every 60 seconds.
 func NewTunnelManager(sshManager *sshmanager.SSHManager) *TunnelManager {
-	return &TunnelManager{
-		sshManager: sshManager,
-		tunnels:    make(map[string][]*ActiveTunnel),
-		monitors:   make(map[string]context.CancelFunc),
+	ctx, cancel := context.WithCancel(context.Background())
+	tm := &TunnelManager{
+		sshManager:   sshManager,
+		tunnels:      make(map[string][]*ActiveTunnel),
+		monitors:     make(map[string]context.CancelFunc),
+		healthCtx:    ctx,
+		healthCancel: cancel,
+		reconnects:   make(map[string]int64),
 	}
+	tm.healthWg.Add(1)
+	go tm.globalHealthCheckLoop()
+	return tm
 }
 
 // CreateReverseTunnel establishes a reverse tunnel (SSH -R equivalent).
@@ -222,8 +315,9 @@ func (tm *TunnelManager) createReverseTunnel(ctx context.Context, instanceName s
 				continue
 			}
 
-			// Bidirectional copy
-			go bidirectionalCopy(tunnelCtx, conn, remote)
+			// Bidirectional copy with byte counting
+			counted := &countingConn{Conn: conn, tunnel: tunnel}
+			go bidirectionalCopy(tunnelCtx, counted, remote)
 		}
 	}()
 
@@ -362,10 +456,16 @@ func (tm *TunnelManager) StopTunnelsForInstance(instanceName string) error {
 	return nil
 }
 
-// Shutdown stops all health monitors and closes all tunnels. Use this during
-// application shutdown to ensure clean cleanup.
+// Shutdown stops the global health check, all per-instance monitors, and closes
+// all tunnels. Use this during application shutdown to ensure clean cleanup.
 func (tm *TunnelManager) Shutdown() {
-	// Stop all monitors first
+	// Stop global health check
+	if tm.healthCancel != nil {
+		tm.healthCancel()
+		tm.healthWg.Wait()
+	}
+
+	// Stop all monitors
 	tm.monMu.Lock()
 	for name, cancel := range tm.monitors {
 		cancel()
@@ -460,6 +560,7 @@ func (tm *TunnelManager) reconnectTunnel(ctx context.Context, instanceName strin
 		}
 
 		if err == nil {
+			tm.incrementReconnects(instanceName)
 			log.Printf("[tunnel] reconnected %s tunnel for %s after %d attempt(s)", service, instanceName, attempt)
 			return
 		}
@@ -477,6 +578,51 @@ func (tm *TunnelManager) reconnectTunnel(ctx context.Context, instanceName strin
 			delay = reconnectMaxDelay
 		}
 	}
+}
+
+// CheckTunnelHealth verifies a specific tunnel is functional by attempting a TCP
+// connection to its local listening port. tunnelType should be a ServiceLabel
+// value (e.g., "vnc", "gateway").
+func (tm *TunnelManager) CheckTunnelHealth(instanceName string, tunnelType string) error {
+	service := ServiceLabel(tunnelType)
+	tunnels := tm.GetTunnels(instanceName)
+
+	for _, t := range tunnels {
+		if t.Config.Service != service {
+			continue
+		}
+		if t.IsClosed() {
+			return fmt.Errorf("tunnel %s for %s is closed", tunnelType, instanceName)
+		}
+
+		err := tm.probeTunnelPort(t)
+		t.updateHealthCheck(err)
+		if err != nil {
+			return fmt.Errorf("tunnel %s for %s health check failed: %w", tunnelType, instanceName, err)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("no %s tunnel found for instance %s", tunnelType, instanceName)
+}
+
+// GetTunnelMetrics returns health and performance metrics for all tunnels
+// belonging to the given instance.
+func (tm *TunnelManager) GetTunnelMetrics(instanceName string) []TunnelMetrics {
+	tunnels := tm.GetTunnels(instanceName)
+	metrics := make([]TunnelMetrics, 0, len(tunnels))
+	for _, t := range tunnels {
+		metrics = append(metrics, t.Metrics())
+	}
+	return metrics
+}
+
+// GetReconnectionCount returns the total number of successful tunnel
+// reconnections for the given instance.
+func (tm *TunnelManager) GetReconnectionCount(instanceName string) int64 {
+	tm.metricsMu.RLock()
+	defer tm.metricsMu.RUnlock()
+	return tm.reconnects[instanceName]
 }
 
 func (tm *TunnelManager) addTunnel(instanceName string, tunnel *ActiveTunnel) {
@@ -501,6 +647,80 @@ func (tm *TunnelManager) removeClosed(instanceName string) {
 	} else {
 		tm.tunnels[instanceName] = active
 	}
+}
+
+// globalHealthCheckLoop runs a periodic health check across all active tunnels.
+// It probes each tunnel's local listening port via TCP and closes tunnels that
+// are no longer accepting connections so that per-instance monitors can
+// recreate them.
+func (tm *TunnelManager) globalHealthCheckLoop() {
+	defer tm.healthWg.Done()
+	ticker := time.NewTicker(tunnelHealthCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-tm.healthCtx.Done():
+			return
+		case <-ticker.C:
+			tm.runGlobalHealthCheck()
+		}
+	}
+}
+
+// runGlobalHealthCheck probes every active tunnel and logs health status.
+// Tunnels that fail the TCP probe are closed so that the per-instance monitor
+// can detect the closure and attempt reconnection.
+func (tm *TunnelManager) runGlobalHealthCheck() {
+	allTunnels := tm.GetAllTunnels()
+	if len(allTunnels) == 0 {
+		return
+	}
+
+	healthy, unhealthy := 0, 0
+	for instanceName, tunnels := range allTunnels {
+		for _, t := range tunnels {
+			if t.IsClosed() {
+				continue
+			}
+
+			err := tm.probeTunnelPort(t)
+			t.updateHealthCheck(err)
+
+			if err != nil {
+				unhealthy++
+				log.Printf("[tunnel-health] %s %s tunnel (port %d) unhealthy: %v",
+					instanceName, t.Config.Service, t.LocalPort, err)
+				// Close the tunnel so the per-instance monitor can recreate it
+				if closeErr := t.Close(); closeErr != nil {
+					log.Printf("[tunnel-health] error closing unhealthy tunnel for %s: %v", instanceName, closeErr)
+				}
+			} else {
+				healthy++
+			}
+		}
+	}
+
+	log.Printf("[tunnel-health] check complete: %d healthy, %d unhealthy", healthy, unhealthy)
+}
+
+// probeTunnelPort attempts a TCP connection to the tunnel's local listening port
+// to verify it is still accepting connections.
+func (tm *TunnelManager) probeTunnelPort(t *ActiveTunnel) error {
+	addr := fmt.Sprintf("127.0.0.1:%d", t.LocalPort)
+	conn, err := net.DialTimeout("tcp", addr, tunnelHealthProbeTimeout)
+	if err != nil {
+		return fmt.Errorf("TCP probe to %s failed: %w", addr, err)
+	}
+	conn.Close()
+	return nil
+}
+
+// incrementReconnects increments the reconnection counter for an instance.
+func (tm *TunnelManager) incrementReconnects(instanceName string) {
+	tm.metricsMu.Lock()
+	defer tm.metricsMu.Unlock()
+	tm.reconnects[instanceName]++
 }
 
 // bidirectionalCopy pipes data between two connections until one side closes or errors.
