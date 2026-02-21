@@ -117,6 +117,7 @@ func main() {
 			}
 			return ids, nil
 		}, orch)
+		tunnelMgr.StartTunnelHealthChecker(ctx)
 	}
 
 	r := chi.NewRouter()

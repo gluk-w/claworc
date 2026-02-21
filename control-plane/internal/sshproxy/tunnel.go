@@ -59,8 +59,9 @@ type ActiveTunnel struct {
 	Error     string // last error message, if any
 	LastCheck time.Time
 
-	listener net.Listener // the local listener (for reverse tunnels)
+	listener net.Listener    // the local listener (for reverse tunnels)
 	cancel   context.CancelFunc
+	metrics  *TunnelMetrics // per-tunnel health metrics
 }
 
 // reconnectState tracks exponential backoff for reconnection attempts per instance.
@@ -85,16 +86,21 @@ type TunnelManager struct {
 	backoffMu sync.RWMutex
 	backoff   map[uint]*reconnectState // per-instance reconnection backoff
 
-	cancel context.CancelFunc
+	reconnectCountMu sync.RWMutex
+	reconnectCounts  map[uint]int64 // total tunnel reconnection count per instance
+
+	cancel       context.CancelFunc
+	healthCancel context.CancelFunc
 }
 
 // NewTunnelManager creates a new TunnelManager that uses the given SSHManager
 // for obtaining SSH connections to instances.
 func NewTunnelManager(sshMgr *SSHManager) *TunnelManager {
 	return &TunnelManager{
-		sshMgr:  sshMgr,
-		tunnels: make(map[uint][]*ActiveTunnel),
-		backoff: make(map[uint]*reconnectState),
+		sshMgr:          sshMgr,
+		tunnels:         make(map[uint][]*ActiveTunnel),
+		backoff:         make(map[uint]*reconnectState),
+		reconnectCounts: make(map[uint]int64),
 	}
 }
 
@@ -131,6 +137,7 @@ func (tm *TunnelManager) CreateReverseTunnel(ctx context.Context, instanceID uin
 		LastCheck: time.Now(),
 		listener:  listener,
 		cancel:    tunnelCancel,
+		metrics:   &TunnelMetrics{CreatedAt: time.Now()},
 	}
 
 	tm.addTunnel(instanceID, tunnel)
@@ -202,6 +209,7 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID
 	if len(existing) > 0 {
 		log.Printf("Recreating tunnels for instance %d (unhealthy tunnels detected)", instanceID)
 		tm.StopTunnelsForInstance(instanceID)
+		tm.incrementReconnectCount(instanceID)
 	}
 
 	// Create VNC tunnel
@@ -280,6 +288,7 @@ func (tm *TunnelManager) StopTunnelsForInstance(instanceID uint) error {
 
 // StopAll closes all tunnels for all instances. Used during shutdown.
 func (tm *TunnelManager) StopAll() {
+	tm.StopTunnelHealthChecker()
 	if tm.cancel != nil {
 		tm.cancel()
 	}
