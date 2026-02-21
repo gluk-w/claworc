@@ -33,9 +33,6 @@ const (
 	// keepaliveInterval is how often we send keepalive requests.
 	keepaliveInterval = 30 * time.Second
 
-	// keepaliveTimeout is how long we wait for a keepalive response.
-	keepaliveTimeout = 10 * time.Second
-
 	// connectTimeout is the default timeout for establishing SSH connections.
 	connectTimeout = 30 * time.Second
 )

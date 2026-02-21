@@ -24,15 +24,6 @@ import (
 const (
 	// tunnelCheckInterval is how often the background goroutine checks tunnel health.
 	tunnelCheckInterval = 60 * time.Second
-
-	// reconnectBaseDelay is the initial delay for reconnection backoff.
-	reconnectBaseDelay = 2 * time.Second
-
-	// reconnectMaxDelay is the maximum delay for reconnection backoff.
-	reconnectMaxDelay = 60 * time.Second
-
-	// reconnectMaxAttempts is the maximum number of reconnection attempts before giving up.
-	reconnectMaxAttempts = 5
 )
 
 // TunnelType represents the direction of the tunnel.
