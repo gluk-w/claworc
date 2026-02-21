@@ -450,42 +450,6 @@ func (d *DockerOrchestrator) ExecInInstance(ctx context.Context, name string, cm
 	return cleaned, "", inspectResp.ExitCode, nil
 }
 
-func (d *DockerOrchestrator) ExecInteractive(ctx context.Context, name string, cmd []string) (*ExecSession, error) {
-	execCfg := container.ExecOptions{
-		Cmd:          cmd,
-		AttachStdin:  true,
-		AttachStdout: true,
-		AttachStderr: true,
-		Tty:          true,
-		ConsoleSize:  &[2]uint{24, 80},
-	}
-
-	execID, err := d.client.ContainerExecCreate(ctx, name, execCfg)
-	if err != nil {
-		return nil, fmt.Errorf("exec create: %w", err)
-	}
-
-	resp, err := d.client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{Tty: true})
-	if err != nil {
-		return nil, fmt.Errorf("exec attach: %w", err)
-	}
-
-	return &ExecSession{
-		Stdin:  resp.Conn,
-		Stdout: resp.Conn,
-		Resize: func(cols, rows uint16) error {
-			return d.client.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
-				Width:  uint(cols),
-				Height: uint(rows),
-			})
-		},
-		Close: func() error {
-			resp.Close()
-			return nil
-		},
-	}, nil
-}
-
 func (d *DockerOrchestrator) GetInstanceSSHEndpoint(ctx context.Context, name string) (string, int, error) {
 	inspect, err := d.client.ContainerInspect(ctx, name)
 	if err != nil {

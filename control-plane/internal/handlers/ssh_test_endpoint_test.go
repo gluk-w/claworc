@@ -43,9 +43,6 @@ func (m *mockOrchestrator) UpdateInstanceConfig(ctx context.Context, name string
 func (m *mockOrchestrator) CloneVolumes(ctx context.Context, srcName, dstName string) error {
 	return nil
 }
-func (m *mockOrchestrator) ExecInteractive(ctx context.Context, name string, cmd []string) (*orchestrator.ExecSession, error) {
-	return nil, nil
-}
 func (m *mockOrchestrator) GetInstanceSSHEndpoint(ctx context.Context, name string) (string, int, error) {
 	return m.sshHost, m.sshPort, m.sshErr
 }

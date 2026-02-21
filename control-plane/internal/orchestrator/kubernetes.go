@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"strings"
 	"time"
@@ -331,93 +330,6 @@ func (k *KubernetesOrchestrator) ExecInInstance(ctx context.Context, name string
 		return "", "", -1, fmt.Errorf("no running pod found for instance %s", name)
 	}
 	return k.execInPod(ctx, podName, cmd)
-}
-
-// termSizeQueue implements remotecommand.TerminalSizeQueue via a channel.
-type termSizeQueue struct {
-	ch chan remotecommand.TerminalSize
-}
-
-func (q *termSizeQueue) Next() *remotecommand.TerminalSize {
-	size, ok := <-q.ch
-	if !ok {
-		return nil
-	}
-	return &size
-}
-
-func (k *KubernetesOrchestrator) ExecInteractive(ctx context.Context, name string, cmd []string) (*ExecSession, error) {
-	podName, err := k.getPodName(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	if podName == "" {
-		return nil, fmt.Errorf("no running pod found for instance %s", name)
-	}
-
-	req := k.clientset.CoreV1().RESTClient().Post().
-		Resource("pods").
-		Name(podName).
-		Namespace(k.ns()).
-		SubResource("exec").
-		VersionedParams(&corev1.PodExecOptions{
-			Command: cmd,
-			Stdin:   true,
-			Stdout:  true,
-			Stderr:  false,
-			TTY:     true,
-		}, scheme.ParameterCodec)
-
-	exec, err := remotecommand.NewSPDYExecutor(k.restConfig, "POST", req.URL())
-	if err != nil {
-		return nil, fmt.Errorf("create executor: %w", err)
-	}
-
-	stdinR, stdinW := io.Pipe()
-	stdoutR, stdoutW := io.Pipe()
-
-	sizeCh := make(chan remotecommand.TerminalSize, 1)
-	sizeQueue := &termSizeQueue{ch: sizeCh}
-
-	// Send initial size
-	sizeCh <- remotecommand.TerminalSize{Width: 80, Height: 24}
-
-	done := make(chan struct{})
-
-	go func() {
-		defer close(done)
-		defer stdoutW.Close()
-		err := exec.StreamWithContext(ctx, remotecommand.StreamOptions{
-			Stdin:             stdinR,
-			Stdout:            stdoutW,
-			Tty:               true,
-			TerminalSizeQueue: sizeQueue,
-		})
-		if err != nil {
-			log.Printf("k8s exec stream ended: %v", err)
-		}
-	}()
-
-	return &ExecSession{
-		Stdin:  stdinW,
-		Stdout: stdoutR,
-		Resize: func(cols, rows uint16) error {
-			// Drain any pending size so the new one is always delivered
-			select {
-			case <-sizeCh:
-			default:
-			}
-			sizeCh <- remotecommand.TerminalSize{Width: cols, Height: rows}
-			return nil
-		},
-		Close: func() error {
-			close(sizeCh)
-			stdinW.Close()
-			stdinR.Close()
-			stdoutR.Close()
-			return nil
-		},
-	}, nil
 }
 
 func (k *KubernetesOrchestrator) GetInstanceSSHEndpoint(ctx context.Context, name string) (string, int, error) {
