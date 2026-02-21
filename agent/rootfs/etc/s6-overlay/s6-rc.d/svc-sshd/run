@@ -1,0 +1,23 @@
+#!/command/with-contenv bash
+
+# Generate SSH host keys if they don't exist (first container start)
+if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
+    echo "Generating SSH host keys..."
+    ssh-keygen -A
+fi
+
+# Create the privilege separation directory required by sshd
+mkdir -p /run/sshd
+
+# Ensure /root/.ssh directory exists with correct permissions
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+
+# Fix permissions on authorized_keys if it exists
+if [ -f /root/.ssh/authorized_keys ]; then
+    chmod 600 /root/.ssh/authorized_keys
+fi
+
+echo "Starting SSH daemon..."
+# Run sshd in foreground mode (-D) so s6 can supervise it
+exec /usr/sbin/sshd -D -e
