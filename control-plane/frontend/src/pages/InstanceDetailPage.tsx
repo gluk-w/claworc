@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import StatusBadge from "@/components/StatusBadge";
 import ActionButtons from "@/components/ActionButtons";
 import ProviderTable from "@/components/ProviderTable";
@@ -10,6 +10,8 @@ import TerminalPanel from "@/components/TerminalPanel";
 import VncPanel from "@/components/VncPanel";
 import ChatPanel from "@/components/ChatPanel";
 import FileBrowser from "@/components/FileBrowser";
+import SSHStatus from "@/components/SSHStatus";
+import SSHTunnelList from "@/components/SSHTunnelList";
 import {
   useInstance,
   useStartInstance,
@@ -23,6 +25,7 @@ import {
   useRestartedToast,
 } from "@/hooks/useInstances";
 import { useSettings } from "@/hooks/useSettings";
+import { useSSHStatus } from "@/hooks/useSSHStatus";
 import { useInstanceLogs } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useDesktop } from "@/hooks/useDesktop";
@@ -41,6 +44,7 @@ export default function InstanceDetailPage() {
   const { data: settings } = useSettings();
   useRestartedToast(instance ? [instance] : undefined);
   const { data: configData } = useInstanceConfig(instanceId, instance?.status === "running");
+  const sshStatus = useSSHStatus(instanceId, instance?.status === "running");
   const startMutation = useStartInstance();
   const stopMutation = useStopInstance();
   const restartMutation = useRestartInstance();
@@ -74,6 +78,9 @@ export default function InstanceDetailPage() {
   // Terminal/Chrome are mounted once the user first visits the tab, then stay mounted
   const [terminalActivated, setTerminalActivated] = useState(getTabFromHash() === "terminal");
   const [chromeActivated, setChromeActivated] = useState(getTabFromHash() === "chrome");
+
+  // SSH tunnel detail toggle
+  const [tunnelsExpanded, setTunnelsExpanded] = useState(false);
 
   // API key editing state
   const [editingKeys, setEditingKeys] = useState(false);
@@ -353,6 +360,33 @@ export default function InstanceDetailPage() {
               ))}
             </div>
           </div>
+
+          {/* SSH Connection Status */}
+          <SSHStatus
+            status={sshStatus.data}
+            isLoading={sshStatus.isLoading}
+            isError={sshStatus.isError}
+            onRefresh={() => sshStatus.refetch()}
+          />
+
+          {/* SSH Tunnel Details (expand/collapse) */}
+          {sshStatus.data && sshStatus.data.tunnels.length > 0 && (
+            <div>
+              <button
+                onClick={() => setTunnelsExpanded((prev) => !prev)}
+                className="flex items-center gap-1 text-sm font-medium text-gray-700 hover:text-gray-900 mb-2"
+              >
+                {tunnelsExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                Tunnel Details
+              </button>
+              {tunnelsExpanded && (
+                <SSHTunnelList
+                  tunnels={sshStatus.data.tunnels}
+                  isLoading={sshStatus.isLoading}
+                />
+              )}
+            </div>
+          )}
 
           {/* API Key Overrides Section */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
