@@ -708,6 +708,13 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Stop any SSH tunnels for this instance before deleting
+	if TunnelMgr != nil {
+		if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
+			log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)
+		}
+	}
+
 	if orch := orchestrator.Get(); orch != nil {
 		if err := orch.DeleteInstance(r.Context(), inst.Name); err != nil {
 			log.Printf("Failed to delete container resources for %s – proceeding with DB cleanup: %v", logutil.SanitizeForLog(inst.Name), err)
@@ -770,6 +777,13 @@ func StopInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Stop any SSH tunnels for this instance
+	if TunnelMgr != nil {
+		if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
+			log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)
+		}
+	}
+
 	if orch := orchestrator.Get(); orch != nil {
 		if err := orch.StopInstance(r.Context(), inst.Name); err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to stop instance: %v", err))
@@ -800,6 +814,13 @@ func RestartInstance(w http.ResponseWriter, r *http.Request) {
 	if !middleware.CanAccessInstance(r, inst.ID) {
 		writeError(w, http.StatusForbidden, "Access denied")
 		return
+	}
+
+	// Stop existing SSH tunnels before restart; they will be recreated by the background manager
+	if TunnelMgr != nil {
+		if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
+			log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)
+		}
 	}
 
 	if orch := orchestrator.Get(); orch != nil {
