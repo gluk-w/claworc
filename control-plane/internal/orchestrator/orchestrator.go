@@ -28,14 +28,8 @@ type ContainerOrchestrator interface {
 	// Clone
 	CloneVolumes(ctx context.Context, srcName, dstName string) error
 
-	// Exec & Files
-	ExecInInstance(ctx context.Context, name string, cmd []string) (stdout string, stderr string, exitCode int, err error)
+	// Exec
 	ExecInteractive(ctx context.Context, name string, cmd []string) (*ExecSession, error)
-	ListDirectory(ctx context.Context, name string, path string) ([]FileEntry, error)
-	ReadFile(ctx context.Context, name string, path string) ([]byte, error)
-	CreateFile(ctx context.Context, name string, path string, content string) error
-	CreateDirectory(ctx context.Context, name string, path string) error
-	WriteFile(ctx context.Context, name string, path string, data []byte) error
 
 	// SSH
 	GetInstanceSSHEndpoint(ctx context.Context, name string) (host string, port int, err error)

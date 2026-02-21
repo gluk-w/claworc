@@ -485,26 +485,6 @@ func (k *KubernetesOrchestrator) ExecInteractive(ctx context.Context, name strin
 	}, nil
 }
 
-func (k *KubernetesOrchestrator) ListDirectory(ctx context.Context, name string, path string) ([]FileEntry, error) {
-	return listDirectory(ctx, k.ExecInInstance, name, path)
-}
-
-func (k *KubernetesOrchestrator) ReadFile(ctx context.Context, name string, path string) ([]byte, error) {
-	return readFile(ctx, k.ExecInInstance, name, path)
-}
-
-func (k *KubernetesOrchestrator) CreateFile(ctx context.Context, name string, path string, content string) error {
-	return createFile(ctx, k.ExecInInstance, name, path, content)
-}
-
-func (k *KubernetesOrchestrator) CreateDirectory(ctx context.Context, name string, path string) error {
-	return createDirectory(ctx, k.ExecInInstance, name, path)
-}
-
-func (k *KubernetesOrchestrator) WriteFile(ctx context.Context, name string, path string, data []byte) error {
-	return writeFile(ctx, k.ExecInInstance, name, path, data)
-}
-
 func (k *KubernetesOrchestrator) GetInstanceSSHEndpoint(ctx context.Context, name string) (string, int, error) {
 	svcName := name + "-vnc"
 	svc, err := k.clientset.CoreV1().Services(k.ns()).Get(ctx, svcName, metav1.GetOptions{})

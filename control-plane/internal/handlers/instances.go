@@ -19,6 +19,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshfiles"
 	"github.com/gluk-w/claworc/control-plane/internal/sshkeys"
 	"github.com/gluk-w/claworc/control-plane/internal/sshtunnel"
 	"github.com/go-chi/chi/v5"
@@ -584,7 +585,9 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		// Push models and API keys to the instance (waits for container ready)
 		database.DB.First(&inst, inst.ID)
 		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
-		config.ConfigureInstance(ctx, orch, name, models, resolvedKeys)
+		if ops, ok := orch.(config.InstanceOps); ok {
+			config.ConfigureInstance(ctx, ops, name, models, resolvedKeys)
+		}
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -716,7 +719,9 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	if orch != nil && orchStatus == "running" {
 		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
-		go config.ConfigureInstance(context.Background(), orch, inst.Name, models, resolvedKeys)
+		if ops, ok := orch.(config.InstanceOps); ok {
+			go config.ConfigureInstance(context.Background(), ops, inst.Name, models, resolvedKeys)
+		}
 	}
 
 	status := resolveStatus(&inst, orchStatus)
@@ -869,13 +874,19 @@ func GetInstanceConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.Get()
-	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+	sm := sshtunnel.GetSSHManager()
+	if sm == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
 		return
 	}
 
-	content, err := orch.ReadFile(r.Context(), inst.Name, orchestrator.PathOpenClawConfig)
+	sshClient, err := sm.GetClient(inst.Name)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Instance must be running to read config")
+		return
+	}
+
+	content, err := sshfiles.ReadFile(sshClient, orchestrator.PathOpenClawConfig)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "Instance must be running to read config")
 		return
@@ -1087,7 +1098,9 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		// Re-fetch to get latest state
 		database.DB.First(&inst, inst.ID)
 		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
-		config.ConfigureInstance(ctx, orch, cloneName, models, resolvedKeys)
+		if ops, ok := orch.(config.InstanceOps); ok {
+			config.ConfigureInstance(ctx, ops, cloneName, models, resolvedKeys)
+		}
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))

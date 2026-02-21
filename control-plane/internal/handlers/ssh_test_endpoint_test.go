@@ -46,26 +46,8 @@ func (m *mockOrchestrator) StreamInstanceLogs(ctx context.Context, name string, 
 func (m *mockOrchestrator) CloneVolumes(ctx context.Context, srcName, dstName string) error {
 	return nil
 }
-func (m *mockOrchestrator) ExecInInstance(ctx context.Context, name string, cmd []string) (string, string, int, error) {
-	return "", "", 0, nil
-}
 func (m *mockOrchestrator) ExecInteractive(ctx context.Context, name string, cmd []string) (*orchestrator.ExecSession, error) {
 	return nil, nil
-}
-func (m *mockOrchestrator) ListDirectory(ctx context.Context, name string, path string) ([]orchestrator.FileEntry, error) {
-	return nil, nil
-}
-func (m *mockOrchestrator) ReadFile(ctx context.Context, name string, path string) ([]byte, error) {
-	return nil, nil
-}
-func (m *mockOrchestrator) CreateFile(ctx context.Context, name string, path string, content string) error {
-	return nil
-}
-func (m *mockOrchestrator) CreateDirectory(ctx context.Context, name string, path string) error {
-	return nil
-}
-func (m *mockOrchestrator) WriteFile(ctx context.Context, name string, path string, data []byte) error {
-	return nil
 }
 func (m *mockOrchestrator) GetInstanceSSHEndpoint(ctx context.Context, name string) (string, int, error) {
 	return m.sshHost, m.sshPort, m.sshErr
