@@ -1633,3 +1633,120 @@ func GetSSHFingerprint(w http.ResponseWriter, r *http.Request) {
 		Algorithm:   pubKey.Type(),
 	})
 }
+
+// --- Global SSH Status ---
+
+// globalSSHInstanceStatus represents SSH status for a single instance in the global dashboard.
+type globalSSHInstanceStatus struct {
+	InstanceID      uint              `json:"instance_id"`
+	InstanceName    string            `json:"instance_name"`
+	DisplayName     string            `json:"display_name"`
+	InstanceStatus  string            `json:"instance_status"`
+	ConnectionState string            `json:"connection_state"`
+	Health          *sshHealthMetrics `json:"health"`
+	TunnelCount     int               `json:"tunnel_count"`
+	HealthyTunnels  int               `json:"healthy_tunnels"`
+}
+
+// globalSSHStatusResponse wraps the list plus summary stats.
+type globalSSHStatusResponse struct {
+	Instances    []globalSSHInstanceStatus `json:"instances"`
+	TotalCount   int                      `json:"total_count"`
+	Connected    int                      `json:"connected"`
+	Reconnecting int                      `json:"reconnecting"`
+	Failed       int                      `json:"failed"`
+	Disconnected int                      `json:"disconnected"`
+}
+
+// GetGlobalSSHStatus returns an overview of SSH connection status across all instances
+// the current user has access to. Used by the global SSH dashboard.
+func GetGlobalSSHStatus(w http.ResponseWriter, r *http.Request) {
+	var instances []database.Instance
+	user := middleware.GetUser(r)
+
+	query := database.DB.Order("sort_order ASC, id ASC")
+	if user != nil && user.Role != "admin" {
+		assignedIDs, err := database.GetUserInstances(user.ID)
+		if err != nil || len(assignedIDs) == 0 {
+			writeJSON(w, http.StatusOK, globalSSHStatusResponse{
+				Instances: []globalSSHInstanceStatus{},
+			})
+			return
+		}
+		query = query.Where("id IN ?", assignedIDs)
+	}
+
+	if err := query.Find(&instances).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to list instances")
+		return
+	}
+
+	orch := orchestrator.Get()
+	sm := sshtunnel.GetSSHManager()
+	tm := sshtunnel.GetTunnelManager()
+
+	resp := globalSSHStatusResponse{
+		Instances: make([]globalSSHInstanceStatus, 0, len(instances)),
+	}
+
+	for i := range instances {
+		inst := &instances[i]
+
+		orchStatus := "stopped"
+		if orch != nil {
+			s, _ := orch.GetInstanceStatus(r.Context(), inst.Name)
+			orchStatus = s
+		}
+		status := resolveStatus(inst, orchStatus)
+
+		entry := globalSSHInstanceStatus{
+			InstanceID:      inst.ID,
+			InstanceName:    inst.Name,
+			DisplayName:     inst.DisplayName,
+			InstanceStatus:  status,
+			ConnectionState: string(sshmanager.StateDisconnected),
+		}
+
+		if sm != nil {
+			entry.ConnectionState = string(sm.GetConnectionState(inst.Name))
+
+			if metrics := sm.GetMetrics(inst.Name); metrics != nil {
+				entry.Health = &sshHealthMetrics{
+					ConnectedAt:      formatTimestamp(metrics.ConnectedAt),
+					LastHealthCheck:  formatTimestamp(metrics.LastHealthCheck),
+					UptimeSeconds:    int64(metrics.Uptime().Seconds()),
+					SuccessfulChecks: metrics.SuccessfulChecks,
+					FailedChecks:     metrics.FailedChecks,
+					Healthy:          metrics.Healthy,
+				}
+			}
+		}
+
+		if tm != nil {
+			tunnelMetrics := tm.GetTunnelMetrics(inst.Name)
+			entry.TunnelCount = len(tunnelMetrics)
+			for _, m := range tunnelMetrics {
+				if m.Healthy {
+					entry.HealthyTunnels++
+				}
+			}
+		}
+
+		// Accumulate stats
+		switch entry.ConnectionState {
+		case "connected":
+			resp.Connected++
+		case "reconnecting":
+			resp.Reconnecting++
+		case "failed":
+			resp.Failed++
+		default:
+			resp.Disconnected++
+		}
+
+		resp.Instances = append(resp.Instances, entry)
+	}
+
+	resp.TotalCount = len(resp.Instances)
+	writeJSON(w, http.StatusOK, resp)
+}

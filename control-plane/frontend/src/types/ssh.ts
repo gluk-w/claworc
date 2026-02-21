@@ -71,3 +71,23 @@ export interface SSHFingerprintResponse {
   fingerprint: string;
   algorithm: string;
 }
+
+export interface GlobalSSHInstanceStatus {
+  instance_id: number;
+  instance_name: string;
+  display_name: string;
+  instance_status: string;
+  connection_state: SSHConnectionState;
+  health: SSHHealthMetrics | null;
+  tunnel_count: number;
+  healthy_tunnels: number;
+}
+
+export interface GlobalSSHStatusResponse {
+  instances: GlobalSSHInstanceStatus[];
+  total_count: number;
+  connected: number;
+  reconnecting: number;
+  failed: number;
+  disconnected: number;
+}

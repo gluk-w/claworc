@@ -109,6 +109,9 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireAuth(sessionStore))
 
+			// Global SSH dashboard (access-filtered internally like ListInstances)
+			r.Get("/ssh-status", handlers.GetGlobalSSHStatus)
+
 			// Instances (ListInstances filters by role internally)
 			r.Get("/instances", handlers.ListInstances)
 			r.Put("/instances/reorder", handlers.ReorderInstances)

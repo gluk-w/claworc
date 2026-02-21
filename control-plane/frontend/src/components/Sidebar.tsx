@@ -6,6 +6,7 @@ import {
   Users,
   LogOut,
   User,
+  Wifi,
 } from "lucide-react";
 import { useHealth } from "@/hooks/useHealth";
 import { useAuth } from "@/contexts/AuthContext";
@@ -84,6 +85,12 @@ export default function Sidebar() {
           <LayoutDashboard size={18} className="shrink-0" />
           <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
             Dashboard
+          </span>
+        </Link>
+        <Link to="/ssh-dashboard" className={navLinkClass("/ssh-dashboard")}>
+          <Wifi size={18} className="shrink-0" />
+          <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
+            SSH Status
           </span>
         </Link>
         {isAdmin && (

@@ -5,6 +5,7 @@ import {
   testSSHConnection,
   reconnectSSH,
   fetchSSHFingerprint,
+  fetchGlobalSSHStatus,
 } from "@/api/ssh";
 
 export function useSSHStatus(instanceId: number, enabled = true) {
@@ -54,5 +55,14 @@ export function useSSHFingerprint(instanceId: number, enabled = true) {
     queryFn: () => fetchSSHFingerprint(instanceId),
     enabled,
     staleTime: 60_000,
+  });
+}
+
+export function useGlobalSSHStatus() {
+  return useQuery({
+    queryKey: ["global-ssh-status"],
+    queryFn: fetchGlobalSSHStatus,
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: false,
   });
 }

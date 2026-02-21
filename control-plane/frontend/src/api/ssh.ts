@@ -5,6 +5,7 @@ import type {
   SSHTestResult,
   SSHReconnectResponse,
   SSHFingerprintResponse,
+  GlobalSSHStatusResponse,
 } from "@/types/ssh";
 
 export async function fetchSSHStatus(
@@ -49,5 +50,10 @@ export async function fetchSSHFingerprint(
   const { data } = await client.get<SSHFingerprintResponse>(
     `/instances/${instanceId}/ssh-fingerprint`,
   );
+  return data;
+}
+
+export async function fetchGlobalSSHStatus(): Promise<GlobalSSHStatusResponse> {
+  const { data } = await client.get<GlobalSSHStatusResponse>("/ssh-status");
   return data;
 }

@@ -8,6 +8,7 @@ import LoginPage from "./pages/LoginPage";
 import UsersPage from "./pages/UsersPage";
 import AccountPage from "./pages/AccountPage";
 import VncPopupPage from "./pages/VncPopupPage";
+import SSHDashboardPage from "./pages/SSHDashboardPage";
 import { useAuth } from "./contexts/AuthContext";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -44,6 +45,7 @@ export default function App() {
         }
       >
         <Route path="/" element={<DashboardPage />} />
+        <Route path="/ssh-dashboard" element={<SSHDashboardPage />} />
         <Route
           path="/instances/new"
           element={
