@@ -21,6 +21,40 @@ const defaultKeepaliveInterval = 30 * time.Second
 // HealthCheckTimeout is the maximum time allowed for a single health check command.
 const HealthCheckTimeout = 5 * time.Second
 
+// Default reconnection parameters.
+const (
+	DefaultMaxRetries      = 10
+	reconnectBaseDelay     = 1 * time.Second
+	reconnectMaxDelay      = 16 * time.Second
+	reconnectBackoffFactor = 2
+)
+
+// ConnectionEvent represents a state change event for an SSH connection.
+type ConnectionEvent struct {
+	InstanceName string    `json:"instance_name"`
+	Type         EventType `json:"type"`
+	Details      string    `json:"details"`
+	Timestamp    time.Time `json:"timestamp"`
+}
+
+// EventType identifies the type of connection event.
+type EventType string
+
+const (
+	EventConnected       EventType = "connected"
+	EventDisconnected    EventType = "disconnected"
+	EventReconnecting    EventType = "reconnecting"
+	EventReconnected     EventType = "reconnected"
+	EventReconnectFailed EventType = "reconnect_failed"
+)
+
+// ConnectionParams stores the parameters needed to reconnect an SSH connection.
+type ConnectionParams struct {
+	Host           string `json:"host"`
+	Port           int    `json:"port"`
+	PrivateKeyPath string `json:"private_key_path"`
+}
+
 // ConnectionMetrics tracks health and performance data for a single SSH connection.
 type ConnectionMetrics struct {
 	ConnectedAt      time.Time `json:"connected_at"`
@@ -41,12 +75,19 @@ func (cm *ConnectionMetrics) Uptime() time.Duration {
 // SSHManager manages SSH connections to agent instances.
 // It maintains a pool of active SSH clients keyed by instance name,
 // enforces a maximum connection limit, and runs periodic keepalive
-// health checks on established connections.
+// health checks on established connections. When a connection fails,
+// it automatically attempts reconnection with exponential backoff.
 type SSHManager struct {
 	mu             sync.RWMutex
 	clients        map[string]*ssh.Client
 	metrics        map[string]*ConnectionMetrics
+	params         map[string]*ConnectionParams
+	reconnecting   map[string]bool // tracks instances currently being reconnected
 	maxConnections int
+
+	// event tracking
+	eventsMu sync.RWMutex
+	events   map[string][]ConnectionEvent
 
 	// keepalive lifecycle
 	keepaliveCtx    context.Context
@@ -61,6 +102,9 @@ func NewSSHManager(maxConnections int) *SSHManager {
 	m := &SSHManager{
 		clients:         make(map[string]*ssh.Client),
 		metrics:         make(map[string]*ConnectionMetrics),
+		params:          make(map[string]*ConnectionParams),
+		reconnecting:    make(map[string]bool),
+		events:          make(map[string][]ConnectionEvent),
 		maxConnections:  maxConnections,
 		keepaliveCtx:    ctx,
 		keepaliveCancel: cancel,
@@ -145,8 +189,14 @@ func (m *SSHManager) Connect(ctx context.Context, instanceName, host string, por
 		ConnectedAt: time.Now(),
 		Healthy:     true,
 	}
+	m.params[instanceName] = &ConnectionParams{
+		Host:           host,
+		Port:           port,
+		PrivateKeyPath: privateKeyPath,
+	}
 	m.mu.Unlock()
 
+	m.emitEvent(instanceName, EventConnected, fmt.Sprintf("connected to %s", logutil.SanitizeForLog(addr)))
 	log.Printf("[ssh] connected to %s at %s", logutil.SanitizeForLog(instanceName), logutil.SanitizeForLog(addr))
 	return client, nil
 }
@@ -190,6 +240,7 @@ func (m *SSHManager) RemoveClient(instanceName string) *ssh.Client {
 	client := m.clients[instanceName]
 	delete(m.clients, instanceName)
 	delete(m.metrics, instanceName)
+	delete(m.params, instanceName)
 	return client
 }
 
@@ -211,6 +262,7 @@ func (m *SSHManager) Close(instanceName string) error {
 	}
 	delete(m.clients, instanceName)
 	delete(m.metrics, instanceName)
+	delete(m.params, instanceName)
 	m.mu.Unlock()
 
 	if client != nil {
@@ -218,6 +270,7 @@ func (m *SSHManager) Close(instanceName string) error {
 			return fmt.Errorf("close SSH connection for %s: %w", logutil.SanitizeForLog(instanceName), err)
 		}
 	}
+	m.emitEvent(instanceName, EventDisconnected, "connection closed")
 	log.Printf("[ssh] closed connection for %s", logutil.SanitizeForLog(instanceName))
 	return nil
 }
@@ -247,6 +300,8 @@ func (m *SSHManager) CloseAll() error {
 	}
 	m.clients = make(map[string]*ssh.Client)
 	m.metrics = make(map[string]*ConnectionMetrics)
+	m.params = make(map[string]*ConnectionParams)
+	m.reconnecting = make(map[string]bool)
 	if count > 0 {
 		log.Printf("[ssh] closed all %d connection(s)", count)
 	}
@@ -369,7 +424,7 @@ func (m *SSHManager) keepaliveLoop() {
 
 // checkConnections performs health checks on all connections. It first sends
 // a lightweight keepalive request, and for connections that pass, runs a full
-// command-based health check. Failed connections are removed from the pool.
+// command-based health check. Failed connections trigger automatic reconnection.
 func (m *SSHManager) checkConnections() {
 	m.mu.RLock()
 	names := make([]string, 0, len(m.clients))
@@ -389,18 +444,195 @@ func (m *SSHManager) checkConnections() {
 		// Send a keepalive request (global request with want-reply)
 		_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
 		if err != nil {
-			log.Printf("[ssh] keepalive failed for %s: %v, removing connection", logutil.SanitizeForLog(name), err)
+			log.Printf("[ssh] keepalive failed for %s: %v, triggering reconnection", logutil.SanitizeForLog(name), err)
 			m.recordHealthCheck(name, err)
+			m.emitEvent(name, EventDisconnected, fmt.Sprintf("keepalive failed: %v", err))
+			// Remove the dead client but keep params for reconnection
 			m.mu.Lock()
 			delete(m.clients, name)
 			m.mu.Unlock()
 			client.Close()
+			// Trigger background reconnection
+			m.triggerReconnect(name, "keepalive failure")
 			continue
 		}
 
 		// Run the full health check command
 		if hcErr := m.HealthCheck(name); hcErr != nil {
-			log.Printf("[ssh] health check failed for %s: %v, marking unhealthy", logutil.SanitizeForLog(name), hcErr)
+			log.Printf("[ssh] health check failed for %s: %v, triggering reconnection", logutil.SanitizeForLog(name), hcErr)
+			m.emitEvent(name, EventDisconnected, fmt.Sprintf("health check failed: %v", hcErr))
+			// Remove the dead client but keep params for reconnection
+			m.mu.Lock()
+			client, ok := m.clients[name]
+			delete(m.clients, name)
+			m.mu.Unlock()
+			if ok && client != nil {
+				client.Close()
+			}
+			m.triggerReconnect(name, "health check failure")
 		}
 	}
+}
+
+// triggerReconnect starts a background reconnection for the given instance
+// if one is not already in progress.
+func (m *SSHManager) triggerReconnect(instanceName, reason string) {
+	m.mu.Lock()
+	if m.reconnecting[instanceName] {
+		m.mu.Unlock()
+		return
+	}
+	params, hasParams := m.params[instanceName]
+	if !hasParams {
+		m.mu.Unlock()
+		log.Printf("[ssh] no connection params for %s, cannot reconnect", logutil.SanitizeForLog(instanceName))
+		return
+	}
+	paramsCopy := *params
+	m.reconnecting[instanceName] = true
+	m.mu.Unlock()
+
+	go func() {
+		defer func() {
+			m.mu.Lock()
+			delete(m.reconnecting, instanceName)
+			m.mu.Unlock()
+		}()
+		err := m.reconnectWithBackoff(m.keepaliveCtx, instanceName, &paramsCopy, DefaultMaxRetries)
+		if err != nil {
+			log.Printf("[ssh] reconnection gave up for %s: %v", logutil.SanitizeForLog(instanceName), err)
+		}
+	}()
+}
+
+// reconnectWithBackoff attempts to reconnect to an SSH instance with exponential
+// backoff. It starts with a 1s delay and doubles each time, capping at 16s.
+// After maxRetries unsuccessful attempts, it gives up and marks the instance offline.
+func (m *SSHManager) reconnectWithBackoff(ctx context.Context, instanceName string, params *ConnectionParams, maxRetries int) error {
+	if maxRetries <= 0 {
+		maxRetries = DefaultMaxRetries
+	}
+
+	m.emitEvent(instanceName, EventReconnecting, fmt.Sprintf("starting reconnection (max %d retries)", maxRetries))
+
+	delay := reconnectBaseDelay
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled during reconnection")
+		default:
+		}
+
+		log.Printf("[ssh] reconnecting %s (attempt %d/%d, reason: connection lost)",
+			logutil.SanitizeForLog(instanceName), attempt, maxRetries)
+
+		// Close any stale connection before reconnecting
+		m.mu.Lock()
+		if old, ok := m.clients[instanceName]; ok && old != nil {
+			old.Close()
+			delete(m.clients, instanceName)
+		}
+		m.mu.Unlock()
+
+		connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		_, err := m.Connect(connectCtx, instanceName, params.Host, params.Port, params.PrivateKeyPath)
+		cancel()
+
+		if err == nil {
+			m.emitEvent(instanceName, EventReconnected, fmt.Sprintf("reconnected after %d attempt(s)", attempt))
+			log.Printf("[ssh] reconnected %s after %d attempt(s)", logutil.SanitizeForLog(instanceName), attempt)
+			return nil
+		}
+
+		log.Printf("[ssh] reconnect attempt %d/%d for %s failed: %v",
+			attempt, maxRetries, logutil.SanitizeForLog(instanceName), err)
+
+		// Wait with exponential backoff before next attempt
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled during reconnection backoff")
+		case <-time.After(delay):
+		}
+		delay *= time.Duration(reconnectBackoffFactor)
+		if delay > reconnectMaxDelay {
+			delay = reconnectMaxDelay
+		}
+	}
+
+	m.emitEvent(instanceName, EventReconnectFailed, fmt.Sprintf("gave up after %d attempts", maxRetries))
+	// Clean up params since we gave up
+	m.mu.Lock()
+	delete(m.params, instanceName)
+	delete(m.metrics, instanceName)
+	m.mu.Unlock()
+
+	return fmt.Errorf("reconnection failed after %d attempts for %s", maxRetries, logutil.SanitizeForLog(instanceName))
+}
+
+// IsReconnecting returns whether a reconnection attempt is in progress for the instance.
+func (m *SSHManager) IsReconnecting(instanceName string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.reconnecting[instanceName]
+}
+
+// GetConnectionParams returns the stored connection parameters for an instance, or nil.
+func (m *SSHManager) GetConnectionParams(instanceName string) *ConnectionParams {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	p, ok := m.params[instanceName]
+	if !ok {
+		return nil
+	}
+	cp := *p
+	return &cp
+}
+
+// maxEventsPerInstance limits the number of stored events per instance.
+const maxEventsPerInstance = 100
+
+// emitEvent records a connection event and logs it.
+func (m *SSHManager) emitEvent(instanceName string, eventType EventType, details string) {
+	event := ConnectionEvent{
+		InstanceName: instanceName,
+		Type:         eventType,
+		Details:      details,
+		Timestamp:    time.Now(),
+	}
+
+	m.eventsMu.Lock()
+	events := m.events[instanceName]
+	events = append(events, event)
+	if len(events) > maxEventsPerInstance {
+		events = events[len(events)-maxEventsPerInstance:]
+	}
+	m.events[instanceName] = events
+	m.eventsMu.Unlock()
+
+	log.Printf("[ssh] event %s/%s: %s", logutil.SanitizeForLog(instanceName), eventType, details)
+}
+
+// GetEvents returns recent connection events for the given instance.
+func (m *SSHManager) GetEvents(instanceName string) []ConnectionEvent {
+	m.eventsMu.RLock()
+	defer m.eventsMu.RUnlock()
+	events := m.events[instanceName]
+	result := make([]ConnectionEvent, len(events))
+	copy(result, events)
+	return result
+}
+
+// GetRecentEvents returns the most recent n events for the given instance.
+func (m *SSHManager) GetRecentEvents(instanceName string, n int) []ConnectionEvent {
+	m.eventsMu.RLock()
+	defer m.eventsMu.RUnlock()
+	events := m.events[instanceName]
+	if len(events) <= n {
+		result := make([]ConnectionEvent, len(events))
+		copy(result, events)
+		return result
+	}
+	result := make([]ConnectionEvent, n)
+	copy(result, events[len(events)-n:])
+	return result
 }

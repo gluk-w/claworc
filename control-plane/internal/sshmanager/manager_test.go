@@ -643,7 +643,7 @@ func TestKeepaliveRemovesDeadConnections(t *testing.T) {
 }
 
 func TestKeepalivePreservesHealthyConnections(t *testing.T) {
-	addr, cleanup := startTestSSHServer(t)
+	addr, cleanup := startTestSSHServerWithExec(t)
 	defer cleanup()
 
 	keyPath := os.Getenv("TEST_SSH_KEY_PATH")
@@ -1149,6 +1149,467 @@ func TestHealthCheckTimeout(t *testing.T) {
 	}
 }
 
+// --- Connection params tests ---
+
+func TestConnectionParamsStoredOnConnect(t *testing.T) {
+	addr, cleanup := startTestSSHServerWithExec(t)
+	defer cleanup()
+
+	keyPath := os.Getenv("TEST_SSH_KEY_PATH")
+	host, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	_, err := m.Connect(context.Background(), "test-instance", host, port, keyPath)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	params := m.GetConnectionParams("test-instance")
+	if params == nil {
+		t.Fatal("connection params should be stored after Connect")
+	}
+	if params.Host != host {
+		t.Errorf("expected host %q, got %q", host, params.Host)
+	}
+	if params.Port != port {
+		t.Errorf("expected port %d, got %d", port, params.Port)
+	}
+	if params.PrivateKeyPath != keyPath {
+		t.Errorf("expected key path %q, got %q", keyPath, params.PrivateKeyPath)
+	}
+}
+
+func TestConnectionParamsClearedOnClose(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	m.SetClient("test-instance", nil)
+	m.mu.Lock()
+	m.params["test-instance"] = &ConnectionParams{Host: "localhost", Port: 22}
+	m.mu.Unlock()
+
+	m.Close("test-instance")
+	if p := m.GetConnectionParams("test-instance"); p != nil {
+		t.Error("params should be nil after Close")
+	}
+}
+
+func TestConnectionParamsClearedOnRemoveClient(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	m.SetClient("test-instance", nil)
+	m.mu.Lock()
+	m.params["test-instance"] = &ConnectionParams{Host: "localhost", Port: 22}
+	m.mu.Unlock()
+
+	m.RemoveClient("test-instance")
+	if p := m.GetConnectionParams("test-instance"); p != nil {
+		t.Error("params should be nil after RemoveClient")
+	}
+}
+
+func TestConnectionParamsReturnsACopy(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	m.SetClient("test", nil)
+	m.mu.Lock()
+	m.params["test"] = &ConnectionParams{Host: "localhost", Port: 22}
+	m.mu.Unlock()
+
+	p1 := m.GetConnectionParams("test")
+	p1.Host = "changed"
+	p2 := m.GetConnectionParams("test")
+	if p2.Host == "changed" {
+		t.Error("GetConnectionParams should return a copy")
+	}
+}
+
+func TestConnectionParamsNilForUnknown(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	if p := m.GetConnectionParams("nonexistent"); p != nil {
+		t.Error("should return nil for unknown instance")
+	}
+}
+
+// --- Connection event tests ---
+
+func TestEventsEmittedOnConnect(t *testing.T) {
+	addr, cleanup := startTestSSHServerWithExec(t)
+	defer cleanup()
+
+	keyPath := os.Getenv("TEST_SSH_KEY_PATH")
+	host, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	_, err := m.Connect(context.Background(), "test-instance", host, port, keyPath)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	events := m.GetEvents("test-instance")
+	if len(events) == 0 {
+		t.Fatal("expected at least one event after Connect")
+	}
+	if events[0].Type != EventConnected {
+		t.Errorf("expected EventConnected, got %s", events[0].Type)
+	}
+	if events[0].InstanceName != "test-instance" {
+		t.Errorf("expected instance name test-instance, got %s", events[0].InstanceName)
+	}
+}
+
+func TestEventsEmittedOnClose(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	m.SetClient("test-instance", nil)
+	m.Close("test-instance")
+
+	events := m.GetEvents("test-instance")
+	found := false
+	for _, e := range events {
+		if e.Type == EventDisconnected {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected EventDisconnected after Close")
+	}
+}
+
+func TestGetRecentEvents(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	// Emit several events
+	for i := 0; i < 10; i++ {
+		m.emitEvent("test", EventConnected, fmt.Sprintf("event %d", i))
+	}
+
+	recent := m.GetRecentEvents("test", 3)
+	if len(recent) != 3 {
+		t.Fatalf("expected 3 recent events, got %d", len(recent))
+	}
+	// Should be the last 3
+	if recent[0].Details != "event 7" {
+		t.Errorf("expected 'event 7', got %q", recent[0].Details)
+	}
+	if recent[2].Details != "event 9" {
+		t.Errorf("expected 'event 9', got %q", recent[2].Details)
+	}
+}
+
+func TestGetRecentEventsLessThanN(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	m.emitEvent("test", EventConnected, "only one")
+	recent := m.GetRecentEvents("test", 5)
+	if len(recent) != 1 {
+		t.Errorf("expected 1 event, got %d", len(recent))
+	}
+}
+
+func TestEventsRingBuffer(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	// Emit more than maxEventsPerInstance events
+	for i := 0; i < maxEventsPerInstance+20; i++ {
+		m.emitEvent("test", EventConnected, fmt.Sprintf("event %d", i))
+	}
+
+	events := m.GetEvents("test")
+	if len(events) != maxEventsPerInstance {
+		t.Errorf("expected %d events (ring buffer), got %d", maxEventsPerInstance, len(events))
+	}
+	// First event should be event 20 (since we added 120, and the buffer keeps 100)
+	if events[0].Details != "event 20" {
+		t.Errorf("expected oldest event 'event 20', got %q", events[0].Details)
+	}
+}
+
+func TestEventsEmptyForUnknown(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	events := m.GetEvents("nonexistent")
+	if len(events) != 0 {
+		t.Errorf("expected 0 events for unknown instance, got %d", len(events))
+	}
+}
+
+// --- Reconnection tests ---
+
+func TestReconnectWithBackoffSuccess(t *testing.T) {
+	addr, cleanup := startTestSSHServerWithExec(t)
+	defer cleanup()
+
+	keyPath := os.Getenv("TEST_SSH_KEY_PATH")
+	host, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	params := &ConnectionParams{Host: host, Port: port, PrivateKeyPath: keyPath}
+	err := m.reconnectWithBackoff(context.Background(), "test-instance", params, 3)
+	if err != nil {
+		t.Fatalf("reconnectWithBackoff should succeed: %v", err)
+	}
+
+	if !m.HasClient("test-instance") {
+		t.Error("client should exist after successful reconnection")
+	}
+
+	// Check events
+	events := m.GetEvents("test-instance")
+	hasReconnecting := false
+	hasReconnected := false
+	for _, e := range events {
+		if e.Type == EventReconnecting {
+			hasReconnecting = true
+		}
+		if e.Type == EventReconnected {
+			hasReconnected = true
+		}
+	}
+	if !hasReconnecting {
+		t.Error("expected EventReconnecting event")
+	}
+	if !hasReconnected {
+		t.Error("expected EventReconnected event")
+	}
+}
+
+func TestReconnectWithBackoffFailsAfterMaxRetries(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	// Use invalid connection params so all attempts fail
+	tmpDir := t.TempDir()
+	keyPath := writeTestKey(t, tmpDir, "test")
+	params := &ConnectionParams{Host: "127.0.0.1", Port: 1, PrivateKeyPath: keyPath}
+
+	err := m.reconnectWithBackoff(context.Background(), "test-instance", params, 2)
+	if err == nil {
+		t.Error("reconnectWithBackoff should fail after max retries")
+	}
+	if !strings.Contains(err.Error(), "reconnection failed after 2 attempts") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// Check that EventReconnectFailed was emitted
+	events := m.GetEvents("test-instance")
+	hasFailed := false
+	for _, e := range events {
+		if e.Type == EventReconnectFailed {
+			hasFailed = true
+			break
+		}
+	}
+	if !hasFailed {
+		t.Error("expected EventReconnectFailed event")
+	}
+
+	// Params and metrics should be cleaned up after giving up
+	if p := m.GetConnectionParams("test-instance"); p != nil {
+		t.Error("params should be cleaned up after giving up")
+	}
+}
+
+func TestReconnectWithBackoffContextCancelled(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	tmpDir := t.TempDir()
+	keyPath := writeTestKey(t, tmpDir, "test")
+	params := &ConnectionParams{Host: "127.0.0.1", Port: 1, PrivateKeyPath: keyPath}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err := m.reconnectWithBackoff(ctx, "test-instance", params, 10)
+	if err == nil {
+		t.Error("should fail with cancelled context")
+	}
+	if !strings.Contains(err.Error(), "context cancelled") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestReconnectWithBackoffDefaultMaxRetries(t *testing.T) {
+	if DefaultMaxRetries != 10 {
+		t.Errorf("expected DefaultMaxRetries to be 10, got %d", DefaultMaxRetries)
+	}
+}
+
+func TestIsReconnecting(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	if m.IsReconnecting("test") {
+		t.Error("should not be reconnecting initially")
+	}
+
+	m.mu.Lock()
+	m.reconnecting["test"] = true
+	m.mu.Unlock()
+
+	if !m.IsReconnecting("test") {
+		t.Error("should be reconnecting after setting flag")
+	}
+}
+
+func TestTriggerReconnectNoParams(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	// Should not panic when no params exist
+	m.triggerReconnect("nonexistent", "test")
+
+	// Give a moment for the goroutine to potentially start
+	time.Sleep(50 * time.Millisecond)
+
+	if m.IsReconnecting("nonexistent") {
+		t.Error("should not be reconnecting without params")
+	}
+}
+
+func TestTriggerReconnectDeduplication(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	tmpDir := t.TempDir()
+	keyPath := writeTestKey(t, tmpDir, "test")
+
+	// Store params but use invalid port so reconnection takes time
+	m.mu.Lock()
+	m.params["test-instance"] = &ConnectionParams{Host: "127.0.0.1", Port: 1, PrivateKeyPath: keyPath}
+	m.mu.Unlock()
+
+	// Trigger reconnect twice - second should be a no-op
+	m.triggerReconnect("test-instance", "test")
+	time.Sleep(50 * time.Millisecond) // Let the goroutine start
+
+	if !m.IsReconnecting("test-instance") {
+		t.Error("should be reconnecting")
+	}
+
+	// Second trigger should not start another goroutine
+	m.triggerReconnect("test-instance", "test")
+	// If this caused a panic or error, the test would fail
+}
+
+func TestCheckConnectionsTriggersReconnect(t *testing.T) {
+	addr, tracker, cleanup := startTestSSHServerWithExecAndConns(t)
+
+	keyPath := os.Getenv("TEST_SSH_KEY_PATH")
+	host, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	_, err := m.Connect(context.Background(), "test-instance", host, port, keyPath)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	// Verify params are stored
+	params := m.GetConnectionParams("test-instance")
+	if params == nil {
+		t.Fatal("params should exist after Connect")
+	}
+
+	// Kill the server to make the connection dead
+	cleanup()
+	tracker.CloseAll()
+	time.Sleep(100 * time.Millisecond)
+
+	// Trigger checkConnections - should detect dead connection and trigger reconnect
+	m.checkConnections()
+
+	// The dead client should be removed
+	if m.HasClient("test-instance") {
+		t.Error("dead client should be removed")
+	}
+
+	// Give a moment for reconnect goroutine to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Should have emitted disconnect event
+	events := m.GetEvents("test-instance")
+	hasDisconnect := false
+	for _, e := range events {
+		if e.Type == EventDisconnected {
+			hasDisconnect = true
+			break
+		}
+	}
+	if !hasDisconnect {
+		t.Error("expected EventDisconnected event after failed health check")
+	}
+}
+
+func TestReconnectAfterServerRestart(t *testing.T) {
+	// Start server, connect, kill server, start new server on same port, verify reconnect
+	addr, tracker, cleanup := startTestSSHServerWithExecAndConns(t)
+
+	keyPath := os.Getenv("TEST_SSH_KEY_PATH")
+	host, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	_, err := m.Connect(context.Background(), "test-instance", host, port, keyPath)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	// Kill original server
+	cleanup()
+	tracker.CloseAll()
+	time.Sleep(100 * time.Millisecond)
+
+	// Start a new server on the same port, accepting the same client key
+	addr2, cleanup2 := startTestSSHServerWithExecOnPort(t, host, port, keyPath)
+	defer cleanup2()
+	_ = addr2
+
+	// Attempt reconnection directly
+	params := m.GetConnectionParams("test-instance")
+	if params == nil {
+		t.Fatal("params should still exist")
+	}
+
+	err = m.reconnectWithBackoff(context.Background(), "test-instance", params, 3)
+	if err != nil {
+		t.Fatalf("reconnectWithBackoff should succeed with new server: %v", err)
+	}
+
+	if !m.HasClient("test-instance") {
+		t.Error("client should exist after reconnection")
+	}
+}
+
 // --- Helpers ---
 
 // connTracker tracks server-side connections for clean shutdown in tests.
@@ -1257,6 +1718,79 @@ func startTestSSHServerWithConns(t *testing.T) (addr string, tracker *connTracke
 	t.Setenv("TEST_SSH_KEY_PATH", keyPath)
 
 	return listener.Addr().String(), tracker, func() { listener.Close() }
+}
+
+// startTestSSHServerWithExecOnPort starts a test SSH server on a specific port
+// that accepts the client key from the given keyPath. Used for testing reconnection
+// to a "restarted" server.
+func startTestSSHServerWithExecOnPort(t *testing.T, host string, port int, clientKeyPath string) (addr string, cleanup func()) {
+	t.Helper()
+
+	// Read the existing client private key to derive the public key
+	keyData, err := os.ReadFile(clientKeyPath)
+	if err != nil {
+		t.Fatalf("read client key: %v", err)
+	}
+	clientPrivKey, err := gossh.ParseRawPrivateKey(keyData)
+	if err != nil {
+		t.Fatalf("parse client private key: %v", err)
+	}
+
+	var clientSSHPub gossh.PublicKey
+	switch k := clientPrivKey.(type) {
+	case *ed25519.PrivateKey:
+		pub := k.Public().(ed25519.PublicKey)
+		clientSSHPub, err = gossh.NewPublicKey(pub)
+		if err != nil {
+			t.Fatalf("convert public key: %v", err)
+		}
+	case ed25519.PrivateKey:
+		pub := k.Public().(ed25519.PublicKey)
+		clientSSHPub, err = gossh.NewPublicKey(pub)
+		if err != nil {
+			t.Fatalf("convert public key: %v", err)
+		}
+	default:
+		t.Fatalf("unsupported key type: %T", clientPrivKey)
+	}
+
+	// Generate a new host key
+	_, hostPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate host key: %v", err)
+	}
+	hostSigner, err := gossh.NewSignerFromKey(hostPriv)
+	if err != nil {
+		t.Fatalf("create host signer: %v", err)
+	}
+
+	cfg := &gossh.ServerConfig{
+		PublicKeyCallback: func(conn gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error) {
+			if bytes.Equal(key.Marshal(), clientSSHPub.Marshal()) {
+				return &gossh.Permissions{}, nil
+			}
+			return nil, fmt.Errorf("unknown public key")
+		},
+	}
+	cfg.AddHostKey(hostSigner)
+
+	listenAddr := fmt.Sprintf("%s:%d", host, port)
+	listener, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		t.Fatalf("listen on %s: %v", listenAddr, err)
+	}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go handleExecConn(conn, cfg)
+		}
+	}()
+
+	return listener.Addr().String(), func() { listener.Close() }
 }
 
 // writeTestKey generates an ED25519 key and writes it to disk, returning the path.
