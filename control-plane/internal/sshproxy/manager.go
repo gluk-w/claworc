@@ -24,8 +24,8 @@ const (
 
 // Orchestrator defines the orchestrator methods needed by EnsureConnected.
 type Orchestrator interface {
-	ConfigureSSHAccess(ctx context.Context, name string, publicKey string) error
-	GetSSHAddress(ctx context.Context, name string) (host string, port int, err error)
+	ConfigureSSHAccess(ctx context.Context, instanceID uint, publicKey string) error
+	GetSSHAddress(ctx context.Context, instanceID uint) (host string, port int, err error)
 }
 
 // SSHManager manages SSH connections to agent instances.
@@ -37,7 +37,7 @@ type SSHManager struct {
 	publicKey string
 
 	mu    sync.RWMutex
-	conns map[string]*managedConn
+	conns map[uint]*managedConn
 }
 
 // managedConn wraps an SSH client with its cancel function for stopping keepalive.
@@ -52,14 +52,14 @@ func NewSSHManager(privateKey ssh.Signer, publicKey string) *SSHManager {
 	return &SSHManager{
 		signer:    privateKey,
 		publicKey: publicKey,
-		conns:     make(map[string]*managedConn),
+		conns:     make(map[uint]*managedConn),
 	}
 }
 
 // Connect establishes an SSH connection to the given host:port using the global
-// private key, and stores it in the connection map keyed by instanceName.
+// private key, and stores it in the connection map keyed by instanceID.
 // If a connection already exists for the instance, it is closed first.
-func (m *SSHManager) Connect(ctx context.Context, instanceName, host string, port int) (*ssh.Client, error) {
+func (m *SSHManager) Connect(ctx context.Context, instanceID uint, host string, port int) (*ssh.Client, error) {
 	cfg := &ssh.ClientConfig{
 		User: "root",
 		Auth: []ssh.AuthMethod{
@@ -88,7 +88,7 @@ func (m *SSHManager) Connect(ctx context.Context, instanceName, host string, por
 
 	// Close any existing connection for this instance
 	m.mu.Lock()
-	if existing, ok := m.conns[instanceName]; ok {
+	if existing, ok := m.conns[instanceID]; ok {
 		existing.cancel()
 		existing.client.Close()
 	}
@@ -99,22 +99,22 @@ func (m *SSHManager) Connect(ctx context.Context, instanceName, host string, por
 		client: client,
 		cancel: keepCancel,
 	}
-	m.conns[instanceName] = mc
+	m.conns[instanceID] = mc
 	m.mu.Unlock()
 
-	go m.keepalive(keepCtx, instanceName, client)
+	go m.keepalive(keepCtx, instanceID, client)
 
-	log.Printf("SSH connected to %s (%s)", instanceName, addr)
+	log.Printf("SSH connected to instance %d (%s)", instanceID, addr)
 	return client, nil
 }
 
 // GetConnection returns an existing SSH connection for the given instance.
 // Returns the client and true if found, nil and false otherwise.
-func (m *SSHManager) GetConnection(instanceName string) (*ssh.Client, bool) {
+func (m *SSHManager) GetConnection(instanceID uint) (*ssh.Client, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	mc, ok := m.conns[instanceName]
+	mc, ok := m.conns[instanceID]
 	if !ok {
 		return nil, false
 	}
@@ -122,21 +122,21 @@ func (m *SSHManager) GetConnection(instanceName string) (*ssh.Client, bool) {
 }
 
 // Close closes a specific instance's SSH connection and removes it from the map.
-func (m *SSHManager) Close(instanceName string) error {
+func (m *SSHManager) Close(instanceID uint) error {
 	m.mu.Lock()
-	mc, ok := m.conns[instanceName]
+	mc, ok := m.conns[instanceID]
 	if !ok {
 		m.mu.Unlock()
 		return nil
 	}
-	delete(m.conns, instanceName)
+	delete(m.conns, instanceID)
 	m.mu.Unlock()
 
 	mc.cancel()
 	if err := mc.client.Close(); err != nil {
-		return fmt.Errorf("close ssh connection for %s: %w", instanceName, err)
+		return fmt.Errorf("close ssh connection for instance %d: %w", instanceID, err)
 	}
-	log.Printf("SSH disconnected from %s", instanceName)
+	log.Printf("SSH disconnected from instance %d", instanceID)
 	return nil
 }
 
@@ -144,14 +144,14 @@ func (m *SSHManager) Close(instanceName string) error {
 func (m *SSHManager) CloseAll() error {
 	m.mu.Lock()
 	conns := m.conns
-	m.conns = make(map[string]*managedConn)
+	m.conns = make(map[uint]*managedConn)
 	m.mu.Unlock()
 
 	var firstErr error
-	for name, mc := range conns {
+	for id, mc := range conns {
 		mc.cancel()
 		if err := mc.client.Close(); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("close ssh connection for %s: %w", name, err)
+			firstErr = fmt.Errorf("close ssh connection for instance %d: %w", id, err)
 		}
 	}
 	log.Printf("All SSH connections closed (%d total)", len(conns))
@@ -159,9 +159,9 @@ func (m *SSHManager) CloseAll() error {
 }
 
 // IsConnected checks if a healthy connection exists for the given instance.
-func (m *SSHManager) IsConnected(instanceName string) bool {
+func (m *SSHManager) IsConnected(instanceID uint) bool {
 	m.mu.RLock()
-	mc, ok := m.conns[instanceName]
+	mc, ok := m.conns[instanceID]
 	m.mu.RUnlock()
 
 	if !ok {
@@ -177,28 +177,28 @@ func (m *SSHManager) IsConnected(instanceName string) bool {
 // an instance. It checks for an existing healthy connection first, and if none
 // exists, uploads the public key via the orchestrator and establishes a new
 // SSH connection.
-func (m *SSHManager) EnsureConnected(ctx context.Context, instanceName string, orch Orchestrator) (*ssh.Client, error) {
+func (m *SSHManager) EnsureConnected(ctx context.Context, instanceID uint, orch Orchestrator) (*ssh.Client, error) {
 	// 1. Check if a healthy connection already exists
-	if m.IsConnected(instanceName) {
-		client, _ := m.GetConnection(instanceName)
+	if m.IsConnected(instanceID) {
+		client, _ := m.GetConnection(instanceID)
 		return client, nil
 	}
 
 	// 2. Get instance SSH address from orchestrator
-	host, port, err := orch.GetSSHAddress(ctx, instanceName)
+	host, port, err := orch.GetSSHAddress(ctx, instanceID)
 	if err != nil {
-		return nil, fmt.Errorf("get ssh address for %s: %w", instanceName, err)
+		return nil, fmt.Errorf("get ssh address for instance %d: %w", instanceID, err)
 	}
 
 	// 3. Upload public key to the instance
-	if err := orch.ConfigureSSHAccess(ctx, instanceName, m.publicKey); err != nil {
-		return nil, fmt.Errorf("configure ssh access for %s: %w", instanceName, err)
+	if err := orch.ConfigureSSHAccess(ctx, instanceID, m.publicKey); err != nil {
+		return nil, fmt.Errorf("configure ssh access for instance %d: %w", instanceID, err)
 	}
 
 	// 4. Establish SSH connection
-	client, err := m.Connect(ctx, instanceName, host, port)
+	client, err := m.Connect(ctx, instanceID, host, port)
 	if err != nil {
-		return nil, fmt.Errorf("ssh connect to %s: %w", instanceName, err)
+		return nil, fmt.Errorf("ssh connect to instance %d: %w", instanceID, err)
 	}
 
 	return client, nil
@@ -206,7 +206,7 @@ func (m *SSHManager) EnsureConnected(ctx context.Context, instanceName string, o
 
 // keepalive sends periodic keepalive requests to detect dead connections.
 // If the connection is dead, it is removed from the map.
-func (m *SSHManager) keepalive(ctx context.Context, instanceName string, client *ssh.Client) {
+func (m *SSHManager) keepalive(ctx context.Context, instanceID uint, client *ssh.Client) {
 	ticker := time.NewTicker(keepaliveInterval)
 	defer ticker.Stop()
 
@@ -218,10 +218,10 @@ func (m *SSHManager) keepalive(ctx context.Context, instanceName string, client 
 			// SendRequest with wantReply=true acts as a keepalive check
 			_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
 			if err != nil {
-				log.Printf("SSH keepalive failed for %s: %v, removing connection", instanceName, err)
+				log.Printf("SSH keepalive failed for instance %d: %v, removing connection", instanceID, err)
 				m.mu.Lock()
-				if mc, ok := m.conns[instanceName]; ok && mc.client == client {
-					delete(m.conns, instanceName)
+				if mc, ok := m.conns[instanceID]; ok && mc.client == client {
+					delete(m.conns, instanceID)
 				}
 				m.mu.Unlock()
 				return
