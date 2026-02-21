@@ -8,12 +8,15 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
-	"github.com/gluk-w/claworc/control-plane/internal/sshmanager"
+	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/go-chi/chi/v5"
 )
 
 // SSHMgr is set from main.go during init.
-var SSHMgr *sshmanager.SSHManager
+var SSHMgr *sshproxy.SSHManager
+
+// TunnelMgr is set from main.go during init.
+var TunnelMgr *sshproxy.TunnelManager
 
 // SSHConnectionTest tests SSH connectivity to an instance by establishing a
 // connection (or reusing an existing one) and executing a simple command.
@@ -58,7 +61,7 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	client, err := SSHMgr.EnsureConnected(r.Context(), inst.Name, orch)
+	client, err := SSHMgr.EnsureConnected(r.Context(), inst.ID, orch)
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
 		writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -101,5 +104,62 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 		"output":     string(output),
 		"latency_ms": latency,
 		"error":      nil,
+	})
+}
+
+// GetTunnelStatus returns the active SSH tunnels for an instance.
+func GetTunnelStatus(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	if TunnelMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"tunnels": []interface{}{},
+			"error":   "Tunnel manager not initialized",
+		})
+		return
+	}
+
+	tunnels := TunnelMgr.GetTunnelsForInstance(inst.ID)
+
+	type tunnelResponse struct {
+		Label      string `json:"label"`
+		Type       string `json:"type"`
+		LocalPort  int    `json:"local_port"`
+		RemotePort int    `json:"remote_port"`
+		Status     string `json:"status"`
+		Error      string `json:"error,omitempty"`
+		LastCheck  string `json:"last_check"`
+	}
+
+	resp := make([]tunnelResponse, len(tunnels))
+	for i, t := range tunnels {
+		resp[i] = tunnelResponse{
+			Label:      t.Label,
+			Type:       string(t.Config.Type),
+			LocalPort:  t.LocalPort,
+			RemotePort: t.Config.RemotePort,
+			Status:     t.Status,
+			Error:      t.Error,
+			LastCheck:  t.LastCheck.UTC().Format(time.RFC3339),
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"tunnels": resp,
 	})
 }
