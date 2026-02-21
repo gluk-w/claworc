@@ -108,6 +108,10 @@ func (ts *TerminalSession) Close() error {
 //   - Resize(): dynamically change terminal dimensions
 //   - Close(): clean up the session
 func CreateInteractiveSession(sshClient *ssh.Client, shell string) (*TerminalSession, error) {
+	if err := ValidateShell(shell); err != nil {
+		return nil, fmt.Errorf("validate shell: %w", err)
+	}
+
 	if shell == "" {
 		shell = DefaultShell
 	}

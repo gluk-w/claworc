@@ -1072,7 +1072,8 @@ func TestInteractiveREPLSession(t *testing.T) {
 	})
 	defer cleanup()
 
-	session, err := CreateInteractiveSession(client, "python3")
+	// Use /bin/sh (an allowed shell) — the mock server simulates a REPL regardless
+	session, err := CreateInteractiveSession(client, "/bin/sh")
 	if err != nil {
 		t.Fatalf("CreateInteractiveSession: %v", err)
 	}

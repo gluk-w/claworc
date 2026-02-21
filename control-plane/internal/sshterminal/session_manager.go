@@ -125,11 +125,16 @@ type SessionManager struct {
 	IdleTimeout time.Duration
 }
 
-// NewSessionManager creates a new SessionManager.
+// DefaultIdleTimeout is the default duration after which detached sessions
+// are automatically cleaned up. Set to 30 minutes.
+const DefaultIdleTimeout = 30 * time.Minute
+
+// NewSessionManager creates a new SessionManager with sensible defaults.
 func NewSessionManager() *SessionManager {
 	return &SessionManager{
 		sessions:       make(map[string]*ManagedSession),
 		ScrollbackSize: defaultScrollbackSize,
+		IdleTimeout:    DefaultIdleTimeout,
 	}
 }
 
@@ -137,6 +142,10 @@ func NewSessionManager() *SessionManager {
 // It starts the SSH shell, initializes the scrollback buffer, and begins
 // relaying SSH stdout into the buffer.
 func (sm *SessionManager) CreateSession(ctx context.Context, sshClient *ssh.Client, instanceID, userID uint, shell string) (*ManagedSession, error) {
+	if err := ValidateShell(shell); err != nil {
+		return nil, fmt.Errorf("validate shell: %w", err)
+	}
+
 	terminal, err := CreateInteractiveSession(sshClient, shell)
 	if err != nil {
 		return nil, fmt.Errorf("create terminal session: %w", err)

@@ -19,6 +19,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
+	"github.com/gluk-w/claworc/control-plane/internal/sshterminal"
 	"github.com/gluk-w/claworc/control-plane/internal/sshtunnel"
 	"github.com/go-chi/chi/v5"
 	gossh "golang.org/x/crypto/ssh"
@@ -1087,7 +1088,9 @@ func TestTerminalWSProxy_RapidInput(t *testing.T) {
 	}
 	defer conn.CloseNow()
 
-	// Send 500 rapid binary messages
+	// Send 500 rapid binary messages.
+	// Due to rate limiting (100 msg/sec, 200 burst), messages beyond the
+	// burst allowance may be dropped. This is expected security behavior.
 	const numMessages = 500
 	message := []byte("rapid-input-test\n")
 	totalSent := 0
@@ -1106,9 +1109,11 @@ func TestTerminalWSProxy_RapidInput(t *testing.T) {
 	got := totalReceived
 	mu.Unlock()
 
-	if got != totalSent {
-		t.Errorf("sent %d bytes but SSH shell received %d bytes (%.1f%% delivered)",
-			totalSent, got, float64(got)/float64(totalSent)*100)
+	// With rate limiting, at least the burst amount should get through.
+	minExpected := sshterminal.MessageRateBurst * len(message)
+	if got < minExpected {
+		t.Errorf("sent %d bytes but SSH shell received only %d bytes (expected at least %d for burst); %.1f%% delivered",
+			totalSent, got, minExpected, float64(got)/float64(totalSent)*100)
 	}
 
 	conn.Close(websocket.StatusNormalClosure, "")

@@ -38,6 +38,15 @@
 //   - JSON text: {type: "pong"} — keepalive response
 //   - JSON text: {type: "session", session_id: "...", state: "..."} — session metadata (sent first)
 //
+// ## Security
+//
+//   - Shell commands are validated against a whitelist (AllowedShells).
+//   - Input messages are size-limited (MaxInputMessageSize = 64KB).
+//   - Terminal resize dimensions are capped (MaxTermCols=500, MaxTermRows=200).
+//   - Per-connection rate limiting prevents message flooding (100 msg/sec, burst 200).
+//   - All session lifecycle events are logged for audit trail.
+//   - Inactive sessions are cleaned up via configurable idle timeout.
+//
 // ## Limitations
 //
 //   - Session persistence relies on the SSH connection staying alive.
@@ -78,6 +87,17 @@ type termMsg struct {
 	State     string `json:"state,omitempty"`
 }
 
+// clampResize caps terminal dimensions to configured maximums.
+func clampResize(cols, rows uint16) (uint16, uint16) {
+	if cols > sshterminal.MaxTermCols {
+		cols = sshterminal.MaxTermCols
+	}
+	if rows > sshterminal.MaxTermRows {
+		rows = sshterminal.MaxTermRows
+	}
+	return cols, rows
+}
+
 // TerminalWSProxy handles WebSocket connections for interactive terminal sessions.
 //
 // Query parameters:
@@ -97,6 +117,14 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 	if !middleware.CanAccessInstance(r, uint(id)) {
 		http.Error(w, "Access denied", http.StatusForbidden)
 		return
+	}
+
+	// Identify the user for audit logging
+	var userID uint
+	var userName string
+	if u := middleware.GetUser(r); u != nil {
+		userID = u.ID
+		userName = u.Username
 	}
 
 	clientConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -134,15 +162,14 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 	sessMgr := sshtunnel.GetSessionManager()
 	sessionID := r.URL.Query().Get("session_id")
 
+	// Audit: log terminal connection
+	log.Printf("[terminal-audit] user=%d (%s) connecting to instance=%d (%s) session_id=%q remote=%s",
+		userID, userName, id, inst.Name, sessionID, r.RemoteAddr)
+
 	if sessMgr != nil {
 		// Managed session mode — supports persistence and multi-session
-		var userID uint
-		if u := middleware.GetUser(r); u != nil {
-			userID = u.ID
-		}
-
 		if sessionID != "" {
-			handleReconnect(ctx, clientConn, sessMgr, sessionID, uint(id))
+			handleReconnect(ctx, clientConn, sessMgr, sessionID, uint(id), userID)
 		} else {
 			handleManagedSession(ctx, clientConn, sessMgr, sshClient, uint(id), userID, inst.Name)
 		}
@@ -151,27 +178,34 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 		handleLegacySession(ctx, clientConn, sshClient, inst.Name)
 	}
 
+	log.Printf("[terminal-audit] user=%d (%s) disconnected from instance=%d (%s) session_id=%q",
+		userID, userName, id, inst.Name, sessionID)
+
 	clientConn.Close(websocket.StatusNormalClosure, "")
 }
 
 // handleReconnect attaches a WebSocket to an existing detached session,
 // replays the scrollback buffer, then streams live output.
-func handleReconnect(ctx context.Context, clientConn *websocket.Conn, sessMgr *sshterminal.SessionManager, sessionID string, instanceID uint) {
+func handleReconnect(ctx context.Context, clientConn *websocket.Conn, sessMgr *sshterminal.SessionManager, sessionID string, instanceID uint, userID uint) {
 	ms := sessMgr.GetSession(sessionID)
 	if ms == nil {
+		log.Printf("[terminal-audit] reconnect failed: session %s not found (user=%d)", sessionID, userID)
 		clientConn.Close(4404, "Session not found")
 		return
 	}
 	if ms.InstanceID != instanceID {
+		log.Printf("[terminal-audit] reconnect denied: session %s belongs to instance %d, not %d (user=%d)",
+			sessionID, ms.InstanceID, instanceID, userID)
 		clientConn.Close(4403, "Session belongs to different instance")
 		return
 	}
 	if ms.State() == sshterminal.SessionClosed {
+		log.Printf("[terminal-audit] reconnect failed: session %s is closed (user=%d)", sessionID, userID)
 		clientConn.Close(4410, "Session is closed")
 		return
 	}
 	ms.SetState(sshterminal.SessionActive)
-	log.Printf("[terminal] reconnecting to session %s", sessionID)
+	log.Printf("[terminal-audit] user=%d reconnected to session %s (instance=%d)", userID, sessionID, instanceID)
 
 	clientConn.SetReadLimit(1024 * 1024)
 
@@ -199,6 +233,9 @@ func handleManagedSession(ctx context.Context, clientConn *websocket.Conn, sessM
 		clientConn.Close(4500, "Failed to start shell")
 		return
 	}
+
+	log.Printf("[terminal-audit] new session %s created for user=%d instance=%d (%s) shell=%s",
+		ms.ID, userID, instanceID, instName, ms.Shell)
 
 	clientConn.SetReadLimit(1024 * 1024)
 
@@ -254,13 +291,13 @@ func streamManagedSession(ctx context.Context, clientConn *websocket.Conn, ms *s
 		}
 	}()
 
-	// WebSocket → SSH stdin
+	// WebSocket → SSH stdin (with rate limiting)
 	relayInput(relayCtx, clientConn, ms)
 
 	// On disconnect, detach instead of close
 	if ms.State() != sshterminal.SessionClosed {
 		ms.SetState(sshterminal.SessionDetached)
-		log.Printf("[terminal] session %s detached", ms.ID)
+		log.Printf("[terminal-audit] session %s detached (instance=%d)", ms.ID, ms.InstanceID)
 	}
 }
 
@@ -279,6 +316,9 @@ func handleLegacySession(ctx context.Context, clientConn *websocket.Conn, sshCli
 
 	relayCtx, relayCancel := context.WithCancel(ctx)
 	defer relayCancel()
+
+	// Rate limiter for this connection
+	limiter := sshterminal.NewRateLimiter(sshterminal.MessageRateLimit, sshterminal.MessageRateBurst)
 
 	// SSH stdout → Browser
 	go func() {
@@ -305,11 +345,28 @@ func handleLegacySession(ctx context.Context, clientConn *websocket.Conn, sshCli
 			if err != nil {
 				return
 			}
+
+			// Rate limit check
+			if !limiter.Allow() {
+				log.Printf("[terminal-security] rate limit exceeded for legacy session on %s", instName)
+				continue
+			}
+
 			if msgType == websocket.MessageBinary {
+				// Enforce input size limit
+				if len(data) > sshterminal.MaxInputMessageSize {
+					log.Printf("[terminal-security] oversized binary input (%d bytes) dropped for %s", len(data), instName)
+					continue
+				}
 				if _, err := session.Stdin.Write(data); err != nil {
 					return
 				}
 			} else {
+				// Enforce input size limit for text messages
+				if len(data) > sshterminal.MaxInputMessageSize {
+					log.Printf("[terminal-security] oversized text input (%d bytes) dropped for %s", len(data), instName)
+					continue
+				}
 				var msg termMsg
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
@@ -323,7 +380,8 @@ func handleLegacySession(ctx context.Context, clientConn *websocket.Conn, sshCli
 					}
 				case "resize":
 					if msg.Cols > 0 && msg.Rows > 0 {
-						session.Resize(msg.Cols, msg.Rows)
+						cols, rows := clampResize(msg.Cols, msg.Rows)
+						session.Resize(cols, rows)
 					}
 				case "ping":
 					pong, _ := json.Marshal(termMsg{Type: "pong"})
@@ -348,14 +406,28 @@ func sendSessionMetadata(ctx context.Context, clientConn *websocket.Conn, ms *ss
 
 // relayInput reads from the WebSocket and writes to the managed session's
 // SSH stdin. It handles binary raw input, JSON input, resize, and ping messages.
+// Input messages are rate-limited and size-checked to prevent abuse.
 func relayInput(ctx context.Context, clientConn *websocket.Conn, ms *sshterminal.ManagedSession) {
+	limiter := sshterminal.NewRateLimiter(sshterminal.MessageRateLimit, sshterminal.MessageRateBurst)
+
 	for {
 		msgType, data, err := clientConn.Read(ctx)
 		if err != nil {
 			return
 		}
 
+		// Rate limit check
+		if !limiter.Allow() {
+			log.Printf("[terminal-security] rate limit exceeded for session %s", ms.ID)
+			continue
+		}
+
 		if msgType == websocket.MessageBinary {
+			// Enforce input size limit
+			if len(data) > sshterminal.MaxInputMessageSize {
+				log.Printf("[terminal-security] oversized binary input (%d bytes) dropped for session %s", len(data), ms.ID)
+				continue
+			}
 			if ms.Recording != nil {
 				ms.Recording.RecordInput(data)
 			}
@@ -363,6 +435,11 @@ func relayInput(ctx context.Context, clientConn *websocket.Conn, ms *sshterminal
 				return
 			}
 		} else {
+			// Enforce input size limit for text messages
+			if len(data) > sshterminal.MaxInputMessageSize {
+				log.Printf("[terminal-security] oversized text input (%d bytes) dropped for session %s", len(data), ms.ID)
+				continue
+			}
 			var msg termMsg
 			if err := json.Unmarshal(data, &msg); err != nil {
 				continue
@@ -380,7 +457,8 @@ func relayInput(ctx context.Context, clientConn *websocket.Conn, ms *sshterminal
 				}
 			case "resize":
 				if msg.Cols > 0 && msg.Rows > 0 {
-					ms.Terminal.Resize(msg.Cols, msg.Rows)
+					cols, rows := clampResize(msg.Cols, msg.Rows)
+					ms.Terminal.Resize(cols, rows)
 				}
 			case "ping":
 				pong, _ := json.Marshal(termMsg{Type: "pong"})
