@@ -175,9 +175,6 @@ func (m *mockOrchestrator) GetInstanceStatus(_ context.Context, _ string) (strin
 	return "running", nil
 }
 func (m *mockOrchestrator) UpdateInstanceConfig(_ context.Context, _, _ string) error { return nil }
-func (m *mockOrchestrator) StreamInstanceLogs(_ context.Context, _ string, _ int, _ bool) (<-chan string, error) {
-	return nil, nil
-}
 func (m *mockOrchestrator) CloneVolumes(_ context.Context, _, _ string) error { return nil }
 func (m *mockOrchestrator) ConfigureSSHAccess(_ context.Context, _ uint, _ string) error {
 	return m.configureErr

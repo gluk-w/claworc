@@ -22,9 +22,6 @@ type ContainerOrchestrator interface {
 	// Config
 	UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error
 
-	// Logs
-	StreamInstanceLogs(ctx context.Context, name string, tail int, follow bool) (<-chan string, error)
-
 	// Clone
 	CloneVolumes(ctx context.Context, srcName, dstName string) error
 
