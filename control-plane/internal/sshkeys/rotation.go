@@ -53,9 +53,36 @@ type InstanceRotationStatus struct {
 	Error      string `json:"error,omitempty"`
 }
 
+// TestConnectionFunc is the type signature for SSH connection test functions.
+type TestConnectionFunc func(ctx context.Context, signer ssh.Signer, host string, port int) error
+
 // testConnectionFunc is the function used to test SSH connectivity with the new key.
 // It is a package-level var so tests can override it without needing a real SSH server.
 var testConnectionFunc = defaultTestConnection
+
+// SetTestConnectionFunc overrides the SSH connection test function (for testing).
+func SetTestConnectionFunc(fn interface{}) {
+	if fn == nil {
+		testConnectionFunc = defaultTestConnection
+		return
+	}
+	// Support both typed and untyped function signatures
+	switch f := fn.(type) {
+	case func(ctx context.Context, signer ssh.Signer, host string, port int) error:
+		testConnectionFunc = f
+	case func(ctx context.Context, signer interface{}, host string, port int) error:
+		testConnectionFunc = func(ctx context.Context, signer ssh.Signer, host string, port int) error {
+			return f(ctx, signer, host, port)
+		}
+	default:
+		panic("SetTestConnectionFunc: unsupported function type")
+	}
+}
+
+// GetTestConnectionFunc returns the current SSH connection test function (for testing).
+func GetTestConnectionFunc() interface{} {
+	return testConnectionFunc
+}
 
 func defaultTestConnection(ctx context.Context, signer ssh.Signer, host string, port int) error {
 	cfg := &ssh.ClientConfig{

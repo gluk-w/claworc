@@ -120,6 +120,10 @@ func main() {
 		tunnelMgr.StartTunnelHealthChecker(ctx)
 	}
 
+	// Start background SSH key rotation job (checks daily)
+	cancelRotation := handlers.StartKeyRotationJob(ctx)
+	_ = cancelRotation // stopped via context cancellation on shutdown
+
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
@@ -204,6 +208,7 @@ func main() {
 				// Settings
 				r.Get("/settings", handlers.GetSettings)
 				r.Put("/settings", handlers.UpdateSettings)
+				r.Post("/settings/rotate-ssh-key", handlers.RotateSSHKey)
 
 				// User management
 				r.Get("/users", handlers.ListUsers)
