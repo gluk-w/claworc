@@ -1,3 +1,21 @@
+// Package sshproxy provides SSH connection and tunnel management for agent instances.
+//
+// It consolidates three concerns into a single package:
+//   - Key management (keys.go): ED25519 key pair generation, persistence, and loading.
+//   - Connection management (manager.go): SSH connections to agent instances, keyed by
+//     instance ID (uint) for stability across instance renames.
+//   - Tunnel management (tunnel.go): SSH tunnels (reverse port forwards) over managed
+//     connections, also keyed by instance ID.
+//
+// The central types are SSHManager and TunnelManager. SSHManager owns the SSH key pair
+// and maintains one multiplexed SSH connection per instance. TunnelManager depends on
+// SSHManager to obtain connections and creates tunnels over them. Callers typically
+// interact through TunnelManager.StartTunnelsForInstance, which delegates to
+// SSHManager.EnsureConnected for on-demand connection setup.
+//
+// All lookups use the database instance ID (uint) rather than the instance name (string).
+// This ensures that connections and tunnels remain valid even if the instance display
+// name changes, and avoids the need to track name-to-ID mappings.
 package sshproxy
 
 import (

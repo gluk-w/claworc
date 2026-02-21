@@ -1,3 +1,10 @@
+// keys.go implements SSH key pair management for the sshproxy package.
+//
+// It handles generation, persistence, and loading of ED25519 key pairs used to
+// authenticate with agent instances. The key pair is shared across all instances:
+// a single private key on the control plane authenticates to every agent by
+// uploading the corresponding public key on demand (see SSHManager.EnsureConnected).
+
 package sshproxy
 
 import (

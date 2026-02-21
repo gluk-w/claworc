@@ -1,3 +1,12 @@
+// tunnel.go implements SSH tunnel management for the sshproxy package.
+//
+// TunnelManager creates and maintains reverse SSH tunnels (equivalent to ssh -R)
+// over connections managed by SSHManager. Tunnels are keyed by instance ID (uint)
+// so they remain stable across instance renames.
+//
+// A background reconciliation loop (StartBackgroundManager) periodically ensures
+// that tunnels exist for all running instances and are cleaned up for stopped ones.
+
 package sshproxy
 
 import (
@@ -58,8 +67,11 @@ type ActiveTunnel struct {
 }
 
 // TunnelManager manages SSH tunnels for all instances.
+// It depends on SSHManager for SSH connections: SSHManager handles the connection
+// lifecycle (connect, keepalive, reconnect) while TunnelManager creates tunnels
+// over those connections. Use NewTunnelManager to wire them together.
 type TunnelManager struct {
-	sshMgr *SSHManager
+	sshMgr *SSHManager // provides SSH connections keyed by instance ID
 
 	mu      sync.RWMutex
 	tunnels map[uint][]*ActiveTunnel // instanceID -> tunnels
