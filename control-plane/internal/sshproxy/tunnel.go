@@ -66,15 +66,17 @@ type ActiveTunnel struct {
 	cancel   context.CancelFunc
 }
 
-// TunnelManager manages SSH tunnels for all instances.
-// It depends on SSHManager for SSH connections: SSHManager handles the connection
-// lifecycle (connect, keepalive, reconnect) while TunnelManager creates tunnels
-// over those connections. Use NewTunnelManager to wire them together.
+// TunnelManager manages SSH tunnels for all instances, keyed by instance ID (uint).
+// Instance IDs are stable across renames, so tunnels remain valid even if a user
+// changes the display name. TunnelManager depends on SSHManager for SSH connections:
+// SSHManager handles the connection lifecycle (connect, keepalive, reconnect) while
+// TunnelManager creates tunnels over those connections. Use NewTunnelManager to
+// wire them together.
 type TunnelManager struct {
 	sshMgr *SSHManager // provides SSH connections keyed by instance ID
 
 	mu      sync.RWMutex
-	tunnels map[uint][]*ActiveTunnel // instanceID -> tunnels
+	tunnels map[uint][]*ActiveTunnel // keyed by instance ID; IDs are stable across renames
 
 	cancel context.CancelFunc
 }
@@ -131,7 +133,8 @@ func (tm *TunnelManager) CreateReverseTunnel(ctx context.Context, instanceID uin
 	return boundPort, nil
 }
 
-// CreateTunnelForVNC creates a reverse tunnel for the agent's VNC/Selkies service (port 3000).
+// CreateTunnelForVNC creates a reverse tunnel for the agent's VNC/Selkies service (port 3000),
+// identified by instance ID.
 func (tm *TunnelManager) CreateTunnelForVNC(ctx context.Context, instanceID uint) (int, error) {
 	port, err := tm.CreateReverseTunnel(ctx, instanceID, "VNC", 3000, 0)
 	if err != nil {
@@ -142,7 +145,8 @@ func (tm *TunnelManager) CreateTunnelForVNC(ctx context.Context, instanceID uint
 	return port, nil
 }
 
-// CreateTunnelForGateway creates a reverse tunnel for the agent's gateway service.
+// CreateTunnelForGateway creates a reverse tunnel for the agent's gateway service,
+// identified by instance ID.
 func (tm *TunnelManager) CreateTunnelForGateway(ctx context.Context, instanceID uint, gatewayPort int) (int, error) {
 	if gatewayPort == 0 {
 		gatewayPort = 8080
@@ -157,8 +161,9 @@ func (tm *TunnelManager) CreateTunnelForGateway(ctx context.Context, instanceID 
 	return port, nil
 }
 
-// StartTunnelsForInstance establishes all required tunnels for an instance.
-// It uses EnsureConnected to set up SSH access before creating tunnels.
+// StartTunnelsForInstance establishes all required tunnels for an instance ID.
+// It delegates to SSHManager.EnsureConnected for on-demand SSH access before
+// creating tunnels.
 func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID uint, orch Orchestrator) error {
 	// Ensure SSH connection is established (uploads key on-demand)
 	_, err := tm.sshMgr.EnsureConnected(ctx, instanceID, orch)
@@ -203,7 +208,7 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID
 	return nil
 }
 
-// StopTunnelsForInstance closes all tunnels for an instance and cleans up state.
+// StopTunnelsForInstance closes all tunnels for the given instance ID and cleans up state.
 func (tm *TunnelManager) StopTunnelsForInstance(instanceID uint) error {
 	tm.mu.Lock()
 	tunnels, ok := tm.tunnels[instanceID]
@@ -252,7 +257,7 @@ func (tm *TunnelManager) StopAll() {
 	log.Printf("Stopped all SSH tunnels (%d total)", count)
 }
 
-// GetTunnelsForInstance returns a copy of the active tunnels for an instance.
+// GetTunnelsForInstance returns a copy of the active tunnels for the given instance ID.
 func (tm *TunnelManager) GetTunnelsForInstance(instanceID uint) []ActiveTunnel {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
@@ -272,7 +277,7 @@ func (tm *TunnelManager) GetTunnelsForInstance(instanceID uint) []ActiveTunnel {
 	return result
 }
 
-// GetVNCLocalPort returns the local port for the VNC tunnel of an instance, or 0 if not found.
+// GetVNCLocalPort returns the local port for the VNC tunnel of the given instance ID, or 0 if not found.
 func (tm *TunnelManager) GetVNCLocalPort(instanceID uint) int {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
@@ -285,7 +290,7 @@ func (tm *TunnelManager) GetVNCLocalPort(instanceID uint) int {
 	return 0
 }
 
-// GetGatewayLocalPort returns the local port for the Gateway tunnel of an instance, or 0 if not found.
+// GetGatewayLocalPort returns the local port for the Gateway tunnel of the given instance ID, or 0 if not found.
 func (tm *TunnelManager) GetGatewayLocalPort(instanceID uint) int {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()

@@ -48,14 +48,15 @@ type Orchestrator interface {
 
 // SSHManager manages SSH connections to agent instances.
 // It holds the global private key and public key, and maintains a map of active
-// connections, one per instance. SSH multiplexes channels over a single TCP
-// connection, so a single connection per instance is sufficient.
+// connections keyed by instance ID (uint). Instance IDs are stable across renames,
+// making them safer than names for long-lived connection maps. SSH multiplexes
+// channels over a single TCP connection, so one connection per instance suffices.
 type SSHManager struct {
 	signer    ssh.Signer
 	publicKey string
 
 	mu    sync.RWMutex
-	conns map[uint]*managedConn
+	conns map[uint]*managedConn // keyed by instance ID; IDs are stable across renames
 }
 
 // managedConn wraps an SSH client with its cancel function for stopping keepalive.
@@ -126,7 +127,7 @@ func (m *SSHManager) Connect(ctx context.Context, instanceID uint, host string, 
 	return client, nil
 }
 
-// GetConnection returns an existing SSH connection for the given instance.
+// GetConnection returns an existing SSH connection for the given instance ID.
 // Returns the client and true if found, nil and false otherwise.
 func (m *SSHManager) GetConnection(instanceID uint) (*ssh.Client, bool) {
 	m.mu.RLock()
@@ -139,7 +140,7 @@ func (m *SSHManager) GetConnection(instanceID uint) (*ssh.Client, bool) {
 	return mc.client, true
 }
 
-// Close closes a specific instance's SSH connection and removes it from the map.
+// Close closes the SSH connection for the given instance ID and removes it from the map.
 func (m *SSHManager) Close(instanceID uint) error {
 	m.mu.Lock()
 	mc, ok := m.conns[instanceID]
@@ -176,7 +177,7 @@ func (m *SSHManager) CloseAll() error {
 	return firstErr
 }
 
-// IsConnected checks if a healthy connection exists for the given instance.
+// IsConnected checks if a healthy connection exists for the given instance ID.
 func (m *SSHManager) IsConnected(instanceID uint) bool {
 	m.mu.RLock()
 	mc, ok := m.conns[instanceID]
@@ -192,9 +193,10 @@ func (m *SSHManager) IsConnected(instanceID uint) bool {
 }
 
 // EnsureConnected is the single entry point for obtaining an SSH connection to
-// an instance. It checks for an existing healthy connection first, and if none
-// exists, uploads the public key via the orchestrator and establishes a new
-// SSH connection.
+// an instance by its ID. It checks for an existing healthy connection first,
+// and if none exists, uploads the public key via the orchestrator and
+// establishes a new SSH connection. The instance ID is used as the map key
+// so connections survive instance renames.
 func (m *SSHManager) EnsureConnected(ctx context.Context, instanceID uint, orch Orchestrator) (*ssh.Client, error) {
 	// 1. Check if a healthy connection already exists
 	if m.IsConnected(instanceID) {
