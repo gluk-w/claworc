@@ -30,12 +30,28 @@ const (
 	ProtocolUnix TunnelProtocol = "unix"
 )
 
+// Well-known agent service ports.
+const (
+	DefaultVNCPort     = 3000 // Selkies/VNC port on agent
+	DefaultGatewayPort = 8080 // OpenClaw gateway port on agent
+)
+
+// ServiceLabel identifies the purpose of a tunnel.
+type ServiceLabel string
+
+const (
+	ServiceVNC     ServiceLabel = "vnc"
+	ServiceGateway ServiceLabel = "gateway"
+	ServiceCustom  ServiceLabel = "custom"
+)
+
 // TunnelConfig describes the desired tunnel parameters.
 type TunnelConfig struct {
 	LocalPort  int            // Port on the control plane side
 	RemotePort int            // Port on the agent side
 	Type       TunnelType     // Forward or reverse
 	Protocol   TunnelProtocol // TCP or Unix socket
+	Service    ServiceLabel   // Purpose of this tunnel (vnc, gateway, custom)
 }
 
 // ActiveTunnel represents a running tunnel with its configuration and lifecycle controls.
@@ -102,6 +118,11 @@ func NewTunnelManager(sshManager *sshmanager.SSHManager) *TunnelManager {
 // Traffic arriving at remotePort on the agent is forwarded to localPort on the control plane.
 // If localPort is 0, an available port is auto-assigned.
 func (tm *TunnelManager) CreateReverseTunnel(ctx context.Context, instanceName string, remotePort, localPort int) (int, error) {
+	return tm.createReverseTunnel(ctx, instanceName, remotePort, localPort, ServiceCustom)
+}
+
+// createReverseTunnel is the internal implementation that accepts a service label.
+func (tm *TunnelManager) createReverseTunnel(ctx context.Context, instanceName string, remotePort, localPort int, service ServiceLabel) (int, error) {
 	client, err := tm.sshManager.GetClient(instanceName)
 	if err != nil {
 		return 0, fmt.Errorf("get SSH client: %w", err)
@@ -125,6 +146,7 @@ func (tm *TunnelManager) CreateReverseTunnel(ctx context.Context, instanceName s
 			RemotePort: remotePort,
 			Type:       TunnelReverse,
 			Protocol:   ProtocolTCP,
+			Service:    service,
 		},
 		LocalPort: boundPort,
 		StartedAt: time.Now(),
@@ -175,8 +197,23 @@ func (tm *TunnelManager) CreateReverseTunnel(ctx context.Context, instanceName s
 
 	tm.addTunnel(instanceName, tunnel)
 
-	log.Printf("[tunnel] reverse tunnel created: %s local:%d -> remote:%d", instanceName, boundPort, remotePort)
+	log.Printf("[tunnel] reverse tunnel created: %s local:%d -> remote:%d (service=%s)", instanceName, boundPort, remotePort, service)
 	return boundPort, nil
+}
+
+// CreateTunnelForVNC creates a reverse tunnel from the agent's VNC port (3000)
+// to an auto-assigned local port on the control plane.
+func (tm *TunnelManager) CreateTunnelForVNC(ctx context.Context, instanceName string) (int, error) {
+	return tm.createReverseTunnel(ctx, instanceName, DefaultVNCPort, 0, ServiceVNC)
+}
+
+// CreateTunnelForGateway creates a reverse tunnel from the agent's gateway port
+// to an auto-assigned local port on the control plane.
+func (tm *TunnelManager) CreateTunnelForGateway(ctx context.Context, instanceName string, gatewayPort int) (int, error) {
+	if gatewayPort <= 0 {
+		gatewayPort = DefaultGatewayPort
+	}
+	return tm.createReverseTunnel(ctx, instanceName, gatewayPort, 0, ServiceGateway)
 }
 
 // GetTunnels returns a snapshot of active tunnels for the given instance.

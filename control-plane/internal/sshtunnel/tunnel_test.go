@@ -318,6 +318,80 @@ func TestCreateReverseTunnelNoSSHClient(t *testing.T) {
 	}
 }
 
+func TestServiceLabelConstants(t *testing.T) {
+	if ServiceVNC != "vnc" {
+		t.Errorf("expected ServiceVNC = 'vnc', got %q", ServiceVNC)
+	}
+	if ServiceGateway != "gateway" {
+		t.Errorf("expected ServiceGateway = 'gateway', got %q", ServiceGateway)
+	}
+	if ServiceCustom != "custom" {
+		t.Errorf("expected ServiceCustom = 'custom', got %q", ServiceCustom)
+	}
+}
+
+func TestDefaultPorts(t *testing.T) {
+	if DefaultVNCPort != 3000 {
+		t.Errorf("expected DefaultVNCPort = 3000, got %d", DefaultVNCPort)
+	}
+	if DefaultGatewayPort != 8080 {
+		t.Errorf("expected DefaultGatewayPort = 8080, got %d", DefaultGatewayPort)
+	}
+}
+
+func TestCreateTunnelForVNCNoSSHClient(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	ctx := t.Context()
+	_, err := tm.CreateTunnelForVNC(ctx, "nonexistent")
+	if err == nil {
+		t.Error("expected error when no SSH client exists")
+	}
+}
+
+func TestCreateTunnelForGatewayNoSSHClient(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	ctx := t.Context()
+	_, err := tm.CreateTunnelForGateway(ctx, "nonexistent", 8080)
+	if err == nil {
+		t.Error("expected error when no SSH client exists")
+	}
+}
+
+func TestCreateTunnelForGatewayDefaultPort(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	ctx := t.Context()
+	// With zero port, should default to DefaultGatewayPort but still fail due to no SSH client
+	_, err := tm.CreateTunnelForGateway(ctx, "nonexistent", 0)
+	if err == nil {
+		t.Error("expected error when no SSH client exists")
+	}
+
+	// With negative port, should also default
+	_, err = tm.CreateTunnelForGateway(ctx, "nonexistent", -1)
+	if err == nil {
+		t.Error("expected error when no SSH client exists")
+	}
+}
+
+func TestTunnelConfigService(t *testing.T) {
+	cfg := TunnelConfig{
+		LocalPort:  0,
+		RemotePort: 3000,
+		Type:       TunnelReverse,
+		Protocol:   ProtocolTCP,
+		Service:    ServiceVNC,
+	}
+	if cfg.Service != ServiceVNC {
+		t.Errorf("expected Service vnc, got %s", cfg.Service)
+	}
+}
+
 func TestGetTunnelsReturnsCopy(t *testing.T) {
 	sm := sshmanager.NewSSHManager()
 	tm := NewTunnelManager(sm)
