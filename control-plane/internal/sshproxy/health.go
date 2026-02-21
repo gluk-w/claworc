@@ -148,8 +148,16 @@ func (m *SSHManager) checkAllConnections() {
 
 	for _, id := range instanceIDs {
 		if err := m.HealthCheck(id); err != nil {
-			log.Printf("SSH health check failed for instance %d: %v, removing connection", id, err)
+			log.Printf("SSH health check failed for instance %d: %v", id, err)
 			m.Close(id)
+			reason := fmt.Sprintf("health check failed: %v", err)
+			m.emitEvent(ConnectionEvent{
+				InstanceID: id,
+				Type:       EventDisconnected,
+				Timestamp:  time.Now(),
+				Details:    reason,
+			})
+			m.triggerReconnect(id, reason)
 		}
 	}
 }

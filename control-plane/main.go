@@ -57,7 +57,6 @@ func main() {
 	}
 	sshMgr := sshproxy.NewSSHManager(sshSigner, sshPublicKey)
 	handlers.SSHMgr = sshMgr
-	sshMgr.StartHealthChecker(ctx)
 	tunnelMgr := sshproxy.NewTunnelManager(sshMgr)
 	handlers.TunnelMgr = tunnelMgr
 	log.Printf("SSH manager initialized (public key: %d bytes)", len(sshPublicKey))
@@ -98,6 +97,12 @@ func main() {
 	if err := orchestrator.InitOrchestrator(ctx); err != nil {
 		log.Printf("WARNING: %v", err)
 	}
+
+	// Configure SSH manager with orchestrator for automatic reconnection
+	if orch := orchestrator.Get(); orch != nil {
+		sshMgr.SetOrchestrator(orch)
+	}
+	sshMgr.StartHealthChecker(ctx)
 
 	// Start background tunnel manager to maintain SSH tunnels for running instances
 	if orch := orchestrator.Get(); orch != nil {

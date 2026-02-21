@@ -56,6 +56,12 @@ type SSHManager struct {
 	conns map[uint]*managedConn // keyed by instance ID; IDs are stable across renames
 
 	healthCancel context.CancelFunc // cancel function for the background health checker
+
+	// Reconnection fields (protected by reconnMu, separate from conns mutex)
+	reconnMu       sync.RWMutex
+	orch           Orchestrator                // orchestrator for reconnection key upload and address lookup
+	eventListeners []EventListener             // connection state change listeners
+	reconnecting   map[uint]context.CancelFunc // active reconnection goroutines, keyed by instance ID
 }
 
 // managedConn wraps an SSH client with its cancel function for stopping keepalive.
@@ -69,9 +75,10 @@ type managedConn struct {
 // and public key string (OpenSSH authorized_keys format).
 func NewSSHManager(privateKey ssh.Signer, publicKey string) *SSHManager {
 	return &SSHManager{
-		signer:    privateKey,
-		publicKey: publicKey,
-		conns:     make(map[uint]*managedConn),
+		signer:       privateKey,
+		publicKey:    publicKey,
+		conns:        make(map[uint]*managedConn),
+		reconnecting: make(map[uint]context.CancelFunc),
 	}
 }
 
@@ -165,6 +172,7 @@ func (m *SSHManager) Close(instanceID uint) error {
 // CloseAll closes all SSH connections. Used during shutdown.
 func (m *SSHManager) CloseAll() error {
 	m.StopHealthChecker()
+	m.cancelAllReconnections()
 
 	m.mu.Lock()
 	conns := m.conns
@@ -249,6 +257,14 @@ func (m *SSHManager) keepalive(ctx context.Context, instanceID uint, client *ssh
 					delete(m.conns, instanceID)
 				}
 				m.mu.Unlock()
+				reason := fmt.Sprintf("keepalive failed: %v", err)
+				m.emitEvent(ConnectionEvent{
+					InstanceID: instanceID,
+					Type:       EventDisconnected,
+					Timestamp:  time.Now(),
+					Details:    reason,
+				})
+				m.triggerReconnect(instanceID, reason)
 				return
 			}
 		}
