@@ -32,14 +32,9 @@ type ContainerOrchestrator interface {
 	ConfigureSSHAccess(ctx context.Context, instanceID uint, publicKey string) error
 	GetSSHAddress(ctx context.Context, instanceID uint) (host string, port int, err error)
 
-	// Exec & Files
+	// Exec
 	ExecInInstance(ctx context.Context, name string, cmd []string) (stdout string, stderr string, exitCode int, err error)
 	ExecInteractive(ctx context.Context, name string, cmd []string) (*ExecSession, error)
-	ListDirectory(ctx context.Context, name string, path string) ([]FileEntry, error)
-	ReadFile(ctx context.Context, name string, path string) ([]byte, error)
-	CreateFile(ctx context.Context, name string, path string, content string) error
-	CreateDirectory(ctx context.Context, name string, path string) error
-	WriteFile(ctx context.Context, name string, path string, data []byte) error
 }
 
 // ExecSession represents an interactive exec session with stdin/stdout and resize support.

@@ -194,19 +194,6 @@ func (m *mockOrchestrator) ExecInInstance(_ context.Context, _ string, _ []strin
 func (m *mockOrchestrator) ExecInteractive(_ context.Context, _ string, _ []string) (*orchestrator.ExecSession, error) {
 	return nil, nil
 }
-func (m *mockOrchestrator) ListDirectory(_ context.Context, _ string, _ string) ([]orchestrator.FileEntry, error) {
-	return nil, nil
-}
-func (m *mockOrchestrator) ReadFile(_ context.Context, _ string, _ string) ([]byte, error) {
-	return nil, nil
-}
-func (m *mockOrchestrator) CreateFile(_ context.Context, _, _, _ string) error { return nil }
-func (m *mockOrchestrator) CreateDirectory(_ context.Context, _, _ string) error {
-	return nil
-}
-func (m *mockOrchestrator) WriteFile(_ context.Context, _ string, _ string, _ []byte) error {
-	return nil
-}
 
 // --- test helpers ---
 

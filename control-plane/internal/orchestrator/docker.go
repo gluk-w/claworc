@@ -562,25 +562,5 @@ func (d *DockerOrchestrator) ExecInteractive(ctx context.Context, name string, c
 	}, nil
 }
 
-func (d *DockerOrchestrator) ListDirectory(ctx context.Context, name string, path string) ([]FileEntry, error) {
-	return listDirectory(ctx, d.ExecInInstance, name, path)
-}
-
-func (d *DockerOrchestrator) ReadFile(ctx context.Context, name string, path string) ([]byte, error) {
-	return readFile(ctx, d.ExecInInstance, name, path)
-}
-
-func (d *DockerOrchestrator) CreateFile(ctx context.Context, name string, path string, content string) error {
-	return createFile(ctx, d.ExecInInstance, name, path, content)
-}
-
-func (d *DockerOrchestrator) CreateDirectory(ctx context.Context, name string, path string) error {
-	return createDirectory(ctx, d.ExecInInstance, name, path)
-}
-
-func (d *DockerOrchestrator) WriteFile(ctx context.Context, name string, path string, data []byte) error {
-	return writeFile(ctx, d.ExecInInstance, name, path, data)
-}
-
 // Ensure DockerOrchestrator implements ContainerOrchestrator
 var _ ContainerOrchestrator = (*DockerOrchestrator)(nil)

@@ -19,6 +19,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshfiles"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -855,13 +856,18 @@ func GetInstanceConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.Get()
-	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
 		return
 	}
 
-	content, err := orch.ReadFile(r.Context(), inst.Name, orchestrator.PathOpenClawConfig)
+	client, ok := SSHMgr.GetConnection(inst.ID)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "No SSH connection for instance")
+		return
+	}
+
+	content, err := sshfiles.ReadFile(client, orchestrator.PathOpenClawConfig)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "Instance must be running to read config")
 		return

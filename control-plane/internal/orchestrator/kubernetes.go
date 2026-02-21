@@ -507,26 +507,6 @@ func (k *KubernetesOrchestrator) ExecInteractive(ctx context.Context, name strin
 	}, nil
 }
 
-func (k *KubernetesOrchestrator) ListDirectory(ctx context.Context, name string, path string) ([]FileEntry, error) {
-	return listDirectory(ctx, k.ExecInInstance, name, path)
-}
-
-func (k *KubernetesOrchestrator) ReadFile(ctx context.Context, name string, path string) ([]byte, error) {
-	return readFile(ctx, k.ExecInInstance, name, path)
-}
-
-func (k *KubernetesOrchestrator) CreateFile(ctx context.Context, name string, path string, content string) error {
-	return createFile(ctx, k.ExecInInstance, name, path, content)
-}
-
-func (k *KubernetesOrchestrator) CreateDirectory(ctx context.Context, name string, path string) error {
-	return createDirectory(ctx, k.ExecInInstance, name, path)
-}
-
-func (k *KubernetesOrchestrator) WriteFile(ctx context.Context, name string, path string, data []byte) error {
-	return writeFile(ctx, k.ExecInInstance, name, path, data)
-}
-
 // --- Helpers ---
 
 func (k *KubernetesOrchestrator) scaleDeployment(ctx context.Context, name string, replicas int32) error {

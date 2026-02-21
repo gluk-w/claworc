@@ -17,7 +17,6 @@ import (
 // via Go's structural typing.
 type InstanceOps interface {
 	ExecInInstance(ctx context.Context, name string, cmd []string) (string, string, int, error)
-	WriteFile(ctx context.Context, name string, path string, data []byte) error
 	GetInstanceStatus(ctx context.Context, name string) (string, error)
 }
 
@@ -47,9 +46,16 @@ func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models
 		for k, v := range apiKeys {
 			lines = append(lines, fmt.Sprintf("%s=%s", k, v))
 		}
-		data := []byte(strings.Join(lines, "\n") + "\n")
-		if err := ops.WriteFile(ctx, name, pathClaworcKeys, data); err != nil {
+		data := strings.Join(lines, "\n") + "\n"
+		b64 := base64.StdEncoding.EncodeToString([]byte(data))
+		cmd := []string{"sh", "-c", fmt.Sprintf("echo '%s' | base64 -d > %s", b64, pathClaworcKeys)}
+		_, stderr, code, err := ops.ExecInInstance(ctx, name, cmd)
+		if err != nil {
 			log.Printf("Error writing API keys for %s: %v", logutil.SanitizeForLog(name), err)
+			return
+		}
+		if code != 0 {
+			log.Printf("Failed to write API keys for %s: %s", logutil.SanitizeForLog(name), logutil.SanitizeForLog(stderr))
 			return
 		}
 	}
