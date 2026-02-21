@@ -4,28 +4,24 @@
 
 ```
 Browser
-  |
-  +---> Claworc Dashboard (192.168.1.204:8000)
-  |       |
-  |       +---> K8s API (via Python kubernetes client)
-  |               |
-  |               +---> Instance Pod "bot-alpha" (NodePorts 30100/30101)
-  |               |       - Dual VNC: Chrome kiosk + xterm terminal
-  |               |       - PVC: clawdbot-data (5Gi)
-  |               |       - PVC: homebrew-data (10Gi)
-  |               |       - PVC: clawd-data (5Gi)
-  |               |       - PVC: chrome-data (5Gi)
-  |               |       - Secret: API keys as env vars
-  |               |       - ConfigMap: clawdbot.json
-  |               |
-  |               +---> Instance Pod "bot-bravo" (NodePorts 30102/30103)
-  |               |       - (same structure)
-  |               |
-  |               +---> Instance Pod "bot-charlie" (NodePorts 30104/30105)
-  |                       - (same structure)
-  |
-  +---> Chrome VNC:   http://192.168.1.104:<even-port>/vnc.html?autoconnect=true
-  +---> Terminal VNC: http://192.168.1.104:<odd-port>/vnc.html?autoconnect=true
+  │
+  └──► Claworc Dashboard (Go backend + React SPA)
+        │
+        ├──► K8s API (via client-go)    — instance lifecycle (create/start/stop/delete)
+        │
+        └──► SSH Tunnels                — all runtime communication
+              │
+              ├──► Instance Pod "bot-alpha" (sshd :22)
+              │     ├─ VNC (tunnel → :3000)
+              │     ├─ Gateway (tunnel → :8080)
+              │     ├─ Files, Logs, Terminal (SSH exec/PTY)
+              │     └─ PVCs, Secret, ConfigMap
+              │
+              ├──► Instance Pod "bot-bravo" (sshd :22)
+              │     └─ (same structure)
+              │
+              └──► Instance Pod "bot-charlie" (sshd :22)
+                    └─ (same structure)
 ```
 
 ## Pod Architecture
@@ -141,6 +137,19 @@ spec:
   selector:
     app: bot-{name}
 ```
+
+## SSH Connectivity
+
+All communication between the control plane and agent instances uses **SSH tunnels**. The control plane acts as an SSH client; each agent runs an sshd server on port 22. Services (desktop, chat, files, logs, terminal) are accessed through multiplexed SSH channels — no agent ports are exposed directly.
+
+Key aspects:
+- **ED25519 key-per-instance**: Each instance gets a unique key pair at creation time. Private keys stored on disk (`/app/data/ssh-keys/`), never exposed via API.
+- **Tunnel-based proxying**: VNC (port 3000) and Gateway (port 8080) are forwarded to ephemeral local ports on the control plane. HTTP/WebSocket handlers proxy through these local ports.
+- **Direct SSH sessions**: File operations, log streaming, and terminal access use SSH exec/PTY sessions directly (no tunnels needed).
+- **Automatic resilience**: 30s keepalive health checks, exponential-backoff reconnection (up to 10 retries), tunnel health monitoring (60s global, 10s per-instance).
+- **Security controls**: Host key TOFU verification, connection rate limiting, per-instance source IP restrictions, comprehensive audit logging.
+
+For complete documentation, see [SSH Connectivity Architecture](architecture/ssh-connectivity.md) and [SSH Resilience](ssh-resilience.md).
 
 ## Persistence
 
@@ -263,6 +272,9 @@ Claworc itself is deployed as a Kubernetes pod with its own Helm chart:
 | Dual VNC / no WM | Isolated displays prevent accidental window management; Chrome kiosk + xterm only |
 | ConfigMap separate from PVC | Enables config updates without touching persistent data |
 | Dedicated Chrome PVC | Separate PVC for Chrome profile keeps storage concerns isolated |
+| SSH tunnels over direct ports | Eliminates direct agent port exposure; single multiplexed connection per instance |
+| ED25519 keys | Modern, fast, small key size; unique per instance for isolation |
+| TOFU host verification | Agents regenerate host keys on restart; strict verification would break reconnection |
 | No authentication | Internal network tool; adding auth would add complexity without value |
 | FastAPI + React | Modern stack, async-capable backend, rich frontend ecosystem |
 | Poetry | Project-mandated Python dependency management |

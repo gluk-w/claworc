@@ -40,6 +40,8 @@ The project consists of the following components:
 
 **Frontend**: React 18 + TypeScript + Vite + TailwindCSS v4. Uses TanStack React Query for data fetching (5s polling on instance list), React Router for SPA routing, Monaco Editor for JSON config editing, Axios for API calls. The `@` import alias maps to `src/`.
 
+**SSH connectivity** (`internal/sshkeys/`, `internal/sshmanager/`, `internal/sshtunnel/`, `internal/sshfiles/`, `internal/sshlogs/`, `internal/sshterminal/`, `internal/sshaudit/`): All control-plane-to-agent communication uses SSH. The control plane is the SSH client; each agent runs sshd. VNC and Gateway access use SSH port-forwarding tunnels. File ops, logs, and terminal use SSH exec/PTY sessions directly. ED25519 key-per-instance with automatic rotation. See `docs/architecture/ssh-connectivity.md`.
+
 **Agent image**: Ubuntu 24.04 with systemd as PID 1 running services using systemd.
 
 ## Configuration
