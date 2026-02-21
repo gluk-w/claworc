@@ -588,6 +588,20 @@ func (d *DockerOrchestrator) GetGatewayWSURL(ctx context.Context, name string) (
 	return "", fmt.Errorf("cannot determine container IP for %s", name)
 }
 
+func (d *DockerOrchestrator) GetInstanceSSHEndpoint(ctx context.Context, name string) (string, int, error) {
+	inspect, err := d.client.ContainerInspect(ctx, name)
+	if err != nil {
+		return "", 0, fmt.Errorf("inspect container: %w", err)
+	}
+
+	for _, net := range inspect.NetworkSettings.Networks {
+		if net.IPAddress != "" {
+			return net.IPAddress, 22, nil
+		}
+	}
+	return "", 0, fmt.Errorf("cannot determine container IP for %s", name)
+}
+
 func (d *DockerOrchestrator) GetHTTPTransport() http.RoundTripper {
 	return nil
 }

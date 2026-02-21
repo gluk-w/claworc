@@ -521,6 +521,44 @@ func (k *KubernetesOrchestrator) GetGatewayWSURL(_ context.Context, name string)
 	return fmt.Sprintf("ws://%s-vnc.%s.svc.cluster.local:3000/gateway", name, k.ns()), nil
 }
 
+func (k *KubernetesOrchestrator) GetInstanceSSHEndpoint(ctx context.Context, name string) (string, int, error) {
+	svcName := name + "-vnc"
+	svc, err := k.clientset.CoreV1().Services(k.ns()).Get(ctx, svcName, metav1.GetOptions{})
+	if err != nil {
+		return "", 0, fmt.Errorf("get service %s: %w", svcName, err)
+	}
+
+	if svc.Spec.Type == corev1.ServiceTypeNodePort {
+		for _, p := range svc.Spec.Ports {
+			if p.Port == 22 {
+				// For NodePort, use the first node address we can find
+				nodes, err := k.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+				if err != nil {
+					return "", 0, fmt.Errorf("list nodes: %w", err)
+				}
+				if len(nodes.Items) == 0 {
+					return "", 0, fmt.Errorf("no nodes found")
+				}
+				nodeHost := ""
+				for _, addr := range nodes.Items[0].Status.Addresses {
+					if addr.Type == corev1.NodeInternalIP {
+						nodeHost = addr.Address
+						break
+					}
+				}
+				if nodeHost == "" {
+					return "", 0, fmt.Errorf("no internal IP found for node %s", nodes.Items[0].Name)
+				}
+				return nodeHost, int(p.NodePort), nil
+			}
+		}
+		return "", 0, fmt.Errorf("SSH port 22 not found in service %s", svcName)
+	}
+
+	// ClusterIP service - return ClusterIP and port 22
+	return svc.Spec.ClusterIP, 22, nil
+}
+
 func (k *KubernetesOrchestrator) GetHTTPTransport() http.RoundTripper {
 	if !k.inCluster {
 		transport, err := rest.TransportFor(k.restConfig)
@@ -701,6 +739,7 @@ func buildService(name, ns string) *corev1.Service {
 			Selector: map[string]string{"app": name},
 			Ports: []corev1.ServicePort{
 				{Name: "http", Port: 3000, TargetPort: intstr.FromInt32(3000), Protocol: corev1.ProtocolTCP},
+				{Name: "ssh", Port: 22, TargetPort: intstr.FromInt32(22), Protocol: corev1.ProtocolTCP},
 			},
 		},
 	}

@@ -42,6 +42,9 @@ type ContainerOrchestrator interface {
 	GetVNCBaseURL(ctx context.Context, name string, display string) (string, error)
 	GetGatewayWSURL(ctx context.Context, name string) (string, error)
 
+	// SSH
+	GetInstanceSSHEndpoint(ctx context.Context, name string) (host string, port int, err error)
+
 	// GetHTTPTransport returns a custom transport for reaching service URLs,
 	// or nil if the default transport is sufficient (e.g. in-cluster).
 	GetHTTPTransport() http.RoundTripper
