@@ -1,5 +1,11 @@
 import client from "./client";
-import type { SSHStatusResponse, SSHEventsResponse } from "@/types/ssh";
+import type {
+  SSHStatusResponse,
+  SSHEventsResponse,
+  SSHTestResult,
+  SSHReconnectResponse,
+  SSHFingerprintResponse,
+} from "@/types/ssh";
 
 export async function fetchSSHStatus(
   instanceId: number,
@@ -15,6 +21,33 @@ export async function fetchSSHEvents(
 ): Promise<SSHEventsResponse> {
   const { data } = await client.get<SSHEventsResponse>(
     `/instances/${instanceId}/ssh-events`,
+  );
+  return data;
+}
+
+export async function testSSHConnection(
+  instanceId: number,
+): Promise<SSHTestResult> {
+  const { data } = await client.post<SSHTestResult>(
+    `/instances/${instanceId}/ssh-test`,
+  );
+  return data;
+}
+
+export async function reconnectSSH(
+  instanceId: number,
+): Promise<SSHReconnectResponse> {
+  const { data } = await client.post<SSHReconnectResponse>(
+    `/instances/${instanceId}/ssh-reconnect`,
+  );
+  return data;
+}
+
+export async function fetchSSHFingerprint(
+  instanceId: number,
+): Promise<SSHFingerprintResponse> {
+  const { data } = await client.get<SSHFingerprintResponse>(
+    `/instances/${instanceId}/ssh-fingerprint`,
   );
   return data;
 }

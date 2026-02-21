@@ -1,5 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
-import { fetchSSHStatus, fetchSSHEvents } from "@/api/ssh";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  fetchSSHStatus,
+  fetchSSHEvents,
+  testSSHConnection,
+  reconnectSSH,
+  fetchSSHFingerprint,
+} from "@/api/ssh";
 
 export function useSSHStatus(instanceId: number, enabled = true) {
   return useQuery({
@@ -18,5 +24,35 @@ export function useSSHEvents(instanceId: number, enabled = true) {
     refetchInterval: 15_000,
     refetchIntervalInBackground: false,
     enabled,
+  });
+}
+
+export function useSSHTest(instanceId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => testSSHConnection(instanceId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ssh-status", instanceId] });
+    },
+  });
+}
+
+export function useSSHReconnect(instanceId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => reconnectSSH(instanceId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ssh-status", instanceId] });
+      qc.invalidateQueries({ queryKey: ["ssh-events", instanceId] });
+    },
+  });
+}
+
+export function useSSHFingerprint(instanceId: number, enabled = true) {
+  return useQuery({
+    queryKey: ["ssh-fingerprint", instanceId],
+    queryFn: () => fetchSSHFingerprint(instanceId),
+    enabled,
+    staleTime: 60_000,
   });
 }

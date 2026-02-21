@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Wrench } from "lucide-react";
 import StatusBadge from "@/components/StatusBadge";
 import ActionButtons from "@/components/ActionButtons";
 import ProviderTable from "@/components/ProviderTable";
@@ -13,6 +13,7 @@ import FileBrowser from "@/components/FileBrowser";
 import SSHStatus from "@/components/SSHStatus";
 import SSHTunnelList from "@/components/SSHTunnelList";
 import SSHEventLog from "@/components/SSHEventLog";
+import SSHTroubleshoot from "@/components/SSHTroubleshoot";
 import {
   useInstance,
   useStartInstance,
@@ -82,6 +83,7 @@ export default function InstanceDetailPage() {
   // SSH tunnel detail toggle
   const [sshTunnelsExpanded, setSSHTunnelsExpanded] = useState(false);
   const [sshEventsExpanded, setSSHEventsExpanded] = useState(false);
+  const [sshTroubleshootOpen, setSSHTroubleshootOpen] = useState(false);
   const { data: sshStatus } = useSSHStatus(instanceId, instance?.status === "running");
 
   // API key editing state
@@ -408,6 +410,21 @@ export default function InstanceDetailPage() {
                   </div>
                 )}
               </div>
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setSSHTroubleshootOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                >
+                  <Wrench size={12} />
+                  Troubleshoot SSH
+                </button>
+              </div>
+              {sshTroubleshootOpen && (
+                <SSHTroubleshoot
+                  instanceId={instanceId}
+                  onClose={() => setSSHTroubleshootOpen(false)}
+                />
+              )}
             </>
           )}
 

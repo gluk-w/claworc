@@ -49,3 +49,25 @@ export interface SSHEvent {
 export interface SSHEventsResponse {
   events: SSHEvent[];
 }
+
+export interface SSHTestResult {
+  success: boolean;
+  latency_ms: number;
+  tunnel_status: {
+    service: string;
+    healthy: boolean;
+    error?: string;
+  }[];
+  command_test: boolean;
+  error?: string;
+}
+
+export interface SSHReconnectResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface SSHFingerprintResponse {
+  fingerprint: string;
+  algorithm: string;
+}
