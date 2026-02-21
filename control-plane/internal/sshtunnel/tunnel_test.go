@@ -1,6 +1,8 @@
 package sshtunnel
 
 import (
+	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -410,5 +412,329 @@ func TestGetTunnelsReturnsCopy(t *testing.T) {
 	internal := tm.GetTunnels("test")
 	if len(internal) != 1 {
 		t.Errorf("internal state was modified, expected 1 tunnel, got %d", len(internal))
+	}
+}
+
+// --- Lifecycle management tests ---
+
+func TestStartTunnelsForInstanceNoSSHClient(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	err := tm.StartTunnelsForInstance(t.Context(), "no-client")
+	if err == nil {
+		t.Fatal("expected error when no SSH client exists")
+	}
+
+	// No tunnels should remain on failure
+	tunnels := tm.GetTunnels("no-client")
+	if len(tunnels) != 0 {
+		t.Errorf("expected 0 tunnels after failed start, got %d", len(tunnels))
+	}
+}
+
+func TestStopTunnelsForInstance(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	// Manually add tunnels and a monitor
+	vncTunnel := &ActiveTunnel{
+		Config:    TunnelConfig{RemotePort: DefaultVNCPort, Type: TunnelReverse, Protocol: ProtocolTCP, Service: ServiceVNC},
+		LocalPort: 12345,
+		StartedAt: time.Now(),
+	}
+	gwTunnel := &ActiveTunnel{
+		Config:    TunnelConfig{RemotePort: DefaultGatewayPort, Type: TunnelReverse, Protocol: ProtocolTCP, Service: ServiceGateway},
+		LocalPort: 12346,
+		StartedAt: time.Now(),
+	}
+	tm.addTunnel("test-instance", vncTunnel)
+	tm.addTunnel("test-instance", gwTunnel)
+
+	// Register a mock monitor cancel function
+	monCtx, monCancel := context.WithCancel(t.Context())
+	tm.monMu.Lock()
+	tm.monitors["test-instance"] = monCancel
+	tm.monMu.Unlock()
+
+	err := tm.StopTunnelsForInstance("test-instance")
+	if err != nil {
+		t.Fatalf("StopTunnelsForInstance returned error: %v", err)
+	}
+
+	// Tunnels should be closed
+	if !vncTunnel.IsClosed() {
+		t.Error("VNC tunnel should be closed")
+	}
+	if !gwTunnel.IsClosed() {
+		t.Error("gateway tunnel should be closed")
+	}
+
+	// No tunnels should remain
+	tunnels := tm.GetTunnels("test-instance")
+	if len(tunnels) != 0 {
+		t.Errorf("expected 0 tunnels after stop, got %d", len(tunnels))
+	}
+
+	// Monitor context should be cancelled
+	select {
+	case <-monCtx.Done():
+		// expected
+	default:
+		t.Error("monitor context should be cancelled")
+	}
+
+	// Monitor should be removed from map
+	tm.monMu.Lock()
+	_, exists := tm.monitors["test-instance"]
+	tm.monMu.Unlock()
+	if exists {
+		t.Error("monitor should be removed from monitors map")
+	}
+}
+
+func TestStopTunnelsForInstanceNonexistent(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	// Should not panic or error
+	err := tm.StopTunnelsForInstance("nonexistent")
+	if err != nil {
+		t.Errorf("StopTunnelsForInstance returned error for nonexistent instance: %v", err)
+	}
+}
+
+func TestUpdateHealthCheck(t *testing.T) {
+	tunnel := &ActiveTunnel{
+		StartedAt: time.Now(),
+	}
+
+	// Initially zero
+	checkTime, checkErr := tunnel.LastCheck()
+	if !checkTime.IsZero() {
+		t.Error("expected zero lastCheck for new tunnel")
+	}
+	if checkErr != nil {
+		t.Error("expected nil lastError for new tunnel")
+	}
+
+	// Update with nil error (healthy)
+	tunnel.updateHealthCheck(nil)
+	checkTime, checkErr = tunnel.LastCheck()
+	if checkTime.IsZero() {
+		t.Error("lastCheck should be updated after updateHealthCheck")
+	}
+	if checkErr != nil {
+		t.Error("lastError should be nil after healthy check")
+	}
+
+	// Update with an error
+	testErr := fmt.Errorf("connection lost")
+	tunnel.updateHealthCheck(testErr)
+	checkTime2, checkErr2 := tunnel.LastCheck()
+	if checkTime2.Before(checkTime) {
+		t.Error("lastCheck should advance after second updateHealthCheck")
+	}
+	if checkErr2 == nil || checkErr2.Error() != "connection lost" {
+		t.Errorf("expected 'connection lost' error, got %v", checkErr2)
+	}
+}
+
+func TestCheckAndReconnectTunnelsAllPresent(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	// Add both VNC and Gateway tunnels manually
+	vncTunnel := &ActiveTunnel{
+		Config:    TunnelConfig{RemotePort: DefaultVNCPort, Type: TunnelReverse, Protocol: ProtocolTCP, Service: ServiceVNC},
+		LocalPort: 12345,
+		StartedAt: time.Now(),
+	}
+	gwTunnel := &ActiveTunnel{
+		Config:    TunnelConfig{RemotePort: DefaultGatewayPort, Type: TunnelReverse, Protocol: ProtocolTCP, Service: ServiceGateway},
+		LocalPort: 12346,
+		StartedAt: time.Now(),
+	}
+	tm.addTunnel("test", vncTunnel)
+	tm.addTunnel("test", gwTunnel)
+
+	// With both tunnels present, no reconnection should be attempted (no SSH client needed)
+	tm.checkAndReconnectTunnels(t.Context(), "test")
+
+	// Tunnels should still be there and healthy
+	tunnels := tm.GetTunnels("test")
+	if len(tunnels) != 2 {
+		t.Errorf("expected 2 tunnels, got %d", len(tunnels))
+	}
+
+	// Health checks should be updated
+	checkTime, checkErr := vncTunnel.LastCheck()
+	if checkTime.IsZero() {
+		t.Error("VNC tunnel lastCheck should be updated")
+	}
+	if checkErr != nil {
+		t.Errorf("VNC tunnel should have nil error, got %v", checkErr)
+	}
+}
+
+func TestCheckAndReconnectTunnelsMissingNoSSH(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	// No tunnels and no SSH client - should log but not panic
+	tm.checkAndReconnectTunnels(t.Context(), "test")
+
+	// Still no tunnels since reconnection can't happen without SSH client
+	tunnels := tm.GetTunnels("test")
+	if len(tunnels) != 0 {
+		t.Errorf("expected 0 tunnels without SSH client, got %d", len(tunnels))
+	}
+}
+
+func TestCheckAndReconnectTunnelsClosedRemoved(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	// Add a closed tunnel and an open one
+	closedTunnel := &ActiveTunnel{
+		Config:    TunnelConfig{RemotePort: DefaultVNCPort, Type: TunnelReverse, Protocol: ProtocolTCP, Service: ServiceVNC},
+		LocalPort: 12345,
+		StartedAt: time.Now(),
+		closed:    true,
+	}
+	openTunnel := &ActiveTunnel{
+		Config:    TunnelConfig{RemotePort: DefaultGatewayPort, Type: TunnelReverse, Protocol: ProtocolTCP, Service: ServiceGateway},
+		LocalPort: 12346,
+		StartedAt: time.Now(),
+	}
+	tm.addTunnel("test", closedTunnel)
+	tm.addTunnel("test", openTunnel)
+
+	// Without SSH client, closed tunnels get removed but reconnection is skipped
+	tm.checkAndReconnectTunnels(t.Context(), "test")
+
+	tunnels := tm.GetTunnels("test")
+	if len(tunnels) != 1 {
+		t.Fatalf("expected 1 tunnel after cleanup, got %d", len(tunnels))
+	}
+	if tunnels[0].Config.Service != ServiceGateway {
+		t.Errorf("expected remaining tunnel to be gateway, got %s", tunnels[0].Config.Service)
+	}
+}
+
+func TestReconnectTunnelContextCancelled(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // Cancel immediately
+
+	// Should return immediately without blocking
+	tm.reconnectTunnel(ctx, "test", ServiceVNC)
+
+	// No tunnels should be created (no SSH client and context is cancelled)
+	tunnels := tm.GetTunnels("test")
+	if len(tunnels) != 0 {
+		t.Errorf("expected 0 tunnels, got %d", len(tunnels))
+	}
+}
+
+func TestMonitorInstanceStopsOnContextCancel(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	ctx, cancel := context.WithCancel(t.Context())
+
+	done := make(chan struct{})
+	go func() {
+		tm.monitorInstance(ctx, "test")
+		close(done)
+	}()
+
+	// Cancel the context and verify the monitor exits
+	cancel()
+
+	select {
+	case <-done:
+		// Monitor exited as expected
+	case <-time.After(2 * time.Second):
+		t.Fatal("monitorInstance did not exit after context cancellation")
+	}
+}
+
+func TestNewTunnelManagerInitializesMonitors(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	if tm.monitors == nil {
+		t.Error("monitors map not initialized")
+	}
+	if len(tm.monitors) != 0 {
+		t.Errorf("expected empty monitors map, got %d entries", len(tm.monitors))
+	}
+}
+
+func TestStopTunnelsForInstanceCancelsMonitor(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	// Start a fake monitor goroutine
+	ctx, cancel := context.WithCancel(t.Context())
+	tm.monMu.Lock()
+	tm.monitors["test-instance"] = cancel
+	tm.monMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		close(done)
+	}()
+
+	_ = tm.StopTunnelsForInstance("test-instance")
+
+	select {
+	case <-done:
+		// Monitor was cancelled as expected
+	case <-time.After(2 * time.Second):
+		t.Fatal("monitor context was not cancelled by StopTunnelsForInstance")
+	}
+}
+
+func TestStartTunnelsForInstanceReplacesExistingMonitor(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	// Register an existing monitor
+	oldCtx, oldCancel := context.WithCancel(t.Context())
+	tm.monMu.Lock()
+	tm.monitors["test-instance"] = oldCancel
+	tm.monMu.Unlock()
+
+	// StartTunnelsForInstance will fail (no SSH client) but should still
+	// try to replace the monitor. Since it fails before reaching monitor setup,
+	// the old monitor should remain.
+	_ = tm.StartTunnelsForInstance(t.Context(), "test-instance")
+
+	// The old monitor was not replaced because Start failed before setting monitor
+	select {
+	case <-oldCtx.Done():
+		t.Error("old monitor context should NOT have been cancelled on early failure")
+	default:
+		// expected - the old context is still active
+	}
+}
+
+func TestLifecycleConstants(t *testing.T) {
+	if defaultHealthCheckInterval <= 0 {
+		t.Error("defaultHealthCheckInterval should be positive")
+	}
+	if reconnectBaseDelay <= 0 {
+		t.Error("reconnectBaseDelay should be positive")
+	}
+	if reconnectMaxDelay < reconnectBaseDelay {
+		t.Error("reconnectMaxDelay should be >= reconnectBaseDelay")
+	}
+	if reconnectBackoffFactor < 2 {
+		t.Error("reconnectBackoffFactor should be >= 2")
 	}
 }

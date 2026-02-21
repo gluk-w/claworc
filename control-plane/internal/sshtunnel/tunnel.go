@@ -98,12 +98,31 @@ func (t *ActiveTunnel) LastCheck() (time.Time, error) {
 	return t.lastCheck, t.lastError
 }
 
+// updateHealthCheck records the result of a health check.
+func (t *ActiveTunnel) updateHealthCheck(err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.lastCheck = time.Now()
+	t.lastError = err
+}
+
+// Default health check and reconnection parameters.
+const (
+	defaultHealthCheckInterval = 10 * time.Second
+	reconnectBaseDelay         = 1 * time.Second
+	reconnectMaxDelay          = 60 * time.Second
+	reconnectBackoffFactor     = 2
+)
+
 // TunnelManager creates and tracks SSH tunnels for agent instances.
 type TunnelManager struct {
 	sshManager *sshmanager.SSHManager
 
 	mu      sync.RWMutex
 	tunnels map[string][]*ActiveTunnel // keyed by instance name
+
+	monMu    sync.Mutex
+	monitors map[string]context.CancelFunc // per-instance health monitor cancellers
 }
 
 // NewTunnelManager creates a TunnelManager backed by the given SSHManager.
@@ -111,6 +130,7 @@ func NewTunnelManager(sshManager *sshmanager.SSHManager) *TunnelManager {
 	return &TunnelManager{
 		sshManager: sshManager,
 		tunnels:    make(map[string][]*ActiveTunnel),
+		monitors:   make(map[string]context.CancelFunc),
 	}
 }
 
@@ -274,6 +294,160 @@ func (tm *TunnelManager) CloseAll() {
 	}
 	if count > 0 {
 		log.Printf("[tunnel] closed all %d tunnel(s)", count)
+	}
+}
+
+// StartTunnelsForInstance creates all standard tunnels (VNC + Gateway) for the
+// given instance and starts a background health monitor that will attempt to
+// reconnect tunnels on failure with exponential backoff.
+func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceName string) error {
+	// Create VNC tunnel
+	vncPort, err := tm.CreateTunnelForVNC(ctx, instanceName)
+	if err != nil {
+		return fmt.Errorf("create VNC tunnel: %w", err)
+	}
+	log.Printf("[tunnel] VNC tunnel for %s ready on local port %d", instanceName, vncPort)
+
+	// Create Gateway tunnel
+	gwPort, err := tm.CreateTunnelForGateway(ctx, instanceName, DefaultGatewayPort)
+	if err != nil {
+		// Clean up VNC tunnel on failure
+		tm.CloseTunnels(instanceName)
+		return fmt.Errorf("create gateway tunnel: %w", err)
+	}
+	log.Printf("[tunnel] gateway tunnel for %s ready on local port %d", instanceName, gwPort)
+
+	// Start health monitoring goroutine
+	monCtx, monCancel := context.WithCancel(ctx)
+	tm.monMu.Lock()
+	// Cancel any existing monitor for this instance
+	if prev, ok := tm.monitors[instanceName]; ok {
+		prev()
+	}
+	tm.monitors[instanceName] = monCancel
+	tm.monMu.Unlock()
+
+	go tm.monitorInstance(monCtx, instanceName)
+
+	log.Printf("[tunnel] all tunnels started for %s", instanceName)
+	return nil
+}
+
+// StopTunnelsForInstance stops the health monitor and closes all tunnels for the instance.
+func (tm *TunnelManager) StopTunnelsForInstance(instanceName string) error {
+	// Stop health monitor
+	tm.monMu.Lock()
+	if cancel, ok := tm.monitors[instanceName]; ok {
+		cancel()
+		delete(tm.monitors, instanceName)
+	}
+	tm.monMu.Unlock()
+
+	// Close all tunnels
+	tm.CloseTunnels(instanceName)
+
+	log.Printf("[tunnel] all tunnels stopped for %s", instanceName)
+	return nil
+}
+
+// monitorInstance periodically checks tunnel health and attempts reconnection.
+func (tm *TunnelManager) monitorInstance(ctx context.Context, instanceName string) {
+	ticker := time.NewTicker(defaultHealthCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tm.checkAndReconnectTunnels(ctx, instanceName)
+		}
+	}
+}
+
+// checkAndReconnectTunnels inspects each tunnel for the instance and recreates any that
+// have failed. Reconnection uses exponential backoff per service type.
+func (tm *TunnelManager) checkAndReconnectTunnels(ctx context.Context, instanceName string) {
+	// First remove closed tunnels from tracking
+	tm.removeClosed(instanceName)
+
+	tunnels := tm.GetTunnels(instanceName)
+
+	// Check which service types have active tunnels
+	hasVNC := false
+	hasGateway := false
+	for _, t := range tunnels {
+		if t.IsClosed() {
+			continue
+		}
+		switch t.Config.Service {
+		case ServiceVNC:
+			hasVNC = true
+		case ServiceGateway:
+			hasGateway = true
+		}
+		// Update health check timestamp for active tunnels
+		t.updateHealthCheck(nil)
+	}
+
+	// Don't attempt reconnection if the SSH client is gone
+	if !tm.sshManager.HasClient(instanceName) {
+		if !hasVNC || !hasGateway {
+			log.Printf("[tunnel] SSH client missing for %s, skipping reconnection", instanceName)
+		}
+		return
+	}
+
+	// Reconnect missing VNC tunnel
+	if !hasVNC {
+		tm.reconnectTunnel(ctx, instanceName, ServiceVNC)
+	}
+	// Reconnect missing gateway tunnel
+	if !hasGateway {
+		tm.reconnectTunnel(ctx, instanceName, ServiceGateway)
+	}
+}
+
+// reconnectTunnel attempts to recreate a tunnel with exponential backoff.
+func (tm *TunnelManager) reconnectTunnel(ctx context.Context, instanceName string, service ServiceLabel) {
+	delay := reconnectBaseDelay
+	for attempt := 1; ; attempt++ {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		log.Printf("[tunnel] reconnecting %s tunnel for %s (attempt %d)", service, instanceName, attempt)
+
+		var err error
+		switch service {
+		case ServiceVNC:
+			_, err = tm.CreateTunnelForVNC(ctx, instanceName)
+		case ServiceGateway:
+			_, err = tm.CreateTunnelForGateway(ctx, instanceName, DefaultGatewayPort)
+		default:
+			log.Printf("[tunnel] unknown service label %q, cannot reconnect", service)
+			return
+		}
+
+		if err == nil {
+			log.Printf("[tunnel] reconnected %s tunnel for %s after %d attempt(s)", service, instanceName, attempt)
+			return
+		}
+
+		log.Printf("[tunnel] reconnect %s tunnel for %s failed (attempt %d): %v", service, instanceName, attempt, err)
+
+		// Wait with exponential backoff
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		delay *= time.Duration(reconnectBackoffFactor)
+		if delay > reconnectMaxDelay {
+			delay = reconnectMaxDelay
+		}
 	}
 }
 
