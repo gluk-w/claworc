@@ -17,7 +17,7 @@ The project consists of the following components:
 
 - `control-plane/` - Main application (Go backend + React frontend)
   - `main.go` - Entry point, Chi router, embedded SPA serving
-  - `internal/` - Go packages (config, database, handlers, middleware, orchestrator)
+  - `internal/` - Go packages (config, database, handlers, middleware, orchestrator, sshproxy)
   - `frontend/` - React TypeScript frontend (npm/Vite)
   - `Dockerfile` - Multi-stage build (Node frontend + Go backend)
 - `agent/` - Bot instance Docker image (Ubuntu 24.04, systemd init, dual VNC)
@@ -38,6 +38,8 @@ The project consists of the following components:
 
 **Crypto** (`internal/crypto/crypto.go`): API keys encrypted at rest in SQLite using Fernet. The Fernet key is auto-generated on first run and stored in the `settings` table.
 
+**SSH Proxy** (`internal/sshproxy/`): Unified package consolidating SSH key management, connection management, and tunnel management. Contains three files: `keys.go` (ED25519 key pair generation/persistence), `manager.go` (SSHManager — one multiplexed SSH connection per instance), and `tunnel.go` (TunnelManager — reverse SSH tunnels over managed connections). All connections and tunnels are keyed by database instance ID (`uint`), not by name, so they remain stable across instance renames. TunnelManager depends on SSHManager for connections; a background reconciliation loop ensures tunnels stay healthy.
+
 **Frontend**: React 18 + TypeScript + Vite + TailwindCSS v4. Uses TanStack React Query for data fetching (5s polling on instance list), React Router for SPA routing, Monaco Editor for JSON config editing, Axios for API calls. The `@` import alias maps to `src/`.
 
 **Agent image**: Ubuntu 24.04 with systemd as PID 1 running services using systemd.
@@ -45,7 +47,7 @@ The project consists of the following components:
 ## Configuration
 
 Backend settings use `envconfig` with `CLAWORC_` env prefix (see `internal/config/config.go`):
-- `CLAWORC_DATABASE_PATH` - SQLite file path (default: `/app/data/claworc.db`)
+- `CLAWORC_DATA_PATH` - Data directory for SQLite database and SSH keys (default: `/app/data`)
 - `CLAWORC_K8S_NAMESPACE` - Target namespace (default: `claworc`)
 ## Key Conventions
 
@@ -55,3 +57,4 @@ Backend settings use `envconfig` with `CLAWORC_` env prefix (see `internal/confi
 - Config updates (clawdbot.json) trigger automatic pod restarts
 - Global API key changes propagate to all instances without overrides
 - Frontend is embedded into the Go binary at build time using `//go:embed`
+- SSH connections and tunnels are keyed by instance ID (uint), not name — this ensures stability across renames and avoids name-to-ID mapping overhead
