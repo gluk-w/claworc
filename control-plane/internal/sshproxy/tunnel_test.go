@@ -149,7 +149,7 @@ func parseDirectTCPIPData(data []byte) (string, int) {
 func handleDirectTCPIP(ch ssh.Channel, host string, port int) {
 	defer ch.Close()
 
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		return
