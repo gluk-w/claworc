@@ -1,13 +1,16 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/coder/websocket"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/sshmanager"
 	"github.com/gluk-w/claworc/control-plane/internal/sshtunnel"
@@ -337,6 +340,294 @@ func TestWebsocketProxyToLocalPort_BackendNotListening(t *testing.T) {
 
 	// The websocket.Accept call may fail or the dial may fail;
 	// either way, no panic
+}
+
+func TestWebsocketProxyToLocalPort_BidirectionalRelay(t *testing.T) {
+	// Start a backend WebSocket echo server
+	echoServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			InsecureSkipVerify: true,
+		})
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		for {
+			msgType, data, err := conn.Read(context.Background())
+			if err != nil {
+				return
+			}
+			if err := conn.Write(context.Background(), msgType, data); err != nil {
+				return
+			}
+		}
+	}))
+	defer echoServer.Close()
+
+	backendPort := extractPort(t, echoServer.URL)
+
+	// Set up a test server that proxies WebSocket to the echo backend
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		websocketProxyToLocalPort(w, r, backendPort, "")
+	}))
+	defer proxyServer.Close()
+
+	// Connect to the proxy server
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + strings.TrimPrefix(proxyServer.URL, "http")
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial proxy: %v", err)
+	}
+	defer conn.CloseNow()
+
+	// Send a text message and verify echo
+	testMsg := "hello via SSH tunnel"
+	if err := conn.Write(ctx, websocket.MessageText, []byte(testMsg)); err != nil {
+		t.Fatalf("failed to write: %v", err)
+	}
+
+	msgType, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("failed to read echo: %v", err)
+	}
+	if msgType != websocket.MessageText {
+		t.Errorf("expected text message, got %v", msgType)
+	}
+	if string(data) != testMsg {
+		t.Errorf("expected %q, got %q", testMsg, string(data))
+	}
+
+	// Send a binary message and verify echo
+	binMsg := []byte{0x00, 0x01, 0x02, 0xFF}
+	if err := conn.Write(ctx, websocket.MessageBinary, binMsg); err != nil {
+		t.Fatalf("failed to write binary: %v", err)
+	}
+
+	msgType, data, err = conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("failed to read binary echo: %v", err)
+	}
+	if msgType != websocket.MessageBinary {
+		t.Errorf("expected binary message, got %v", msgType)
+	}
+	if string(data) != string(binMsg) {
+		t.Errorf("binary data mismatch")
+	}
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestWebsocketProxyToLocalPort_MultipleMessages(t *testing.T) {
+	// Backend that echoes messages
+	echoServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			InsecureSkipVerify: true,
+		})
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		for {
+			msgType, data, err := conn.Read(context.Background())
+			if err != nil {
+				return
+			}
+			if err := conn.Write(context.Background(), msgType, data); err != nil {
+				return
+			}
+		}
+	}))
+	defer echoServer.Close()
+
+	backendPort := extractPort(t, echoServer.URL)
+
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		websocketProxyToLocalPort(w, r, backendPort, "")
+	}))
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + strings.TrimPrefix(proxyServer.URL, "http")
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial proxy: %v", err)
+	}
+	defer conn.CloseNow()
+
+	// Send multiple messages rapidly to verify relay stability
+	messages := []string{"msg1", "msg2", "msg3", "msg4", "msg5"}
+	for _, msg := range messages {
+		if err := conn.Write(ctx, websocket.MessageText, []byte(msg)); err != nil {
+			t.Fatalf("failed to write %q: %v", msg, err)
+		}
+	}
+
+	for _, expected := range messages {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("failed to read echo for %q: %v", expected, err)
+		}
+		if string(data) != expected {
+			t.Errorf("expected %q, got %q", expected, string(data))
+		}
+	}
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestWebsocketProxyToLocalPort_UpstreamSendsFirst(t *testing.T) {
+	// Backend that sends a greeting immediately upon connection
+	greetingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			InsecureSkipVerify: true,
+		})
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		// Send greeting first
+		conn.Write(context.Background(), websocket.MessageText, []byte("welcome"))
+		// Then echo
+		for {
+			msgType, data, err := conn.Read(context.Background())
+			if err != nil {
+				return
+			}
+			if err := conn.Write(context.Background(), msgType, data); err != nil {
+				return
+			}
+		}
+	}))
+	defer greetingServer.Close()
+
+	backendPort := extractPort(t, greetingServer.URL)
+
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		websocketProxyToLocalPort(w, r, backendPort, "")
+	}))
+	defer proxyServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + strings.TrimPrefix(proxyServer.URL, "http")
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial proxy: %v", err)
+	}
+	defer conn.CloseNow()
+
+	// Read the upstream-initiated greeting
+	_, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("failed to read greeting: %v", err)
+	}
+	if string(data) != "welcome" {
+		t.Errorf("expected 'welcome', got %q", string(data))
+	}
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestProxyToLocalPort_ForwardsPath(t *testing.T) {
+	var receivedPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	port := extractPort(t, backend.URL)
+
+	req := httptest.NewRequest("GET", "/deep/nested/path/file.js", nil)
+	w := httptest.NewRecorder()
+
+	proxyToLocalPort(w, req, port, "deep/nested/path/file.js")
+
+	if receivedPath != "/deep/nested/path/file.js" {
+		t.Errorf("expected path '/deep/nested/path/file.js', got %q", receivedPath)
+	}
+}
+
+func TestProxyToLocalPort_EmptyPath(t *testing.T) {
+	var receivedPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	port := extractPort(t, backend.URL)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+
+	proxyToLocalPort(w, req, port, "")
+
+	if receivedPath != "/" {
+		t.Errorf("expected path '/', got %q", receivedPath)
+	}
+}
+
+func TestProxyToLocalPort_BinaryResponse(t *testing.T) {
+	binaryData := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A} // PNG header
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.WriteHeader(http.StatusOK)
+		w.Write(binaryData)
+	}))
+	defer backend.Close()
+
+	port := extractPort(t, backend.URL)
+
+	req := httptest.NewRequest("GET", "/image.png", nil)
+	w := httptest.NewRecorder()
+
+	proxyToLocalPort(w, req, port, "image.png")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	if w.Header().Get("Content-Type") != "image/png" {
+		t.Errorf("expected image/png, got %s", w.Header().Get("Content-Type"))
+	}
+	if w.Body.Len() != len(binaryData) {
+		t.Errorf("expected %d bytes, got %d", len(binaryData), w.Body.Len())
+	}
+}
+
+func TestProxyToLocalPort_CacheHeaders(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Header().Set("ETag", `"abc123"`)
+		w.Header().Set("Last-Modified", "Thu, 01 Jan 2026 00:00:00 GMT")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "body{}")
+	}))
+	defer backend.Close()
+
+	port := extractPort(t, backend.URL)
+
+	req := httptest.NewRequest("GET", "/style.css", nil)
+	w := httptest.NewRecorder()
+
+	proxyToLocalPort(w, req, port, "style.css")
+
+	if w.Header().Get("Cache-Control") != "public, max-age=3600" {
+		t.Errorf("Cache-Control not forwarded: %q", w.Header().Get("Cache-Control"))
+	}
+	if w.Header().Get("ETag") != `"abc123"` {
+		t.Errorf("ETag not forwarded: %q", w.Header().Get("ETag"))
+	}
+	if w.Header().Get("Last-Modified") != "Thu, 01 Jan 2026 00:00:00 GMT" {
+		t.Errorf("Last-Modified not forwarded: %q", w.Header().Get("Last-Modified"))
+	}
 }
 
 // --- helpers ---
