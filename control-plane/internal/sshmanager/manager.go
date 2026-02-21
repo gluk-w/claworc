@@ -22,12 +22,19 @@ const (
 	connectTimeout = 30 * time.Second
 )
 
+// Orchestrator defines the orchestrator methods needed by EnsureConnected.
+type Orchestrator interface {
+	ConfigureSSHAccess(ctx context.Context, name string, publicKey string) error
+	GetSSHAddress(ctx context.Context, name string) (host string, port int, err error)
+}
+
 // SSHManager manages SSH connections to agent instances.
-// It holds the global private key and maintains a map of active connections,
-// one per instance. SSH multiplexes channels over a single TCP connection,
-// so a single connection per instance is sufficient.
+// It holds the global private key and public key, and maintains a map of active
+// connections, one per instance. SSH multiplexes channels over a single TCP
+// connection, so a single connection per instance is sufficient.
 type SSHManager struct {
-	signer ssh.Signer
+	signer    ssh.Signer
+	publicKey string
 
 	mu    sync.RWMutex
 	conns map[string]*managedConn
@@ -39,11 +46,13 @@ type managedConn struct {
 	cancel context.CancelFunc
 }
 
-// NewSSHManager creates a new SSHManager with the given private key signer.
-func NewSSHManager(privateKey ssh.Signer) *SSHManager {
+// NewSSHManager creates a new SSHManager with the given private key signer
+// and public key string (OpenSSH authorized_keys format).
+func NewSSHManager(privateKey ssh.Signer, publicKey string) *SSHManager {
 	return &SSHManager{
-		signer: privateKey,
-		conns:  make(map[string]*managedConn),
+		signer:    privateKey,
+		publicKey: publicKey,
+		conns:     make(map[string]*managedConn),
 	}
 }
 
@@ -162,6 +171,37 @@ func (m *SSHManager) IsConnected(instanceName string) bool {
 	// Send a keepalive to verify the connection is still alive
 	_, _, err := mc.client.SendRequest("keepalive@openssh.com", true, nil)
 	return err == nil
+}
+
+// EnsureConnected is the single entry point for obtaining an SSH connection to
+// an instance. It checks for an existing healthy connection first, and if none
+// exists, uploads the public key via the orchestrator and establishes a new
+// SSH connection.
+func (m *SSHManager) EnsureConnected(ctx context.Context, instanceName string, orch Orchestrator) (*ssh.Client, error) {
+	// 1. Check if a healthy connection already exists
+	if m.IsConnected(instanceName) {
+		client, _ := m.GetConnection(instanceName)
+		return client, nil
+	}
+
+	// 2. Get instance SSH address from orchestrator
+	host, port, err := orch.GetSSHAddress(ctx, instanceName)
+	if err != nil {
+		return nil, fmt.Errorf("get ssh address for %s: %w", instanceName, err)
+	}
+
+	// 3. Upload public key to the instance
+	if err := orch.ConfigureSSHAccess(ctx, instanceName, m.publicKey); err != nil {
+		return nil, fmt.Errorf("configure ssh access for %s: %w", instanceName, err)
+	}
+
+	// 4. Establish SSH connection
+	client, err := m.Connect(ctx, instanceName, host, port)
+	if err != nil {
+		return nil, fmt.Errorf("ssh connect to %s: %w", instanceName, err)
+	}
+
+	return client, nil
 }
 
 // keepalive sends periodic keepalive requests to detect dead connections.

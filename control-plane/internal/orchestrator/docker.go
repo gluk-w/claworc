@@ -385,6 +385,19 @@ func (d *DockerOrchestrator) ConfigureSSHAccess(ctx context.Context, name string
 	return configureSSHAccess(ctx, d.ExecInInstance, name, publicKey)
 }
 
+func (d *DockerOrchestrator) GetSSHAddress(ctx context.Context, name string) (string, int, error) {
+	inspect, err := d.client.ContainerInspect(ctx, name)
+	if err != nil {
+		return "", 0, fmt.Errorf("inspect container: %w", err)
+	}
+	for _, net := range inspect.NetworkSettings.Networks {
+		if net.IPAddress != "" {
+			return net.IPAddress, 22, nil
+		}
+	}
+	return "", 0, fmt.Errorf("cannot determine container IP for %s", name)
+}
+
 func (d *DockerOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {
 	return updateInstanceConfig(ctx, d.ExecInInstance, name, configJSON)
 }

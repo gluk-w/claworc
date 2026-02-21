@@ -55,7 +55,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("SSH key init: %v", err)
 	}
-	sshMgr := sshmanager.NewSSHManager(sshSigner)
+	sshMgr := sshmanager.NewSSHManager(sshSigner, sshPublicKey)
 	log.Printf("SSH manager initialized (public key: %d bytes)", len(sshPublicKey))
 
 	// Init WebAuthn

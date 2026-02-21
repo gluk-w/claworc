@@ -316,6 +316,23 @@ func (k *KubernetesOrchestrator) ConfigureSSHAccess(ctx context.Context, name st
 	return configureSSHAccess(ctx, k.ExecInInstance, name, publicKey)
 }
 
+func (k *KubernetesOrchestrator) GetSSHAddress(ctx context.Context, name string) (string, int, error) {
+	pods, err := k.clientset.CoreV1().Pods(k.ns()).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("app=%s", name),
+	})
+	if err != nil {
+		return "", 0, fmt.Errorf("list pods: %w", err)
+	}
+	if len(pods.Items) == 0 {
+		return "", 0, fmt.Errorf("no pods found for instance %s", name)
+	}
+	pod := pods.Items[0]
+	if pod.Status.PodIP == "" {
+		return "", 0, fmt.Errorf("pod %s has no IP assigned", pod.Name)
+	}
+	return pod.Status.PodIP, 22, nil
+}
+
 func (k *KubernetesOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {
 	return updateInstanceConfig(ctx, k.ExecInInstance, name, configJSON)
 }

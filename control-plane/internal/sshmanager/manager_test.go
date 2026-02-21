@@ -170,7 +170,7 @@ func TestNewSSHManager(t *testing.T) {
 		t.Fatalf("parse key: %v", err)
 	}
 
-	mgr := NewSSHManager(signer)
+	mgr := NewSSHManager(signer, "")
 	if mgr == nil {
 		t.Fatal("NewSSHManager returned nil")
 	}
@@ -186,7 +186,7 @@ func TestConnect_ValidKey(t *testing.T) {
 	signer, ts := newTestSignerAndServer(t)
 	defer ts.cleanup()
 
-	mgr := NewSSHManager(signer)
+	mgr := NewSSHManager(signer, "")
 	defer mgr.CloseAll()
 
 	host, port := parseHostPort(t, ts.addr)
@@ -229,7 +229,7 @@ func TestConnect_InvalidKey(t *testing.T) {
 		t.Fatalf("parse wrong key: %v", err)
 	}
 
-	mgr := NewSSHManager(wrongSigner)
+	mgr := NewSSHManager(wrongSigner, "")
 	defer mgr.CloseAll()
 
 	host, port := parseHostPort(t, ts.addr)
@@ -249,7 +249,7 @@ func TestConnect_InvalidHost(t *testing.T) {
 		t.Fatalf("parse key: %v", err)
 	}
 
-	mgr := NewSSHManager(signer)
+	mgr := NewSSHManager(signer, "")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -264,7 +264,7 @@ func TestGetConnection(t *testing.T) {
 	signer, ts := newTestSignerAndServer(t)
 	defer ts.cleanup()
 
-	mgr := NewSSHManager(signer)
+	mgr := NewSSHManager(signer, "")
 	defer mgr.CloseAll()
 
 	// Before connecting
@@ -299,7 +299,7 @@ func TestClose(t *testing.T) {
 	signer, ts := newTestSignerAndServer(t)
 	defer ts.cleanup()
 
-	mgr := NewSSHManager(signer)
+	mgr := NewSSHManager(signer, "")
 
 	host, port := parseHostPort(t, ts.addr)
 	_, err := mgr.Connect(context.Background(), "test-instance", host, port)
@@ -331,7 +331,7 @@ func TestCloseAll(t *testing.T) {
 	signer, ts := newTestSignerAndServer(t)
 	defer ts.cleanup()
 
-	mgr := NewSSHManager(signer)
+	mgr := NewSSHManager(signer, "")
 
 	host, port := parseHostPort(t, ts.addr)
 
@@ -366,7 +366,7 @@ func TestConnect_ReplacesExisting(t *testing.T) {
 	signer, ts := newTestSignerAndServer(t)
 	defer ts.cleanup()
 
-	mgr := NewSSHManager(signer)
+	mgr := NewSSHManager(signer, "")
 	defer mgr.CloseAll()
 
 	host, port := parseHostPort(t, ts.addr)
@@ -398,7 +398,7 @@ func TestIsConnected(t *testing.T) {
 	signer, ts := newTestSignerAndServer(t)
 	defer ts.cleanup()
 
-	mgr := NewSSHManager(signer)
+	mgr := NewSSHManager(signer, "")
 	defer mgr.CloseAll()
 
 	if mgr.IsConnected("test-instance") {
@@ -420,7 +420,7 @@ func TestConcurrentAccess(t *testing.T) {
 	signer, ts := newTestSignerAndServer(t)
 	defer ts.cleanup()
 
-	mgr := NewSSHManager(signer)
+	mgr := NewSSHManager(signer, "")
 	defer mgr.CloseAll()
 
 	host, port := parseHostPort(t, ts.addr)
@@ -475,7 +475,7 @@ func TestConcurrentAccess(t *testing.T) {
 func TestKeepalive_RemovesDeadConnection(t *testing.T) {
 	signer, ts := newTestSignerAndServer(t)
 
-	mgr := NewSSHManager(signer)
+	mgr := NewSSHManager(signer, "")
 
 	host, port := parseHostPort(t, ts.addr)
 	_, err := mgr.Connect(context.Background(), "test-instance", host, port)
