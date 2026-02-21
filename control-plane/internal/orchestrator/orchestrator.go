@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"io"
-	"net/http"
 )
 
 // ContainerOrchestrator thin abstraction providing generic primitives (exec, read/write files)
@@ -41,14 +40,6 @@ type ContainerOrchestrator interface {
 	CreateFile(ctx context.Context, name string, path string, content string) error
 	CreateDirectory(ctx context.Context, name string, path string) error
 	WriteFile(ctx context.Context, name string, path string, data []byte) error
-
-	// URLs
-	GetVNCBaseURL(ctx context.Context, name string, display string) (string, error)
-	GetGatewayWSURL(ctx context.Context, name string) (string, error)
-
-	// GetHTTPTransport returns a custom transport for reaching service URLs,
-	// or nil if the default transport is sufficient (e.g. in-cluster).
-	GetHTTPTransport() http.RoundTripper
 }
 
 // ExecSession represents an interactive exec session with stdin/stdout and resize support.

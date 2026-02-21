@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"strings"
 	"time"
 
@@ -526,41 +525,6 @@ func (k *KubernetesOrchestrator) CreateDirectory(ctx context.Context, name strin
 
 func (k *KubernetesOrchestrator) WriteFile(ctx context.Context, name string, path string, data []byte) error {
 	return writeFile(ctx, k.ExecInInstance, name, path, data)
-}
-
-func (k *KubernetesOrchestrator) GetVNCBaseURL(_ context.Context, name string, display string) (string, error) {
-	if display != "chrome" {
-		return "", fmt.Errorf("unsupported display type: %s", display)
-	}
-	port := 3000
-	if !k.inCluster {
-		host := strings.TrimRight(k.restConfig.Host, "/")
-		return fmt.Sprintf("%s/api/v1/namespaces/%s/services/%s-vnc:%d/proxy", host, k.ns(), name, port), nil
-	}
-	return fmt.Sprintf("http://%s-vnc.%s.svc.cluster.local:%d", name, k.ns(), port), nil
-}
-
-func (k *KubernetesOrchestrator) GetGatewayWSURL(_ context.Context, name string) (string, error) {
-	if !k.inCluster {
-		host := strings.TrimRight(k.restConfig.Host, "/")
-		// Convert https:// to wss:// for WebSocket through API server proxy
-		wsHost := strings.Replace(host, "https://", "wss://", 1)
-		wsHost = strings.Replace(wsHost, "http://", "ws://", 1)
-		return fmt.Sprintf("%s/api/v1/namespaces/%s/services/%s-vnc:3000/proxy/gateway", wsHost, k.ns(), name), nil
-	}
-	return fmt.Sprintf("ws://%s-vnc.%s.svc.cluster.local:3000/gateway", name, k.ns()), nil
-}
-
-func (k *KubernetesOrchestrator) GetHTTPTransport() http.RoundTripper {
-	if !k.inCluster {
-		transport, err := rest.TransportFor(k.restConfig)
-		if err != nil {
-			log.Printf("Failed to create K8s transport: %v", err)
-			return nil
-		}
-		return transport
-	}
-	return nil
 }
 
 // --- Helpers ---

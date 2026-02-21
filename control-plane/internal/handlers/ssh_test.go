@@ -207,13 +207,6 @@ func (m *mockOrchestrator) CreateDirectory(_ context.Context, _, _ string) error
 func (m *mockOrchestrator) WriteFile(_ context.Context, _ string, _ string, _ []byte) error {
 	return nil
 }
-func (m *mockOrchestrator) GetVNCBaseURL(_ context.Context, _, _ string) (string, error) {
-	return "", nil
-}
-func (m *mockOrchestrator) GetGatewayWSURL(_ context.Context, _ string) (string, error) {
-	return "", nil
-}
-func (m *mockOrchestrator) GetHTTPTransport() http.RoundTripper { return nil }
 
 // --- test helpers ---
 
