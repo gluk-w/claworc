@@ -20,6 +20,9 @@ type Instance struct {
 	GatewayToken    string    `json:"-"`
 	ModelsConfig    string    `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
 	DefaultModel    string    `gorm:"default:''" json:"-"`
+	SSHPublicKey     string `gorm:"type:text" json:"-"`
+	SSHPrivateKeyPath string `gorm:"type:text" json:"-"`
+	SSHPort          int    `gorm:"default:22" json:"ssh_port"`
 	SortOrder       int       `gorm:"not null;default:0" json:"sort_order"`
 	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt       time.Time `gorm:"autoUpdateTime" json:"updated_at"`
