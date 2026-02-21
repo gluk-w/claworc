@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Wrench } from "lucide-react";
 import StatusBadge from "@/components/StatusBadge";
 import ActionButtons from "@/components/ActionButtons";
 import ProviderTable from "@/components/ProviderTable";
@@ -13,6 +13,7 @@ import FileBrowser from "@/components/FileBrowser";
 import SSHStatus from "@/components/SSHStatus";
 import SSHTunnelList from "@/components/SSHTunnelList";
 import SSHEventLog from "@/components/SSHEventLog";
+import SSHTroubleshoot from "@/components/SSHTroubleshoot";
 import {
   useInstance,
   useStartInstance,
@@ -85,6 +86,8 @@ export default function InstanceDetailPage() {
   const [tunnelsExpanded, setTunnelsExpanded] = useState(false);
   // SSH event log toggle
   const [eventsExpanded, setEventsExpanded] = useState(false);
+  // SSH troubleshoot dialog
+  const [troubleshootOpen, setTroubleshootOpen] = useState(false);
 
   // API key editing state
   const [editingKeys, setEditingKeys] = useState(false);
@@ -366,12 +369,30 @@ export default function InstanceDetailPage() {
           </div>
 
           {/* SSH Connection Status */}
-          <SSHStatus
-            status={sshStatus.data}
-            isLoading={sshStatus.isLoading}
-            isError={sshStatus.isError}
-            onRefresh={() => sshStatus.refetch()}
-          />
+          <div className="relative">
+            <SSHStatus
+              status={sshStatus.data}
+              isLoading={sshStatus.isLoading}
+              isError={sshStatus.isError}
+              onRefresh={() => sshStatus.refetch()}
+            />
+            {instance.status === "running" && sshStatus.data && (
+              <button
+                onClick={() => setTroubleshootOpen(true)}
+                className="absolute top-4 right-12 inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded"
+                title="Troubleshoot SSH"
+              >
+                <Wrench size={12} />
+                Troubleshoot
+              </button>
+            )}
+          </div>
+          {troubleshootOpen && (
+            <SSHTroubleshoot
+              instanceId={instanceId}
+              onClose={() => setTroubleshootOpen(false)}
+            />
+          )}
 
           {/* SSH Tunnel Details (expand/collapse) */}
           {sshStatus.data && sshStatus.data.tunnels.length > 0 && (

@@ -48,3 +48,14 @@ export interface SSHEventEntry {
 export interface SSHEventsResponse {
   events: SSHEventEntry[];
 }
+
+export interface SSHReconnectResponse {
+  status: "ok" | "error";
+  latency_ms: number;
+  error: string | null;
+}
+
+export interface SSHFingerprintResponse {
+  fingerprint: string;
+  public_key: string;
+}

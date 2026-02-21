@@ -167,7 +167,9 @@ func main() {
 			r.Get("/instances/{id}/ssh-test", handlers.SSHConnectionTest)
 			r.Get("/instances/{id}/ssh-status", handlers.GetSSHStatus)
 			r.Get("/instances/{id}/ssh-events", handlers.GetSSHEvents)
+			r.Post("/instances/{id}/ssh-reconnect", handlers.SSHReconnect)
 			r.Get("/instances/{id}/tunnels", handlers.GetTunnelStatus)
+			r.Get("/ssh-fingerprint", handlers.GetSSHFingerprint)
 
 			// Files
 			r.Get("/instances/{id}/files/browse", handlers.BrowseFiles)

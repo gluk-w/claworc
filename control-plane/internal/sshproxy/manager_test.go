@@ -468,6 +468,34 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 }
 
+func TestGetPublicKeyFingerprint(t *testing.T) {
+	pubKeyBytes, privKeyPEM, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key pair: %v", err)
+	}
+	signer, err := ParsePrivateKey(privKeyPEM)
+	if err != nil {
+		t.Fatalf("parse key: %v", err)
+	}
+
+	mgr := NewSSHManager(signer, string(pubKeyBytes))
+
+	fp := mgr.GetPublicKeyFingerprint()
+	if fp == "" {
+		t.Fatal("GetPublicKeyFingerprint() returned empty string")
+	}
+	// SHA256 fingerprints start with "SHA256:"
+	if len(fp) < 7 || fp[:7] != "SHA256:" {
+		t.Errorf("GetPublicKeyFingerprint() = %q, want SHA256:... prefix", fp)
+	}
+
+	// GetPublicKey should return the same public key string
+	pk := mgr.GetPublicKey()
+	if pk != string(pubKeyBytes) {
+		t.Errorf("GetPublicKey() mismatch: got %d bytes, want %d bytes", len(pk), len(pubKeyBytes))
+	}
+}
+
 func TestKeepalive_RemovesDeadConnection(t *testing.T) {
 	signer, ts := newTestSignerAndServer(t)
 

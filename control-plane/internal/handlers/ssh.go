@@ -331,3 +331,65 @@ type sshEventEntry struct {
 	Timestamp string `json:"timestamp"`
 	Details   string `json:"details"`
 }
+
+// SSHReconnect triggers a manual reconnection to an instance. It closes the
+// existing connection and re-establishes it with key re-upload.
+func SSHReconnect(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	if SSHMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"status": "error",
+			"error":  "SSH manager not initialized",
+		})
+		return
+	}
+
+	start := time.Now()
+	err = SSHMgr.ReconnectWithBackoff(r.Context(), inst.ID, 3, "manual reconnect")
+	latency := time.Since(start).Milliseconds()
+
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status":     "error",
+			"latency_ms": latency,
+			"error":      err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":     "ok",
+		"latency_ms": latency,
+		"error":      nil,
+	})
+}
+
+// GetSSHFingerprint returns the global SSH public key fingerprint.
+// This is a control-plane-wide value (not per-instance).
+func GetSSHFingerprint(w http.ResponseWriter, r *http.Request) {
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"fingerprint": SSHMgr.GetPublicKeyFingerprint(),
+		"public_key":  SSHMgr.GetPublicKey(),
+	})
+}

@@ -252,6 +252,16 @@ func (m *SSHManager) EnsureConnected(ctx context.Context, instanceID uint, orch 
 	return client, nil
 }
 
+// GetPublicKeyFingerprint returns the SHA256 fingerprint of the global SSH public key.
+func (m *SSHManager) GetPublicKeyFingerprint() string {
+	return ssh.FingerprintSHA256(m.signer.PublicKey())
+}
+
+// GetPublicKey returns the global SSH public key in OpenSSH authorized_keys format.
+func (m *SSHManager) GetPublicKey() string {
+	return m.publicKey
+}
+
 // keepalive sends periodic keepalive requests to detect dead connections.
 // If the connection is dead, it is removed from the map.
 func (m *SSHManager) keepalive(ctx context.Context, instanceID uint, client *ssh.Client) {
