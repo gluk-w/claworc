@@ -6,6 +6,7 @@ import {
   reconnectSSH,
   fetchSSHFingerprint,
   fetchGlobalSSHStatus,
+  fetchSSHMetrics,
 } from "@/api/ssh";
 
 export function useSSHStatus(instanceId: number, enabled = true) {
@@ -63,6 +64,15 @@ export function useGlobalSSHStatus() {
     queryKey: ["global-ssh-status"],
     queryFn: fetchGlobalSSHStatus,
     refetchInterval: 10_000,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function useSSHMetrics() {
+  return useQuery({
+    queryKey: ["ssh-metrics"],
+    queryFn: fetchSSHMetrics,
+    refetchInterval: 30_000,
     refetchIntervalInBackground: false,
   });
 }

@@ -91,3 +91,27 @@ export interface GlobalSSHStatusResponse {
   failed: number;
   disconnected: number;
 }
+
+export interface SSHUptimeBucket {
+  label: string;
+  count: number;
+}
+
+export interface SSHHealthRate {
+  instance_name: string;
+  display_name: string;
+  success_rate: number;
+  total_checks: number;
+}
+
+export interface SSHReconnectionCount {
+  instance_name: string;
+  display_name: string;
+  count: number;
+}
+
+export interface SSHMetricsResponse {
+  uptime_buckets: SSHUptimeBucket[];
+  health_rates: SSHHealthRate[];
+  reconnection_counts: SSHReconnectionCount[];
+}

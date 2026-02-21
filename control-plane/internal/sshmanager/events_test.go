@@ -265,3 +265,66 @@ func TestMultipleInstanceEvents(t *testing.T) {
 		t.Errorf("expected 1 event for inst-b, got %d", len(eventsB))
 	}
 }
+
+func TestGetEventCountsByType_Empty(t *testing.T) {
+	sm := NewSSHManager(0)
+	defer sm.CloseAll()
+
+	counts := sm.GetEventCountsByType(EventReconnecting)
+	if len(counts) != 0 {
+		t.Errorf("expected empty map, got %v", counts)
+	}
+}
+
+func TestGetEventCountsByType_SingleInstance(t *testing.T) {
+	sm := NewSSHManager(0)
+	defer sm.CloseAll()
+
+	sm.LogEvent("bot-a", EventReconnecting, "attempt 1")
+	sm.LogEvent("bot-a", EventReconnecting, "attempt 2")
+	sm.LogEvent("bot-a", EventConnected, "connected")
+
+	counts := sm.GetEventCountsByType(EventReconnecting)
+	if counts["bot-a"] != 2 {
+		t.Errorf("expected 2 reconnecting events for bot-a, got %d", counts["bot-a"])
+	}
+
+	counts = sm.GetEventCountsByType(EventConnected)
+	if counts["bot-a"] != 1 {
+		t.Errorf("expected 1 connected event for bot-a, got %d", counts["bot-a"])
+	}
+}
+
+func TestGetEventCountsByType_MultipleInstances(t *testing.T) {
+	sm := NewSSHManager(0)
+	defer sm.CloseAll()
+
+	sm.LogEvent("bot-a", EventReconnecting, "attempt 1")
+	sm.LogEvent("bot-b", EventReconnecting, "attempt 1")
+	sm.LogEvent("bot-b", EventReconnecting, "attempt 2")
+	sm.LogEvent("bot-c", EventConnected, "connected")
+
+	counts := sm.GetEventCountsByType(EventReconnecting)
+	if counts["bot-a"] != 1 {
+		t.Errorf("expected 1 for bot-a, got %d", counts["bot-a"])
+	}
+	if counts["bot-b"] != 2 {
+		t.Errorf("expected 2 for bot-b, got %d", counts["bot-b"])
+	}
+	if _, ok := counts["bot-c"]; ok {
+		t.Error("bot-c should not have reconnecting events")
+	}
+}
+
+func TestGetEventCountsByType_NoMatches(t *testing.T) {
+	sm := NewSSHManager(0)
+	defer sm.CloseAll()
+
+	sm.LogEvent("bot-a", EventConnected, "connected")
+	sm.LogEvent("bot-a", EventDisconnected, "disconnected")
+
+	counts := sm.GetEventCountsByType(EventReconnecting)
+	if len(counts) != 0 {
+		t.Errorf("expected empty map, got %v", counts)
+	}
+}

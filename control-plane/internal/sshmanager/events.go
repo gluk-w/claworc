@@ -89,3 +89,24 @@ func (m *SSHManager) ClearEvents(instanceName string) {
 	defer m.eventsMu.Unlock()
 	delete(m.events, instanceName)
 }
+
+// GetEventCountsByType returns a count of events matching the given type for
+// each instance. Only instances that have at least one matching event are
+// included in the result.
+func (m *SSHManager) GetEventCountsByType(eventType EventType) map[string]int {
+	m.eventsMu.RLock()
+	defer m.eventsMu.RUnlock()
+	result := make(map[string]int)
+	for name, events := range m.events {
+		count := 0
+		for _, e := range events {
+			if e.Type == eventType {
+				count++
+			}
+		}
+		if count > 0 {
+			result[name] = count
+		}
+	}
+	return result
+}

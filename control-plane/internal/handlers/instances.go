@@ -1750,3 +1750,141 @@ func GetGlobalSSHStatus(w http.ResponseWriter, r *http.Request) {
 	resp.TotalCount = len(resp.Instances)
 	writeJSON(w, http.StatusOK, resp)
 }
+
+// --- SSH Metrics ---
+
+type sshUptimeBucket struct {
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+type sshHealthRate struct {
+	InstanceName string  `json:"instance_name"`
+	DisplayName  string  `json:"display_name"`
+	SuccessRate  float64 `json:"success_rate"`
+	TotalChecks  int64   `json:"total_checks"`
+}
+
+type sshReconnectionCount struct {
+	InstanceName string `json:"instance_name"`
+	DisplayName  string `json:"display_name"`
+	Count        int    `json:"count"`
+}
+
+type sshMetricsResponse struct {
+	UptimeBuckets      []sshUptimeBucket      `json:"uptime_buckets"`
+	HealthRates        []sshHealthRate         `json:"health_rates"`
+	ReconnectionCounts []sshReconnectionCount  `json:"reconnection_counts"`
+}
+
+// GetSSHMetrics returns aggregated SSH metrics for visualization.
+// Includes uptime distribution, health check success rates, and reconnection
+// counts across all instances the current user can access.
+func GetSSHMetrics(w http.ResponseWriter, r *http.Request) {
+	var instances []database.Instance
+	user := middleware.GetUser(r)
+
+	query := database.DB.Order("sort_order ASC, id ASC")
+	if user != nil && user.Role != "admin" {
+		assignedIDs, err := database.GetUserInstances(user.ID)
+		if err != nil || len(assignedIDs) == 0 {
+			writeJSON(w, http.StatusOK, sshMetricsResponse{
+				UptimeBuckets:      []sshUptimeBucket{},
+				HealthRates:        []sshHealthRate{},
+				ReconnectionCounts: []sshReconnectionCount{},
+			})
+			return
+		}
+		query = query.Where("id IN ?", assignedIDs)
+	}
+
+	if err := query.Find(&instances).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to list instances")
+		return
+	}
+
+	sm := sshtunnel.GetSSHManager()
+
+	// Build name -> display name map for accessible instances
+	nameToDisplay := make(map[string]string, len(instances))
+	for i := range instances {
+		nameToDisplay[instances[i].Name] = instances[i].DisplayName
+	}
+
+	// Uptime distribution buckets
+	type bucket struct {
+		label    string
+		maxSecs  int64 // exclusive upper bound, -1 = unlimited
+	}
+	bucketDefs := []bucket{
+		{"< 1h", 3600},
+		{"1–6h", 21600},
+		{"6–24h", 86400},
+		{"1–7d", 604800},
+		{"> 7d", -1},
+	}
+	uptimeCounts := make([]int, len(bucketDefs))
+
+	healthRates := make([]sshHealthRate, 0)
+	reconnCounts := make([]sshReconnectionCount, 0)
+
+	// Get reconnection event counts
+	var reconnMap map[string]int
+	if sm != nil {
+		reconnMap = sm.GetEventCountsByType(sshmanager.EventReconnecting)
+	}
+
+	for i := range instances {
+		inst := &instances[i]
+		if sm == nil {
+			continue
+		}
+
+		metrics := sm.GetMetrics(inst.Name)
+		if metrics == nil {
+			continue
+		}
+
+		// Uptime distribution
+		uptimeSecs := int64(metrics.Uptime().Seconds())
+		for bi, bd := range bucketDefs {
+			if bd.maxSecs == -1 || uptimeSecs < bd.maxSecs {
+				uptimeCounts[bi]++
+				break
+			}
+		}
+
+		// Health check success rate
+		total := metrics.SuccessfulChecks + metrics.FailedChecks
+		if total > 0 {
+			healthRates = append(healthRates, sshHealthRate{
+				InstanceName: inst.Name,
+				DisplayName:  inst.DisplayName,
+				SuccessRate:  float64(metrics.SuccessfulChecks) / float64(total),
+				TotalChecks:  total,
+			})
+		}
+	}
+
+	// Reconnection counts (only for accessible instances)
+	for name, count := range reconnMap {
+		if displayName, ok := nameToDisplay[name]; ok {
+			reconnCounts = append(reconnCounts, sshReconnectionCount{
+				InstanceName: name,
+				DisplayName:  displayName,
+				Count:        count,
+			})
+		}
+	}
+
+	uptimeBuckets := make([]sshUptimeBucket, len(bucketDefs))
+	for i, bd := range bucketDefs {
+		uptimeBuckets[i] = sshUptimeBucket{Label: bd.label, Count: uptimeCounts[i]}
+	}
+
+	writeJSON(w, http.StatusOK, sshMetricsResponse{
+		UptimeBuckets:      uptimeBuckets,
+		HealthRates:        healthRates,
+		ReconnectionCounts: reconnCounts,
+	})
+}

@@ -11,6 +11,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { useGlobalSSHStatus } from "@/hooks/useSSH";
+import SSHMetrics from "@/components/SSHMetrics";
 import type {
   GlobalSSHInstanceStatus,
   SSHConnectionState,
@@ -220,6 +221,9 @@ export default function SSHDashboardPage() {
           </button>
         ))}
       </div>
+
+      {/* Metrics charts (collapsible) */}
+      <SSHMetrics />
 
       {/* Instance table */}
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">

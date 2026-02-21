@@ -380,6 +380,12 @@ func (m *SSHManager) recordHealthCheck(instanceName string, err error) {
 	}
 }
 
+// RecordHealthCheckForTest updates the connection metrics after a health check.
+// Exported for use in handler tests where no real SSH connection exists.
+func (m *SSHManager) RecordHealthCheckForTest(instanceName string, err error) {
+	m.recordHealthCheck(instanceName, err)
+}
+
 // GetMetrics returns a copy of the connection metrics for the given instance.
 // Returns nil if no metrics exist for the instance.
 func (m *SSHManager) GetMetrics(instanceName string) *ConnectionMetrics {

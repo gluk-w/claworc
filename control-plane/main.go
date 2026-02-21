@@ -111,6 +111,7 @@ func main() {
 
 			// Global SSH dashboard (access-filtered internally like ListInstances)
 			r.Get("/ssh-status", handlers.GetGlobalSSHStatus)
+			r.Get("/ssh-metrics", handlers.GetSSHMetrics)
 
 			// Instances (ListInstances filters by role internally)
 			r.Get("/instances", handlers.ListInstances)
