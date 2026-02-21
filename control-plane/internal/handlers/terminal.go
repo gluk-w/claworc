@@ -66,10 +66,12 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
+	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
 	"github.com/gluk-w/claworc/control-plane/internal/sshterminal"
 	"github.com/gluk-w/claworc/control-plane/internal/sshtunnel"
 	"github.com/go-chi/chi/v5"
@@ -166,6 +168,10 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[terminal-audit] user=%d (%s) connecting to instance=%d (%s) session_id=%q remote=%s",
 		userID, userName, id, inst.Name, sessionID, r.RemoteAddr)
 
+	sourceIP := sshaudit.ExtractSourceIP(r)
+	termStart := time.Now()
+	sshaudit.LogTerminalSessionStart(inst.ID, inst.Name, userName, sessionID, sourceIP)
+
 	if sessMgr != nil {
 		// Managed session mode — supports persistence and multi-session
 		if sessionID != "" {
@@ -180,6 +186,9 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[terminal-audit] user=%d (%s) disconnected from instance=%d (%s) session_id=%q",
 		userID, userName, id, inst.Name, sessionID)
+
+	durationMs := time.Since(termStart).Milliseconds()
+	sshaudit.LogTerminalSessionEnd(inst.ID, inst.Name, userName, sessionID, durationMs)
 
 	clientConn.Close(websocket.StatusNormalClosure, "")
 }

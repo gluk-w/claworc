@@ -20,6 +20,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
 	"github.com/gluk-w/claworc/control-plane/internal/sshkeys"
 	"github.com/gluk-w/claworc/control-plane/internal/sshtunnel"
 	"github.com/go-chi/chi/v5"
@@ -77,6 +78,10 @@ func main() {
 	// Initialize SSH tunnel subsystem
 	sshtunnel.InitGlobal()
 	log.Println("SSH tunnel manager initialized")
+
+	// Initialize SSH audit subsystem
+	sshaudit.InitGlobal(database.DB, sshaudit.DefaultRetentionDays)
+	log.Println("SSH audit logger initialized")
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
@@ -167,6 +172,10 @@ func main() {
 				r.Delete("/instances/{id}", handlers.DeleteInstance)
 				r.Post("/instances/{id}/rotate-ssh-key", handlers.RotateSSHKey)
 
+				// SSH audit logs
+				r.Get("/ssh-audit-logs", handlers.GetSSHAuditLogs)
+				r.Post("/ssh-audit-logs/purge", handlers.PurgeSSHAuditLogs)
+
 				// Settings
 				r.Get("/settings", handlers.GetSettings)
 				r.Put("/settings", handlers.UpdateSettings)
@@ -202,6 +211,9 @@ func main() {
 
 	// Start background key rotation checker (runs daily)
 	go keyRotationLoop(sigCtx)
+
+	// Start background audit log retention purge (runs daily)
+	go auditRetentionLoop(sigCtx)
 
 	go func() {
 		log.Printf("Server starting on :8000")
@@ -458,6 +470,36 @@ func checkKeyRotations(ctx context.Context) {
 
 	if rotated > 0 {
 		log.Printf("[key-rotation] automatic rotation completed: %d instance(s) rotated", rotated)
+	}
+}
+
+// auditRetentionLoop periodically purges old SSH audit log entries based on
+// the configured retention policy.
+func auditRetentionLoop(ctx context.Context) {
+	// Wait a few minutes after startup before first purge
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(5 * time.Minute):
+	}
+
+	auditor := sshaudit.GetAuditor()
+	if auditor != nil {
+		auditor.PurgeOlderThan(0)
+	}
+
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if a := sshaudit.GetAuditor(); a != nil {
+				a.PurgeOlderThan(0)
+			}
+		}
 	}
 }
 

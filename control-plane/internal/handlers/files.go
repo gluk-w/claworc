@@ -14,6 +14,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
+	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
 	"github.com/gluk-w/claworc/control-plane/internal/sshfiles"
 	"github.com/gluk-w/claworc/control-plane/internal/sshtunnel"
 	"github.com/go-chi/chi/v5"
@@ -64,6 +65,9 @@ func BrowseFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[files] BrowseFiles instance=%s path=%s entries=%d duration=%s", logutil.SanitizeForLog(inst.Name), logutil.SanitizeForLog(dirPath), len(entries), time.Since(start))
+	if u := middleware.GetUser(r); u != nil {
+		sshaudit.LogFileOperation(inst.ID, inst.Name, u.Username, "browse", dirPath)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"path":    dirPath,
 		"entries": entries,
@@ -116,6 +120,9 @@ func ReadFileContent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[files] ReadFileContent instance=%s path=%s bytes=%d duration=%s", logutil.SanitizeForLog(inst.Name), logutil.SanitizeForLog(filePath), len(content), time.Since(start))
+	if u := middleware.GetUser(r); u != nil {
+		sshaudit.LogFileOperation(inst.ID, inst.Name, u.Username, "read", filePath)
+	}
 	writeJSON(w, http.StatusOK, map[string]string{
 		"path":    filePath,
 		"content": string(content),
@@ -171,6 +178,9 @@ func DownloadFile(w http.ResponseWriter, r *http.Request) {
 	filename := parts[len(parts)-1]
 
 	log.Printf("[files] DownloadFile instance=%s path=%s bytes=%d duration=%s", logutil.SanitizeForLog(inst.Name), logutil.SanitizeForLog(filePath), len(content), time.Since(start))
+	if u := middleware.GetUser(r); u != nil {
+		sshaudit.LogFileOperation(inst.ID, inst.Name, u.Username, "download", filePath)
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	w.Write(content)
@@ -224,6 +234,9 @@ func CreateNewFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[files] CreateNewFile instance=%s path=%s bytes=%d duration=%s", logutil.SanitizeForLog(inst.Name), logutil.SanitizeForLog(body.Path), len(body.Content), time.Since(start))
+	if u := middleware.GetUser(r); u != nil {
+		sshaudit.LogFileOperation(inst.ID, inst.Name, u.Username, "create", body.Path)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 		"path":    body.Path,
@@ -277,6 +290,9 @@ func CreateDirectory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[files] CreateDirectory instance=%s path=%s duration=%s", logutil.SanitizeForLog(inst.Name), logutil.SanitizeForLog(body.Path), time.Since(start))
+	if u := middleware.GetUser(r); u != nil {
+		sshaudit.LogFileOperation(inst.ID, inst.Name, u.Username, "mkdir", body.Path)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 		"path":    body.Path,
@@ -346,6 +362,9 @@ func UploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[files] UploadFile instance=%s path=%s bytes=%d duration=%s", logutil.SanitizeForLog(inst.Name), logutil.SanitizeForLog(fullPath), len(content), time.Since(start))
+	if u := middleware.GetUser(r); u != nil {
+		sshaudit.LogFileOperation(inst.ID, inst.Name, u.Username, "upload", fullPath)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success":  true,
 		"path":     fullPath,

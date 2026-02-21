@@ -21,6 +21,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
 	"github.com/gluk-w/claworc/control-plane/internal/sshfiles"
 	"github.com/gluk-w/claworc/control-plane/internal/sshkeys"
 	"github.com/gluk-w/claworc/control-plane/internal/sshmanager"
@@ -1236,9 +1237,15 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
+	var userName string
+	if u := middleware.GetUser(r); u != nil {
+		userName = u.Username
+	}
+
 	client, err := sm.Connect(r.Context(), inst.Name, host, port, inst.SSHPrivateKeyPath)
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
+		sshaudit.LogConnectionFailed(inst.ID, inst.Name, userName, err.Error())
 		writeJSON(w, http.StatusOK, sshTestResponse{
 			Success:      false,
 			LatencyMs:    latency,
@@ -1247,6 +1254,9 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	sourceIP := sshaudit.ExtractSourceIP(r)
+	sshaudit.LogConnection(inst.ID, inst.Name, userName, sourceIP)
 
 	session, err := client.NewSession()
 	if err != nil {
@@ -1866,6 +1876,10 @@ func RotateSSHKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[ssh-rotate] key rotation completed for %s (fingerprint: %s)", logutil.SanitizeForLog(inst.Name), result.NewFingerprint)
+
+	if u := middleware.GetUser(r); u != nil {
+		sshaudit.LogKeyRotation(inst.ID, inst.Name, u.Username, result.NewFingerprint)
+	}
 
 	writeJSON(w, http.StatusOK, sshRotateResponse{
 		Success:     true,

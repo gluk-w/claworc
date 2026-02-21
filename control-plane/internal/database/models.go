@@ -60,6 +60,19 @@ type UserInstance struct {
 	InstanceID uint `gorm:"primaryKey" json:"instance_id"`
 }
 
+// SSHAuditLog records a single SSH-related event for security auditing.
+type SSHAuditLog struct {
+	ID           uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	InstanceID   uint      `gorm:"index;not null" json:"instance_id"`
+	InstanceName string    `gorm:"index;not null" json:"instance_name"`
+	EventType    string    `gorm:"index;not null" json:"event_type"`
+	Username     string    `json:"username"`
+	SourceIP     string    `json:"source_ip,omitempty"`
+	Details      string    `gorm:"type:text" json:"details,omitempty"`
+	Duration     int64     `json:"duration_ms,omitempty"` // milliseconds, for connection termination events
+	CreatedAt    time.Time `gorm:"autoCreateTime;index" json:"created_at"`
+}
+
 type WebAuthnCredential struct {
 	ID              string    `gorm:"primaryKey;size:256" json:"id"`
 	UserID          uint      `gorm:"not null;index" json:"user_id"`
