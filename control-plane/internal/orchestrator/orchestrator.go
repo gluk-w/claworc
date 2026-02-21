@@ -5,6 +5,9 @@ import (
 	"io"
 )
 
+// NOTE: Log streaming has been migrated to SSH (see internal/sshlogs).
+// The StreamInstanceLogs method was removed from this interface.
+
 // ContainerOrchestrator thin abstraction providing generic primitives (exec, read/write files)
 type ContainerOrchestrator interface {
 	Initialize(ctx context.Context) error
@@ -21,9 +24,6 @@ type ContainerOrchestrator interface {
 
 	// Config
 	UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error
-
-	// Logs
-	StreamInstanceLogs(ctx context.Context, name string, tail int, follow bool) (<-chan string, error)
 
 	// Clone
 	CloneVolumes(ctx context.Context, srcName, dstName string) error

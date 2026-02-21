@@ -40,9 +40,6 @@ func (m *mockOrchestrator) GetInstanceStatus(ctx context.Context, name string) (
 func (m *mockOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {
 	return nil
 }
-func (m *mockOrchestrator) StreamInstanceLogs(ctx context.Context, name string, tail int, follow bool) (<-chan string, error) {
-	return nil, nil
-}
 func (m *mockOrchestrator) CloneVolumes(ctx context.Context, srcName, dstName string) error {
 	return nil
 }

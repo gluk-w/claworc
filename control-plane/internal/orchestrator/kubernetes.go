@@ -1,7 +1,6 @@
 package orchestrator
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -321,70 +320,6 @@ func (k *KubernetesOrchestrator) GetInstanceStatus(ctx context.Context, name str
 
 func (k *KubernetesOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {
 	return updateInstanceConfig(ctx, k.ExecInInstance, name, configJSON)
-}
-
-func (k *KubernetesOrchestrator) StreamInstanceLogs(ctx context.Context, name string, tail int, follow bool) (<-chan string, error) {
-	podName, err := k.getPodName(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	if podName == "" {
-		ch := make(chan string, 1)
-		ch <- "No pods found"
-		close(ch)
-		return ch, nil
-	}
-
-	cmd := fmt.Sprintf("openclaw logs --plain --limit %d", tail)
-	if follow {
-		cmd += " --follow"
-	}
-	cmdSlice := []string{"su", "-", "abc", "-c", cmd}
-
-	req := k.clientset.CoreV1().RESTClient().Post().
-		Resource("pods").
-		Name(podName).
-		Namespace(k.ns()).
-		SubResource("exec").
-		VersionedParams(&corev1.PodExecOptions{
-			Command: cmdSlice,
-			Stdin:   false,
-			Stdout:  true,
-			Stderr:  true,
-			TTY:     false,
-		}, scheme.ParameterCodec)
-
-	exec, err := remotecommand.NewSPDYExecutor(k.restConfig, "POST", req.URL())
-	if err != nil {
-		return nil, fmt.Errorf("create executor: %w", err)
-	}
-
-	stdoutR, stdoutW := io.Pipe()
-
-	ch := make(chan string, 100)
-	go func() {
-		defer stdoutW.Close()
-		err := exec.StreamWithContext(ctx, remotecommand.StreamOptions{
-			Stdout: stdoutW,
-			Stderr: stdoutW,
-		})
-		if err != nil {
-			log.Printf("k8s log exec stream ended: %v", err)
-		}
-	}()
-
-	go func() {
-		defer close(ch)
-		scanner := bufio.NewScanner(stdoutR)
-		for scanner.Scan() {
-			select {
-			case ch <- scanner.Text():
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return ch, nil
 }
 
 func (k *KubernetesOrchestrator) ExecInInstance(ctx context.Context, name string, cmd []string) (string, string, int, error) {

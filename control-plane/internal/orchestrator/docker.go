@@ -392,64 +392,6 @@ func (d *DockerOrchestrator) UpdateInstanceConfig(ctx context.Context, name stri
 	return updateInstanceConfig(ctx, d.ExecInInstance, name, configJSON)
 }
 
-func (d *DockerOrchestrator) StreamInstanceLogs(ctx context.Context, name string, tail int, follow bool) (<-chan string, error) {
-	cmd := fmt.Sprintf("openclaw logs --plain --limit %d", tail)
-	if follow {
-		cmd += " --follow"
-	}
-	cmdSlice := []string{"su", "-", "abc", "-c", cmd}
-
-	execCfg := container.ExecOptions{
-		Cmd:          cmdSlice,
-		AttachStdout: true,
-		AttachStderr: true,
-	}
-
-	execID, err := d.client.ContainerExecCreate(ctx, name, execCfg)
-	if err != nil {
-		if dockerclient.IsErrNotFound(err) {
-			ch := make(chan string, 1)
-			ch <- "Container not found"
-			close(ch)
-			return ch, nil
-		}
-		return nil, fmt.Errorf("exec create: %w", err)
-	}
-
-	resp, err := d.client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("exec attach: %w", err)
-	}
-
-	ch := make(chan string, 100)
-	go func() {
-		defer close(ch)
-		defer resp.Close()
-
-		buf := make([]byte, 8192)
-		for {
-			n, err := resp.Reader.Read(buf)
-			if n > 0 {
-				data := buf[:n]
-				text := stripDockerLogHeaders(data)
-				for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
-					if line != "" {
-						select {
-						case ch <- line:
-						case <-ctx.Done():
-							return
-						}
-					}
-				}
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-	return ch, nil
-}
-
 func stripDockerLogHeaders(data []byte) string {
 	// Docker multiplexed log format: [stream_type(1)][0(3)][size(4)][payload]
 	// If the data starts with a valid header byte (0, 1, or 2), try to strip
