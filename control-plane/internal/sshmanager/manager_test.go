@@ -668,6 +668,487 @@ func TestKeepalivePreservesHealthyConnections(t *testing.T) {
 	}
 }
 
+// --- Health check tests ---
+
+// startTestSSHServerWithExec starts a test SSH server that can execute commands.
+// The server handles "exec" requests by running simple built-in commands.
+func startTestSSHServerWithExec(t *testing.T) (addr string, cleanup func()) {
+	t.Helper()
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate ed25519 key: %v", err)
+	}
+	signer, err := gossh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("create signer: %v", err)
+	}
+
+	clientPub, clientPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate client key: %v", err)
+	}
+	clientSSHPub, err := gossh.NewPublicKey(clientPub)
+	if err != nil {
+		t.Fatalf("convert client public key: %v", err)
+	}
+
+	cfg := &gossh.ServerConfig{
+		PublicKeyCallback: func(conn gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error) {
+			if bytes.Equal(key.Marshal(), clientSSHPub.Marshal()) {
+				return &gossh.Permissions{}, nil
+			}
+			return nil, fmt.Errorf("unknown public key")
+		},
+	}
+	cfg.AddHostKey(signer)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go handleExecConn(conn, cfg)
+		}
+	}()
+
+	tmpDir := t.TempDir()
+	pemBlock, err := gossh.MarshalPrivateKey(clientPriv, "")
+	if err != nil {
+		t.Fatalf("marshal client private key: %v", err)
+	}
+	keyPath := filepath.Join(tmpDir, "client.key")
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
+		t.Fatalf("write client key: %v", err)
+	}
+	t.Setenv("TEST_SSH_KEY_PATH", keyPath)
+
+	return listener.Addr().String(), func() { listener.Close() }
+}
+
+// startTestSSHServerWithExecAndConns is like startTestSSHServerWithExec but also
+// returns a connTracker so tests can force-close server-side connections.
+func startTestSSHServerWithExecAndConns(t *testing.T) (addr string, tracker *connTracker, cleanup func()) {
+	t.Helper()
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate ed25519 key: %v", err)
+	}
+	signer, err := gossh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("create signer: %v", err)
+	}
+
+	clientPub, clientPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate client key: %v", err)
+	}
+	clientSSHPub, err := gossh.NewPublicKey(clientPub)
+	if err != nil {
+		t.Fatalf("convert client public key: %v", err)
+	}
+
+	cfg := &gossh.ServerConfig{
+		PublicKeyCallback: func(conn gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error) {
+			if bytes.Equal(key.Marshal(), clientSSHPub.Marshal()) {
+				return &gossh.Permissions{}, nil
+			}
+			return nil, fmt.Errorf("unknown public key")
+		},
+	}
+	cfg.AddHostKey(signer)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	tracker = &connTracker{}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			tracker.Add(conn)
+			go handleExecConn(conn, cfg)
+		}
+	}()
+
+	tmpDir := t.TempDir()
+	pemBlock, err := gossh.MarshalPrivateKey(clientPriv, "")
+	if err != nil {
+		t.Fatalf("marshal client private key: %v", err)
+	}
+	keyPath := filepath.Join(tmpDir, "client.key")
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
+		t.Fatalf("write client key: %v", err)
+	}
+	t.Setenv("TEST_SSH_KEY_PATH", keyPath)
+
+	return listener.Addr().String(), tracker, func() { listener.Close() }
+}
+
+// handleExecConn handles an SSH connection with exec request support.
+func handleExecConn(conn net.Conn, cfg *gossh.ServerConfig) {
+	defer conn.Close()
+	srvConn, chans, reqs, err := gossh.NewServerConn(conn, cfg)
+	if err != nil {
+		return
+	}
+	defer srvConn.Close()
+	go gossh.DiscardRequests(reqs)
+	for newChan := range chans {
+		if newChan.ChannelType() != "session" {
+			newChan.Reject(gossh.UnknownChannelType, "unknown channel type")
+			continue
+		}
+		ch, requests, err := newChan.Accept()
+		if err != nil {
+			continue
+		}
+		go func() {
+			defer ch.Close()
+			for req := range requests {
+				switch req.Type {
+				case "exec":
+					// Parse the command from the payload (uint32 length + string)
+					if len(req.Payload) < 4 {
+						req.Reply(false, nil)
+						continue
+					}
+					cmdLen := int(req.Payload[0])<<24 | int(req.Payload[1])<<16 | int(req.Payload[2])<<8 | int(req.Payload[3])
+					if len(req.Payload) < 4+cmdLen {
+						req.Reply(false, nil)
+						continue
+					}
+					cmd := string(req.Payload[4 : 4+cmdLen])
+					req.Reply(true, nil)
+
+					// Handle simple commands
+					switch {
+					case cmd == "echo ping":
+						ch.Write([]byte("ping\n"))
+					case strings.HasPrefix(cmd, "echo "):
+						ch.Write([]byte(cmd[5:] + "\n"))
+					default:
+						ch.Write([]byte("unknown command\n"))
+					}
+					// Send exit status 0
+					ch.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
+					return
+				default:
+					if req.WantReply {
+						req.Reply(false, nil)
+					}
+				}
+			}
+		}()
+	}
+}
+
+func TestHealthCheckSuccess(t *testing.T) {
+	addr, cleanup := startTestSSHServerWithExec(t)
+	defer cleanup()
+
+	keyPath := os.Getenv("TEST_SSH_KEY_PATH")
+	host, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	_, err := m.Connect(context.Background(), "test-instance", host, port, keyPath)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	err = m.HealthCheck("test-instance")
+	if err != nil {
+		t.Fatalf("HealthCheck should pass: %v", err)
+	}
+
+	met := m.GetMetrics("test-instance")
+	if met == nil {
+		t.Fatal("metrics should exist after health check")
+	}
+	if met.SuccessfulChecks != 1 {
+		t.Errorf("expected 1 successful check, got %d", met.SuccessfulChecks)
+	}
+	if met.FailedChecks != 0 {
+		t.Errorf("expected 0 failed checks, got %d", met.FailedChecks)
+	}
+	if !met.Healthy {
+		t.Error("connection should be marked healthy")
+	}
+	if met.LastHealthCheck.IsZero() {
+		t.Error("last health check time should be set")
+	}
+}
+
+func TestHealthCheckNoConnection(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	err := m.HealthCheck("nonexistent")
+	if err == nil {
+		t.Error("HealthCheck should fail for nonexistent connection")
+	}
+	if !strings.Contains(err.Error(), "no SSH connection") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestHealthCheckFailedConnection(t *testing.T) {
+	addr, tracker, cleanup := startTestSSHServerWithExecAndConns(t)
+
+	keyPath := os.Getenv("TEST_SSH_KEY_PATH")
+	host, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	_, err := m.Connect(context.Background(), "test-instance", host, port, keyPath)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	// Stop the server AND close all server-side connections
+	cleanup()
+	tracker.CloseAll()
+	time.Sleep(100 * time.Millisecond)
+
+	err = m.HealthCheck("test-instance")
+	if err == nil {
+		t.Error("HealthCheck should fail after server stops")
+	}
+
+	met := m.GetMetrics("test-instance")
+	if met == nil {
+		t.Fatal("metrics should exist")
+	}
+	if met.FailedChecks != 1 {
+		t.Errorf("expected 1 failed check, got %d", met.FailedChecks)
+	}
+	if met.Healthy {
+		t.Error("connection should be marked unhealthy")
+	}
+}
+
+func TestMetricsInitializedOnConnect(t *testing.T) {
+	addr, cleanup := startTestSSHServerWithExec(t)
+	defer cleanup()
+
+	keyPath := os.Getenv("TEST_SSH_KEY_PATH")
+	host, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	_, err := m.Connect(context.Background(), "test-instance", host, port, keyPath)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	met := m.GetMetrics("test-instance")
+	if met == nil {
+		t.Fatal("metrics should be initialized on Connect")
+	}
+	if met.ConnectedAt.IsZero() {
+		t.Error("ConnectedAt should be set")
+	}
+	if !met.Healthy {
+		t.Error("new connection should be healthy")
+	}
+	if met.SuccessfulChecks != 0 {
+		t.Error("new connection should have 0 successful checks")
+	}
+}
+
+func TestMetricsClearedOnClose(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	m.SetClient("test-instance", nil)
+	met := m.GetMetrics("test-instance")
+	if met == nil {
+		t.Fatal("metrics should exist after SetClient")
+	}
+
+	m.Close("test-instance")
+	met = m.GetMetrics("test-instance")
+	if met != nil {
+		t.Error("metrics should be nil after Close")
+	}
+}
+
+func TestMetricsClearedOnRemoveClient(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	m.SetClient("test-instance", nil)
+	m.RemoveClient("test-instance")
+	met := m.GetMetrics("test-instance")
+	if met != nil {
+		t.Error("metrics should be nil after RemoveClient")
+	}
+}
+
+func TestMetricsClearedOnCloseAll(t *testing.T) {
+	m := NewSSHManager(0)
+
+	m.SetClient("a", nil)
+	m.SetClient("b", nil)
+	m.CloseAll()
+
+	all := m.GetAllMetrics()
+	if len(all) != 0 {
+		t.Errorf("expected 0 metrics after CloseAll, got %d", len(all))
+	}
+}
+
+func TestGetAllMetrics(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	m.SetClient("a", nil)
+	m.SetClient("b", nil)
+
+	all := m.GetAllMetrics()
+	if len(all) != 2 {
+		t.Fatalf("expected 2 metrics, got %d", len(all))
+	}
+	if all["a"] == nil || all["b"] == nil {
+		t.Error("metrics should exist for both instances")
+	}
+}
+
+func TestGetMetricsReturnsACopy(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	m.SetClient("test", nil)
+	met1 := m.GetMetrics("test")
+	met1.SuccessfulChecks = 999
+
+	met2 := m.GetMetrics("test")
+	if met2.SuccessfulChecks == 999 {
+		t.Error("GetMetrics should return a copy, not a reference")
+	}
+}
+
+func TestSetClientInitializesMetrics(t *testing.T) {
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	m.SetClient("test", nil)
+	met := m.GetMetrics("test")
+	if met == nil {
+		t.Fatal("SetClient should initialize metrics")
+	}
+	if met.ConnectedAt.IsZero() {
+		t.Error("ConnectedAt should be set")
+	}
+	if !met.Healthy {
+		t.Error("new connection should be healthy")
+	}
+}
+
+func TestConnectionMetricsUptime(t *testing.T) {
+	cm := &ConnectionMetrics{ConnectedAt: time.Now().Add(-5 * time.Second)}
+	uptime := cm.Uptime()
+	if uptime < 4*time.Second || uptime > 6*time.Second {
+		t.Errorf("expected ~5s uptime, got %v", uptime)
+	}
+
+	cm2 := &ConnectionMetrics{}
+	if cm2.Uptime() != 0 {
+		t.Error("zero ConnectedAt should return 0 uptime")
+	}
+}
+
+func TestHealthCheckMultipleChecks(t *testing.T) {
+	addr, cleanup := startTestSSHServerWithExec(t)
+	defer cleanup()
+
+	keyPath := os.Getenv("TEST_SSH_KEY_PATH")
+	host, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	_, err := m.Connect(context.Background(), "test-instance", host, port, keyPath)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	// Run multiple health checks
+	for i := 0; i < 5; i++ {
+		if err := m.HealthCheck("test-instance"); err != nil {
+			t.Fatalf("HealthCheck %d failed: %v", i+1, err)
+		}
+	}
+
+	met := m.GetMetrics("test-instance")
+	if met.SuccessfulChecks != 5 {
+		t.Errorf("expected 5 successful checks, got %d", met.SuccessfulChecks)
+	}
+}
+
+func TestCheckConnectionsWithExecServer(t *testing.T) {
+	addr, cleanup := startTestSSHServerWithExec(t)
+	defer cleanup()
+
+	keyPath := os.Getenv("TEST_SSH_KEY_PATH")
+	host, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	m := NewSSHManager(0)
+	defer m.CloseAll()
+
+	_, err := m.Connect(context.Background(), "test-instance", host, port, keyPath)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	// Manually trigger checkConnections
+	m.checkConnections()
+
+	if !m.HasClient("test-instance") {
+		t.Error("healthy connection should remain after checkConnections")
+	}
+
+	met := m.GetMetrics("test-instance")
+	if met == nil {
+		t.Fatal("metrics should exist")
+	}
+	if met.SuccessfulChecks < 1 {
+		t.Errorf("expected at least 1 successful check, got %d", met.SuccessfulChecks)
+	}
+}
+
+func TestHealthCheckTimeout(t *testing.T) {
+	if HealthCheckTimeout != 5*time.Second {
+		t.Errorf("expected HealthCheckTimeout to be 5s, got %v", HealthCheckTimeout)
+	}
+}
+
 // --- Helpers ---
 
 // connTracker tracks server-side connections for clean shutdown in tests.
