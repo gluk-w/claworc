@@ -13,7 +13,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
-	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshfiles"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -40,13 +40,18 @@ func BrowseFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.Get()
-	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
 		return
 	}
 
-	entries, err := orch.ListDirectory(r.Context(), inst.Name, dirPath)
+	client, ok := SSHMgr.GetConnection(inst.ID)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "No SSH connection for instance")
+		return
+	}
+
+	entries, err := sshfiles.ListDirectory(client, dirPath)
 	if err != nil {
 		log.Printf("Failed to list directory %s for instance %s: %v", logutil.SanitizeForLog(dirPath), logutil.SanitizeForLog(inst.Name), err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to list directory: %v", err))
@@ -83,13 +88,18 @@ func ReadFileContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.Get()
-	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
 		return
 	}
 
-	content, err := orch.ReadFile(r.Context(), inst.Name, filePath)
+	client, ok := SSHMgr.GetConnection(inst.ID)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "No SSH connection for instance")
+		return
+	}
+
+	content, err := sshfiles.ReadFile(client, filePath)
 	if err != nil {
 		log.Printf("Failed to read file %s for instance %s: %v", logutil.SanitizeForLog(filePath), logutil.SanitizeForLog(inst.Name), err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to read file: %v", err))
@@ -126,13 +136,18 @@ func DownloadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.Get()
-	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
 		return
 	}
 
-	content, err := orch.ReadFile(r.Context(), inst.Name, filePath)
+	client, ok := SSHMgr.GetConnection(inst.ID)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "No SSH connection for instance")
+		return
+	}
+
+	content, err := sshfiles.ReadFile(client, filePath)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to download file: %v", err))
 		return
@@ -173,13 +188,18 @@ func CreateNewFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.Get()
-	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
 		return
 	}
 
-	if err := orch.CreateFile(r.Context(), inst.Name, body.Path, body.Content); err != nil {
+	client, ok := SSHMgr.GetConnection(inst.ID)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "No SSH connection for instance")
+		return
+	}
+
+	if err := sshfiles.WriteFile(client, body.Path, []byte(body.Content)); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create file: %v", err))
 		return
 	}
@@ -216,13 +236,18 @@ func CreateDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.Get()
-	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
 		return
 	}
 
-	if err := orch.CreateDirectory(r.Context(), inst.Name, body.Path); err != nil {
+	client, ok := SSHMgr.GetConnection(inst.ID)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "No SSH connection for instance")
+		return
+	}
+
+	if err := sshfiles.CreateDirectory(client, body.Path); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create directory: %v", err))
 		return
 	}
@@ -275,13 +300,18 @@ func UploadFile(w http.ResponseWriter, r *http.Request) {
 		fullPath = dirPath
 	}
 
-	orch := orchestrator.Get()
-	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
 		return
 	}
 
-	if err := orch.WriteFile(r.Context(), inst.Name, fullPath, content); err != nil {
+	client, ok := SSHMgr.GetConnection(inst.ID)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "No SSH connection for instance")
+		return
+	}
+
+	if err := sshfiles.WriteFile(client, fullPath, content); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to upload file: %v", err))
 		return
 	}
