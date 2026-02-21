@@ -381,6 +381,10 @@ func (d *DockerOrchestrator) GetInstanceStatus(ctx context.Context, name string)
 	}
 }
 
+func (d *DockerOrchestrator) ConfigureSSHAccess(ctx context.Context, name string, publicKey string) error {
+	return configureSSHAccess(ctx, d.ExecInInstance, name, publicKey)
+}
+
 func (d *DockerOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {
 	return updateInstanceConfig(ctx, d.ExecInInstance, name, configJSON)
 }

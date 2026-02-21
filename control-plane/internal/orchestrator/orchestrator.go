@@ -29,6 +29,9 @@ type ContainerOrchestrator interface {
 	// Clone
 	CloneVolumes(ctx context.Context, srcName, dstName string) error
 
+	// SSH
+	ConfigureSSHAccess(ctx context.Context, name string, publicKey string) error
+
 	// Exec & Files
 	ExecInInstance(ctx context.Context, name string, cmd []string) (stdout string, stderr string, exitCode int, err error)
 	ExecInteractive(ctx context.Context, name string, cmd []string) (*ExecSession, error)

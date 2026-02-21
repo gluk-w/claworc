@@ -312,6 +312,10 @@ func (k *KubernetesOrchestrator) GetInstanceStatus(ctx context.Context, name str
 	}
 }
 
+func (k *KubernetesOrchestrator) ConfigureSSHAccess(ctx context.Context, name string, publicKey string) error {
+	return configureSSHAccess(ctx, k.ExecInInstance, name, publicKey)
+}
+
 func (k *KubernetesOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {
 	return updateInstanceConfig(ctx, k.ExecInInstance, name, configJSON)
 }
