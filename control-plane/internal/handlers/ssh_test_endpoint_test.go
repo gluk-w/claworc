@@ -67,16 +67,9 @@ func (m *mockOrchestrator) CreateDirectory(ctx context.Context, name string, pat
 func (m *mockOrchestrator) WriteFile(ctx context.Context, name string, path string, data []byte) error {
 	return nil
 }
-func (m *mockOrchestrator) GetVNCBaseURL(ctx context.Context, name string, display string) (string, error) {
-	return "", nil
-}
-func (m *mockOrchestrator) GetGatewayWSURL(ctx context.Context, name string) (string, error) {
-	return "", nil
-}
 func (m *mockOrchestrator) GetInstanceSSHEndpoint(ctx context.Context, name string) (string, int, error) {
 	return m.sshHost, m.sshPort, m.sshErr
 }
-func (m *mockOrchestrator) GetHTTPTransport() http.RoundTripper { return nil }
 
 func TestSSHConnectionTest_InvalidID(t *testing.T) {
 	cleanup := setupTestDB(t)

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -66,10 +65,10 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get gateway URL
-	gwURL, err := orch.GetGatewayWSURL(ctx, inst.Name)
+	// Get tunnel port for gateway
+	port, err := getTunnelPort(uint(id), "gateway")
 	if err != nil {
-		log.Printf("[chat] Failed to get gateway URL for %s: %v", inst.Name, err)
+		log.Printf("[chat] No gateway tunnel for %s: %v", inst.Name, err)
 		clientConn.Close(4500, truncate(err.Error(), 120))
 		return
 	}
@@ -82,33 +81,18 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Append token to URL (matching controlWSProxy pattern)
+	// Build local gateway URL via SSH tunnel
+	gwURL := fmt.Sprintf("ws://127.0.0.1:%d/gateway", port)
 	if gatewayToken != "" {
-		if strings.Contains(gwURL, "?") {
-			gwURL += "&token=" + gatewayToken
-		} else {
-			gwURL += "?token=" + gatewayToken
-		}
+		gwURL += "?token=" + gatewayToken
 	}
 
-	// Connect to gateway
+	// Connect to gateway via SSH tunnel
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	origin, host := gatewayHost(gwURL)
-	dialOpts := &websocket.DialOptions{
-		Host:       host,
-		HTTPHeader: http.Header{},
-	}
-	if origin != "" {
-		dialOpts.HTTPHeader.Set("Origin", origin)
-	}
-	if t := orch.GetHTTPTransport(); t != nil {
-		dialOpts.HTTPClient = &http.Client{Transport: t}
-	}
-
-	log.Printf("[chat] Connecting to gateway: %s", gwURL)
-	gwConn, _, err := websocket.Dial(dialCtx, gwURL, dialOpts)
+	log.Printf("[chat] Connecting to gateway via tunnel: %s", gwURL)
+	gwConn, _, err := websocket.Dial(dialCtx, gwURL, nil)
 	if err != nil {
 		log.Printf("[chat] Failed to connect to gateway at %s: %v", gwURL, err)
 		clientConn.Close(4502, "Cannot connect to gateway")
@@ -290,39 +274,3 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen]
 }
 
-// gatewayHost derives the gateway's internal host:port from the WS URL.
-// For K8s API proxy URLs it reconstructs the cluster DNS name;
-// for direct URLs it returns scheme+host as-is.
-func gatewayHost(gwURL string) (origin, host string) {
-	u, err := url.Parse(gwURL)
-	if err != nil {
-		return "", ""
-	}
-
-	// K8s API proxy: .../api/v1/namespaces/{ns}/services/{svc}:{port}/proxy
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	var ns, svc, port string
-	for i := 0; i < len(parts)-1; i++ {
-		switch parts[i] {
-		case "namespaces":
-			ns = parts[i+1]
-		case "services":
-			sp := strings.SplitN(parts[i+1], ":", 2)
-			svc = sp[0]
-			if len(sp) > 1 {
-				port = sp[1]
-			}
-		}
-	}
-	if ns != "" && svc != "" && port != "" {
-		h := fmt.Sprintf("%s.%s.svc.cluster.local:%s", svc, ns, port)
-		return "http://" + h, h
-	}
-
-	// Direct URL (Docker / in-cluster)
-	scheme := "http"
-	if u.Scheme == "wss" || u.Scheme == "https" {
-		scheme = "https"
-	}
-	return fmt.Sprintf("%s://%s", scheme, u.Host), u.Host
-}
