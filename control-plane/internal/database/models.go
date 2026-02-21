@@ -20,9 +20,11 @@ type Instance struct {
 	GatewayToken    string    `json:"-"`
 	ModelsConfig    string    `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
 	DefaultModel    string    `gorm:"default:''" json:"-"`
-	SSHPublicKey     string `gorm:"type:text" json:"-"`
-	SSHPrivateKeyPath string `gorm:"type:text" json:"-"`
-	SSHPort          int    `gorm:"default:22" json:"ssh_port"`
+	SSHPublicKey       string     `gorm:"type:text" json:"-"`
+	SSHPrivateKeyPath  string     `gorm:"type:text" json:"-"`
+	SSHPort            int        `gorm:"default:22" json:"ssh_port"`
+	LastKeyRotation    *time.Time `json:"last_key_rotation,omitempty"`
+	KeyRotationPolicy  int        `gorm:"default:90" json:"key_rotation_policy"` // days between rotations, 0 = disabled
 	LogPaths         string `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"openclaw":"/custom/path.log",...}
 	SortOrder       int       `gorm:"not null;default:0" json:"sort_order"`
 	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
