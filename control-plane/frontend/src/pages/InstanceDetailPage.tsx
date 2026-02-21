@@ -12,6 +12,7 @@ import ChatPanel from "@/components/ChatPanel";
 import FileBrowser from "@/components/FileBrowser";
 import SSHStatus from "@/components/SSHStatus";
 import SSHTunnelList from "@/components/SSHTunnelList";
+import SSHEventLog from "@/components/SSHEventLog";
 import {
   useInstance,
   useStartInstance,
@@ -25,7 +26,7 @@ import {
   useRestartedToast,
 } from "@/hooks/useInstances";
 import { useSettings } from "@/hooks/useSettings";
-import { useSSHStatus } from "@/hooks/useSSHStatus";
+import { useSSHStatus, useSSHEvents } from "@/hooks/useSSHStatus";
 import { useInstanceLogs } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useDesktop } from "@/hooks/useDesktop";
@@ -45,6 +46,7 @@ export default function InstanceDetailPage() {
   useRestartedToast(instance ? [instance] : undefined);
   const { data: configData } = useInstanceConfig(instanceId, instance?.status === "running");
   const sshStatus = useSSHStatus(instanceId, instance?.status === "running");
+  const sshEvents = useSSHEvents(instanceId, instance?.status === "running");
   const startMutation = useStartInstance();
   const stopMutation = useStopInstance();
   const restartMutation = useRestartInstance();
@@ -81,6 +83,8 @@ export default function InstanceDetailPage() {
 
   // SSH tunnel detail toggle
   const [tunnelsExpanded, setTunnelsExpanded] = useState(false);
+  // SSH event log toggle
+  const [eventsExpanded, setEventsExpanded] = useState(false);
 
   // API key editing state
   const [editingKeys, setEditingKeys] = useState(false);
@@ -383,6 +387,26 @@ export default function InstanceDetailPage() {
                 <SSHTunnelList
                   tunnels={sshStatus.data.tunnels}
                   isLoading={sshStatus.isLoading}
+                />
+              )}
+            </div>
+          )}
+
+          {/* SSH Connection Events (expand/collapse) */}
+          {instance.status === "running" && (
+            <div>
+              <button
+                onClick={() => setEventsExpanded((prev) => !prev)}
+                className="flex items-center gap-1 text-sm font-medium text-gray-700 hover:text-gray-900 mb-2"
+              >
+                {eventsExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                Connection Events
+              </button>
+              {eventsExpanded && (
+                <SSHEventLog
+                  events={sshEvents.data?.events}
+                  isLoading={sshEvents.isLoading}
+                  isError={sshEvents.isError}
                 />
               )}
             </div>
