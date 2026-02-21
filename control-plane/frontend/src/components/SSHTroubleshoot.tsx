@@ -216,6 +216,21 @@ export default function SSHTroubleshoot({
               <code className="text-xs text-gray-800 break-all font-mono">
                 {fingerprint.fingerprint}
               </code>
+              <div className="flex items-center gap-1.5 mt-2">
+                {fingerprint.verified ? (
+                  <>
+                    <CheckCircle size={12} className="text-green-500" />
+                    <span className="text-xs text-green-700">Verified</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle size={12} className="text-amber-500" />
+                    <span className="text-xs text-amber-700">
+                      Fingerprint mismatch — key may have been modified
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
           ) : (
             <p className="text-xs text-gray-500">

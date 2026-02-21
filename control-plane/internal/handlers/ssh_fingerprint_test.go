@@ -179,6 +179,9 @@ func TestGetSSHFingerprint_ResponseFormat(t *testing.T) {
 	if _, ok := raw["algorithm"]; !ok {
 		t.Error("response missing 'algorithm' field")
 	}
+	if _, ok := raw["verified"]; !ok {
+		t.Error("response missing 'verified' field")
+	}
 }
 
 func TestGetSSHFingerprint_ViewerAssigned(t *testing.T) {
@@ -212,6 +215,137 @@ func TestGetSSHFingerprint_ViewerAssigned(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200 for assigned viewer, got %d", w.Code)
+	}
+}
+
+func TestGetSSHFingerprint_VerifiedWithStoredFingerprint(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	pubKey, _, err := sshkeys.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed to generate key pair: %v", err)
+	}
+
+	fp, err := sshkeys.GetPublicKeyFingerprint(pubKey)
+	if err != nil {
+		t.Fatalf("failed to get fingerprint: %v", err)
+	}
+
+	inst := database.Instance{
+		Name:              "bot-fp-verified",
+		DisplayName:       "FP Verified",
+		Status:            "running",
+		SSHPublicKey:      string(pubKey),
+		SSHKeyFingerprint: fp,
+	}
+	database.DB.Create(&inst)
+
+	admin := &database.User{Username: "admin", PasswordHash: "x", Role: "admin"}
+	database.DB.Create(admin)
+
+	r := newChiRequest("GET", fmt.Sprintf("/api/v1/instances/%d/ssh-fingerprint", inst.ID), map[string]string{"id": fmt.Sprint(inst.ID)})
+	r = middleware.WithUserForTest(r, admin)
+
+	w := httptest.NewRecorder()
+	GetSSHFingerprint(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp sshFingerprintResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if !resp.Verified {
+		t.Error("expected verified=true when stored fingerprint matches")
+	}
+	if resp.Fingerprint != fp {
+		t.Errorf("fingerprint mismatch: expected %q, got %q", fp, resp.Fingerprint)
+	}
+}
+
+func TestGetSSHFingerprint_NotVerifiedOnMismatch(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	pubKey, _, err := sshkeys.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed to generate key pair: %v", err)
+	}
+
+	inst := database.Instance{
+		Name:              "bot-fp-mismatch",
+		DisplayName:       "FP Mismatch",
+		Status:            "running",
+		SSHPublicKey:      string(pubKey),
+		SSHKeyFingerprint: "SHA256:bogus-fingerprint-value",
+	}
+	database.DB.Create(&inst)
+
+	admin := &database.User{Username: "admin", PasswordHash: "x", Role: "admin"}
+	database.DB.Create(admin)
+
+	r := newChiRequest("GET", fmt.Sprintf("/api/v1/instances/%d/ssh-fingerprint", inst.ID), map[string]string{"id": fmt.Sprint(inst.ID)})
+	r = middleware.WithUserForTest(r, admin)
+
+	w := httptest.NewRecorder()
+	GetSSHFingerprint(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp sshFingerprintResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp.Verified {
+		t.Error("expected verified=false when stored fingerprint does not match")
+	}
+}
+
+func TestGetSSHFingerprint_VerifiedWhenNoStoredFingerprint(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	pubKey, _, err := sshkeys.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed to generate key pair: %v", err)
+	}
+
+	// No SSHKeyFingerprint stored (legacy instance)
+	inst := database.Instance{
+		Name:         "bot-fp-legacy",
+		DisplayName:  "FP Legacy",
+		Status:       "running",
+		SSHPublicKey: string(pubKey),
+	}
+	database.DB.Create(&inst)
+
+	admin := &database.User{Username: "admin", PasswordHash: "x", Role: "admin"}
+	database.DB.Create(admin)
+
+	r := newChiRequest("GET", fmt.Sprintf("/api/v1/instances/%d/ssh-fingerprint", inst.ID), map[string]string{"id": fmt.Sprint(inst.ID)})
+	r = middleware.WithUserForTest(r, admin)
+
+	w := httptest.NewRecorder()
+	GetSSHFingerprint(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp sshFingerprintResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if !resp.Verified {
+		t.Error("expected verified=true when no stored fingerprint (legacy)")
 	}
 }
 

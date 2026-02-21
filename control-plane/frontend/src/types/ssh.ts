@@ -70,6 +70,7 @@ export interface SSHReconnectResponse {
 export interface SSHFingerprintResponse {
   fingerprint: string;
   algorithm: string;
+  verified: boolean;
 }
 
 export interface GlobalSSHInstanceStatus {

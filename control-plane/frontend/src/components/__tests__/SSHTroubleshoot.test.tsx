@@ -29,6 +29,7 @@ describe("SSHTroubleshoot", () => {
     vi.mocked(fetchSSHFingerprint).mockResolvedValue({
       fingerprint: "SHA256:abcdef1234567890",
       algorithm: "ssh-ed25519",
+      verified: true,
     });
     renderWithProviders(
       <SSHTroubleshoot instanceId={1} onClose={vi.fn()} />,
@@ -46,6 +47,7 @@ describe("SSHTroubleshoot", () => {
     vi.mocked(fetchSSHFingerprint).mockResolvedValue({
       fingerprint: "SHA256:abcdef1234567890",
       algorithm: "ssh-ed25519",
+      verified: true,
     });
     renderWithProviders(
       <SSHTroubleshoot instanceId={1} onClose={vi.fn()} />,
@@ -59,10 +61,43 @@ describe("SSHTroubleshoot", () => {
     expect(screen.getByText("ssh-ed25519")).toBeInTheDocument();
   });
 
+  it("shows verified status when fingerprint is verified", async () => {
+    vi.mocked(fetchSSHFingerprint).mockResolvedValue({
+      fingerprint: "SHA256:verified123",
+      algorithm: "ssh-ed25519",
+      verified: true,
+    });
+    renderWithProviders(
+      <SSHTroubleshoot instanceId={1} onClose={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Verified")).toBeInTheDocument();
+    });
+  });
+
+  it("shows mismatch warning when fingerprint is not verified", async () => {
+    vi.mocked(fetchSSHFingerprint).mockResolvedValue({
+      fingerprint: "SHA256:mismatch456",
+      algorithm: "ssh-ed25519",
+      verified: false,
+    });
+    renderWithProviders(
+      <SSHTroubleshoot instanceId={1} onClose={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Fingerprint mismatch/),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("runs connection test and shows success result", async () => {
     vi.mocked(fetchSSHFingerprint).mockResolvedValue({
       fingerprint: "SHA256:test",
       algorithm: "ssh-ed25519",
+      verified: true,
     });
     vi.mocked(testSSHConnection).mockResolvedValue({
       success: true,
@@ -90,6 +125,7 @@ describe("SSHTroubleshoot", () => {
     vi.mocked(fetchSSHFingerprint).mockResolvedValue({
       fingerprint: "SHA256:test",
       algorithm: "ssh-ed25519",
+      verified: true,
     });
     vi.mocked(testSSHConnection).mockResolvedValue({
       success: false,
@@ -119,6 +155,7 @@ describe("SSHTroubleshoot", () => {
     vi.mocked(fetchSSHFingerprint).mockResolvedValue({
       fingerprint: "SHA256:test",
       algorithm: "ssh-ed25519",
+      verified: true,
     });
     vi.mocked(testSSHConnection).mockRejectedValue({
       response: { data: { detail: "Server unreachable" } },
@@ -140,6 +177,7 @@ describe("SSHTroubleshoot", () => {
     vi.mocked(fetchSSHFingerprint).mockResolvedValue({
       fingerprint: "SHA256:test",
       algorithm: "ssh-ed25519",
+      verified: true,
     });
     vi.mocked(reconnectSSH).mockResolvedValue({
       success: true,
@@ -164,6 +202,7 @@ describe("SSHTroubleshoot", () => {
     vi.mocked(fetchSSHFingerprint).mockResolvedValue({
       fingerprint: "SHA256:test",
       algorithm: "ssh-ed25519",
+      verified: true,
     });
     vi.mocked(reconnectSSH).mockRejectedValue({
       response: { data: { detail: "Instance not running" } },
@@ -185,6 +224,7 @@ describe("SSHTroubleshoot", () => {
     vi.mocked(fetchSSHFingerprint).mockResolvedValue({
       fingerprint: "SHA256:test",
       algorithm: "ssh-ed25519",
+      verified: true,
     });
     const onClose = vi.fn();
     const user = userEvent.setup();
@@ -221,7 +261,7 @@ describe("SSHTroubleshoot", () => {
 
   it("shows fingerprint not available when no data", async () => {
     vi.mocked(fetchSSHFingerprint).mockResolvedValue(
-      undefined as unknown as { fingerprint: string; algorithm: string },
+      undefined as unknown as { fingerprint: string; algorithm: string; verified: boolean },
     );
     renderWithProviders(
       <SSHTroubleshoot instanceId={1} onClose={vi.fn()} />,

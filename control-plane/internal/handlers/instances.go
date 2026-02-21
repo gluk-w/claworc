@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/ssh"
-
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/crypto"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
@@ -502,6 +500,13 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sshFingerprint, err := sshkeys.GetPublicKeyFingerprint(sshPubKey)
+	if err != nil {
+		log.Printf("Failed to compute SSH key fingerprint for %s: %v", logutil.SanitizeForLog(name), err)
+		writeError(w, http.StatusInternalServerError, "Failed to compute SSH key fingerprint")
+		return
+	}
+
 	// Compute next sort_order
 	var maxSortOrder int
 	database.DB.Model(&database.Instance{}).Select("COALESCE(MAX(sort_order), 0)").Scan(&maxSortOrder)
@@ -525,6 +530,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		DefaultModel:      body.DefaultModel,
 		SSHPublicKey:      string(sshPubKey),
 		SSHPrivateKeyPath: sshKeyPath,
+		SSHKeyFingerprint: sshFingerprint,
 		SSHPort:           22,
 		SortOrder:         maxSortOrder + 1,
 	}
@@ -1006,6 +1012,13 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cloneFingerprint, err := sshkeys.GetPublicKeyFingerprint(clonePubKey)
+	if err != nil {
+		log.Printf("Failed to compute SSH key fingerprint for clone %s: %v", logutil.SanitizeForLog(cloneName), err)
+		writeError(w, http.StatusInternalServerError, "Failed to compute SSH key fingerprint")
+		return
+	}
+
 	// Compute next sort_order
 	var maxSortOrder int
 	database.DB.Model(&database.Instance{}).Select("COALESCE(MAX(sort_order), 0)").Scan(&maxSortOrder)
@@ -1029,6 +1042,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		DefaultModel:      src.DefaultModel,
 		SSHPublicKey:      string(clonePubKey),
 		SSHPrivateKeyPath: cloneKeyPath,
+		SSHKeyFingerprint: cloneFingerprint,
 		SSHPort:           22,
 		SortOrder:         maxSortOrder + 1,
 	}
@@ -1223,6 +1237,22 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 	if inst.SSHPrivateKeyPath == "" {
 		writeError(w, http.StatusBadRequest, "Instance has no SSH key configured")
 		return
+	}
+
+	// Verify SSH key fingerprint before connecting
+	if inst.SSHPublicKey != "" && inst.SSHKeyFingerprint != "" {
+		if verifyErr := sshkeys.VerifyFingerprint([]byte(inst.SSHPublicKey), inst.SSHKeyFingerprint); verifyErr != nil {
+			log.Printf("[ssh-test] WARNING: SSH key fingerprint mismatch for %s: %v", logutil.SanitizeForLog(inst.Name), verifyErr)
+			if u := middleware.GetUser(r); u != nil {
+				sshaudit.LogFingerprintMismatch(inst.ID, inst.Name, u.Username, verifyErr.Error())
+			}
+			writeJSON(w, http.StatusOK, sshTestResponse{
+				Success:      false,
+				TunnelStatus: []sshTunnelTest{},
+				Error:        fmt.Sprintf("SSH key integrity check failed: %v", verifyErr),
+			})
+			return
+		}
 	}
 
 	host, port, err := orch.GetInstanceSSHEndpoint(r.Context(), inst.Name)
@@ -1562,6 +1592,23 @@ func SSHReconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify SSH key fingerprint before reconnecting
+	if inst.SSHPublicKey != "" && inst.SSHKeyFingerprint != "" {
+		if err := sshkeys.VerifyFingerprint([]byte(inst.SSHPublicKey), inst.SSHKeyFingerprint); err != nil {
+			log.Printf("[ssh-reconnect] WARNING: SSH key fingerprint mismatch for %s: %v", logutil.SanitizeForLog(inst.Name), err)
+			username := ""
+			if u := middleware.GetUser(r); u != nil {
+				username = u.Username
+			}
+			sshaudit.LogFingerprintMismatch(inst.ID, inst.Name, username, err.Error())
+			writeJSON(w, http.StatusOK, sshReconnectResponse{
+				Success: false,
+				Message: fmt.Sprintf("SSH key integrity check failed: %v", err),
+			})
+			return
+		}
+	}
+
 	// Close existing connection if any
 	if sm.HasClient(inst.Name) {
 		_ = sm.Close(inst.Name)
@@ -1604,9 +1651,11 @@ func SSHReconnect(w http.ResponseWriter, r *http.Request) {
 type sshFingerprintResponse struct {
 	Fingerprint string `json:"fingerprint"`
 	Algorithm   string `json:"algorithm"`
+	Verified    bool   `json:"verified"`
 }
 
 // GetSSHFingerprint returns the SSH public key fingerprint for an instance.
+// It also verifies the computed fingerprint against the stored expected value.
 func GetSSHFingerprint(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
@@ -1630,17 +1679,26 @@ func GetSSHFingerprint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(inst.SSHPublicKey))
+	fingerprint, err := sshkeys.GetPublicKeyFingerprint([]byte(inst.SSHPublicKey))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to parse SSH public key")
 		return
 	}
 
-	fingerprint := ssh.FingerprintSHA256(pubKey)
+	algorithm, _ := sshkeys.GetPublicKeyAlgorithm([]byte(inst.SSHPublicKey))
+
+	// Verify fingerprint matches stored expected value
+	verified := true
+	if inst.SSHKeyFingerprint != "" && inst.SSHKeyFingerprint != fingerprint {
+		verified = false
+		log.Printf("[ssh-fingerprint] WARNING: fingerprint mismatch for instance %d: stored=%s computed=%s",
+			inst.ID, inst.SSHKeyFingerprint, fingerprint)
+	}
 
 	writeJSON(w, http.StatusOK, sshFingerprintResponse{
 		Fingerprint: fingerprint,
-		Algorithm:   pubKey.Type(),
+		Algorithm:   algorithm,
+		Verified:    verified,
 	})
 }
 
@@ -1808,6 +1866,16 @@ func RotateSSHKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify current SSH key fingerprint before rotation
+	if inst.SSHKeyFingerprint != "" {
+		if err := sshkeys.VerifyFingerprint([]byte(inst.SSHPublicKey), inst.SSHKeyFingerprint); err != nil {
+			log.Printf("[ssh-rotate] WARNING: SSH key fingerprint mismatch for %s: %v", logutil.SanitizeForLog(inst.Name), err)
+			if u := middleware.GetUser(r); u != nil {
+				sshaudit.LogFingerprintMismatch(inst.ID, inst.Name, u.Username, err.Error())
+			}
+		}
+	}
+
 	// Get the existing SSH client for this instance
 	sshClient, err := sm.GetClient(inst.Name)
 	if err != nil {
@@ -1842,9 +1910,10 @@ func RotateSSHKey(w http.ResponseWriter, r *http.Request) {
 	// Update the database with new key info
 	now := result.RotatedAt
 	if err := database.DB.Model(&inst).Updates(map[string]interface{}{
-		"ssh_public_key":      string(newPubKey),
+		"ssh_public_key":       string(newPubKey),
 		"ssh_private_key_path": newKeyPath,
-		"last_key_rotation":   &now,
+		"ssh_key_fingerprint":  result.NewFingerprint,
+		"last_key_rotation":    &now,
 	}).Error; err != nil {
 		log.Printf("[ssh-rotate] failed to update database for %s: %v", logutil.SanitizeForLog(inst.Name), err)
 		writeError(w, http.StatusInternalServerError, "Key rotation succeeded but failed to update database")

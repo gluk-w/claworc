@@ -22,6 +22,7 @@ type Instance struct {
 	DefaultModel    string    `gorm:"default:''" json:"-"`
 	SSHPublicKey       string     `gorm:"type:text" json:"-"`
 	SSHPrivateKeyPath  string     `gorm:"type:text" json:"-"`
+	SSHKeyFingerprint  string     `gorm:"type:text" json:"-"` // SHA256 fingerprint of SSH public key
 	SSHPort            int        `gorm:"default:22" json:"ssh_port"`
 	LastKeyRotation    *time.Time `json:"last_key_rotation,omitempty"`
 	KeyRotationPolicy  int        `gorm:"default:90" json:"key_rotation_policy"` // days between rotations, 0 = disabled

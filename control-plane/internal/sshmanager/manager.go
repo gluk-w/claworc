@@ -67,6 +67,9 @@ type SSHManager struct {
 	reconnecting   map[string]bool // tracks instances currently being reconnected
 	maxConnections int
 
+	// host key fingerprints (TOFU)
+	hostFingerprints map[string]string // instance name -> SHA256 host key fingerprint
+
 	// connection state tracking
 	stateTracker *ConnectionStateTracker
 
@@ -88,16 +91,17 @@ type SSHManager struct {
 func NewSSHManager(maxConnections int) *SSHManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &SSHManager{
-		clients:         make(map[string]*ssh.Client),
-		metrics:         make(map[string]*ConnectionMetrics),
-		params:          make(map[string]*ConnectionParams),
-		reconnecting:    make(map[string]bool),
-		stateTracker:    NewConnectionStateTracker(),
-		events:          make(map[string][]ConnectionEvent),
-		rateLimiter:     NewRateLimiter(DefaultRateLimitConfig()),
-		maxConnections:  maxConnections,
-		keepaliveCtx:    ctx,
-		keepaliveCancel: cancel,
+		clients:          make(map[string]*ssh.Client),
+		metrics:          make(map[string]*ConnectionMetrics),
+		params:           make(map[string]*ConnectionParams),
+		reconnecting:     make(map[string]bool),
+		hostFingerprints: make(map[string]string),
+		stateTracker:     NewConnectionStateTracker(),
+		events:           make(map[string][]ConnectionEvent),
+		rateLimiter:      NewRateLimiter(DefaultRateLimitConfig()),
+		maxConnections:   maxConnections,
+		keepaliveCtx:     ctx,
+		keepaliveCancel:  cancel,
 	}
 	m.keepaliveWg.Add(1)
 	go m.keepaliveLoop()
@@ -145,12 +149,29 @@ func (m *SSHManager) Connect(ctx context.Context, instanceName, host string, por
 		return nil, fmt.Errorf("connect: parse private key: %w", err)
 	}
 
+	// Build host key callback that captures the remote host's fingerprint.
+	// We use TOFU (Trust On First Use): accept on first connection, warn if
+	// the fingerprint changes later (e.g. pod restart vs MITM).
+	m.mu.RLock()
+	expectedHostFP := m.hostFingerprints[instanceName]
+	m.mu.RUnlock()
+
+	var actualHostFP string
+	hostKeyCallback := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		actualHostFP = ssh.FingerprintSHA256(key)
+		if expectedHostFP != "" && expectedHostFP != actualHostFP {
+			log.Printf("[ssh] host key fingerprint changed for %s — expected %s, got %s (may indicate pod restart or MITM)",
+				logutil.SanitizeForLog(instanceName), expectedHostFP, actualHostFP)
+		}
+		return nil
+	}
+
 	config := &ssh.ClientConfig{
 		User: "root",
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
 		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostKeyCallback,
 		Timeout:         10 * time.Second,
 	}
 
@@ -198,6 +219,9 @@ func (m *SSHManager) Connect(ctx context.Context, instanceName, host string, por
 		Host:           host,
 		Port:           port,
 		PrivateKeyPath: privateKeyPath,
+	}
+	if actualHostFP != "" {
+		m.hostFingerprints[instanceName] = actualHostFP
 	}
 	m.mu.Unlock()
 
@@ -247,6 +271,7 @@ func (m *SSHManager) RemoveClient(instanceName string) *ssh.Client {
 	delete(m.clients, instanceName)
 	delete(m.metrics, instanceName)
 	delete(m.params, instanceName)
+	delete(m.hostFingerprints, instanceName)
 	m.stateTracker.ClearInstance(instanceName)
 	return client
 }
@@ -310,6 +335,7 @@ func (m *SSHManager) CloseAll() error {
 	m.metrics = make(map[string]*ConnectionMetrics)
 	m.params = make(map[string]*ConnectionParams)
 	m.reconnecting = make(map[string]bool)
+	m.hostFingerprints = make(map[string]string)
 	m.stateTracker.ClearAll()
 	if count > 0 {
 		log.Printf("[ssh] closed all %d connection(s)", count)
@@ -652,5 +678,13 @@ func (m *SSHManager) ResetRateLimit(instanceName string) {
 // GetRateLimiter returns the rate limiter for direct access (e.g., in tests).
 func (m *SSHManager) GetRateLimiter() *RateLimiter {
 	return m.rateLimiter
+}
+
+// GetHostFingerprint returns the stored host key fingerprint for an instance.
+// Returns an empty string if no fingerprint has been captured yet.
+func (m *SSHManager) GetHostFingerprint(instanceName string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.hostFingerprints[instanceName]
 }
 

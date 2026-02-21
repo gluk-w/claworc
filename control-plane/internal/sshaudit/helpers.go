@@ -99,6 +99,20 @@ func LogTerminalSessionEnd(instanceID uint, instanceName, username, sessionID st
 	}
 }
 
+// LogFingerprintMismatch logs a security event when an SSH key fingerprint
+// does not match the expected value, which may indicate key tampering.
+func LogFingerprintMismatch(instanceID uint, instanceName, username, details string) {
+	if a := GetAuditor(); a != nil {
+		a.Log(AuditEntry{
+			InstanceID:   instanceID,
+			InstanceName: instanceName,
+			EventType:    EventFingerprintMismatch,
+			Username:     username,
+			Details:      details,
+		})
+	}
+}
+
 // LogKeyRotation logs an SSH key rotation event.
 func LogKeyRotation(instanceID uint, instanceName, username, fingerprint string) {
 	if a := GetAuditor(); a != nil {

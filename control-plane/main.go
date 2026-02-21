@@ -430,6 +430,7 @@ func checkKeyRotations(ctx context.Context) {
 		if dbErr := database.DB.Model(&inst).Updates(map[string]interface{}{
 			"ssh_public_key":       string(newPubKey),
 			"ssh_private_key_path": newKeyPath,
+			"ssh_key_fingerprint":  result.NewFingerprint,
 			"last_key_rotation":    &rotatedAt,
 		}).Error; dbErr != nil {
 			log.Printf("[key-rotation] failed to update database for %s: %v",
