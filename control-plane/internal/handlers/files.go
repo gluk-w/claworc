@@ -9,6 +9,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
@@ -51,12 +52,14 @@ func BrowseFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	entries, err := sshfiles.ListDirectory(client, dirPath)
 	if err != nil {
 		log.Printf("Failed to list directory %s for instance %s: %v", logutil.SanitizeForLog(dirPath), logutil.SanitizeForLog(inst.Name), err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to list directory: %v", err))
 		return
 	}
+	log.Printf("[files] BrowseFiles instance=%d path=%s entries=%d duration=%s", inst.ID, logutil.SanitizeForLog(dirPath), len(entries), time.Since(start))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"path":    dirPath,
@@ -99,12 +102,14 @@ func ReadFileContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	content, err := sshfiles.ReadFile(client, filePath)
 	if err != nil {
 		log.Printf("Failed to read file %s for instance %s: %v", logutil.SanitizeForLog(filePath), logutil.SanitizeForLog(inst.Name), err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to read file: %v", err))
 		return
 	}
+	log.Printf("[files] ReadFileContent instance=%d path=%s size=%d duration=%s", inst.ID, logutil.SanitizeForLog(filePath), len(content), time.Since(start))
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"path":    filePath,
@@ -147,11 +152,13 @@ func DownloadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	content, err := sshfiles.ReadFile(client, filePath)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to download file: %v", err))
 		return
 	}
+	log.Printf("[files] DownloadFile instance=%d path=%s size=%d duration=%s", inst.ID, logutil.SanitizeForLog(filePath), len(content), time.Since(start))
 
 	parts := strings.Split(filePath, "/")
 	filename := parts[len(parts)-1]
@@ -199,10 +206,12 @@ func CreateNewFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	if err := sshfiles.WriteFile(client, body.Path, []byte(body.Content)); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create file: %v", err))
 		return
 	}
+	log.Printf("[files] CreateNewFile instance=%d path=%s size=%d duration=%s", inst.ID, logutil.SanitizeForLog(body.Path), len(body.Content), time.Since(start))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
@@ -247,10 +256,12 @@ func CreateDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	if err := sshfiles.CreateDirectory(client, body.Path); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create directory: %v", err))
 		return
 	}
+	log.Printf("[files] CreateDirectory instance=%d path=%s duration=%s", inst.ID, logutil.SanitizeForLog(body.Path), time.Since(start))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
@@ -311,10 +322,12 @@ func UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	if err := sshfiles.WriteFile(client, fullPath, content); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to upload file: %v", err))
 		return
 	}
+	log.Printf("[files] UploadFile instance=%d path=%s size=%d duration=%s", inst.ID, logutil.SanitizeForLog(fullPath), len(content), time.Since(start))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success":  true,
