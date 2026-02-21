@@ -14,13 +14,13 @@ import (
 var DB *gorm.DB
 
 func Init() error {
-	dbPath := config.Cfg.DatabasePath
-	dbDir := filepath.Dir(dbPath)
-	if dbDir != "" {
-		if err := os.MkdirAll(dbDir, 0755); err != nil {
-			return fmt.Errorf("create db directory: %w", err)
+	dataDir := config.Cfg.DataPath
+	if dataDir != "" {
+		if err := os.MkdirAll(dataDir, 0755); err != nil {
+			return fmt.Errorf("create data directory: %w", err)
 		}
 	}
+	dbPath := filepath.Join(dataDir, "claworc.db")
 
 	var err error
 	DB, err = gorm.Open(sqlite.Open(dbPath), &gorm.Config{
@@ -61,7 +61,8 @@ func seedDefaults() error {
 		"default_container_image":  "glukw/openclaw-vnc-chrome:latest",
 		"default_vnc_resolution":   "1920x1080",
 		"orchestrator_backend":     "auto",
-		"default_models":           "[]",
+		"default_models":                "[]",
+		"ssh_key_rotation_policy_days": "90",
 	}
 
 	for key, value := range defaults {

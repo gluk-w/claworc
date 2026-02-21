@@ -130,7 +130,7 @@ func (m *SSHManager) reconnectWithBackoff(ctx context.Context, instanceID uint, 
 
 		// Re-upload the global public key before each attempt
 		// (agent may have restarted, losing authorized_keys)
-		if err := orch.ConfigureSSHAccess(ctx, instanceID, m.publicKey); err != nil {
+		if err := orch.ConfigureSSHAccess(ctx, instanceID, m.getPublicKey()); err != nil {
 			lastErr = fmt.Errorf("configure ssh access (attempt %d): %w", attempt, err)
 			log.Printf("SSH key upload failed for instance %d (attempt %d): %v", instanceID, attempt, err)
 		} else {

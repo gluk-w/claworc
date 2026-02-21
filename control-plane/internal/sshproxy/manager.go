@@ -49,6 +49,7 @@ type Orchestrator interface {
 // making them safer than names for long-lived connection maps. SSH multiplexes
 // channels over a single TCP connection, so one connection per instance suffices.
 type SSHManager struct {
+	keyMu     sync.RWMutex // protects signer and publicKey during key rotation
 	signer    ssh.Signer
 	publicKey string
 
@@ -77,6 +78,31 @@ type managedConn struct {
 	metrics *ConnectionMetrics
 }
 
+// getSigner returns the current SSH signer, safe for concurrent use during key rotation.
+func (m *SSHManager) getSigner() ssh.Signer {
+	m.keyMu.RLock()
+	defer m.keyMu.RUnlock()
+	return m.signer
+}
+
+// getPublicKey returns the current public key string, safe for concurrent use during key rotation.
+func (m *SSHManager) getPublicKey() string {
+	m.keyMu.RLock()
+	defer m.keyMu.RUnlock()
+	return m.publicKey
+}
+
+// ReloadKeys atomically replaces the SSH key pair used for future connections.
+// Existing connections are not affected (they already completed their SSH handshake).
+// This is used during key rotation to switch to the new key pair.
+func (m *SSHManager) ReloadKeys(signer ssh.Signer, publicKey string) {
+	m.keyMu.Lock()
+	defer m.keyMu.Unlock()
+	m.signer = signer
+	m.publicKey = publicKey
+	log.Printf("SSH keys reloaded (fingerprint: %s)", ssh.FingerprintSHA256(signer.PublicKey()))
+}
+
 // NewSSHManager creates a new SSHManager with the given private key signer
 // and public key string (OpenSSH authorized_keys format).
 func NewSSHManager(privateKey ssh.Signer, publicKey string) *SSHManager {
@@ -97,7 +123,7 @@ func (m *SSHManager) Connect(ctx context.Context, instanceID uint, host string, 
 	cfg := &ssh.ClientConfig{
 		User: "root",
 		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(m.signer),
+			ssh.PublicKeys(m.getSigner()),
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         connectTimeout,
@@ -239,7 +265,7 @@ func (m *SSHManager) EnsureConnected(ctx context.Context, instanceID uint, orch 
 	}
 
 	// 3. Upload public key to the instance
-	if err := orch.ConfigureSSHAccess(ctx, instanceID, m.publicKey); err != nil {
+	if err := orch.ConfigureSSHAccess(ctx, instanceID, m.getPublicKey()); err != nil {
 		return nil, fmt.Errorf("configure ssh access for instance %d: %w", instanceID, err)
 	}
 
@@ -254,12 +280,12 @@ func (m *SSHManager) EnsureConnected(ctx context.Context, instanceID uint, orch 
 
 // GetPublicKeyFingerprint returns the SHA256 fingerprint of the global SSH public key.
 func (m *SSHManager) GetPublicKeyFingerprint() string {
-	return ssh.FingerprintSHA256(m.signer.PublicKey())
+	return ssh.FingerprintSHA256(m.getSigner().PublicKey())
 }
 
 // GetPublicKey returns the global SSH public key in OpenSSH authorized_keys format.
 func (m *SSHManager) GetPublicKey() string {
-	return m.publicKey
+	return m.getPublicKey()
 }
 
 // keepalive sends periodic keepalive requests to detect dead connections.
