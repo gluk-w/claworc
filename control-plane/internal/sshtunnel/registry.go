@@ -17,7 +17,7 @@ var (
 func InitGlobal() {
 	registryMu.Lock()
 	defer registryMu.Unlock()
-	globalSSHManager = sshmanager.NewSSHManager()
+	globalSSHManager = sshmanager.NewSSHManager(0)
 	globalTunnelManager = NewTunnelManager(globalSSHManager)
 }
 

@@ -214,7 +214,7 @@ func TestIntegrationSSHConnectionEstablishes(t *testing.T) {
 	sshAddr, sshCleanup := startTestSSHServer(t, nil)
 	defer sshCleanup()
 
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	client := connectTestSSH(t, sshAddr)
 	defer client.Close()
 
@@ -245,7 +245,7 @@ func TestIntegrationTunnelsCreatedAutomatically(t *testing.T) {
 	})
 	defer sshCleanup()
 
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	client := connectTestSSH(t, sshAddr)
 	defer client.Close()
 	sm.SetClient("test-instance", client)
@@ -305,7 +305,7 @@ func TestIntegrationVNCHTTPDataFlow(t *testing.T) {
 	})
 	defer sshCleanup()
 
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	client := connectTestSSH(t, sshAddr)
 	defer client.Close()
 	sm.SetClient("test-instance", client)
@@ -353,7 +353,7 @@ func TestIntegrationGatewayWebSocketDataFlow(t *testing.T) {
 	})
 	defer sshCleanup()
 
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	client := connectTestSSH(t, sshAddr)
 	defer client.Close()
 	sm.SetClient("test-instance", client)
@@ -408,7 +408,7 @@ func TestIntegrationTunnelSurvivesDisruption(t *testing.T) {
 	})
 	defer sshCleanup()
 
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	client := connectTestSSH(t, sshAddr)
 	defer client.Close()
 	sm.SetClient("test-instance", client)
@@ -461,7 +461,7 @@ func TestIntegrationTunnelCleanupOnStop(t *testing.T) {
 	})
 	defer sshCleanup()
 
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	client := connectTestSSH(t, sshAddr)
 	defer client.Close()
 	sm.SetClient("test-instance", client)

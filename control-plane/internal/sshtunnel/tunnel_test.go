@@ -10,7 +10,7 @@ import (
 )
 
 func TestNewTunnelManager(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 	if tm == nil {
 		t.Fatal("NewTunnelManager returned nil")
@@ -102,7 +102,7 @@ func TestActiveTunnelLastCheck(t *testing.T) {
 }
 
 func TestGetTunnelsEmpty(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	tunnels := tm.GetTunnels("nonexistent")
@@ -112,7 +112,7 @@ func TestGetTunnelsEmpty(t *testing.T) {
 }
 
 func TestGetAllTunnelsEmpty(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	all := tm.GetAllTunnels()
@@ -122,7 +122,7 @@ func TestGetAllTunnelsEmpty(t *testing.T) {
 }
 
 func TestAddAndGetTunnels(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	tunnel := &ActiveTunnel{
@@ -151,7 +151,7 @@ func TestAddAndGetTunnels(t *testing.T) {
 }
 
 func TestAddMultipleTunnels(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	t1 := &ActiveTunnel{
@@ -190,7 +190,7 @@ func TestAddMultipleTunnels(t *testing.T) {
 }
 
 func TestCloseTunnels(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	tunnel := &ActiveTunnel{
@@ -213,7 +213,7 @@ func TestCloseTunnels(t *testing.T) {
 }
 
 func TestCloseTunnelsNonexistent(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	// Should not panic
@@ -221,7 +221,7 @@ func TestCloseTunnelsNonexistent(t *testing.T) {
 }
 
 func TestCloseAll(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	t1 := &ActiveTunnel{
@@ -254,7 +254,7 @@ func TestCloseAll(t *testing.T) {
 }
 
 func TestRemoveClosed(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	open := &ActiveTunnel{
@@ -284,7 +284,7 @@ func TestRemoveClosed(t *testing.T) {
 }
 
 func TestRemoveClosedAllClosed(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	closed := &ActiveTunnel{
@@ -310,7 +310,7 @@ func TestRemoveClosedAllClosed(t *testing.T) {
 }
 
 func TestCreateReverseTunnelNoSSHClient(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	ctx := t.Context()
@@ -342,7 +342,7 @@ func TestDefaultPorts(t *testing.T) {
 }
 
 func TestCreateTunnelForVNCNoSSHClient(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	ctx := t.Context()
@@ -353,7 +353,7 @@ func TestCreateTunnelForVNCNoSSHClient(t *testing.T) {
 }
 
 func TestCreateTunnelForGatewayNoSSHClient(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	ctx := t.Context()
@@ -364,7 +364,7 @@ func TestCreateTunnelForGatewayNoSSHClient(t *testing.T) {
 }
 
 func TestCreateTunnelForGatewayDefaultPort(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	ctx := t.Context()
@@ -395,7 +395,7 @@ func TestTunnelConfigService(t *testing.T) {
 }
 
 func TestGetTunnelsReturnsCopy(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	tunnel := &ActiveTunnel{
@@ -418,7 +418,7 @@ func TestGetTunnelsReturnsCopy(t *testing.T) {
 // --- Lifecycle management tests ---
 
 func TestStartTunnelsForInstanceNoSSHClient(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	err := tm.StartTunnelsForInstance(t.Context(), "no-client")
@@ -434,7 +434,7 @@ func TestStartTunnelsForInstanceNoSSHClient(t *testing.T) {
 }
 
 func TestStopTunnelsForInstance(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	// Manually add tunnels and a monitor
@@ -494,7 +494,7 @@ func TestStopTunnelsForInstance(t *testing.T) {
 }
 
 func TestStopTunnelsForInstanceNonexistent(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	// Should not panic or error
@@ -541,7 +541,7 @@ func TestUpdateHealthCheck(t *testing.T) {
 }
 
 func TestCheckAndReconnectTunnelsAllPresent(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	// Add both VNC and Gateway tunnels manually
@@ -578,7 +578,7 @@ func TestCheckAndReconnectTunnelsAllPresent(t *testing.T) {
 }
 
 func TestCheckAndReconnectTunnelsMissingNoSSH(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	// No tunnels and no SSH client - should log but not panic
@@ -592,7 +592,7 @@ func TestCheckAndReconnectTunnelsMissingNoSSH(t *testing.T) {
 }
 
 func TestCheckAndReconnectTunnelsClosedRemoved(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	// Add a closed tunnel and an open one
@@ -623,7 +623,7 @@ func TestCheckAndReconnectTunnelsClosedRemoved(t *testing.T) {
 }
 
 func TestReconnectTunnelContextCancelled(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -640,7 +640,7 @@ func TestReconnectTunnelContextCancelled(t *testing.T) {
 }
 
 func TestMonitorInstanceStopsOnContextCancel(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -663,7 +663,7 @@ func TestMonitorInstanceStopsOnContextCancel(t *testing.T) {
 }
 
 func TestNewTunnelManagerInitializesMonitors(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	if tm.monitors == nil {
@@ -675,7 +675,7 @@ func TestNewTunnelManagerInitializesMonitors(t *testing.T) {
 }
 
 func TestStopTunnelsForInstanceCancelsMonitor(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	// Start a fake monitor goroutine
@@ -701,7 +701,7 @@ func TestStopTunnelsForInstanceCancelsMonitor(t *testing.T) {
 }
 
 func TestStartTunnelsForInstanceReplacesExistingMonitor(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	// Register an existing monitor
@@ -725,14 +725,14 @@ func TestStartTunnelsForInstanceReplacesExistingMonitor(t *testing.T) {
 }
 
 func TestShutdownEmpty(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 	// Should not panic on empty state
 	tm.Shutdown()
 }
 
 func TestShutdownClosesAllTunnelsAndMonitors(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	// Add tunnels for two instances
@@ -806,7 +806,7 @@ func TestShutdownClosesAllTunnelsAndMonitors(t *testing.T) {
 }
 
 func TestShutdownIdempotent(t *testing.T) {
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := NewTunnelManager(sm)
 
 	tunnel := &ActiveTunnel{

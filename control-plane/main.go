@@ -198,7 +198,9 @@ func main() {
 		tm.Shutdown()
 	}
 	if sm := sshtunnel.GetSSHManager(); sm != nil {
-		sm.CloseAll()
+		if err := sm.CloseAll(); err != nil {
+			log.Printf("Error closing SSH connections: %v", err)
+		}
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

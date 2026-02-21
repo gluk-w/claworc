@@ -173,7 +173,7 @@ func TestGetTunnelStatus_WithTunnels(t *testing.T) {
 	admin := &database.User{Username: "admin", PasswordHash: "x", Role: "admin"}
 	database.DB.Create(admin)
 
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := sshtunnel.NewTunnelManager(sm)
 	sshtunnel.SetGlobalForTest(sm, tm)
 	defer sshtunnel.ResetGlobalForTest()
@@ -259,7 +259,7 @@ func TestGetTunnelStatus_ClosedTunnel(t *testing.T) {
 	admin := &database.User{Username: "admin", PasswordHash: "x", Role: "admin"}
 	database.DB.Create(admin)
 
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := sshtunnel.NewTunnelManager(sm)
 	sshtunnel.SetGlobalForTest(sm, tm)
 	defer sshtunnel.ResetGlobalForTest()
@@ -303,7 +303,7 @@ func TestGetTunnelStatus_HealthMetrics(t *testing.T) {
 	admin := &database.User{Username: "admin", PasswordHash: "x", Role: "admin"}
 	database.DB.Create(admin)
 
-	sm := sshmanager.NewSSHManager()
+	sm := sshmanager.NewSSHManager(0)
 	tm := sshtunnel.NewTunnelManager(sm)
 	sshtunnel.SetGlobalForTest(sm, tm)
 	defer sshtunnel.ResetGlobalForTest()
