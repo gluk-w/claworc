@@ -25,6 +25,7 @@ type ContainerOrchestrator interface {
 
 	// Logs
 	StreamInstanceLogs(ctx context.Context, name string, tail int, follow bool) (<-chan string, error)
+	StreamCreationLogs(ctx context.Context, name string) (<-chan string, error)
 
 	// Clone
 	CloneVolumes(ctx context.Context, srcName, dstName string) error

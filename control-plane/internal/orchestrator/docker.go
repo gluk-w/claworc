@@ -466,6 +466,117 @@ func stripDockerLogHeaders(data []byte) string {
 	return result.String()
 }
 
+func (d *DockerOrchestrator) StreamCreationLogs(ctx context.Context, name string) (<-chan string, error) {
+	ch := make(chan string, 100)
+
+	go func() {
+		defer close(ch)
+
+		timeout := time.After(10 * time.Minute)
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		seen := make(map[string]bool)
+		lastStatus := ""
+
+		send := func(msg string) bool {
+			if seen[msg] {
+				return true
+			}
+			seen[msg] = true
+			select {
+			case ch <- msg:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timeout:
+				send("Timed out waiting for container to become ready")
+				return
+			case <-ticker.C:
+			}
+
+			inspect, err := d.client.ContainerInspect(ctx, name)
+			if err != nil {
+				if dockerclient.IsErrNotFound(err) {
+					send("Waiting for container creation...")
+					continue
+				}
+				send(fmt.Sprintf("Error inspecting container: %v", err))
+				continue
+			}
+
+			// Emit status changes
+			status := inspect.State.Status
+			if status != lastStatus {
+				msg := fmt.Sprintf("Container status: %s", status)
+				if !send(msg) {
+					return
+				}
+				lastStatus = status
+			}
+
+			// Emit health status if available
+			if inspect.State.Health != nil {
+				healthMsg := fmt.Sprintf("Health: %s", inspect.State.Health.Status)
+				if !send(healthMsg) {
+					return
+				}
+			}
+
+			// Check if container is running and healthy
+			if status == "running" {
+				health := ""
+				if inspect.State.Health != nil {
+					health = inspect.State.Health.Status
+				}
+				if health == "healthy" {
+					// Fetch recent container logs
+					logOpts := container.LogsOptions{
+						ShowStdout: true,
+						ShowStderr: true,
+						Tail:       "50",
+					}
+					logReader, err := d.client.ContainerLogs(ctx, name, logOpts)
+					if err == nil {
+						buf := make([]byte, 8192)
+						for {
+							n, readErr := logReader.Read(buf)
+							if n > 0 {
+								text := stripDockerLogHeaders(buf[:n])
+								for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+									if line != "" {
+										select {
+										case ch <- line:
+										case <-ctx.Done():
+											logReader.Close()
+											return
+										}
+									}
+								}
+							}
+							if readErr != nil {
+								break
+							}
+						}
+						logReader.Close()
+					}
+					send("Container is running and healthy")
+					return
+				}
+			}
+		}
+	}()
+
+	return ch, nil
+}
+
 func (d *DockerOrchestrator) ExecInInstance(ctx context.Context, name string, cmd []string) (string, string, int, error) {
 	execCfg := container.ExecOptions{
 		Cmd:          cmd,

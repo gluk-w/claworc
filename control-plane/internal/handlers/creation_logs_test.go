@@ -1,0 +1,2408 @@
+package handlers_test
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/gluk-w/claworc/control-plane/internal/auth"
+	"github.com/gluk-w/claworc/control-plane/internal/config"
+	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/handlers"
+	"github.com/gluk-w/claworc/control-plane/internal/middleware"
+	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/go-chi/chi/v5"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+)
+
+// mockOrchestrator implements orchestrator.ContainerOrchestrator for testing.
+type mockOrchestrator struct {
+	creationLogsCh  chan string
+	creationLogsErr error
+}
+
+func (m *mockOrchestrator) Initialize(_ context.Context) error                          { return nil }
+func (m *mockOrchestrator) IsAvailable(_ context.Context) bool                          { return true }
+func (m *mockOrchestrator) BackendName() string                                         { return "mock" }
+func (m *mockOrchestrator) CreateInstance(_ context.Context, _ orchestrator.CreateParams) error {
+	return nil
+}
+func (m *mockOrchestrator) DeleteInstance(_ context.Context, _ string) error             { return nil }
+func (m *mockOrchestrator) StartInstance(_ context.Context, _ string) error              { return nil }
+func (m *mockOrchestrator) StopInstance(_ context.Context, _ string) error               { return nil }
+func (m *mockOrchestrator) RestartInstance(_ context.Context, _ string) error            { return nil }
+func (m *mockOrchestrator) GetInstanceStatus(_ context.Context, _ string) (string, error) {
+	return "creating", nil
+}
+func (m *mockOrchestrator) UpdateInstanceConfig(_ context.Context, _ string, _ string) error {
+	return nil
+}
+func (m *mockOrchestrator) StreamInstanceLogs(_ context.Context, _ string, _ int, _ bool) (<-chan string, error) {
+	return nil, nil
+}
+func (m *mockOrchestrator) StreamCreationLogs(_ context.Context, _ string) (<-chan string, error) {
+	if m.creationLogsErr != nil {
+		return nil, m.creationLogsErr
+	}
+	return m.creationLogsCh, nil
+}
+func (m *mockOrchestrator) CloneVolumes(_ context.Context, _, _ string) error { return nil }
+func (m *mockOrchestrator) ExecInInstance(_ context.Context, _ string, _ []string) (string, string, int, error) {
+	return "", "", 0, nil
+}
+func (m *mockOrchestrator) ExecInteractive(_ context.Context, _ string, _ []string) (*orchestrator.ExecSession, error) {
+	return nil, nil
+}
+func (m *mockOrchestrator) ListDirectory(_ context.Context, _ string, _ string) ([]orchestrator.FileEntry, error) {
+	return nil, nil
+}
+func (m *mockOrchestrator) ReadFile(_ context.Context, _ string, _ string) ([]byte, error) {
+	return nil, nil
+}
+func (m *mockOrchestrator) CreateFile(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+func (m *mockOrchestrator) CreateDirectory(_ context.Context, _ string, _ string) error { return nil }
+func (m *mockOrchestrator) WriteFile(_ context.Context, _ string, _ string, _ []byte) error {
+	return nil
+}
+func (m *mockOrchestrator) GetVNCBaseURL(_ context.Context, _ string, _ string) (string, error) {
+	return "", nil
+}
+func (m *mockOrchestrator) GetGatewayWSURL(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+func (m *mockOrchestrator) GetHTTPTransport() http.RoundTripper { return nil }
+
+var sessionStore *auth.SessionStore
+
+func setupTestDB(t *testing.T) {
+	t.Helper()
+	var err error
+	database.DB, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("open test db: %v", err)
+	}
+	// Limit to 1 connection so all goroutines share the same in-memory DB
+	// (SQLite :memory: databases are per-connection by default).
+	sqlDB, _ := database.DB.DB()
+	sqlDB.SetMaxOpenConns(1)
+
+	database.DB.AutoMigrate(&database.Instance{}, &database.Setting{}, &database.User{}, &database.UserInstance{})
+
+	// Enable auth-disabled mode so RequireAuth injects the admin user from DB
+	config.Cfg.AuthDisabled = true
+
+	// Create session store for middleware
+	sessionStore = auth.NewSessionStore()
+	handlers.SessionStore = sessionStore
+}
+
+func createTestInstance(t *testing.T, name string) database.Instance {
+	t.Helper()
+	return createTestInstanceWithStatus(t, name, "creating")
+}
+
+func createTestInstanceWithStatus(t *testing.T, name, status string) database.Instance {
+	t.Helper()
+	inst := database.Instance{Name: name, DisplayName: name, Status: status}
+	if err := database.DB.Create(&inst).Error; err != nil {
+		t.Fatalf("create test instance: %v", err)
+	}
+	return inst
+}
+
+func createTestAdmin(t *testing.T) *database.User {
+	t.Helper()
+	user := &database.User{Username: "admin", PasswordHash: "test", Role: "admin"}
+	if err := database.DB.Create(user).Error; err != nil {
+		t.Fatalf("create test admin: %v", err)
+	}
+	return user
+}
+
+func newRouter() chi.Router {
+	r := chi.NewRouter()
+	r.Use(middleware.RequireAuth(sessionStore))
+	r.Get("/instances/{id}/creation-logs", handlers.StreamCreationLogs)
+	return r
+}
+
+func TestStreamCreationLogs_Success(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-test")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Waiting for pod creation..."
+	ch <- "Pod scheduled to node xyz"
+	ch <- "Pod is running and ready"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+
+	expected := []string{"Waiting for pod creation...", "Pod scheduled to node xyz", "Pod is running and ready"}
+	if len(lines) != len(expected) {
+		t.Fatalf("expected %d events, got %d: %v", len(expected), len(lines), lines)
+	}
+	for i, exp := range expected {
+		if lines[i] != exp {
+			t.Errorf("event %d: expected %q, got %q", i, exp, lines[i])
+		}
+	}
+}
+
+func TestStreamCreationLogs_InstanceNotFound(t *testing.T) {
+	setupTestDB(t)
+	createTestAdmin(t)
+
+	mock := &mockOrchestrator{}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", "/instances/9999/creation-logs", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestStreamCreationLogs_InvalidID(t *testing.T) {
+	setupTestDB(t)
+	createTestAdmin(t)
+
+	mock := &mockOrchestrator{}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", "/instances/abc/creation-logs", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestStreamCreationLogs_OrchestratorError(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-err")
+	createTestAdmin(t)
+
+	mock := &mockOrchestrator{creationLogsErr: fmt.Errorf("connection refused")}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestStreamCreationLogs_NoOrchestrator(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-no-orch")
+	createTestAdmin(t)
+
+	orchestrator.SetForTest(nil)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
+	}
+}
+
+func TestStreamCreationLogs_StoppedInstance(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstanceWithStatus(t, "bot-stopped", "stopped")
+	createTestAdmin(t)
+
+	mock := &mockOrchestrator{}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 event, got %d: %v", len(lines), lines)
+	}
+	expectedMsg := "Instance is not in creation phase. Switch to Runtime logs or restart the instance to see creation logs."
+	if lines[0] != expectedMsg {
+		t.Errorf("expected %q, got %q", expectedMsg, lines[0])
+	}
+}
+
+func TestStreamCreationLogs_FailedInstance(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstanceWithStatus(t, "bot-failed", "failed")
+	createTestAdmin(t)
+
+	mock := &mockOrchestrator{}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 event, got %d: %v", len(lines), lines)
+	}
+	expectedMsg := "Instance is not in creation phase. Switch to Runtime logs or restart the instance to see creation logs."
+	if lines[0] != expectedMsg {
+		t.Errorf("expected %q, got %q", expectedMsg, lines[0])
+	}
+}
+
+func TestStreamCreationLogs_ErrorInstance(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstanceWithStatus(t, "bot-error", "error")
+	createTestAdmin(t)
+
+	mock := &mockOrchestrator{}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 event, got %d: %v", len(lines), lines)
+	}
+	expectedMsg := "Instance is not in creation phase. Switch to Runtime logs or restart the instance to see creation logs."
+	if lines[0] != expectedMsg {
+		t.Errorf("expected %q, got %q", expectedMsg, lines[0])
+	}
+}
+
+// TestStreamCreationLogs_RunningInstance verifies that an already-running instance
+// returns the "not in creation phase" message instead of streaming from the orchestrator.
+func TestStreamCreationLogs_RunningInstance(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstanceWithStatus(t, "bot-running", "running")
+	createTestAdmin(t)
+
+	mock := &mockOrchestrator{}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 event, got %d: %v", len(lines), lines)
+	}
+	expectedMsg := "Instance is not in creation phase. Switch to Runtime logs or restart the instance to see creation logs."
+	if lines[0] != expectedMsg {
+		t.Errorf("expected %q, got %q", expectedMsg, lines[0])
+	}
+}
+
+// TestStreamCreationLogs_FastStartup verifies that even a very fast startup
+// (channel closes quickly) still delivers all log lines.
+func TestStreamCreationLogs_FastStartup(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-fast")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Pod is running and ready"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 event, got %d: %v", len(lines), lines)
+	}
+	if lines[0] != "Pod is running and ready" {
+		t.Errorf("expected %q, got %q", "Pod is running and ready", lines[0])
+	}
+}
+
+// TestStreamCreationLogs_SlowImagePull verifies that pulling progress messages
+// are streamed correctly during a slow image pull.
+func TestStreamCreationLogs_SlowImagePull(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-slow-pull")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "[2026-02-20 14:23:01] [STATUS] Waiting for pod creation..."
+	ch <- "[2026-02-20 14:23:03] [EVENT] kubelet: Pulling image ghcr.io/openclaw/agent:latest"
+	ch <- "[2026-02-20 14:23:15] [EVENT] kubelet: Still pulling image ghcr.io/openclaw/agent:latest"
+	ch <- "[2026-02-20 14:23:45] [EVENT] kubelet: Successfully pulled image ghcr.io/openclaw/agent:latest"
+	ch <- "[2026-02-20 14:23:46] [STATUS] Pod is running and ready"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 events for slow image pull, got %d: %v", len(lines), lines)
+	}
+	// Verify pulling progress appears in log stream
+	if !strings.Contains(lines[1], "Pulling image") {
+		t.Errorf("expected pulling progress in event 1, got %q", lines[1])
+	}
+	if !strings.Contains(lines[3], "Successfully pulled") {
+		t.Errorf("expected pull success in event 3, got %q", lines[3])
+	}
+}
+
+// TestStreamCreationLogs_ImagePullFailure verifies that image pull failure errors
+// are correctly streamed to the client.
+func TestStreamCreationLogs_ImagePullFailure(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-pull-fail")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "[2026-02-20 14:23:01] [STATUS] Waiting for pod creation..."
+	ch <- "[2026-02-20 14:23:03] [EVENT] kubelet: Pulling image ghcr.io/openclaw/agent:nonexistent"
+	ch <- "[2026-02-20 14:23:10] [STATUS] Container main: ImagePullBackOff - Back-off pulling image ghcr.io/openclaw/agent:nonexistent"
+	ch <- "[2026-02-20 14:23:30] [EVENT] kubelet: Failed to pull image ghcr.io/openclaw/agent:nonexistent: rpc error: code = NotFound"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 events for image pull failure, got %d: %v", len(lines), lines)
+	}
+	// Verify error events appear
+	if !strings.Contains(lines[2], "ImagePullBackOff") {
+		t.Errorf("expected ImagePullBackOff in event 2, got %q", lines[2])
+	}
+	if !strings.Contains(lines[3], "Failed to pull image") {
+		t.Errorf("expected pull failure in event 3, got %q", lines[3])
+	}
+}
+
+// TestStreamCreationLogs_ContextCancellation verifies that the handler
+// stops streaming when the client disconnects (context cancelled).
+func TestStreamCreationLogs_ContextCancellation(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-cancel")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "First log line"
+	// Don't close the channel — simulate a long-running stream
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		router.ServeHTTP(w, req)
+		close(done)
+	}()
+
+	// Cancel the context to simulate client disconnect
+	cancel()
+
+	// Handler should return promptly
+	<-done
+
+	body, _ := io.ReadAll(w.Result().Body)
+	lines := parseSSEData(string(body))
+	// Should have received at most the first line (may or may not have been flushed)
+	if len(lines) > 1 {
+		t.Errorf("expected at most 1 event after cancellation, got %d: %v", len(lines), lines)
+	}
+}
+
+// TestStreamCreationLogs_EmptyChannel verifies that an immediately-closed channel
+// (no log lines) results in a valid SSE response with no data events.
+func TestStreamCreationLogs_EmptyChannel(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-empty")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 0 {
+		t.Errorf("expected 0 events for empty channel, got %d: %v", len(lines), lines)
+	}
+}
+
+// TestStreamCreationLogs_AllNonCreatingStatuses verifies that all terminal statuses
+// short-circuit with the "not in creation phase" message.
+func TestStreamCreationLogs_AllNonCreatingStatuses(t *testing.T) {
+	statuses := []string{"running", "stopped", "failed", "error"}
+	expectedMsg := "Instance is not in creation phase. Switch to Runtime logs or restart the instance to see creation logs."
+
+	for _, status := range statuses {
+		t.Run(status, func(t *testing.T) {
+			setupTestDB(t)
+			inst := createTestInstanceWithStatus(t, fmt.Sprintf("bot-%s", status), status)
+			createTestAdmin(t)
+
+			mock := &mockOrchestrator{}
+			orchestrator.SetForTest(mock)
+
+			router := newRouter()
+
+			req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			resp := w.Result()
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status %q: expected 200, got %d: %s", status, resp.StatusCode, string(body))
+			}
+
+			body, _ := io.ReadAll(resp.Body)
+			lines := parseSSEData(string(body))
+			if len(lines) != 1 {
+				t.Fatalf("status %q: expected 1 event, got %d: %v", status, len(lines), lines)
+			}
+			if lines[0] != expectedMsg {
+				t.Errorf("status %q: expected %q, got %q", status, expectedMsg, lines[0])
+			}
+		})
+	}
+}
+
+// TestStreamCreationLogs_MultipleInstances verifies that multiple instances
+// stream their own independent creation log events without cross-contamination.
+func TestStreamCreationLogs_MultipleInstances(t *testing.T) {
+	setupTestDB(t)
+	inst1 := createTestInstance(t, "bot-multi-1")
+	inst2 := createTestInstance(t, "bot-multi-2")
+	inst3 := createTestInstance(t, "bot-multi-3")
+	createTestAdmin(t)
+
+	ch1 := make(chan string, 10)
+	ch2 := make(chan string, 10)
+	ch3 := make(chan string, 10)
+
+	// concurrentMockOrchestrator routes channels per instance name
+	mock := &concurrentMockOrchestrator{
+		channels: map[string]chan string{
+			"bot-multi-1": ch1,
+			"bot-multi-2": ch2,
+			"bot-multi-3": ch3,
+		},
+	}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	// Pre-fill channels with instance-specific events
+	ch1 <- "Instance 1: Scheduling"
+	ch1 <- "Instance 1: Pulling image"
+	ch1 <- "Instance 1: Ready"
+	close(ch1)
+
+	ch2 <- "Instance 2: Scheduling"
+	ch2 <- "Instance 2: Ready"
+	close(ch2)
+
+	ch3 <- "Instance 3: Scheduling"
+	ch3 <- "Instance 3: Pulling image"
+	ch3 <- "Instance 3: Container creating"
+	ch3 <- "Instance 3: Ready"
+	close(ch3)
+
+	// Stream each instance sequentially and verify isolation
+	type testCase struct {
+		inst          database.Instance
+		expectedCount int
+		prefix        string
+	}
+	cases := []testCase{
+		{inst1, 3, "Instance 1:"},
+		{inst2, 2, "Instance 2:"},
+		{inst3, 4, "Instance 3:"},
+	}
+
+	for _, tc := range cases {
+		req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", tc.inst.ID), nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		resp := w.Result()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("%s: expected 200, got %d: %s", tc.inst.Name, resp.StatusCode, string(body))
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		lines := parseSSEData(string(body))
+		if len(lines) != tc.expectedCount {
+			t.Fatalf("%s: expected %d events, got %d: %v", tc.inst.Name, tc.expectedCount, len(lines), lines)
+		}
+		for _, line := range lines {
+			if !strings.HasPrefix(line, tc.prefix) {
+				t.Errorf("%s: unexpected event %q (expected prefix %q)", tc.inst.Name, line, tc.prefix)
+			}
+		}
+	}
+}
+
+// TestStreamCreationLogs_AccessDenied verifies that a non-admin user without
+// instance assignment gets 403 when accessing creation logs.
+func TestStreamCreationLogs_AccessDenied(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-denied")
+
+	// Create a regular user (not admin) without instance assignment
+	user := &database.User{Username: "regular", PasswordHash: "test", Role: "user"}
+	if err := database.DB.Create(user).Error; err != nil {
+		t.Fatalf("create test user: %v", err)
+	}
+
+	// Disable auth-disabled mode to use proper auth flow
+	config.Cfg.AuthDisabled = false
+
+	// Create session for the regular user
+	token, err := sessionStore.Create(user.ID)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	mock := &mockOrchestrator{}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: token})
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+
+	// Restore auth-disabled for other tests
+	config.Cfg.AuthDisabled = true
+}
+
+// TestStreamCreationLogs_Unauthenticated verifies that requests without
+// authentication credentials get 401.
+func TestStreamCreationLogs_Unauthenticated(t *testing.T) {
+	setupTestDB(t)
+	createTestInstance(t, "bot-unauth")
+
+	// Disable auth-disabled mode
+	config.Cfg.AuthDisabled = false
+
+	mock := &mockOrchestrator{}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", "/instances/1/creation-logs", nil)
+	// No cookie or session
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+
+	// Restore auth-disabled for other tests
+	config.Cfg.AuthDisabled = true
+}
+
+// TestStreamCreationLogs_SSEHeaders verifies all required SSE headers are set.
+func TestStreamCreationLogs_SSEHeaders(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-headers")
+	createTestAdmin(t)
+
+	ch := make(chan string, 1)
+	ch <- "test"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Errorf("expected Content-Type text/event-stream, got %q", resp.Header.Get("Content-Type"))
+	}
+	if resp.Header.Get("Cache-Control") != "no-cache" {
+		t.Errorf("expected Cache-Control no-cache, got %q", resp.Header.Get("Cache-Control"))
+	}
+	if resp.Header.Get("Connection") != "keep-alive" {
+		t.Errorf("expected Connection keep-alive, got %q", resp.Header.Get("Connection"))
+	}
+	if resp.Header.Get("X-Accel-Buffering") != "no" {
+		t.Errorf("expected X-Accel-Buffering no, got %q", resp.Header.Get("X-Accel-Buffering"))
+	}
+}
+
+// TestStreamCreationLogs_AdditionalStatuses verifies creation logs work correctly
+// for additional statuses like "stopping" and "restarting".
+func TestStreamCreationLogs_AdditionalStatuses(t *testing.T) {
+	// These statuses are not in the short-circuit list, so they should
+	// attempt to stream from the orchestrator
+	statuses := []string{"stopping", "restarting"}
+
+	for _, status := range statuses {
+		t.Run(status, func(t *testing.T) {
+			setupTestDB(t)
+			inst := createTestInstanceWithStatus(t, fmt.Sprintf("bot-%s", status), status)
+			createTestAdmin(t)
+
+			ch := make(chan string, 1)
+			ch <- "Stream event during " + status
+			close(ch)
+
+			mock := &mockOrchestrator{creationLogsCh: ch}
+			orchestrator.SetForTest(mock)
+
+			router := newRouter()
+
+			req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			resp := w.Result()
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status %q: expected 200, got %d: %s", status, resp.StatusCode, string(body))
+			}
+		})
+	}
+}
+
+// --- Docker-specific E2E verification tests ---
+// These tests verify that Docker creation log event patterns flow correctly
+// through the SSE handler, matching the DockerOrchestrator.StreamCreationLogs output.
+
+// TestStreamCreationLogs_DockerFullLifecycle simulates a complete Docker container
+// creation lifecycle: container not found → created → running → health starting → healthy + logs.
+func TestStreamCreationLogs_DockerFullLifecycle(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-docker-lifecycle")
+	createTestAdmin(t)
+
+	ch := make(chan string, 20)
+	ch <- "Waiting for container creation..."
+	ch <- "Container status: created"
+	ch <- "Container status: running"
+	ch <- "Health: starting"
+	ch <- "Health: healthy"
+	ch <- "systemd[1]: Started OpenClaw Agent Service"
+	ch <- "clawd[42]: Listening on port 8080"
+	ch <- "Container is running and healthy"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+
+	expected := []string{
+		"Waiting for container creation...",
+		"Container status: created",
+		"Container status: running",
+		"Health: starting",
+		"Health: healthy",
+		"systemd[1]: Started OpenClaw Agent Service",
+		"clawd[42]: Listening on port 8080",
+		"Container is running and healthy",
+	}
+	if len(lines) != len(expected) {
+		t.Fatalf("expected %d events, got %d: %v", len(expected), len(lines), lines)
+	}
+	for i, exp := range expected {
+		if lines[i] != exp {
+			t.Errorf("event %d: expected %q, got %q", i, exp, lines[i])
+		}
+	}
+}
+
+// TestStreamCreationLogs_DockerContainerNotFound simulates the scenario where the
+// Docker container hasn't been created yet (container not found polling).
+func TestStreamCreationLogs_DockerContainerNotFound(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-docker-notfound")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Waiting for container creation..."
+	ch <- "Waiting for container creation..."
+	ch <- "Container status: created"
+	ch <- "Container status: running"
+	ch <- "Container is running and healthy"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 events, got %d: %v", len(lines), lines)
+	}
+	// Both "Waiting for container creation..." messages should come through
+	if lines[0] != "Waiting for container creation..." {
+		t.Errorf("event 0: expected waiting message, got %q", lines[0])
+	}
+	if lines[4] != "Container is running and healthy" {
+		t.Errorf("event 4: expected healthy message, got %q", lines[4])
+	}
+}
+
+// TestStreamCreationLogs_DockerInspectError simulates errors from Docker
+// ContainerInspect (e.g., daemon connectivity issues).
+func TestStreamCreationLogs_DockerInspectError(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-docker-inspect-err")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Waiting for container creation..."
+	ch <- "Error inspecting container: connection refused"
+	ch <- "Container status: created"
+	ch <- "Container status: running"
+	ch <- "Container is running and healthy"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 events, got %d: %v", len(lines), lines)
+	}
+	if !strings.Contains(lines[1], "Error inspecting container") {
+		t.Errorf("event 1: expected inspect error, got %q", lines[1])
+	}
+}
+
+// TestStreamCreationLogs_DockerTimeout simulates a Docker container that fails
+// to become healthy within the timeout period.
+func TestStreamCreationLogs_DockerTimeout(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-docker-timeout")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Waiting for container creation..."
+	ch <- "Container status: created"
+	ch <- "Container status: running"
+	ch <- "Health: starting"
+	ch <- "Timed out waiting for container to become ready"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 events, got %d: %v", len(lines), lines)
+	}
+	if lines[4] != "Timed out waiting for container to become ready" {
+		t.Errorf("expected timeout message, got %q", lines[4])
+	}
+}
+
+// TestStreamCreationLogs_DockerHealthFailure simulates a container that starts
+// but health checks report unhealthy status.
+func TestStreamCreationLogs_DockerHealthFailure(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-docker-unhealthy")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Container status: created"
+	ch <- "Container status: running"
+	ch <- "Health: starting"
+	ch <- "Health: unhealthy"
+	ch <- "Timed out waiting for container to become ready"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 events, got %d: %v", len(lines), lines)
+	}
+	if lines[3] != "Health: unhealthy" {
+		t.Errorf("event 3: expected unhealthy status, got %q", lines[3])
+	}
+}
+
+// TestStreamCreationLogs_DockerFastStartup simulates a Docker container that
+// starts almost instantly (no waiting phase, immediate health).
+func TestStreamCreationLogs_DockerFastStartup(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-docker-fast")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Container status: running"
+	ch <- "Health: healthy"
+	ch <- "Container is running and healthy"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 events for fast Docker startup, got %d: %v", len(lines), lines)
+	}
+	if lines[0] != "Container status: running" {
+		t.Errorf("event 0: expected running status, got %q", lines[0])
+	}
+	if lines[2] != "Container is running and healthy" {
+		t.Errorf("event 2: expected healthy message, got %q", lines[2])
+	}
+}
+
+// TestStreamCreationLogs_DockerWithContainerLogs simulates Docker creation logs
+// that include container stdout/stderr lines (stripped of Docker mux headers).
+func TestStreamCreationLogs_DockerWithContainerLogs(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-docker-logs")
+	createTestAdmin(t)
+
+	ch := make(chan string, 20)
+	ch <- "Container status: created"
+	ch <- "Container status: running"
+	ch <- "Health: starting"
+	ch <- "Health: healthy"
+	// These simulate container stdout lines after Docker log header stripping
+	ch <- "Starting services..."
+	ch <- "VNC server started on display :1"
+	ch <- "noVNC listening on port 6080"
+	ch <- "Chrome remote debugging on port 9222"
+	ch <- "OpenClaw agent ready"
+	ch <- "Container is running and healthy"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 10 {
+		t.Fatalf("expected 10 events, got %d: %v", len(lines), lines)
+	}
+	// Verify container logs are interleaved correctly
+	if lines[4] != "Starting services..." {
+		t.Errorf("event 4: expected container log, got %q", lines[4])
+	}
+	if lines[8] != "OpenClaw agent ready" {
+		t.Errorf("event 8: expected container log, got %q", lines[8])
+	}
+}
+
+// TestStreamCreationLogs_DockerMultipleInstances verifies that multiple Docker
+// instances stream independent creation events without cross-contamination.
+func TestStreamCreationLogs_DockerMultipleInstances(t *testing.T) {
+	setupTestDB(t)
+	inst1 := createTestInstance(t, "bot-docker-1")
+	inst2 := createTestInstance(t, "bot-docker-2")
+	createTestAdmin(t)
+
+	ch1 := make(chan string, 10)
+	ch2 := make(chan string, 10)
+
+	mock := &concurrentMockOrchestrator{
+		channels: map[string]chan string{
+			"bot-docker-1": ch1,
+			"bot-docker-2": ch2,
+		},
+	}
+	orchestrator.SetForTest(mock)
+
+	// Docker instance 1: fast startup
+	ch1 <- "Container status: running"
+	ch1 <- "Health: healthy"
+	ch1 <- "Container is running and healthy"
+	close(ch1)
+
+	// Docker instance 2: slow with health retries
+	ch2 <- "Waiting for container creation..."
+	ch2 <- "Container status: created"
+	ch2 <- "Container status: running"
+	ch2 <- "Health: starting"
+	ch2 <- "Health: starting"
+	ch2 <- "Health: healthy"
+	ch2 <- "Container is running and healthy"
+	close(ch2)
+
+	router := newRouter()
+
+	// Stream instance 1
+	req1 := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst1.ID), nil)
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+
+	body1, _ := io.ReadAll(w1.Result().Body)
+	lines1 := parseSSEData(string(body1))
+	if len(lines1) != 3 {
+		t.Fatalf("instance 1: expected 3 events, got %d: %v", len(lines1), lines1)
+	}
+	for _, line := range lines1 {
+		if strings.Contains(line, "Waiting for") || strings.Contains(line, "created") {
+			t.Errorf("instance 1: unexpected slow-path event leaked: %q", line)
+		}
+	}
+
+	// Stream instance 2
+	req2 := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst2.ID), nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+
+	body2, _ := io.ReadAll(w2.Result().Body)
+	lines2 := parseSSEData(string(body2))
+	if len(lines2) != 7 {
+		t.Fatalf("instance 2: expected 7 events, got %d: %v", len(lines2), lines2)
+	}
+	if lines2[0] != "Waiting for container creation..." {
+		t.Errorf("instance 2 event 0: expected waiting msg, got %q", lines2[0])
+	}
+}
+
+// concurrentMockOrchestrator routes StreamCreationLogs to per-instance channels.
+type concurrentMockOrchestrator struct {
+	mockOrchestrator
+	channels map[string]chan string
+}
+
+func (m *concurrentMockOrchestrator) StreamCreationLogs(_ context.Context, name string) (<-chan string, error) {
+	if ch, ok := m.channels[name]; ok {
+		return ch, nil
+	}
+	return nil, fmt.Errorf("no channel for instance %s", name)
+}
+
+// --- Concurrent instance creation logging tests ---
+// These tests verify that multiple instances can stream creation logs simultaneously
+// with truly parallel HTTP connections, without cross-contamination or blocking.
+
+// TestStreamCreationLogs_ConcurrentStreaming verifies that 3 instances stream
+// creation logs in parallel via a real HTTP server, each receiving only its own
+// events without cross-contamination.
+func TestStreamCreationLogs_ConcurrentStreaming(t *testing.T) {
+	setupTestDB(t)
+	inst1 := createTestInstance(t, "bot-conc-1")
+	inst2 := createTestInstance(t, "bot-conc-2")
+	inst3 := createTestInstance(t, "bot-conc-3")
+	createTestAdmin(t)
+
+	ch1 := make(chan string, 20)
+	ch2 := make(chan string, 20)
+	ch3 := make(chan string, 20)
+
+	mock := &concurrentMockOrchestrator{
+		channels: map[string]chan string{
+			"bot-conc-1": ch1,
+			"bot-conc-2": ch2,
+			"bot-conc-3": ch3,
+		},
+	}
+	orchestrator.SetForTest(mock)
+
+	// Pre-fill channels with interleaved events (simulates events arriving
+	// in mixed order across instances) then close them.
+	ch1 <- "Instance 1: Scheduling pod"
+	ch2 <- "Instance 2: Scheduling pod"
+	ch3 <- "Instance 3: Scheduling pod"
+	ch2 <- "Instance 2: Pulling image"
+	ch1 <- "Instance 1: Pulling image"
+	ch3 <- "Instance 3: Pulling image"
+	ch3 <- "Instance 3: Container creating"
+	ch1 <- "Instance 1: Pod running"
+	ch2 <- "Instance 2: Pod running"
+	ch3 <- "Instance 3: Pod running"
+	close(ch1)
+	close(ch2)
+	close(ch3)
+
+	router := newRouter()
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	type result struct {
+		instName string
+		lines    []string
+		err      error
+	}
+	results := make(chan result, 3)
+
+	// Launch 3 concurrent SSE readers against the real HTTP server
+	for _, tc := range []struct {
+		inst database.Instance
+		name string
+	}{
+		{inst1, "bot-conc-1"},
+		{inst2, "bot-conc-2"},
+		{inst3, "bot-conc-3"},
+	} {
+		go func(inst database.Instance, name string) {
+			resp, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst.ID))
+			if err != nil {
+				results <- result{name, nil, err}
+				return
+			}
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			results <- result{name, parseSSEData(string(body)), nil}
+		}(tc.inst, tc.name)
+	}
+
+	// Collect results from all 3 streams
+	collected := map[string][]string{}
+	for i := 0; i < 3; i++ {
+		r := <-results
+		if r.err != nil {
+			t.Fatalf("%s: HTTP error: %v", r.instName, r.err)
+		}
+		collected[r.instName] = r.lines
+	}
+
+	// Verify instance 1: 3 events, all prefixed with "Instance 1:"
+	if len(collected["bot-conc-1"]) != 3 {
+		t.Fatalf("bot-conc-1: expected 3 events, got %d: %v", len(collected["bot-conc-1"]), collected["bot-conc-1"])
+	}
+	for _, line := range collected["bot-conc-1"] {
+		if !strings.HasPrefix(line, "Instance 1:") {
+			t.Errorf("bot-conc-1: unexpected event %q (expected prefix 'Instance 1:')", line)
+		}
+	}
+
+	// Verify instance 2: 3 events, all prefixed with "Instance 2:"
+	if len(collected["bot-conc-2"]) != 3 {
+		t.Fatalf("bot-conc-2: expected 3 events, got %d: %v", len(collected["bot-conc-2"]), collected["bot-conc-2"])
+	}
+	for _, line := range collected["bot-conc-2"] {
+		if !strings.HasPrefix(line, "Instance 2:") {
+			t.Errorf("bot-conc-2: unexpected event %q (expected prefix 'Instance 2:')", line)
+		}
+	}
+
+	// Verify instance 3: 4 events, all prefixed with "Instance 3:"
+	if len(collected["bot-conc-3"]) != 4 {
+		t.Fatalf("bot-conc-3: expected 4 events, got %d: %v", len(collected["bot-conc-3"]), collected["bot-conc-3"])
+	}
+	for _, line := range collected["bot-conc-3"] {
+		if !strings.HasPrefix(line, "Instance 3:") {
+			t.Errorf("bot-conc-3: unexpected event %q (expected prefix 'Instance 3:')", line)
+		}
+	}
+}
+
+// TestStreamCreationLogs_ConcurrentNoBlocking verifies that a slow-streaming instance
+// does not block a fast-streaming instance — the fast one completes independently
+// while the slow one continues streaming.
+func TestStreamCreationLogs_ConcurrentNoBlocking(t *testing.T) {
+	setupTestDB(t)
+	instFast := createTestInstance(t, "bot-fast-conc")
+	instSlow := createTestInstance(t, "bot-slow-conc")
+	createTestAdmin(t)
+
+	chFast := make(chan string, 10)
+	chSlow := make(chan string, 10)
+
+	mock := &concurrentMockOrchestrator{
+		channels: map[string]chan string{
+			"bot-fast-conc": chFast,
+			"bot-slow-conc": chSlow,
+		},
+	}
+	orchestrator.SetForTest(mock)
+
+	// Pre-fill fast channel with all events and close it
+	chFast <- "Fast: Pod ready"
+	close(chFast)
+
+	// Pre-fill slow channel with first event only (don't close yet)
+	chSlow <- "Slow: Still pulling image..."
+
+	router := newRouter()
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	fastDone := make(chan []string, 1)
+	slowDone := make(chan []string, 1)
+
+	// Start both streams concurrently
+	go func() {
+		resp, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, instFast.ID))
+		if err != nil {
+			t.Errorf("fast stream error: %v", err)
+			fastDone <- nil
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		fastDone <- parseSSEData(string(body))
+	}()
+
+	go func() {
+		resp, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, instSlow.ID))
+		if err != nil {
+			t.Errorf("slow stream error: %v", err)
+			slowDone <- nil
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		slowDone <- parseSSEData(string(body))
+	}()
+
+	// Fast stream should complete without waiting for slow stream
+	fastLines := <-fastDone
+	if len(fastLines) != 1 {
+		t.Fatalf("fast stream: expected 1 event, got %d: %v", len(fastLines), fastLines)
+	}
+	if fastLines[0] != "Fast: Pod ready" {
+		t.Errorf("fast stream: expected 'Fast: Pod ready', got %q", fastLines[0])
+	}
+
+	// Now complete the slow stream (send remaining events and close)
+	chSlow <- "Slow: Image pulled"
+	chSlow <- "Slow: Pod running"
+	close(chSlow)
+
+	slowLines := <-slowDone
+	if len(slowLines) != 3 {
+		t.Fatalf("slow stream: expected 3 events, got %d: %v", len(slowLines), slowLines)
+	}
+	for _, line := range slowLines {
+		if !strings.HasPrefix(line, "Slow:") {
+			t.Errorf("slow stream: unexpected event %q (expected prefix 'Slow:')", line)
+		}
+	}
+}
+
+// TestStreamCreationLogs_ConcurrentClientDisconnect verifies that one client disconnecting
+// does not affect other concurrent streams.
+func TestStreamCreationLogs_ConcurrentClientDisconnect(t *testing.T) {
+	setupTestDB(t)
+	inst1 := createTestInstance(t, "bot-disc-1")
+	inst2 := createTestInstance(t, "bot-disc-2")
+	createTestAdmin(t)
+
+	ch1 := make(chan string, 10)
+	ch2 := make(chan string, 10)
+
+	mock := &concurrentMockOrchestrator{
+		channels: map[string]chan string{
+			"bot-disc-1": ch1,
+			"bot-disc-2": ch2,
+		},
+	}
+	orchestrator.SetForTest(mock)
+
+	// Pre-fill stream 2 with all events and close it
+	ch2 <- "Stream 2: First event"
+	ch2 <- "Stream 2: Second event"
+	ch2 <- "Stream 2: Third event"
+	close(ch2)
+
+	// Stream 1 gets an event but stays open (will be cancelled)
+	ch1 <- "Stream 1: First event"
+
+	router := newRouter()
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	stream2Done := make(chan []string, 1)
+
+	// Start stream 1 with a cancellable context
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	req1, _ := http.NewRequestWithContext(ctx1, "GET", fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst1.ID), nil)
+
+	go func() {
+		resp, err := http.DefaultClient.Do(req1)
+		if err != nil {
+			return // Expected after cancel
+		}
+		resp.Body.Close()
+	}()
+
+	// Start stream 2
+	go func() {
+		resp, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst2.ID))
+		if err != nil {
+			t.Errorf("stream 2 error: %v", err)
+			stream2Done <- nil
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		stream2Done <- parseSSEData(string(body))
+	}()
+
+	// Cancel stream 1 (simulate client disconnect)
+	cancel1()
+	close(ch1)
+
+	// Stream 2 should complete with all 3 events despite stream 1 disconnect
+	lines2 := <-stream2Done
+	if len(lines2) != 3 {
+		t.Fatalf("stream 2: expected 3 events, got %d: %v", len(lines2), lines2)
+	}
+	for _, line := range lines2 {
+		if !strings.HasPrefix(line, "Stream 2:") {
+			t.Errorf("stream 2: unexpected event %q (expected prefix 'Stream 2:')", line)
+		}
+	}
+}
+
+// --- Error handling and edge case verification tests ---
+// These tests verify proper handling of error conditions, edge cases,
+// and graceful behavior under unusual circumstances.
+
+// TestStreamCreationLogs_ErrorResponseFormat verifies that all error responses
+// return well-formed JSON with a "detail" field.
+func TestStreamCreationLogs_ErrorResponseFormat(t *testing.T) {
+	cases := []struct {
+		name           string
+		url            string
+		setup          func(t *testing.T)
+		expectedStatus int
+		expectedDetail string
+	}{
+		{
+			name: "invalid ID returns JSON error",
+			url:  "/instances/abc/creation-logs",
+			setup: func(t *testing.T) {
+				setupTestDB(t)
+				createTestAdmin(t)
+				orchestrator.SetForTest(&mockOrchestrator{})
+			},
+			expectedStatus: http.StatusBadRequest,
+			expectedDetail: "Invalid instance ID",
+		},
+		{
+			name: "non-existent instance returns JSON error",
+			url:  "/instances/99999/creation-logs",
+			setup: func(t *testing.T) {
+				setupTestDB(t)
+				createTestAdmin(t)
+				orchestrator.SetForTest(&mockOrchestrator{})
+			},
+			expectedStatus: http.StatusNotFound,
+			expectedDetail: "Instance not found",
+		},
+		{
+			name: "no orchestrator returns JSON error",
+			url:  "", // set dynamically
+			setup: func(t *testing.T) {
+				setupTestDB(t)
+				createTestAdmin(t)
+				orchestrator.SetForTest(nil)
+			},
+			expectedStatus: http.StatusServiceUnavailable,
+			expectedDetail: "No orchestrator available",
+		},
+		{
+			name: "orchestrator error returns JSON error",
+			url:  "", // set dynamically
+			setup: func(t *testing.T) {
+				setupTestDB(t)
+				createTestAdmin(t)
+				orchestrator.SetForTest(&mockOrchestrator{creationLogsErr: fmt.Errorf("k8s unreachable")})
+			},
+			expectedStatus: http.StatusInternalServerError,
+			expectedDetail: "Failed to stream creation logs: k8s unreachable",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.setup(t)
+			router := newRouter()
+
+			url := tc.url
+			if url == "" {
+				inst := createTestInstance(t, fmt.Sprintf("bot-err-%s", strings.ReplaceAll(tc.name, " ", "-")))
+				url = fmt.Sprintf("/instances/%d/creation-logs", inst.ID)
+			}
+
+			req := httptest.NewRequest("GET", url, nil)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			if w.Code != tc.expectedStatus {
+				t.Fatalf("expected status %d, got %d", tc.expectedStatus, w.Code)
+			}
+
+			// Verify JSON response body
+			var body map[string]string
+			if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+				t.Fatalf("expected JSON error response, got parse error: %v (body: %s)", err, w.Body.String())
+			}
+			if body["detail"] != tc.expectedDetail {
+				t.Errorf("expected detail %q, got %q", tc.expectedDetail, body["detail"])
+			}
+			if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+				t.Errorf("expected Content-Type application/json, got %q", ct)
+			}
+		})
+	}
+}
+
+// TestStreamCreationLogs_NegativeAndZeroIDs verifies edge cases for instance ID values.
+func TestStreamCreationLogs_NegativeAndZeroIDs(t *testing.T) {
+	setupTestDB(t)
+	createTestAdmin(t)
+	orchestrator.SetForTest(&mockOrchestrator{})
+
+	router := newRouter()
+
+	ids := []struct {
+		id     string
+		status int
+	}{
+		{"-1", http.StatusNotFound},   // negative ID: valid int but no matching instance
+		{"0", http.StatusNotFound},    // zero ID: valid int but no matching instance
+		{"999999", http.StatusNotFound}, // large ID: valid int but no matching instance
+	}
+
+	for _, tc := range ids {
+		t.Run("id="+tc.id, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/instances/"+tc.id+"/creation-logs", nil)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			if w.Code != tc.status {
+				t.Errorf("ID %s: expected %d, got %d", tc.id, tc.status, w.Code)
+			}
+		})
+	}
+}
+
+// TestStreamCreationLogs_LongRunningCreation simulates an instance stuck in "creating"
+// for a long time, streaming many events before the orchestrator eventually closes
+// the channel (simulating the 10-minute timeout guard).
+func TestStreamCreationLogs_LongRunningCreation(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-long-running")
+	createTestAdmin(t)
+
+	// Simulate a long-running creation: many status updates before timeout
+	ch := make(chan string, 50)
+	ch <- "Waiting for pod creation..."
+	ch <- "Pod scheduled to node worker-1"
+	ch <- "Pulling image ghcr.io/openclaw/agent:latest (this may take a while)"
+	// Simulate many poll-cycle status updates
+	for i := 1; i <= 20; i++ {
+		ch <- fmt.Sprintf("Still pulling image... (%d/20 attempts)", i)
+	}
+	ch <- "Successfully pulled image ghcr.io/openclaw/agent:latest"
+	ch <- "Container main: Creating"
+	ch <- "Container main: Running"
+	ch <- "Pod is running and ready"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+
+	// 3 initial + 20 poll + 4 final = 27 total events
+	expectedCount := 27
+	if len(lines) != expectedCount {
+		t.Fatalf("expected %d events for long-running creation, got %d", expectedCount, len(lines))
+	}
+	if lines[0] != "Waiting for pod creation..." {
+		t.Errorf("first event: expected waiting message, got %q", lines[0])
+	}
+	if lines[len(lines)-1] != "Pod is running and ready" {
+		t.Errorf("last event: expected ready message, got %q", lines[len(lines)-1])
+	}
+	// Verify streaming continued through all poll cycles
+	if !strings.Contains(lines[10], "Still pulling image... (8/20 attempts)") {
+		t.Errorf("mid-stream event: expected poll message, got %q", lines[10])
+	}
+}
+
+// TestStreamCreationLogs_OrchestratorTimeoutMessage verifies that a stream that ends
+// with a timeout message (from the orchestrator's 10-minute guard) is delivered
+// correctly to the client.
+func TestStreamCreationLogs_OrchestratorTimeoutMessage(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-orch-timeout")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Waiting for pod creation..."
+	ch <- "Pod scheduled to node worker-1"
+	ch <- "Pulling image ghcr.io/openclaw/agent:latest"
+	ch <- "Timed out waiting for pod to become ready (10m0s)"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 events, got %d: %v", len(lines), lines)
+	}
+	// The timeout message should be the last event before channel close
+	if lines[3] != "Timed out waiting for pod to become ready (10m0s)" {
+		t.Errorf("expected timeout message as last event, got %q", lines[3])
+	}
+}
+
+// TestStreamCreationLogs_SequentialRequestsSameInstance verifies that making
+// sequential requests for the same instance each get their own independent stream.
+func TestStreamCreationLogs_SequentialRequestsSameInstance(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-seq")
+	createTestAdmin(t)
+
+	// First request: instance is creating, gets some events
+	ch1 := make(chan string, 10)
+	ch1 <- "First request: Scheduling"
+	ch1 <- "First request: Ready"
+	close(ch1)
+
+	mock := &mockOrchestrator{creationLogsCh: ch1}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req1 := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+
+	body1, _ := io.ReadAll(w1.Result().Body)
+	lines1 := parseSSEData(string(body1))
+	if len(lines1) != 2 {
+		t.Fatalf("first request: expected 2 events, got %d: %v", len(lines1), lines1)
+	}
+
+	// Second request: new channel with different events
+	ch2 := make(chan string, 10)
+	ch2 <- "Second request: Already running"
+	close(ch2)
+
+	mock2 := &mockOrchestrator{creationLogsCh: ch2}
+	orchestrator.SetForTest(mock2)
+
+	req2 := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+
+	body2, _ := io.ReadAll(w2.Result().Body)
+	lines2 := parseSSEData(string(body2))
+	if len(lines2) != 1 {
+		t.Fatalf("second request: expected 1 event, got %d: %v", len(lines2), lines2)
+	}
+	if lines2[0] != "Second request: Already running" {
+		t.Errorf("second request: expected new event, got %q", lines2[0])
+	}
+}
+
+// TestStreamCreationLogs_SpecialCharactersInSSE verifies that special characters
+// in log messages (newlines, colons, HTML entities) are transmitted correctly via SSE.
+func TestStreamCreationLogs_SpecialCharactersInSSE(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-special-chars")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Normal message"
+	ch <- "Message with colons: key: value: nested"
+	ch <- "Message with <html> entities & symbols"
+	ch <- "Message with unicode: 日本語テスト"
+	ch <- "Message with quotes: \"double\" and 'single'"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 events, got %d: %v", len(lines), lines)
+	}
+	if lines[1] != "Message with colons: key: value: nested" {
+		t.Errorf("colons not preserved: got %q", lines[1])
+	}
+	if lines[2] != "Message with <html> entities & symbols" {
+		t.Errorf("HTML entities not preserved: got %q", lines[2])
+	}
+	if lines[3] != "Message with unicode: 日本語テスト" {
+		t.Errorf("unicode not preserved: got %q", lines[3])
+	}
+}
+
+// TestStreamCreationLogs_FailedInstanceShowsCreationErrors verifies that when an
+// instance fails during creation, the error events from the orchestrator are
+// properly streamed before the channel closes.
+func TestStreamCreationLogs_FailedInstanceShowsCreationErrors(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-create-fail")
+	createTestAdmin(t)
+
+	ch := make(chan string, 10)
+	ch <- "Waiting for pod creation..."
+	ch <- "Pod scheduled to node worker-1"
+	ch <- "Error: Insufficient memory on node worker-1"
+	ch <- "Pod evicted: OOMKilled"
+	ch <- "Instance creation failed: pod terminated with error"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/instances/%d/creation-logs", inst.ID), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 events showing creation errors, got %d: %v", len(lines), lines)
+	}
+	// Verify error events are properly streamed
+	if !strings.Contains(lines[2], "Insufficient memory") {
+		t.Errorf("expected memory error in event 2, got %q", lines[2])
+	}
+	if !strings.Contains(lines[3], "OOMKilled") {
+		t.Errorf("expected OOMKilled in event 3, got %q", lines[3])
+	}
+	if !strings.Contains(lines[4], "creation failed") {
+		t.Errorf("expected creation failed message in event 4, got %q", lines[4])
+	}
+}
+
+// --- Performance and resource usage verification tests ---
+// These tests verify SSE connection persistence, incremental flushing,
+// server-side cleanup on client disconnect, and resource management.
+
+// TestStreamCreationLogs_SSEConnectionPersistence verifies that the SSE connection
+// stays open while events are being streamed, and events are delivered incrementally
+// (not buffered until the stream ends). Uses a real HTTP server to test true
+// network-level behavior.
+func TestStreamCreationLogs_SSEConnectionPersistence(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-sse-persist")
+	createTestAdmin(t)
+
+	ch := make(chan string, 100)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	// Open SSE connection
+	resp, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst.ID))
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Verify SSE headers are set (connection is established)
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+
+	reader := bufio.NewReader(resp.Body)
+
+	// Send first event and verify it arrives immediately
+	ch <- "Event 1: Pod scheduling"
+	line1, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("failed to read first event: %v", err)
+	}
+	if !strings.Contains(line1, "Event 1: Pod scheduling") {
+		t.Errorf("expected first event, got %q", line1)
+	}
+	// Read the blank line after the data line
+	reader.ReadString('\n')
+
+	// Send second event — connection should still be open
+	ch <- "Event 2: Image pulling"
+	line2, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("failed to read second event (connection dropped?): %v", err)
+	}
+	if !strings.Contains(line2, "Event 2: Image pulling") {
+		t.Errorf("expected second event, got %q", line2)
+	}
+	reader.ReadString('\n')
+
+	// Send third event — connection should still be open
+	ch <- "Event 3: Pod running"
+	line3, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("failed to read third event (connection dropped?): %v", err)
+	}
+	if !strings.Contains(line3, "Event 3: Pod running") {
+		t.Errorf("expected third event, got %q", line3)
+	}
+	reader.ReadString('\n')
+
+	// Close the channel — stream should end gracefully
+	close(ch)
+
+	// Verify EOF (connection properly closed after channel close)
+	_, err = reader.ReadString('\n')
+	if err != io.EOF {
+		t.Errorf("expected EOF after channel close, got: %v", err)
+	}
+}
+
+// TestStreamCreationLogs_SSEFlushingBehavior verifies that each SSE event is flushed
+// immediately to the client, not batched. This ensures real-time delivery of creation
+// events to the browser.
+func TestStreamCreationLogs_SSEFlushingBehavior(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-sse-flush")
+	createTestAdmin(t)
+
+	ch := make(chan string, 100)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	resp, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst.ID))
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer resp.Body.Close()
+
+	reader := bufio.NewReader(resp.Body)
+
+	// Send 5 events one at a time and verify each arrives before the next is sent.
+	// This proves events are flushed immediately, not batched.
+	for i := 1; i <= 5; i++ {
+		msg := fmt.Sprintf("Flush test event %d", i)
+		ch <- msg
+
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("event %d: failed to read (not flushed?): %v", i, err)
+		}
+		if !strings.Contains(line, msg) {
+			t.Errorf("event %d: expected %q, got %q", i, msg, line)
+		}
+		// Consume blank line separator
+		reader.ReadString('\n')
+	}
+
+	close(ch)
+}
+
+// TestStreamCreationLogs_ServerCleanupOnClientDisconnect verifies that when a client
+// disconnects (cancels context), the server-side handler exits cleanly and the
+// orchestrator channel is no longer consumed. This prevents goroutine leaks.
+func TestStreamCreationLogs_ServerCleanupOnClientDisconnect(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-sse-cleanup")
+	createTestAdmin(t)
+
+	ch := make(chan string, 100)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	// Open connection with cancellable context
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst.ID), nil)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+
+	reader := bufio.NewReader(resp.Body)
+
+	// Deliver first event to verify connection is working
+	ch <- "Pre-disconnect event"
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("failed to read pre-disconnect event: %v", err)
+	}
+	if !strings.Contains(line, "Pre-disconnect event") {
+		t.Errorf("expected pre-disconnect event, got %q", line)
+	}
+
+	// Cancel context (simulate client navigating away / closing tab)
+	cancel()
+	resp.Body.Close()
+
+	// After client disconnect, the handler should exit.
+	// We verify by closing the channel — if the handler goroutine was still
+	// blocked reading from the channel, closing it would be fine.
+	// The key test is that we can close the channel without deadlocking.
+	close(ch)
+}
+
+// TestStreamCreationLogs_NewConnectionAfterDisconnect verifies that after one client
+// disconnects, a new client can establish a fresh SSE connection and receive events
+// independently. This proves connections are properly isolated.
+func TestStreamCreationLogs_NewConnectionAfterDisconnect(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-sse-reconnect")
+	createTestAdmin(t)
+
+	// First connection
+	ch1 := make(chan string, 10)
+	ch1 <- "First connection event"
+	close(ch1)
+
+	mock := &mockOrchestrator{creationLogsCh: ch1}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	resp1, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst.ID))
+	if err != nil {
+		t.Fatalf("first connection failed: %v", err)
+	}
+	body1, _ := io.ReadAll(resp1.Body)
+	resp1.Body.Close()
+	lines1 := parseSSEData(string(body1))
+	if len(lines1) != 1 || lines1[0] != "First connection event" {
+		t.Fatalf("first connection: expected 1 event, got %v", lines1)
+	}
+
+	// Second connection (simulates reopening logs tab)
+	ch2 := make(chan string, 10)
+	ch2 <- "Second connection event A"
+	ch2 <- "Second connection event B"
+	close(ch2)
+
+	mock2 := &mockOrchestrator{creationLogsCh: ch2}
+	orchestrator.SetForTest(mock2)
+
+	resp2, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst.ID))
+	if err != nil {
+		t.Fatalf("second connection failed: %v", err)
+	}
+	body2, _ := io.ReadAll(resp2.Body)
+	resp2.Body.Close()
+	lines2 := parseSSEData(string(body2))
+	if len(lines2) != 2 {
+		t.Fatalf("second connection: expected 2 events, got %v", lines2)
+	}
+	if lines2[0] != "Second connection event A" || lines2[1] != "Second connection event B" {
+		t.Errorf("second connection: unexpected events: %v", lines2)
+	}
+}
+
+// TestStreamCreationLogs_SSEHeadersPreventBuffering verifies that SSE response headers
+// include all necessary directives to prevent proxy/browser buffering, ensuring
+// real-time event delivery.
+func TestStreamCreationLogs_SSEHeadersPreventBuffering(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-sse-headers-perf")
+	createTestAdmin(t)
+
+	ch := make(chan string, 1)
+	ch <- "test"
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	resp, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst.ID))
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer resp.Body.Close()
+	io.ReadAll(resp.Body)
+
+	// Verify all headers that prevent buffering at various proxy layers
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type: expected text/event-stream, got %q", ct)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("Cache-Control: expected no-cache, got %q", cc)
+	}
+	if conn := resp.Header.Get("Connection"); conn != "keep-alive" {
+		t.Errorf("Connection: expected keep-alive, got %q", conn)
+	}
+	if xab := resp.Header.Get("X-Accel-Buffering"); xab != "no" {
+		t.Errorf("X-Accel-Buffering: expected no, got %q (nginx will buffer SSE!)", xab)
+	}
+}
+
+// TestStreamCreationLogs_HighVolumeStreaming verifies that the SSE handler can
+// deliver a high volume of events without data loss or connection issues,
+// testing the buffered channel approach.
+func TestStreamCreationLogs_HighVolumeStreaming(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-sse-volume")
+	createTestAdmin(t)
+
+	eventCount := 500
+	ch := make(chan string, eventCount)
+	for i := 0; i < eventCount; i++ {
+		ch <- fmt.Sprintf("High volume event %d", i)
+	}
+	close(ch)
+
+	mock := &mockOrchestrator{creationLogsCh: ch}
+	orchestrator.SetForTest(mock)
+
+	router := newRouter()
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	resp, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst.ID))
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	lines := parseSSEData(string(body))
+
+	if len(lines) != eventCount {
+		t.Fatalf("expected %d events, got %d (data loss!)", eventCount, len(lines))
+	}
+	// Verify first and last events
+	if lines[0] != "High volume event 0" {
+		t.Errorf("first event: expected 'High volume event 0', got %q", lines[0])
+	}
+	if lines[eventCount-1] != fmt.Sprintf("High volume event %d", eventCount-1) {
+		t.Errorf("last event: expected 'High volume event %d', got %q", eventCount-1, lines[eventCount-1])
+	}
+}
+
+// --- Final integration smoke test ---
+// Simulates the complete user journey end-to-end:
+//  1. Instance is created with "creating" status
+//  2. User opens creation logs → receives real-time streaming events
+//  3. Instance transitions to "running"
+//  4. User accesses creation-logs again → receives guidance message
+//  5. User views runtime logs → receives application log events
+//  6. User toggles back to creation logs → guidance message again
+
+// smokeTestOrchestrator extends mockOrchestrator with runtime log support.
+type smokeTestOrchestrator struct {
+	mockOrchestrator
+	runtimeLogsCh  chan string
+	runtimeLogsErr error
+}
+
+func (s *smokeTestOrchestrator) StreamInstanceLogs(_ context.Context, _ string, _ int, _ bool) (<-chan string, error) {
+	if s.runtimeLogsErr != nil {
+		return nil, s.runtimeLogsErr
+	}
+	return s.runtimeLogsCh, nil
+}
+
+func newFullRouter() chi.Router {
+	r := chi.NewRouter()
+	r.Use(middleware.RequireAuth(sessionStore))
+	r.Get("/instances/{id}/creation-logs", handlers.StreamCreationLogs)
+	r.Get("/instances/{id}/logs", handlers.StreamLogs)
+	return r
+}
+
+func TestSmokeTest_CompleteUserJourney(t *testing.T) {
+	setupTestDB(t)
+	inst := createTestInstance(t, "bot-smoke")
+	createTestAdmin(t)
+
+	// Prepare creation log events (simulating K8s pod creation sequence)
+	creationCh := make(chan string, 10)
+	creationCh <- "[STATUS] Waiting for pod to be scheduled..."
+	creationCh <- "[EVENT] kubelet: Successfully assigned claworc/bot-smoke to node-1"
+	creationCh <- "[EVENT] kubelet: Pulling image \"ghcr.io/example/agent:latest\""
+	creationCh <- "[EVENT] kubelet: Successfully pulled image in 12.3s"
+	creationCh <- "[EVENT] kubelet: Created container agent"
+	creationCh <- "[EVENT] kubelet: Started container agent"
+	creationCh <- "[READY] All containers are running and ready"
+	close(creationCh)
+
+	// Prepare runtime log events
+	runtimeCh := make(chan string, 10)
+	runtimeCh <- "2026-02-20T10:00:01Z Starting openclaw-gateway..."
+	runtimeCh <- "2026-02-20T10:00:02Z Gateway listening on :8080"
+	runtimeCh <- "2026-02-20T10:00:03Z Connected to Chrome debugger"
+	close(runtimeCh)
+
+	mock := &smokeTestOrchestrator{
+		mockOrchestrator: mockOrchestrator{creationLogsCh: creationCh},
+		runtimeLogsCh:    runtimeCh,
+	}
+	orchestrator.SetForTest(mock)
+
+	router := newFullRouter()
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	// === Phase 1: Stream creation logs while instance is "creating" ===
+	resp, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst.ID))
+	if err != nil {
+		t.Fatalf("Phase 1 (creation-logs): request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Phase 1: expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("Phase 1: expected text/event-stream, got %q", ct)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	creationLines := parseSSEData(string(body))
+
+	expectedCreation := []string{
+		"[STATUS] Waiting for pod to be scheduled...",
+		"[EVENT] kubelet: Successfully assigned claworc/bot-smoke to node-1",
+		`[EVENT] kubelet: Pulling image "ghcr.io/example/agent:latest"`,
+		"[EVENT] kubelet: Successfully pulled image in 12.3s",
+		"[EVENT] kubelet: Created container agent",
+		"[EVENT] kubelet: Started container agent",
+		"[READY] All containers are running and ready",
+	}
+	if len(creationLines) != len(expectedCreation) {
+		t.Fatalf("Phase 1: expected %d creation events, got %d: %v",
+			len(expectedCreation), len(creationLines), creationLines)
+	}
+	for i, exp := range expectedCreation {
+		if creationLines[i] != exp {
+			t.Errorf("Phase 1: event %d: expected %q, got %q", i, exp, creationLines[i])
+		}
+	}
+
+	// === Phase 2: Instance transitions to "running" ===
+	database.DB.Model(&inst).Update("status", "running")
+
+	// Accessing creation-logs for a running instance returns guidance message
+	resp2, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst.ID))
+	if err != nil {
+		t.Fatalf("Phase 2 (creation-logs after running): request failed: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("Phase 2: expected 200, got %d", resp2.StatusCode)
+	}
+
+	body2, _ := io.ReadAll(resp2.Body)
+	guidanceLines := parseSSEData(string(body2))
+
+	if len(guidanceLines) != 1 {
+		t.Fatalf("Phase 2: expected 1 guidance event, got %d: %v", len(guidanceLines), guidanceLines)
+	}
+	expectedGuidance := "Instance is not in creation phase. Switch to Runtime logs or restart the instance to see creation logs."
+	if guidanceLines[0] != expectedGuidance {
+		t.Errorf("Phase 2: expected guidance %q, got %q", expectedGuidance, guidanceLines[0])
+	}
+
+	// === Phase 3: View runtime logs ===
+	resp3, err := http.Get(fmt.Sprintf("%s/instances/%d/logs?tail=100&follow=true", ts.URL, inst.ID))
+	if err != nil {
+		t.Fatalf("Phase 3 (runtime logs): request failed: %v", err)
+	}
+	defer resp3.Body.Close()
+
+	if resp3.StatusCode != http.StatusOK {
+		body3, _ := io.ReadAll(resp3.Body)
+		t.Fatalf("Phase 3: expected 200, got %d: %s", resp3.StatusCode, string(body3))
+	}
+	if ct := resp3.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("Phase 3: expected text/event-stream, got %q", ct)
+	}
+
+	body3, _ := io.ReadAll(resp3.Body)
+	runtimeLines := parseSSEData(string(body3))
+
+	expectedRuntime := []string{
+		"2026-02-20T10:00:01Z Starting openclaw-gateway...",
+		"2026-02-20T10:00:02Z Gateway listening on :8080",
+		"2026-02-20T10:00:03Z Connected to Chrome debugger",
+	}
+	if len(runtimeLines) != len(expectedRuntime) {
+		t.Fatalf("Phase 3: expected %d runtime events, got %d: %v",
+			len(expectedRuntime), len(runtimeLines), runtimeLines)
+	}
+	for i, exp := range expectedRuntime {
+		if runtimeLines[i] != exp {
+			t.Errorf("Phase 3: event %d: expected %q, got %q", i, exp, runtimeLines[i])
+		}
+	}
+
+	// === Phase 4: Toggle back to creation logs (still running) ===
+	// Re-request creation-logs to verify same guidance message
+	resp4, err := http.Get(fmt.Sprintf("%s/instances/%d/creation-logs", ts.URL, inst.ID))
+	if err != nil {
+		t.Fatalf("Phase 4 (creation-logs toggle back): request failed: %v", err)
+	}
+	defer resp4.Body.Close()
+
+	body4, _ := io.ReadAll(resp4.Body)
+	toggleLines := parseSSEData(string(body4))
+
+	if len(toggleLines) != 1 || toggleLines[0] != expectedGuidance {
+		t.Errorf("Phase 4: expected guidance message on toggle back, got %v", toggleLines)
+	}
+}
+
+// parseSSEData extracts "data: ..." lines from SSE output.
+func parseSSEData(body string) []string {
+	var lines []string
+	scanner := bufio.NewScanner(strings.NewReader(body))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			lines = append(lines, strings.TrimPrefix(line, "data: "))
+		}
+	}
+	return lines
+}

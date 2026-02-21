@@ -61,3 +61,10 @@ func Get() ContainerOrchestrator {
 	defer mu.RUnlock()
 	return current
 }
+
+// SetForTest replaces the current orchestrator. Only for use in tests.
+func SetForTest(orch ContainerOrchestrator) {
+	mu.Lock()
+	defer mu.Unlock()
+	current = orch
+}

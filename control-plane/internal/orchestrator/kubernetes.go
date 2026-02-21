@@ -380,6 +380,136 @@ func (k *KubernetesOrchestrator) StreamInstanceLogs(ctx context.Context, name st
 	return ch, nil
 }
 
+func (k *KubernetesOrchestrator) StreamCreationLogs(ctx context.Context, name string) (<-chan string, error) {
+	ch := make(chan string, 100)
+
+	go func() {
+		defer close(ch)
+
+		timeout := time.After(10 * time.Minute)
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		seen := make(map[string]bool)
+
+		// formatLog formats a log line with a timestamp and type prefix.
+		formatLog := func(ts time.Time, tag, msg string) string {
+			return fmt.Sprintf("[%s] [%s] %s", ts.Format("2006-01-02 15:04:05"), tag, msg)
+		}
+
+		// send emits a formatted message, deduplicating by a stable key.
+		send := func(key, formatted string) bool {
+			if seen[key] {
+				return true
+			}
+			seen[key] = true
+			select {
+			case ch <- formatted:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
+
+		// sendStatus is a shorthand for STATUS-tagged messages timestamped now.
+		sendStatus := func(msg string) bool {
+			return send(msg, formatLog(time.Now(), "STATUS", msg))
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timeout:
+				sendStatus("Timed out waiting for pod to become ready")
+				return
+			case <-ticker.C:
+			}
+
+			pods, err := k.clientset.CoreV1().Pods(k.ns()).List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("app=%s", name),
+			})
+			if err != nil || len(pods.Items) == 0 {
+				sendStatus("Waiting for pod creation...")
+				continue
+			}
+
+			pod := pods.Items[0]
+
+			// Emit pod events
+			events, err := k.clientset.CoreV1().Events(k.ns()).List(ctx, metav1.ListOptions{
+				FieldSelector: fmt.Sprintf("involvedObject.name=%s,involvedObject.kind=Pod", pod.Name),
+			})
+			if err == nil {
+				for _, event := range events.Items {
+					key := fmt.Sprintf("event:%s:%s:%s", event.Reason, event.Source.Component, event.Message)
+					ts := event.LastTimestamp.Time
+					if ts.IsZero() {
+						ts = event.EventTime.Time
+					}
+					if ts.IsZero() {
+						ts = time.Now()
+					}
+					msg := fmt.Sprintf("%s: %s", event.Source.Component, event.Message)
+					if !send(key, formatLog(ts, "EVENT", msg)) {
+						return
+					}
+				}
+			}
+
+			// Emit container status messages
+			for _, cs := range pod.Status.ContainerStatuses {
+				if cs.State.Waiting != nil {
+					msg := fmt.Sprintf("Container %s: %s", cs.Name, cs.State.Waiting.Reason)
+					if cs.State.Waiting.Message != "" {
+						msg += " - " + cs.State.Waiting.Message
+					}
+					key := fmt.Sprintf("status:%s", msg)
+					if !send(key, formatLog(time.Now(), "STATUS", msg)) {
+						return
+					}
+				}
+			}
+
+			// Check if pod is running with all containers ready
+			if pod.Status.Phase == corev1.PodRunning {
+				allReady := true
+				for _, cs := range pod.Status.ContainerStatuses {
+					if !cs.Ready {
+						allReady = false
+						break
+					}
+				}
+				if allReady {
+					// Fetch last 50 lines of container logs
+					tailLines := int64(50)
+					logReq := k.clientset.CoreV1().Pods(k.ns()).GetLogs(pod.Name, &corev1.PodLogOptions{
+						TailLines: &tailLines,
+					})
+					logStream, err := logReq.Stream(ctx)
+					if err == nil {
+						scanner := bufio.NewScanner(logStream)
+						for scanner.Scan() {
+							formatted := formatLog(time.Now(), "LOG", scanner.Text())
+							select {
+							case ch <- formatted:
+							case <-ctx.Done():
+								logStream.Close()
+								return
+							}
+						}
+						logStream.Close()
+					}
+					sendStatus("Pod is running and ready")
+					return
+				}
+			}
+		}
+	}()
+
+	return ch, nil
+}
+
 func (k *KubernetesOrchestrator) ExecInInstance(ctx context.Context, name string, cmd []string) (string, string, int, error) {
 	podName, err := k.getPodName(ctx, name)
 	if err != nil {
