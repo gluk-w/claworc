@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"io"
 )
 
 // ContainerOrchestrator thin abstraction providing generic primitives (exec, read/write files)
@@ -31,15 +30,6 @@ type ContainerOrchestrator interface {
 
 	// Exec
 	ExecInInstance(ctx context.Context, name string, cmd []string) (stdout string, stderr string, exitCode int, err error)
-	ExecInteractive(ctx context.Context, name string, cmd []string) (*ExecSession, error)
-}
-
-// ExecSession represents an interactive exec session with stdin/stdout and resize support.
-type ExecSession struct {
-	Stdin  io.WriteCloser
-	Stdout io.Reader
-	Resize func(cols, rows uint16) error
-	Close  func() error
 }
 
 type CreateParams struct {

@@ -188,9 +188,6 @@ func (m *mockOrchestrator) GetSSHAddress(_ context.Context, _ uint) (string, int
 func (m *mockOrchestrator) ExecInInstance(_ context.Context, _ string, _ []string) (string, string, int, error) {
 	return "", "", 0, nil
 }
-func (m *mockOrchestrator) ExecInteractive(_ context.Context, _ string, _ []string) (*orchestrator.ExecSession, error) {
-	return nil, nil
-}
 
 // --- test helpers ---
 
