@@ -19,8 +19,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
-	"github.com/gluk-w/claworc/control-plane/internal/sshkeys"
-	"github.com/gluk-w/claworc/control-plane/internal/sshmanager"
+	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
@@ -51,12 +50,14 @@ func main() {
 	log.Printf("Config: AuthDisabled=%v, RPID=%s, RPOrigins=%v", config.Cfg.AuthDisabled, config.Cfg.RPID, config.Cfg.RPOrigins)
 
 	// Init global SSH key pair
-	sshSigner, sshPublicKey, err := sshkeys.EnsureKeyPair(config.Cfg.DataPath)
+	sshSigner, sshPublicKey, err := sshproxy.EnsureKeyPair(config.Cfg.DataPath)
 	if err != nil {
 		log.Fatalf("SSH key init: %v", err)
 	}
-	sshMgr := sshmanager.NewSSHManager(sshSigner, sshPublicKey)
+	sshMgr := sshproxy.NewSSHManager(sshSigner, sshPublicKey)
 	handlers.SSHMgr = sshMgr
+	tunnelMgr := sshproxy.NewTunnelManager(sshMgr)
+	handlers.TunnelMgr = tunnelMgr
 	log.Printf("SSH manager initialized (public key: %d bytes)", len(sshPublicKey))
 
 	// Init WebAuthn
@@ -80,6 +81,21 @@ func main() {
 	ctx := context.Background()
 	if err := orchestrator.InitOrchestrator(ctx); err != nil {
 		log.Printf("WARNING: %v", err)
+	}
+
+	// Start background tunnel manager to maintain SSH tunnels for running instances
+	if orch := orchestrator.Get(); orch != nil {
+		tunnelMgr.StartBackgroundManager(ctx, func(ctx context.Context) ([]uint, error) {
+			var instances []database.Instance
+			if err := database.DB.Where("status = ?", "running").Find(&instances).Error; err != nil {
+				return nil, err
+			}
+			ids := make([]uint, len(instances))
+			for i, inst := range instances {
+				ids[i] = inst.ID
+			}
+			return ids, nil
+		}, orch)
 	}
 
 	r := chi.NewRouter()
@@ -127,6 +143,7 @@ func main() {
 			r.Put("/instances/{id}/config", handlers.UpdateInstanceConfig)
 			r.Get("/instances/{id}/logs", handlers.StreamLogs)
 			r.Get("/instances/{id}/ssh-test", handlers.SSHConnectionTest)
+			r.Get("/instances/{id}/tunnels", handlers.GetTunnelStatus)
 
 			// Files
 			r.Get("/instances/{id}/files/browse", handlers.BrowseFiles)
@@ -195,6 +212,8 @@ func main() {
 
 	<-sigCtx.Done()
 	log.Println("Shutting down...")
+
+	tunnelMgr.StopAll()
 
 	if err := sshMgr.CloseAll(); err != nil {
 		log.Printf("SSH manager shutdown: %v", err)
