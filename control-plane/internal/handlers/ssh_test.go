@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
@@ -86,30 +87,67 @@ func handleTestConn(netConn net.Conn, cfg *ssh.ServerConfig) {
 	}()
 
 	for newChan := range chans {
-		if newChan.ChannelType() != "session" {
-			newChan.Reject(ssh.UnknownChannelType, "unknown channel type")
-			continue
-		}
-		ch, requests, err := newChan.Accept()
-		if err != nil {
-			continue
-		}
-		go func() {
-			defer ch.Close()
-			for req := range requests {
-				if req.Type == "exec" {
-					ch.Write([]byte("SSH test successful\n"))
-					ch.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
+		switch newChan.ChannelType() {
+		case "session":
+			ch, requests, err := newChan.Accept()
+			if err != nil {
+				continue
+			}
+			go func() {
+				defer ch.Close()
+				for req := range requests {
+					if req.Type == "exec" {
+						ch.Write([]byte("SSH test successful\n"))
+						ch.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
+						if req.WantReply {
+							req.Reply(true, nil)
+						}
+						return
+					}
 					if req.WantReply {
 						req.Reply(true, nil)
 					}
-					return
 				}
-				if req.WantReply {
-					req.Reply(true, nil)
-				}
+			}()
+		case "direct-tcpip":
+			// Support TCP forwarding for tunnel tests
+			var payload struct {
+				DestHost   string
+				DestPort   uint32
+				OriginHost string
+				OriginPort uint32
 			}
-		}()
+			if err := ssh.Unmarshal(newChan.ExtraData(), &payload); err != nil {
+				newChan.Reject(ssh.ConnectionFailed, "bad payload")
+				continue
+			}
+			ch, _, err := newChan.Accept()
+			if err != nil {
+				continue
+			}
+			addr := fmt.Sprintf("%s:%d", payload.DestHost, payload.DestPort)
+			conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+			if err != nil {
+				ch.Close()
+				continue
+			}
+			go func() {
+				defer ch.Close()
+				defer conn.Close()
+				done := make(chan struct{}, 2)
+				go func() {
+					io.Copy(conn, ch)
+					done <- struct{}{}
+				}()
+				go func() {
+					io.Copy(ch, conn)
+					done <- struct{}{}
+				}()
+				<-done
+			}()
+		default:
+			newChan.Reject(ssh.UnknownChannelType, "unknown channel type")
+		}
 	}
 }
 
