@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -10,14 +11,18 @@ import (
 	"github.com/coder/websocket"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
-	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshterminal"
+	"github.com/gluk-w/claworc/control-plane/internal/sshtunnel"
 	"github.com/go-chi/chi/v5"
 )
 
-type termResizeMsg struct {
+// termMsg is a generic JSON message exchanged over the terminal WebSocket.
+// All messages have a "type" field; additional fields depend on the type.
+type termMsg struct {
 	Type string `json:"type"`
-	Cols uint16 `json:"cols"`
-	Rows uint16 `json:"rows"`
+	Data string `json:"data,omitempty"`
+	Cols uint16 `json:"cols,omitempty"`
+	Rows uint16 `json:"rows,omitempty"`
 }
 
 func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
@@ -49,21 +54,24 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.Get()
-	if orch == nil {
-		clientConn.Close(4500, "No orchestrator available")
+	// Get SSH client for instance from SSHManager
+	sm := sshtunnel.GetSSHManager()
+	if sm == nil {
+		clientConn.Close(4500, "SSH manager not initialized")
 		return
 	}
 
-	status, _ := orch.GetInstanceStatus(ctx, inst.Name)
-	if status != "running" {
-		clientConn.Close(4003, "Instance not running")
-		return
-	}
-
-	session, err := orch.ExecInteractive(ctx, inst.Name, []string{"su", "-", "abc"})
+	sshClient, err := sm.GetClient(inst.Name)
 	if err != nil {
-		log.Printf("Failed to start exec session for %s: %v", inst.Name, err)
+		log.Printf("No SSH connection for terminal %s: %v", inst.Name, err)
+		clientConn.Close(4500, fmt.Sprintf("No SSH connection: %v", err))
+		return
+	}
+
+	// Create interactive SSH terminal session
+	session, err := sshterminal.CreateInteractiveSession(sshClient, "")
+	if err != nil {
+		log.Printf("Failed to start SSH terminal for %s: %v", inst.Name, err)
 		clientConn.Close(4500, "Failed to start shell")
 		return
 	}
@@ -75,7 +83,7 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 	relayCtx, relayCancel := context.WithCancel(ctx)
 	defer relayCancel()
 
-	// Shell stdout → Browser (binary WebSocket messages)
+	// SSH stdout → Browser (binary WebSocket messages)
 	go func() {
 		defer relayCancel()
 		buf := make([]byte, 32*1024)
@@ -92,7 +100,7 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Browser → Shell stdin (binary = data, text = control JSON)
+	// Browser → SSH stdin (binary = raw data, text = JSON control messages)
 	func() {
 		defer relayCancel()
 		for {
@@ -102,17 +110,32 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if msgType == websocket.MessageBinary {
+				// Raw terminal input
 				if _, err := session.Stdin.Write(data); err != nil {
 					return
 				}
 			} else {
 				// Text message: parse as JSON control
-				var msg termResizeMsg
+				var msg termMsg
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
 				}
-				if msg.Type == "resize" && msg.Cols > 0 && msg.Rows > 0 {
-					session.Resize(msg.Cols, msg.Rows)
+				switch msg.Type {
+				case "input":
+					if msg.Data != "" {
+						if _, err := session.Stdin.Write([]byte(msg.Data)); err != nil {
+							return
+						}
+					}
+				case "resize":
+					if msg.Cols > 0 && msg.Rows > 0 {
+						session.Resize(msg.Cols, msg.Rows)
+					}
+				case "ping":
+					pong, _ := json.Marshal(termMsg{Type: "pong"})
+					if err := clientConn.Write(relayCtx, websocket.MessageText, pong); err != nil {
+						return
+					}
 				}
 			}
 		}
