@@ -12,6 +12,7 @@ import ChatPanel from "@/components/ChatPanel";
 import FileBrowser from "@/components/FileBrowser";
 import SSHStatus from "@/components/SSHStatus";
 import SSHTunnelList from "@/components/SSHTunnelList";
+import SSHEventLog from "@/components/SSHEventLog";
 import {
   useInstance,
   useStartInstance,
@@ -80,6 +81,7 @@ export default function InstanceDetailPage() {
 
   // SSH tunnel detail toggle
   const [sshTunnelsExpanded, setSSHTunnelsExpanded] = useState(false);
+  const [sshEventsExpanded, setSSHEventsExpanded] = useState(false);
   const { data: sshStatus } = useSSHStatus(instanceId, instance?.status === "running");
 
   // API key editing state
@@ -388,6 +390,24 @@ export default function InstanceDetailPage() {
                   )}
                 </div>
               )}
+              <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <button
+                  onClick={() => setSSHEventsExpanded(!sshEventsExpanded)}
+                  className="flex items-center gap-2 text-sm font-medium text-gray-900 w-full"
+                >
+                  {sshEventsExpanded ? (
+                    <ChevronDown size={16} className="text-gray-500" />
+                  ) : (
+                    <ChevronRight size={16} className="text-gray-500" />
+                  )}
+                  Connection Events
+                </button>
+                {sshEventsExpanded && (
+                  <div className="mt-4">
+                    <SSHEventLog instanceId={instanceId} enabled={instance.status === "running"} />
+                  </div>
+                )}
+              </div>
             </>
           )}
 
