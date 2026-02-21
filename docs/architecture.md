@@ -142,6 +142,25 @@ spec:
     app: bot-{name}
 ```
 
+## SSH Connectivity
+
+All communication between the control plane and agent instances flows through SSH. The control plane maintains one multiplexed SSH connection per instance and creates tunnels for VNC and gateway access.
+
+**Key design:**
+
+- **Single global key pair**: One ED25519 key pair stored as `ssh_key` / `ssh_key.pub` in the data directory. Auto-generated on first startup. The public key is uploaded to each instance on-demand.
+- **SSH tunnels replace direct access**: The browser connects to the control plane, which proxies traffic through SSH tunnels (port 3000 for VNC, port 8080 for gateway) — agents are never exposed directly.
+- **Automatic resilience**: Three-layer health monitoring (SSH keepalive, application health, tunnel health) with automatic reconnection using exponential backoff.
+- **Security**: Key-based auth only, optional per-instance source IP restrictions, connection rate limiting, persistent audit logging, and safe multi-step key rotation.
+
+For full details, see [SSH Connectivity Architecture](ssh-connectivity.md).
+
+```
+Browser ──▶ Control Plane ──[SSH tunnel]──▶ Agent :3000 (VNC)
+                           ──[SSH tunnel]──▶ Agent :8080 (Gateway)
+                           ──[SSH exec]────▶ Agent (terminal, files, logs)
+```
+
 ## Persistence
 
 ### Volume Mounts
@@ -266,3 +285,8 @@ Claworc itself is deployed as a Kubernetes pod with its own Helm chart:
 | No authentication | Internal network tool; adding auth would add complexity without value |
 | FastAPI + React | Modern stack, async-capable backend, rich frontend ecosystem |
 | Poetry | Project-mandated Python dependency management |
+| SSH tunnels (not direct NodePort) | Single entry point, no exposed agent ports, centralized auth and audit |
+| Single global ED25519 key pair | Simple to manage; one key authenticates with all instances; rotatable |
+| On-demand key upload | Handles agent container restarts that wipe `/root/.ssh/authorized_keys` |
+| Instance ID keying (not name) | SSH connections survive instance renames without re-mapping |
+| Three-layer health monitoring | Protocol keepalive + command execution + TCP tunnel probe for comprehensive coverage |
