@@ -17,8 +17,10 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
+	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshkeys"
 	"github.com/gluk-w/claworc/control-plane/internal/sshtunnel"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -163,6 +165,7 @@ func main() {
 				r.Post("/instances", handlers.CreateInstance)
 				r.Post("/instances/{id}/clone", handlers.CloneInstance)
 				r.Delete("/instances/{id}", handlers.DeleteInstance)
+				r.Post("/instances/{id}/rotate-ssh-key", handlers.RotateSSHKey)
 
 				// Settings
 				r.Get("/settings", handlers.GetSettings)
@@ -196,6 +199,9 @@ func main() {
 
 	// Start background tunnel maintenance goroutine
 	go tunnelMaintenanceLoop(sigCtx)
+
+	// Start background key rotation checker (runs daily)
+	go keyRotationLoop(sigCtx)
 
 	go func() {
 		log.Printf("Server starting on :8000")
@@ -297,6 +303,161 @@ func maintainTunnels(ctx context.Context) {
 	}
 	if totalTunnels > 0 {
 		log.Printf("[tunnel-maint] active: %d tunnel(s) across %d instance(s)", totalTunnels, len(allTunnels))
+	}
+}
+
+// keyRotationLoop runs a daily check for instances whose SSH keys need rotation
+// based on each instance's KeyRotationPolicy.
+func keyRotationLoop(ctx context.Context) {
+	// Run an initial check shortly after startup (wait 1 minute for services to initialize)
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(1 * time.Minute):
+		checkKeyRotations(ctx)
+	}
+
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			checkKeyRotations(ctx)
+		}
+	}
+}
+
+// checkKeyRotations inspects all instances and automatically rotates SSH keys
+// for those whose keys are older than their rotation policy threshold.
+func checkKeyRotations(ctx context.Context) {
+	var instances []database.Instance
+	if err := database.DB.Find(&instances).Error; err != nil {
+		log.Printf("[key-rotation] failed to list instances: %v", err)
+		return
+	}
+
+	orch := orchestrator.Get()
+	sm := sshtunnel.GetSSHManager()
+	if orch == nil || sm == nil {
+		return
+	}
+
+	now := time.Now()
+	rotated := 0
+
+	for _, inst := range instances {
+		// Skip instances with rotation disabled (policy = 0)
+		if inst.KeyRotationPolicy <= 0 {
+			continue
+		}
+
+		// Skip instances without SSH keys configured
+		if inst.SSHPublicKey == "" || inst.SSHPrivateKeyPath == "" {
+			continue
+		}
+
+		// Determine if rotation is due
+		var lastRotation time.Time
+		if inst.LastKeyRotation != nil {
+			lastRotation = *inst.LastKeyRotation
+		} else {
+			// Never rotated - use creation time as baseline
+			lastRotation = inst.CreatedAt
+		}
+
+		daysSinceRotation := now.Sub(lastRotation).Hours() / 24
+		if daysSinceRotation < float64(inst.KeyRotationPolicy) {
+			continue
+		}
+
+		// Check that instance is running
+		status, _ := orch.GetInstanceStatus(ctx, inst.Name)
+		if status != "running" {
+			log.Printf("[key-rotation] skipping %s: instance not running (status: %s)",
+				logutil.SanitizeForLog(inst.Name), status)
+			continue
+		}
+
+		// Get SSH client
+		sshClient, err := sm.GetClient(inst.Name)
+		if err != nil {
+			log.Printf("[key-rotation] skipping %s: no active SSH connection",
+				logutil.SanitizeForLog(inst.Name))
+			continue
+		}
+
+		// Get SSH endpoint
+		host, port, err := orch.GetInstanceSSHEndpoint(ctx, inst.Name)
+		if err != nil {
+			log.Printf("[key-rotation] skipping %s: failed to get SSH endpoint: %v",
+				logutil.SanitizeForLog(inst.Name), err)
+			continue
+		}
+
+		log.Printf("[key-rotation] rotating key for %s (%.0f days since last rotation, policy: %d days)",
+			logutil.SanitizeForLog(inst.Name), daysSinceRotation, inst.KeyRotationPolicy)
+
+		// Perform rotation
+		newPubKey, newKeyPath, result, err := sshkeys.RotateKeyPair(
+			sshClient,
+			inst.Name,
+			inst.SSHPublicKey,
+			host,
+			port,
+		)
+		if err != nil {
+			log.Printf("[key-rotation] FAILED for %s: %v", logutil.SanitizeForLog(inst.Name), err)
+			continue
+		}
+
+		// Update database
+		rotatedAt := result.RotatedAt
+		if dbErr := database.DB.Model(&inst).Updates(map[string]interface{}{
+			"ssh_public_key":       string(newPubKey),
+			"ssh_private_key_path": newKeyPath,
+			"last_key_rotation":    &rotatedAt,
+		}).Error; dbErr != nil {
+			log.Printf("[key-rotation] failed to update database for %s: %v",
+				logutil.SanitizeForLog(inst.Name), dbErr)
+			continue
+		}
+
+		// Reconnect with new key
+		if sm.HasClient(inst.Name) {
+			_ = sm.Close(inst.Name)
+		}
+		if _, reconnErr := sm.Connect(ctx, inst.Name, host, port, newKeyPath); reconnErr != nil {
+			log.Printf("[key-rotation] reconnection with new key failed for %s: %v",
+				logutil.SanitizeForLog(inst.Name), reconnErr)
+		}
+
+		// Restart tunnels
+		if tm := sshtunnel.GetTunnelManager(); tm != nil {
+			tm.StopTunnelsForInstance(inst.Name)
+			if tunnelErr := tm.StartTunnelsForInstance(ctx, inst.Name); tunnelErr != nil {
+				log.Printf("[key-rotation] tunnel restart failed for %s: %v",
+					logutil.SanitizeForLog(inst.Name), tunnelErr)
+			}
+		}
+
+		// Clean up old key file
+		if inst.SSHPrivateKeyPath != newKeyPath {
+			if delErr := sshkeys.DeletePrivateKey(inst.SSHPrivateKeyPath); delErr != nil {
+				log.Printf("[key-rotation] failed to delete old key file for %s: %v",
+					logutil.SanitizeForLog(inst.Name), delErr)
+			}
+		}
+
+		log.Printf("[key-rotation] completed for %s (fingerprint: %s)",
+			logutil.SanitizeForLog(inst.Name), result.NewFingerprint)
+		rotated++
+	}
+
+	if rotated > 0 {
+		log.Printf("[key-rotation] automatic rotation completed: %d instance(s) rotated", rotated)
 	}
 }
 

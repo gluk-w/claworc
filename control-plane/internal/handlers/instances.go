@@ -1751,6 +1751,130 @@ func GetGlobalSSHStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// --- SSH Key Rotation ---
+
+type sshRotateResponse struct {
+	Success     bool   `json:"success"`
+	Fingerprint string `json:"fingerprint"`
+	RotatedAt   string `json:"rotated_at"`
+	Message     string `json:"message,omitempty"`
+}
+
+// RotateSSHKey rotates the SSH key pair for an instance. It generates a new key,
+// appends it to the agent's authorized_keys, verifies the new key works, then
+// removes the old key. Requires admin access.
+func RotateSSHKey(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	sm := sshtunnel.GetSSHManager()
+	if sm == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	if inst.SSHPublicKey == "" || inst.SSHPrivateKeyPath == "" {
+		writeError(w, http.StatusBadRequest, "Instance has no SSH key configured")
+		return
+	}
+
+	// Get the existing SSH client for this instance
+	sshClient, err := sm.GetClient(inst.Name)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Instance must have an active SSH connection for key rotation")
+		return
+	}
+
+	// Get the SSH endpoint for testing the new key
+	host, port, err := orch.GetInstanceSSHEndpoint(r.Context(), inst.Name)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("Failed to get SSH endpoint: %v", err))
+		return
+	}
+
+	// Perform the key rotation
+	newPubKey, newKeyPath, result, err := sshkeys.RotateKeyPair(
+		sshClient,
+		inst.Name,
+		inst.SSHPublicKey,
+		host,
+		port,
+	)
+	if err != nil {
+		log.Printf("[ssh-rotate] key rotation failed for %s: %v", logutil.SanitizeForLog(inst.Name), err)
+		writeJSON(w, http.StatusOK, sshRotateResponse{
+			Success: false,
+			Message: fmt.Sprintf("Key rotation failed: %v", err),
+		})
+		return
+	}
+
+	// Update the database with new key info
+	now := result.RotatedAt
+	if err := database.DB.Model(&inst).Updates(map[string]interface{}{
+		"ssh_public_key":      string(newPubKey),
+		"ssh_private_key_path": newKeyPath,
+		"last_key_rotation":   &now,
+	}).Error; err != nil {
+		log.Printf("[ssh-rotate] failed to update database for %s: %v", logutil.SanitizeForLog(inst.Name), err)
+		writeError(w, http.StatusInternalServerError, "Key rotation succeeded but failed to update database")
+		return
+	}
+
+	// Reconnect SSH with the new key
+	if sm.HasClient(inst.Name) {
+		_ = sm.Close(inst.Name)
+	}
+	_, reconnErr := sm.Connect(r.Context(), inst.Name, host, port, newKeyPath)
+	if reconnErr != nil {
+		log.Printf("[ssh-rotate] reconnection with new key failed for %s: %v", logutil.SanitizeForLog(inst.Name), reconnErr)
+	}
+
+	// Restart tunnels after reconnection
+	if tm := sshtunnel.GetTunnelManager(); tm != nil {
+		tm.StopTunnelsForInstance(inst.Name)
+		if tunnelErr := tm.StartTunnelsForInstance(r.Context(), inst.Name); tunnelErr != nil {
+			log.Printf("[ssh-rotate] tunnel restart failed after rotation for %s: %v", logutil.SanitizeForLog(inst.Name), tunnelErr)
+		}
+	}
+
+	// Clean up old private key file
+	if inst.SSHPrivateKeyPath != newKeyPath {
+		if delErr := sshkeys.DeletePrivateKey(inst.SSHPrivateKeyPath); delErr != nil {
+			log.Printf("[ssh-rotate] failed to delete old key file for %s: %v", logutil.SanitizeForLog(inst.Name), delErr)
+		}
+	}
+
+	log.Printf("[ssh-rotate] key rotation completed for %s (fingerprint: %s)", logutil.SanitizeForLog(inst.Name), result.NewFingerprint)
+
+	writeJSON(w, http.StatusOK, sshRotateResponse{
+		Success:     true,
+		Fingerprint: result.NewFingerprint,
+		RotatedAt:   formatTimestamp(now),
+		Message:     "SSH key rotation completed successfully",
+	})
+}
+
 // --- SSH Metrics ---
 
 type sshUptimeBucket struct {
