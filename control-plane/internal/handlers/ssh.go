@@ -107,6 +107,127 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetSSHStatus returns the SSH connection status, health metrics, active tunnels,
+// and recent state transitions for an instance.
+func GetSSHStatus(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	// Connection state
+	state := SSHMgr.GetConnectionState(inst.ID)
+
+	// Health metrics
+	var metricsResp *sshStatusMetrics
+	if m := SSHMgr.GetMetrics(inst.ID); m != nil {
+		metricsResp = &sshStatusMetrics{
+			ConnectedAt:      formatTimestamp(m.ConnectedAt),
+			LastHealthCheck:  formatTimestamp(m.LastHealthCheck),
+			Uptime:           m.Uptime().String(),
+			SuccessfulChecks: m.SuccessfulChecks,
+			FailedChecks:     m.FailedChecks,
+		}
+	}
+
+	// Active tunnels with health status
+	var tunnelsResp []sshStatusTunnel
+	if TunnelMgr != nil {
+		tunnelMetrics := TunnelMgr.GetTunnelMetrics(inst.ID)
+		tunnelsResp = make([]sshStatusTunnel, len(tunnelMetrics))
+		for i, tm := range tunnelMetrics {
+			tunnelsResp[i] = sshStatusTunnel{
+				Label:            tm.Label,
+				LocalPort:        tm.LocalPort,
+				RemotePort:       tm.RemotePort,
+				Status:           tm.Status,
+				CreatedAt:        formatTimestamp(tm.CreatedAt),
+				LastHealthCheck:  formatTimestamp(tm.LastHealthCheck),
+				SuccessfulChecks: tm.SuccessfulChecks,
+				FailedChecks:     tm.FailedChecks,
+				Uptime:           tm.Uptime.String(),
+			}
+		}
+	}
+	if tunnelsResp == nil {
+		tunnelsResp = []sshStatusTunnel{}
+	}
+
+	// Recent state transitions (last 10)
+	allTransitions := SSHMgr.GetStateTransitions(inst.ID)
+	recentTransitions := allTransitions
+	if len(allTransitions) > 10 {
+		recentTransitions = allTransitions[len(allTransitions)-10:]
+	}
+	eventsResp := make([]sshStatusEvent, len(recentTransitions))
+	for i, t := range recentTransitions {
+		eventsResp[i] = sshStatusEvent{
+			From:      t.From.String(),
+			To:        t.To.String(),
+			Timestamp: t.Timestamp.UTC().Format(time.RFC3339),
+			Reason:    t.Reason,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, sshStatusResponse{
+		State:        state.String(),
+		Metrics:      metricsResp,
+		Tunnels:      tunnelsResp,
+		RecentEvents: eventsResp,
+	})
+}
+
+type sshStatusResponse struct {
+	State        string            `json:"state"`
+	Metrics      *sshStatusMetrics `json:"metrics"`
+	Tunnels      []sshStatusTunnel `json:"tunnels"`
+	RecentEvents []sshStatusEvent  `json:"recent_events"`
+}
+
+type sshStatusMetrics struct {
+	ConnectedAt      string `json:"connected_at"`
+	LastHealthCheck  string `json:"last_health_check"`
+	Uptime           string `json:"uptime"`
+	SuccessfulChecks int64  `json:"successful_checks"`
+	FailedChecks     int64  `json:"failed_checks"`
+}
+
+type sshStatusTunnel struct {
+	Label            string `json:"label"`
+	LocalPort        int    `json:"local_port"`
+	RemotePort       int    `json:"remote_port"`
+	Status           string `json:"status"`
+	CreatedAt        string `json:"created_at"`
+	LastHealthCheck  string `json:"last_health_check"`
+	SuccessfulChecks int64  `json:"successful_checks"`
+	FailedChecks     int64  `json:"failed_checks"`
+	Uptime           string `json:"uptime"`
+}
+
+type sshStatusEvent struct {
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Timestamp string `json:"timestamp"`
+	Reason    string `json:"reason"`
+}
+
 // GetTunnelStatus returns the active SSH tunnels for an instance.
 func GetTunnelStatus(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
