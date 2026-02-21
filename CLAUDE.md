@@ -17,7 +17,7 @@ The project consists of the following components:
 
 - `control-plane/` - Main application (Go backend + React frontend)
   - `main.go` - Entry point, Chi router, embedded SPA serving
-  - `internal/` - Go packages (config, database, handlers, middleware, orchestrator, sshproxy)
+  - `internal/` - Go packages (config, database, handlers, middleware, orchestrator, sshproxy, sshterminal)
   - `frontend/` - React TypeScript frontend (npm/Vite)
   - `Dockerfile` - Multi-stage build (Node frontend + Go backend)
 - `agent/` - Bot instance Docker image (Ubuntu 24.04, systemd init, dual VNC)
@@ -40,6 +40,8 @@ The project consists of the following components:
 
 **SSH Proxy** (`internal/sshproxy/`): Unified package consolidating SSH key management, connection management, and tunnel management. Contains three files: `keys.go` (ED25519 key pair generation/persistence), `manager.go` (SSHManager — one multiplexed SSH connection per instance), and `tunnel.go` (TunnelManager — reverse SSH tunnels over managed connections). All connections and tunnels are keyed by database instance ID (`uint`), not by name, so they remain stable across instance renames. TunnelManager depends on SSHManager for connections; a background reconciliation loop ensures tunnels stay healthy.
 
+**SSH Terminal** (`internal/sshterminal/`): Interactive terminal sessions over SSH with session persistence. `SessionManager` tracks multiple concurrent sessions per instance, each identified by UUID. Sessions survive WebSocket disconnect (detached state) and can be reconnected via `?session_id=` query parameter. A ring-buffer scrollback captures recent output for replay on reconnect. Optional audit recording writes all session output to timestamped files. Idle detached sessions are reaped after a configurable timeout.
+
 **Frontend**: React 18 + TypeScript + Vite + TailwindCSS v4. Uses TanStack React Query for data fetching (5s polling on instance list), React Router for SPA routing, Monaco Editor for JSON config editing, Axios for API calls. The `@` import alias maps to `src/`.
 
 **Agent image**: Ubuntu 24.04 with systemd as PID 1 running services using systemd.
@@ -49,6 +51,9 @@ The project consists of the following components:
 Backend settings use `envconfig` with `CLAWORC_` env prefix (see `internal/config/config.go`):
 - `CLAWORC_DATA_PATH` - Data directory for SQLite database and SSH keys (default: `/app/data`)
 - `CLAWORC_K8S_NAMESPACE` - Target namespace (default: `claworc`)
+- `CLAWORC_TERMINAL_HISTORY_LINES` - Scrollback buffer size in lines (default: `1000`, `0` to disable)
+- `CLAWORC_TERMINAL_RECORDING_DIR` - Directory for audit recordings (default: empty, disabled)
+- `CLAWORC_TERMINAL_SESSION_TIMEOUT` - Idle detached session timeout (default: `30m`)
 ## Key Conventions
 
 - K8s-safe instance names are derived from display names: lowercase, hyphens, prefixed with `bot-`, max 63 chars

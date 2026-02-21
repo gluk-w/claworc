@@ -20,6 +20,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
+	"github.com/gluk-w/claworc/control-plane/internal/sshterminal"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
@@ -59,6 +60,20 @@ func main() {
 	tunnelMgr := sshproxy.NewTunnelManager(sshMgr)
 	handlers.TunnelMgr = tunnelMgr
 	log.Printf("SSH manager initialized (public key: %d bytes)", len(sshPublicKey))
+
+	// Init terminal session manager
+	sessionTimeout, err := time.ParseDuration(config.Cfg.TerminalSessionTimeout)
+	if err != nil {
+		sessionTimeout = 30 * time.Minute
+	}
+	termMgr := sshterminal.NewSessionManager(sshterminal.SessionManagerConfig{
+		HistoryLines: config.Cfg.TerminalHistoryLines,
+		RecordingDir: config.Cfg.TerminalRecordingDir,
+		IdleTimeout:  sessionTimeout,
+	})
+	handlers.TermSessionMgr = termMgr
+	log.Printf("Terminal session manager initialized (history=%d lines, recording=%q, idle_timeout=%s)",
+		config.Cfg.TerminalHistoryLines, config.Cfg.TerminalRecordingDir, sessionTimeout)
 
 	// Init WebAuthn
 	if err := auth.InitWebAuthn(config.Cfg.RPID, config.Cfg.RPOrigins); err != nil {
@@ -156,8 +171,10 @@ func main() {
 			// Chat WebSocket
 			r.Get("/instances/{id}/chat", handlers.ChatProxy)
 
-			// Terminal WebSocket
+			// Terminal WebSocket and session management
 			r.Get("/instances/{id}/terminal", handlers.TerminalWSProxy)
+			r.Get("/instances/{id}/terminal/sessions", handlers.ListTerminalSessions)
+			r.Delete("/instances/{id}/terminal/sessions/{sessionId}", handlers.CloseTerminalSession)
 
 			// Desktop proxy (Selkies streaming UI)
 			r.HandleFunc("/instances/{id}/desktop/*", handlers.DesktopProxy)
@@ -213,6 +230,7 @@ func main() {
 	<-sigCtx.Done()
 	log.Println("Shutting down...")
 
+	termMgr.Stop()
 	tunnelMgr.StopAll()
 
 	if err := sshMgr.CloseAll(); err != nil {

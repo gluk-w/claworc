@@ -13,7 +13,12 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshterminal"
 	"github.com/go-chi/chi/v5"
+	"golang.org/x/crypto/ssh"
 )
+
+// TermSessionMgr is set from main.go during init. When non-nil, terminal
+// sessions persist after WebSocket disconnect and support reconnection.
+var TermSessionMgr *sshterminal.SessionManager
 
 type termResizeMsg struct {
 	Type string `json:"type"`
@@ -21,6 +26,16 @@ type termResizeMsg struct {
 	Rows uint16 `json:"rows"`
 }
 
+// TerminalWSProxy handles WebSocket connections for interactive terminal sessions.
+//
+// Query parameters:
+//   - session_id: (optional) reconnect to an existing detached session. If omitted
+//     or the referenced session doesn't exist, a new session is created.
+//
+// When TermSessionMgr is set, sessions persist after WebSocket disconnect and
+// output is buffered in a scrollback history. On reconnect the scrollback is
+// replayed so the client sees missed output. When TermSessionMgr is nil, each
+// WebSocket gets a fresh ephemeral session destroyed on disconnect (legacy mode).
 func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
@@ -68,21 +83,120 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if TermSessionMgr != nil {
+		handleManagedTerminal(ctx, clientConn, r, sshClient, inst.ID)
+	} else {
+		handleLegacyTerminal(ctx, clientConn, sshClient)
+	}
+}
+
+// handleManagedTerminal uses SessionManager for session persistence, multiple
+// concurrent sessions, history replay, and optional recording.
+func handleManagedTerminal(ctx context.Context, clientConn *websocket.Conn, r *http.Request, sshClient *ssh.Client, instanceID uint) {
+	sessionID := r.URL.Query().Get("session_id")
+
+	var ms *sshterminal.ManagedSession
+
+	// Try to reconnect to an existing session
+	if sessionID != "" {
+		ms = TermSessionMgr.GetSession(sessionID)
+		if ms != nil && ms.InstanceID != instanceID {
+			ms = nil // wrong instance
+		}
+		if ms != nil && ms.IsAttached() {
+			clientConn.Close(4409, "Session already attached")
+			return
+		}
+	}
+
+	// Create a new session if needed
+	if ms == nil {
+		var createErr error
+		ms, createErr = TermSessionMgr.CreateSession(sshClient, instanceID, "su - abc")
+		if createErr != nil {
+			log.Printf("Failed to create terminal session for instance %d: %v", instanceID, createErr)
+			clientConn.Close(4500, "Failed to start shell")
+			return
+		}
+	}
+
+	clientConn.SetReadLimit(1024 * 1024)
+
+	// Send session ID to client so it can reconnect later
+	sessionInfo, _ := json.Marshal(map[string]string{
+		"type":       "session_info",
+		"session_id": ms.ID,
+	})
+	if err := clientConn.Write(ctx, websocket.MessageText, sessionInfo); err != nil {
+		return
+	}
+
+	// Attach and replay history
+	wsWriter := &wsOutputWriter{conn: clientConn, ctx: ctx}
+	history := ms.Attach(wsWriter)
+	defer ms.Detach()
+
+	if len(history) > 0 {
+		if err := clientConn.Write(ctx, websocket.MessageBinary, history); err != nil {
+			return
+		}
+	}
+
+	relayCtx, relayCancel := context.WithCancel(ctx)
+	defer relayCancel()
+
+	// Watch for session SSH process termination
+	go func() {
+		select {
+		case <-ms.Done():
+			relayCancel()
+		case <-relayCtx.Done():
+		}
+	}()
+
+	// Browser -> Shell stdin
+	func() {
+		defer relayCancel()
+		for {
+			msgType, data, err := clientConn.Read(relayCtx)
+			if err != nil {
+				return
+			}
+			if msgType == websocket.MessageBinary {
+				if _, err := ms.WriteInput(data); err != nil {
+					return
+				}
+			} else {
+				var msg termResizeMsg
+				if err := json.Unmarshal(data, &msg); err != nil {
+					continue
+				}
+				if msg.Type == "resize" && msg.Cols > 0 && msg.Rows > 0 {
+					ms.Resize(msg.Cols, msg.Rows)
+				}
+			}
+		}
+	}()
+
+	clientConn.Close(websocket.StatusNormalClosure, "")
+}
+
+// handleLegacyTerminal creates an ephemeral session destroyed on disconnect.
+func handleLegacyTerminal(ctx context.Context, clientConn *websocket.Conn, sshClient *ssh.Client) {
 	session, err := sshterminal.CreateInteractiveSession(sshClient, "su - abc")
 	if err != nil {
-		log.Printf("Failed to start SSH terminal session for instance %d: %v", inst.ID, err)
+		log.Printf("Failed to start SSH terminal session: %v", err)
 		clientConn.Close(4500, "Failed to start shell")
 		return
 	}
 	defer session.Close()
 
-	// Increase read limit for terminal traffic
 	clientConn.SetReadLimit(1024 * 1024)
 
 	relayCtx, relayCancel := context.WithCancel(ctx)
 	defer relayCancel()
 
-	// Shell stdout → Browser (binary WebSocket messages)
+	// Shell stdout -> Browser
 	go func() {
 		defer relayCancel()
 		buf := make([]byte, 32*1024)
@@ -99,7 +213,7 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Browser → Shell stdin (binary = data, text = control JSON)
+	// Browser -> Shell stdin
 	func() {
 		defer relayCancel()
 		for {
@@ -107,13 +221,11 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return
 			}
-
 			if msgType == websocket.MessageBinary {
 				if _, err := session.Stdin.Write(data); err != nil {
 					return
 				}
 			} else {
-				// Text message: parse as JSON control
 				var msg termResizeMsg
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
@@ -126,4 +238,99 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	clientConn.Close(websocket.StatusNormalClosure, "")
+}
+
+// wsOutputWriter wraps a WebSocket connection to implement io.Writer.
+type wsOutputWriter struct {
+	conn *websocket.Conn
+	ctx  context.Context
+}
+
+func (w *wsOutputWriter) Write(p []byte) (int, error) {
+	if err := w.conn.Write(w.ctx, websocket.MessageBinary, p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+// ListTerminalSessions returns the active terminal sessions for an instance.
+func ListTerminalSessions(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, uint(id)) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	if TermSessionMgr == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"sessions": []interface{}{},
+		})
+		return
+	}
+
+	sessions := TermSessionMgr.ListSessions(uint(id))
+
+	type sessionResponse struct {
+		ID        string `json:"id"`
+		Shell     string `json:"shell"`
+		Attached  bool   `json:"attached"`
+		CreatedAt string `json:"created_at"`
+	}
+
+	resp := make([]sessionResponse, len(sessions))
+	for i, s := range sessions {
+		resp[i] = sessionResponse{
+			ID:        s.ID,
+			Shell:     s.Shell,
+			Attached:  s.IsAttached(),
+			CreatedAt: s.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"sessions": resp,
+	})
+}
+
+// CloseTerminalSession terminates a specific terminal session.
+func CloseTerminalSession(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, uint(id)) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	sessionID := chi.URLParam(r, "sessionId")
+	if sessionID == "" {
+		writeError(w, http.StatusBadRequest, "Session ID required")
+		return
+	}
+
+	if TermSessionMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "Session manager not initialized")
+		return
+	}
+
+	ms := TermSessionMgr.GetSession(sessionID)
+	if ms == nil || ms.InstanceID != uint(id) {
+		writeError(w, http.StatusNotFound, "Session not found")
+		return
+	}
+
+	if err := TermSessionMgr.CloseSession(sessionID); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to close session")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "closed"})
 }

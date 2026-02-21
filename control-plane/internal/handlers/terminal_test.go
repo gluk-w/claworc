@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
+	"github.com/gluk-w/claworc/control-plane/internal/sshterminal"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -759,4 +761,468 @@ func TestTerminalWSProxy_InvalidResizeIgnored(t *testing.T) {
 	readUntilWS(t, conn, ctx, "echo:still_alive", 3*time.Second)
 
 	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+// --- Managed Session Tests ---
+// These tests verify the SessionManager-powered terminal features:
+// session persistence, reconnection, multiple concurrent sessions, history replay,
+// session listing, and session closing.
+
+// setupManagedTerminalTest is like setupTerminalTest but also configures a
+// SessionManager for session persistence and multi-session support.
+func setupManagedTerminalTest(t *testing.T) (*httptest.Server, *database.Instance) {
+	t.Helper()
+
+	setupTestDB(t)
+
+	pubKeyBytes, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key pair: %v", err)
+	}
+	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+
+	addr, cleanup := testTerminalSSHServer(t, signer.PublicKey())
+	t.Cleanup(cleanup)
+
+	host, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	mgr := sshproxy.NewSSHManager(signer, string(pubKeyBytes))
+	t.Cleanup(func() { mgr.CloseAll() })
+	SSHMgr = mgr
+	t.Cleanup(func() { SSHMgr = nil })
+
+	sm := sshterminal.NewSessionManager(sshterminal.SessionManagerConfig{
+		HistoryLines: 500,
+		IdleTimeout:  5 * time.Minute,
+	})
+	TermSessionMgr = sm
+	t.Cleanup(func() {
+		sm.Stop()
+		TermSessionMgr = nil
+	})
+
+	mock := &mockOrchestrator{sshHost: host, sshPort: port}
+	orchestrator.Set(mock)
+	t.Cleanup(func() { orchestrator.Set(nil) })
+
+	inst := createTestInstance(t, "bot-test", "Test")
+	user := createTestUser(t, "admin")
+
+	_, err = mgr.Connect(context.Background(), inst.ID, host, port)
+	if err != nil {
+		t.Fatalf("SSH connect: %v", err)
+	}
+
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := buildRequest(t, r.Method, r.URL.String(), user, map[string]string{
+			"id":        fmt.Sprintf("%d", inst.ID),
+			"sessionId": extractSessionID(r.URL.Path),
+		})
+		for k, v := range r.Header {
+			req.Header[k] = v
+		}
+		// Route based on path
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/sessions") && r.Method == "GET":
+			ListTerminalSessions(w, req)
+		case strings.Contains(path, "/sessions/") && r.Method == "DELETE":
+			CloseTerminalSession(w, req)
+		default:
+			TerminalWSProxy(w, req)
+		}
+	}))
+	t.Cleanup(proxyServer.Close)
+
+	return proxyServer, &inst
+}
+
+// extractSessionID extracts the session ID from paths like /sessions/{sessionId}
+func extractSessionID(path string) string {
+	parts := strings.Split(path, "/sessions/")
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return ""
+}
+
+// readSessionInfoWS reads messages until we find the session_info text message
+// and returns the session ID.
+func readSessionInfoWS(t *testing.T, conn *websocket.Conn, ctx context.Context) string {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for session_info message")
+		default:
+		}
+
+		readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
+		msgType, data, err := conn.Read(readCtx)
+		readCancel()
+		if err != nil {
+			t.Fatalf("read error waiting for session_info: %v", err)
+		}
+
+		if msgType == websocket.MessageText {
+			var info map[string]string
+			if err := json.Unmarshal(data, &info); err == nil {
+				if info["type"] == "session_info" && info["session_id"] != "" {
+					return info["session_id"]
+				}
+			}
+		}
+	}
+}
+
+func TestManagedTerminal_SessionInfoSent(t *testing.T) {
+	proxyServer, _ := setupManagedTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.CloseNow()
+
+	// First message should be session_info with a session ID
+	sessionID := readSessionInfoWS(t, conn, ctx)
+	if sessionID == "" {
+		t.Fatal("session_info should include a non-empty session_id")
+	}
+
+	// After session_info, we should get PTY:true
+	readUntilWS(t, conn, ctx, "PTY:true", 3*time.Second)
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestManagedTerminal_InputOutputRelay(t *testing.T) {
+	proxyServer, _ := setupManagedTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.CloseNow()
+
+	readSessionInfoWS(t, conn, ctx)
+	readUntilWS(t, conn, ctx, "PTY:true", 3*time.Second)
+
+	testInput := "managed_hello"
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte(testInput)); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	readUntilWS(t, conn, ctx, "echo:"+testInput, 3*time.Second)
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestManagedTerminal_SessionReconnect(t *testing.T) {
+	proxyServer, _ := setupManagedTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+
+	// First connection: create a session and send some data
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel1()
+
+	conn1, _, err := websocket.Dial(ctx1, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy (1st): %v", err)
+	}
+
+	sessionID := readSessionInfoWS(t, conn1, ctx1)
+	readUntilWS(t, conn1, ctx1, "PTY:true", 3*time.Second)
+
+	// Send some data that will be in the history
+	if err := conn1.Write(ctx1, websocket.MessageBinary, []byte("persist_this")); err != nil {
+		t.Fatalf("write persist_this: %v", err)
+	}
+	readUntilWS(t, conn1, ctx1, "echo:persist_this", 3*time.Second)
+
+	// Disconnect (session persists in manager)
+	conn1.Close(websocket.StatusNormalClosure, "")
+	time.Sleep(200 * time.Millisecond)
+
+	// Second connection: reconnect with session_id
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+
+	reconnectURL := wsURL + "?session_id=" + sessionID
+	conn2, _, err := websocket.Dial(ctx2, reconnectURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy (reconnect): %v", err)
+	}
+	defer conn2.CloseNow()
+
+	// Should get session_info with the same session ID
+	reconnectedID := readSessionInfoWS(t, conn2, ctx2)
+	if reconnectedID != sessionID {
+		t.Errorf("reconnected session ID = %q, want %q", reconnectedID, sessionID)
+	}
+
+	// Should get history replay containing previous data
+	output := readUntilWS(t, conn2, ctx2, "persist_this", 3*time.Second)
+	if !strings.Contains(output, "PTY:true") {
+		t.Error("history replay missing PTY:true")
+	}
+
+	// Session should still be functional after reconnect
+	if err := conn2.Write(ctx2, websocket.MessageBinary, []byte("after_reconnect")); err != nil {
+		t.Fatalf("write after_reconnect: %v", err)
+	}
+	readUntilWS(t, conn2, ctx2, "echo:after_reconnect", 3*time.Second)
+
+	conn2.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestManagedTerminal_MultipleConcurrentSessions(t *testing.T) {
+	proxyServer, _ := setupManagedTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+
+	// Create two concurrent WebSocket connections (each gets its own session)
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel1()
+	conn1, _, err := websocket.Dial(ctx1, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial conn1: %v", err)
+	}
+	defer conn1.CloseNow()
+
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+	conn2, _, err := websocket.Dial(ctx2, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial conn2: %v", err)
+	}
+	defer conn2.CloseNow()
+
+	// Both should get different session IDs
+	sid1 := readSessionInfoWS(t, conn1, ctx1)
+	sid2 := readSessionInfoWS(t, conn2, ctx2)
+
+	if sid1 == sid2 {
+		t.Error("concurrent sessions should have different IDs")
+	}
+
+	// Both should be functional independently
+	readUntilWS(t, conn1, ctx1, "PTY:true", 3*time.Second)
+	readUntilWS(t, conn2, ctx2, "PTY:true", 3*time.Second)
+
+	conn1.Write(ctx1, websocket.MessageBinary, []byte("conn1_data"))
+	conn2.Write(ctx2, websocket.MessageBinary, []byte("conn2_data"))
+
+	readUntilWS(t, conn1, ctx1, "echo:conn1_data", 3*time.Second)
+	readUntilWS(t, conn2, ctx2, "echo:conn2_data", 3*time.Second)
+
+	conn1.Close(websocket.StatusNormalClosure, "")
+	conn2.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestManagedTerminal_ListSessions(t *testing.T) {
+	proxyServer, _ := setupManagedTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+
+	// Create a session
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.CloseNow()
+
+	sessionID := readSessionInfoWS(t, conn, ctx)
+	readUntilWS(t, conn, ctx, "PTY:true", 3*time.Second)
+
+	// List sessions via REST API
+	resp, err := http.Get(proxyServer.URL + "/sessions")
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list sessions status = %d, want 200", resp.StatusCode)
+	}
+
+	var body struct {
+		Sessions []struct {
+			ID        string `json:"id"`
+			Shell     string `json:"shell"`
+			Attached  bool   `json:"attached"`
+			CreatedAt string `json:"created_at"`
+		} `json:"sessions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if len(body.Sessions) != 1 {
+		t.Fatalf("session count = %d, want 1", len(body.Sessions))
+	}
+
+	if body.Sessions[0].ID != sessionID {
+		t.Errorf("session ID = %q, want %q", body.Sessions[0].ID, sessionID)
+	}
+	if !body.Sessions[0].Attached {
+		t.Error("session should be attached while WebSocket is open")
+	}
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestManagedTerminal_CloseSession(t *testing.T) {
+	proxyServer, _ := setupManagedTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+
+	// Create a session
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+
+	sessionID := readSessionInfoWS(t, conn, ctx)
+	readUntilWS(t, conn, ctx, "PTY:true", 3*time.Second)
+
+	// Disconnect so we can close the detached session
+	conn.Close(websocket.StatusNormalClosure, "")
+	time.Sleep(200 * time.Millisecond)
+
+	// Close the session via REST API
+	req, _ := http.NewRequest("DELETE", proxyServer.URL+"/sessions/"+sessionID, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("close session: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("close session status = %d, want 200", resp.StatusCode)
+	}
+
+	// Verify session no longer listed
+	listResp, err := http.Get(proxyServer.URL + "/sessions")
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	defer listResp.Body.Close()
+
+	var body struct {
+		Sessions []struct{ ID string } `json:"sessions"`
+	}
+	json.NewDecoder(listResp.Body).Decode(&body)
+
+	if len(body.Sessions) != 0 {
+		t.Errorf("sessions after close = %d, want 0", len(body.Sessions))
+	}
+}
+
+func TestManagedTerminal_SessionAlreadyAttached(t *testing.T) {
+	proxyServer, _ := setupManagedTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+
+	// Create a session
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel1()
+
+	conn1, _, err := websocket.Dial(ctx1, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial conn1: %v", err)
+	}
+	defer conn1.CloseNow()
+
+	sessionID := readSessionInfoWS(t, conn1, ctx1)
+	readUntilWS(t, conn1, ctx1, "PTY:true", 3*time.Second)
+
+	// Try to reconnect to the same session while it's still attached
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel2()
+
+	reconnectURL := wsURL + "?session_id=" + sessionID
+	conn2, _, err := websocket.Dial(ctx2, reconnectURL, nil)
+	if err != nil {
+		// Expected: server rejects because session is already attached
+		return
+	}
+	defer conn2.CloseNow()
+
+	// If we connected, the handler should close us with error code 4409
+	_, _, err = conn2.Read(ctx2)
+	if err == nil {
+		t.Fatal("expected error reading from already-attached session")
+	}
+
+	conn1.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestManagedTerminal_ResizeAfterReconnect(t *testing.T) {
+	proxyServer, _ := setupManagedTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+
+	// Create session
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel1()
+
+	conn1, _, err := websocket.Dial(ctx1, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial conn1: %v", err)
+	}
+
+	sessionID := readSessionInfoWS(t, conn1, ctx1)
+	readUntilWS(t, conn1, ctx1, "PTY:true", 3*time.Second)
+
+	// Disconnect
+	conn1.Close(websocket.StatusNormalClosure, "")
+	time.Sleep(200 * time.Millisecond)
+
+	// Reconnect
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+
+	reconnectURL := wsURL + "?session_id=" + sessionID
+	conn2, _, err := websocket.Dial(ctx2, reconnectURL, nil)
+	if err != nil {
+		t.Fatalf("dial reconnect: %v", err)
+	}
+	defer conn2.CloseNow()
+
+	readSessionInfoWS(t, conn2, ctx2)
+
+	// Drain history replay (contains PTY:true from before)
+	readUntilWS(t, conn2, ctx2, "PTY:true", 3*time.Second)
+
+	// Resize should work after reconnect
+	resizeMsg, _ := json.Marshal(termResizeMsg{Type: "resize", Cols: 100, Rows: 30})
+	if err := conn2.Write(ctx2, websocket.MessageText, resizeMsg); err != nil {
+		t.Fatalf("write resize: %v", err)
+	}
+
+	readUntilWS(t, conn2, ctx2, "resize:100x30", 3*time.Second)
+
+	conn2.Close(websocket.StatusNormalClosure, "")
 }
