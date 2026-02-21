@@ -1479,3 +1479,119 @@ func TestGetSSHEvents_NoSSHManager(t *testing.T) {
 		t.Fatalf("expected status 503, got %d", w.Code)
 	}
 }
+
+// --- GetSSHFingerprint tests ---
+
+func TestGetSSHFingerprint_Success(t *testing.T) {
+	pubKeyBytes, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key pair: %v", err)
+	}
+	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+
+	SSHMgr = sshproxy.NewSSHManager(signer, string(pubKeyBytes))
+	defer SSHMgr.CloseAll()
+
+	req := httptest.NewRequest("GET", "/api/v1/ssh-fingerprint", nil)
+	w := httptest.NewRecorder()
+
+	GetSSHFingerprint(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	result := parseResponse(t, w)
+
+	fp, ok := result["fingerprint"].(string)
+	if !ok || fp == "" {
+		t.Fatalf("expected non-empty fingerprint string, got %v", result["fingerprint"])
+	}
+	if len(fp) < 7 || fp[:7] != "SHA256:" {
+		t.Errorf("fingerprint = %q, want SHA256:... prefix", fp)
+	}
+
+	pk, ok := result["public_key"].(string)
+	if !ok || pk == "" {
+		t.Fatalf("expected non-empty public_key string, got %v", result["public_key"])
+	}
+	if pk != string(pubKeyBytes) {
+		t.Errorf("public_key mismatch")
+	}
+}
+
+func TestGetSSHFingerprint_NoSSHManager(t *testing.T) {
+	SSHMgr = nil
+
+	req := httptest.NewRequest("GET", "/api/v1/ssh-fingerprint", nil)
+	w := httptest.NewRecorder()
+
+	GetSSHFingerprint(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d", w.Code)
+	}
+}
+
+func TestGetSSHFingerprint_ResponseFormat(t *testing.T) {
+	pubKeyBytes, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key pair: %v", err)
+	}
+	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+
+	SSHMgr = sshproxy.NewSSHManager(signer, string(pubKeyBytes))
+	defer SSHMgr.CloseAll()
+
+	req := httptest.NewRequest("GET", "/api/v1/ssh-fingerprint", nil)
+	w := httptest.NewRecorder()
+
+	GetSSHFingerprint(w, req)
+
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected Content-Type application/json, got %s", ct)
+	}
+
+	result := parseResponse(t, w)
+	for _, key := range []string{"fingerprint", "public_key"} {
+		if _, exists := result[key]; !exists {
+			t.Errorf("response missing field %q", key)
+		}
+	}
+}
+
+func TestGetSSHFingerprint_ConsistentWithVerifyPackage(t *testing.T) {
+	pubKeyBytes, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key pair: %v", err)
+	}
+	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+
+	SSHMgr = sshproxy.NewSSHManager(signer, string(pubKeyBytes))
+	defer SSHMgr.CloseAll()
+
+	req := httptest.NewRequest("GET", "/api/v1/ssh-fingerprint", nil)
+	w := httptest.NewRecorder()
+
+	GetSSHFingerprint(w, req)
+
+	result := parseResponse(t, w)
+	handlerFP := result["fingerprint"].(string)
+
+	// The handler computes fingerprint via SSHManager.GetPublicKeyFingerprint(),
+	// which uses ssh.FingerprintSHA256(signer.PublicKey()).
+	// Verify it matches what we'd compute from the raw public key bytes.
+	expectedFP := ssh.FingerprintSHA256(signer.PublicKey())
+	if handlerFP != expectedFP {
+		t.Errorf("handler fingerprint %q != expected %q", handlerFP, expectedFP)
+	}
+}
