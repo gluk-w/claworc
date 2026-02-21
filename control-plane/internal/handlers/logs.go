@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshlogs"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -31,6 +33,11 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 		follow = false
 	}
 
+	logType := sshlogs.LogType(r.URL.Query().Get("type"))
+	if logType == "" {
+		logType = sshlogs.LogTypeOpenClaw
+	}
+
 	var inst database.Instance
 	if err := database.DB.First(&inst, id).Error; err != nil {
 		writeError(w, http.StatusNotFound, "Instance not found")
@@ -48,9 +55,35 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ch, err := orch.StreamInstanceLogs(r.Context(), inst.Name, tail, follow)
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	// Parse custom log paths from instance if set
+	var customPaths map[sshlogs.LogType]string
+	if inst.LogPaths != "" {
+		if err := json.Unmarshal([]byte(inst.LogPaths), &customPaths); err != nil {
+			log.Printf("Invalid log_paths JSON for instance %d: %v", inst.ID, err)
+		}
+	}
+
+	logPath := sshlogs.ResolveLogPath(logType, customPaths)
+	if logPath == "" {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Unknown log type: %s", logType))
+		return
+	}
+
+	client, err := SSHMgr.EnsureConnected(r.Context(), inst.ID, orch)
 	if err != nil {
-		log.Printf("Failed to stream logs for %s: %v", inst.Name, err)
+		log.Printf("Failed to get SSH connection for instance %d: %v", inst.ID, err)
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("SSH connection failed: %v", err))
+		return
+	}
+
+	ch, err := sshlogs.StreamLogs(r.Context(), client, logPath, tail, follow)
+	if err != nil {
+		log.Printf("Failed to stream logs for instance %d (%s): %v", inst.ID, logPath, err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to stream logs: %v", err))
 		return
 	}
