@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type ContainerInfo,
-  agentImage,
+  ensureAgentImage,
   startAgentContainer,
   stopAgentContainer,
   waitForSSH,
@@ -72,19 +72,8 @@ let container: ContainerInfo;
 
 describe("SSH log streaming integration", () => {
   beforeAll(async () => {
-    // Verify the agent image exists
-    const image = agentImage();
-    try {
-      execFileSync("docker", ["inspect", "--type=image", image], {
-        stdio: "ignore",
-      });
-    } catch {
-      throw new Error(
-        `Agent image "${image}" not found. Build it first:\n` +
-          `  docker build -t ${image} ./agent/\n` +
-          `Or set AGENT_TEST_IMAGE to an existing image.`,
-      );
-    }
+    // Build agent image from agent/Dockerfile if it doesn't exist
+    ensureAgentImage();
 
     container = startAgentContainer("logs");
     console.log(
@@ -227,6 +216,21 @@ describe("SSH log streaming integration", () => {
     () => {
       const result = runGoTest(
         "TestExternalIntegration_StreamLogsFollowWithCancel",
+        container,
+      );
+
+      if (result.exitCode !== 0) logFailure(result);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("PASS");
+    },
+    120_000,
+  );
+
+  it(
+    "continues streaming after log rotation (tail -F)",
+    () => {
+      const result = runGoTest(
+        "TestExternalIntegration_StreamLogsLogRotation",
         container,
       );
 

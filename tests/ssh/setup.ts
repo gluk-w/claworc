@@ -14,9 +14,14 @@
 
 import { execFileSync } from "node:child_process";
 import { createConnection } from "node:net";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** Default agent Docker image. Override with AGENT_TEST_IMAGE env var. */
 const DEFAULT_IMAGE = "claworc-agent:local";
+
+const __setup_dirname = dirname(fileURLToPath(import.meta.url));
+const AGENT_DIR = resolve(__setup_dirname, "../../agent");
 
 /** Container metadata returned by startAgentContainer. */
 export interface ContainerInfo {
@@ -36,6 +41,53 @@ export interface ExecResult {
 /** Returns the Docker image name for agent tests. */
 export function agentImage(): string {
   return process.env.AGENT_TEST_IMAGE ?? DEFAULT_IMAGE;
+}
+
+/**
+ * Ensures the agent Docker image exists, building it from agent/Dockerfile if needed.
+ * Skips the build when AGENT_TEST_IMAGE is set (assumes external image is pre-built).
+ *
+ * @returns The image name that is guaranteed to exist
+ */
+export function ensureAgentImage(): string {
+  const image = agentImage();
+
+  // Check if image already exists
+  try {
+    execFileSync("docker", ["inspect", "--type=image", image], {
+      stdio: "ignore",
+    });
+    return image;
+  } catch {
+    // Image doesn't exist — try to build it
+  }
+
+  // Only auto-build the default image (not custom AGENT_TEST_IMAGE)
+  if (process.env.AGENT_TEST_IMAGE) {
+    throw new Error(
+      `Agent image "${image}" not found. Ensure the AGENT_TEST_IMAGE exists.`,
+    );
+  }
+
+  console.log(`Building agent image "${image}" from ${AGENT_DIR}/Dockerfile...`);
+  try {
+    execFileSync(
+      "docker",
+      ["build", "--platform", "linux/amd64", "-t", image, AGENT_DIR],
+      {
+        encoding: "utf-8",
+        stdio: "inherit",
+        timeout: 600_000, // 10 minute build timeout
+      },
+    );
+  } catch (err: any) {
+    throw new Error(
+      `Failed to build agent image "${image}" from ${AGENT_DIR}/Dockerfile.\n` +
+        `Build error: ${err.message ?? err}`,
+    );
+  }
+
+  return image;
 }
 
 /**
