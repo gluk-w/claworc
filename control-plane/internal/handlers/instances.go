@@ -21,6 +21,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshfiles"
 	"github.com/gluk-w/claworc/control-plane/internal/sshkeys"
+	"github.com/gluk-w/claworc/control-plane/internal/sshmanager"
 	"github.com/gluk-w/claworc/control-plane/internal/sshtunnel"
 	"github.com/go-chi/chi/v5"
 )
@@ -1290,4 +1291,118 @@ func ReorderInstances(w http.ResponseWriter, r *http.Request) {
 	}
 	tx.Commit()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- SSH Connection Status ---
+
+type sshHealthMetrics struct {
+	ConnectedAt      string `json:"connected_at"`
+	LastHealthCheck  string `json:"last_health_check"`
+	UptimeSeconds    int64  `json:"uptime_seconds"`
+	SuccessfulChecks int64  `json:"successful_checks"`
+	FailedChecks     int64  `json:"failed_checks"`
+	Healthy          bool   `json:"healthy"`
+}
+
+type sshTunnelStatus struct {
+	Service             string `json:"service"`
+	LocalPort           int    `json:"local_port"`
+	RemotePort          int    `json:"remote_port"`
+	CreatedAt           string `json:"created_at"`
+	LastCheck           string `json:"last_check,omitempty"`
+	LastSuccessfulCheck string `json:"last_successful_check,omitempty"`
+	LastError           string `json:"last_error,omitempty"`
+	BytesTransferred    int64  `json:"bytes_transferred"`
+	Healthy             bool   `json:"healthy"`
+}
+
+type sshStateEvent struct {
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Timestamp string `json:"timestamp"`
+}
+
+type sshStatusResponse struct {
+	ConnectionState string            `json:"connection_state"`
+	Health          *sshHealthMetrics `json:"health"`
+	Tunnels         []sshTunnelStatus `json:"tunnels"`
+	RecentEvents    []sshStateEvent   `json:"recent_events"`
+}
+
+// GetSSHStatus returns the SSH connection status for an instance, including
+// connection state, health metrics, active tunnels, and recent state changes.
+func GetSSHStatus(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	sm := sshtunnel.GetSSHManager()
+	tm := sshtunnel.GetTunnelManager()
+
+	resp := sshStatusResponse{
+		ConnectionState: string(sshmanager.StateDisconnected),
+		Tunnels:         []sshTunnelStatus{},
+		RecentEvents:    []sshStateEvent{},
+	}
+
+	if sm != nil {
+		resp.ConnectionState = string(sm.GetConnectionState(inst.Name))
+
+		if metrics := sm.GetMetrics(inst.Name); metrics != nil {
+			resp.Health = &sshHealthMetrics{
+				ConnectedAt:      formatTimestamp(metrics.ConnectedAt),
+				LastHealthCheck:  formatTimestamp(metrics.LastHealthCheck),
+				UptimeSeconds:    int64(metrics.Uptime().Seconds()),
+				SuccessfulChecks: metrics.SuccessfulChecks,
+				FailedChecks:     metrics.FailedChecks,
+				Healthy:          metrics.Healthy,
+			}
+		}
+
+		transitions := sm.GetStateTransitions(inst.Name)
+		count := len(transitions)
+		start := 0
+		if count > 10 {
+			start = count - 10
+		}
+		for _, t := range transitions[start:] {
+			resp.RecentEvents = append(resp.RecentEvents, sshStateEvent{
+				From:      string(t.From),
+				To:        string(t.To),
+				Timestamp: formatTimestamp(t.Timestamp),
+			})
+		}
+	}
+
+	if tm != nil {
+		tunnelMetrics := tm.GetTunnelMetrics(inst.Name)
+		for _, m := range tunnelMetrics {
+			resp.Tunnels = append(resp.Tunnels, sshTunnelStatus{
+				Service:             string(m.Service),
+				LocalPort:           m.LocalPort,
+				RemotePort:          m.RemotePort,
+				CreatedAt:           formatTimestamp(m.CreatedAt),
+				LastCheck:           formatTimestamp(m.LastCheck),
+				LastSuccessfulCheck: formatTimestamp(m.LastSuccessfulCheck),
+				LastError:           m.LastError,
+				BytesTransferred:    m.BytesTransferred,
+				Healthy:             m.Healthy,
+			})
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
