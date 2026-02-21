@@ -4,9 +4,22 @@
 //   - SSH exec reuses a persistent multiplexed connection per instance, avoiding
 //     the per-request overhead of K8s exec (which creates a new SPDY stream and
 //     authenticates with the API server each time).
-//   - Streaming with "tail -f" maintains a single SSH session for the duration,
+//   - Streaming with "tail -F" maintains a single SSH session for the duration,
 //     providing real-time log delivery with minimal latency.
 //   - All operations log their duration at the [sshlogs] log prefix for monitoring.
+//
+// Log rotation handling:
+//
+// By default, follow-mode streaming uses "tail -F" (equivalent to --follow=name
+// --retry). This follows the log file by name rather than by file descriptor,
+// so when a log rotation tool (e.g. logrotate) renames the current log file and
+// creates a new one with the same name, tail automatically detects the change
+// and switches to the new file. This ensures continuous streaming across log
+// rotations without requiring client reconnection.
+//
+// The alternative "tail -f" (--follow=descriptor) can be selected via
+// StreamOptions.FollowByName=false if needed, but it will stop delivering new
+// lines after rotation since it tracks the old (renamed) file descriptor.
 package sshlogs
 
 import (
@@ -75,17 +88,39 @@ func ResolveLogPath(lt LogType, customPaths map[string]string) (string, bool) {
 	return DefaultPathForType(lt)
 }
 
+// StreamOptions controls the behavior of log streaming.
+type StreamOptions struct {
+	// FollowByName controls whether tail follows the file by name (tail -F)
+	// or by file descriptor (tail -f). Following by name (the default, true)
+	// handles log rotation gracefully: when logrotate renames the file and
+	// creates a new one, tail detects the change and switches to the new file.
+	// Set to false to use tail -f (follow by descriptor) if log rotation is
+	// not a concern and you want the simpler behavior.
+	FollowByName bool
+}
+
+// DefaultStreamOptions returns the default streaming options with log rotation
+// awareness enabled (FollowByName=true).
+func DefaultStreamOptions() StreamOptions {
+	return StreamOptions{
+		FollowByName: true,
+	}
+}
+
 // StreamLogs streams log lines from a remote file via SSH. It executes a tail
 // command on the remote host and returns a channel that receives log lines.
 //
-// When follow is true, it uses "tail -f" to continuously stream new lines.
+// When follow is true, it uses "tail -F" (follow by name with retry) by default
+// to continuously stream new lines, handling log rotation gracefully. The
+// behavior can be customized via opts; pass nil to use DefaultStreamOptions().
+//
 // When follow is false, it tails the last `tail` lines and completes.
 //
 // The returned channel is closed when:
 //   - The command completes (non-follow mode)
 //   - The context is cancelled
 //   - An error occurs reading the stream
-func StreamLogs(ctx context.Context, sshClient *ssh.Client, logPath string, tail int, follow bool) (<-chan string, error) {
+func StreamLogs(ctx context.Context, sshClient *ssh.Client, logPath string, tail int, follow bool, opts ...StreamOptions) (<-chan string, error) {
 	session, err := sshClient.NewSession()
 	if err != nil {
 		return nil, fmt.Errorf("create SSH session: %w", err)
@@ -97,7 +132,12 @@ func StreamLogs(ctx context.Context, sshClient *ssh.Client, logPath string, tail
 		return nil, fmt.Errorf("create stdout pipe: %w", err)
 	}
 
-	cmd := buildTailCommand(logPath, tail, follow)
+	o := DefaultStreamOptions()
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+
+	cmd := buildTailCommand(logPath, tail, follow, o.FollowByName)
 	log.Printf("[sshlogs] starting stream cmd=%q", cmd)
 
 	if err := session.Start(cmd); err != nil {
@@ -186,9 +226,23 @@ func GetAvailableLogFiles(sshClient *ssh.Client) ([]string, error) {
 }
 
 // buildTailCommand constructs the tail command string.
-func buildTailCommand(logPath string, tail int, follow bool) string {
+//
+// When follow is true and followByName is true, uses "tail -F" which is
+// equivalent to "--follow=name --retry". This handles log rotation by
+// detecting when the file is renamed and reopening by name. When the log
+// file is rotated (e.g. by logrotate), tail will notice the file has been
+// replaced and will start reading from the new file automatically.
+//
+// When follow is true and followByName is false, uses "tail -f" which
+// follows by file descriptor. This will stop delivering new lines after
+// rotation since it tracks the old (renamed) file descriptor.
+func buildTailCommand(logPath string, tail int, follow bool, followByName bool) string {
 	if follow {
-		return fmt.Sprintf("tail -f -n %d %s", tail, shellQuote(logPath))
+		flag := "-F" // follow by name with retry (handles log rotation)
+		if !followByName {
+			flag = "-f" // follow by file descriptor (no rotation awareness)
+		}
+		return fmt.Sprintf("tail %s -n %d %s", flag, tail, shellQuote(logPath))
 	}
 	return fmt.Sprintf("tail -n %d %s", tail, shellQuote(logPath))
 }

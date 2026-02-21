@@ -164,9 +164,9 @@ func TestStreamLogsNoFollow(t *testing.T) {
 			sendExitStatus(ch, 1)
 			return
 		}
-		// Verify no -f flag for non-follow mode
-		if strings.Contains(cmd, "-f") {
-			ch.Stderr().Write([]byte("unexpected -f flag"))
+		// Verify no -f or -F flag for non-follow mode
+		if strings.Contains(cmd, "-f") || strings.Contains(cmd, "-F") {
+			ch.Stderr().Write([]byte("unexpected follow flag"))
 			sendExitStatus(ch, 1)
 			return
 		}
@@ -209,7 +209,7 @@ func TestStreamLogsFollow(t *testing.T) {
 		receivedCmd = cmd
 		mu.Unlock()
 
-		// Simulate tail -f: write some lines, then wait until the channel is closed
+		// Simulate tail -F: write some lines, then wait until the channel is closed
 		ch.Write([]byte("initial line 1\n"))
 		ch.Write([]byte("initial line 2\n"))
 
@@ -217,7 +217,7 @@ func TestStreamLogsFollow(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		ch.Write([]byte("new line 3\n"))
 
-		// Block until the channel is closed (simulating tail -f waiting for new data)
+		// Block until the channel is closed (simulating tail -F waiting for new data)
 		buf := make([]byte, 1)
 		for {
 			_, err := ch.Read(buf)
@@ -261,12 +261,12 @@ func TestStreamLogsFollow(t *testing.T) {
 		t.Errorf("expected 'new line 3', got %q", received[2])
 	}
 
-	// Verify the command used -f flag
+	// Verify the command used -F flag (follow by name for log rotation)
 	mu.Lock()
 	cmd := receivedCmd
 	mu.Unlock()
-	if !strings.Contains(cmd, "-f") {
-		t.Errorf("expected -f flag in command, got %q", cmd)
+	if !strings.Contains(cmd, "-F") {
+		t.Errorf("expected -F flag in command, got %q", cmd)
 	}
 
 	// Cancel context to stop streaming
@@ -501,15 +501,25 @@ func TestGetAvailableLogFilesSomeExist(t *testing.T) {
 // --- buildTailCommand tests ---
 
 func TestBuildTailCommandNoFollow(t *testing.T) {
-	cmd := buildTailCommand("/var/log/test.log", 50, false)
+	cmd := buildTailCommand("/var/log/test.log", 50, false, true)
 	expected := "tail -n 50 '/var/log/test.log'"
 	if cmd != expected {
 		t.Errorf("expected %q, got %q", expected, cmd)
 	}
 }
 
-func TestBuildTailCommandWithFollow(t *testing.T) {
-	cmd := buildTailCommand("/var/log/test.log", 100, true)
+func TestBuildTailCommandFollowByName(t *testing.T) {
+	// Default follow mode uses -F for log rotation awareness
+	cmd := buildTailCommand("/var/log/test.log", 100, true, true)
+	expected := "tail -F -n 100 '/var/log/test.log'"
+	if cmd != expected {
+		t.Errorf("expected %q, got %q", expected, cmd)
+	}
+}
+
+func TestBuildTailCommandFollowByDescriptor(t *testing.T) {
+	// With followByName=false, uses -f (follow by descriptor)
+	cmd := buildTailCommand("/var/log/test.log", 100, true, false)
 	expected := "tail -f -n 100 '/var/log/test.log'"
 	if cmd != expected {
 		t.Errorf("expected %q, got %q", expected, cmd)
@@ -517,7 +527,7 @@ func TestBuildTailCommandWithFollow(t *testing.T) {
 }
 
 func TestBuildTailCommandWithSpecialPath(t *testing.T) {
-	cmd := buildTailCommand("/var/log/my app's log.txt", 10, false)
+	cmd := buildTailCommand("/var/log/my app's log.txt", 10, false, true)
 	expected := "tail -n 10 '/var/log/my app'\\''s log.txt'"
 	if cmd != expected {
 		t.Errorf("expected %q, got %q", expected, cmd)
@@ -724,7 +734,7 @@ func TestStreamLogsGoroutineCleanup(t *testing.T) {
 	client, cleanup := startSSHServer(t, func(cmd string, ch gossh.Channel) {
 		ch.Write([]byte("line 1\nline 2\n"))
 
-		if strings.Contains(cmd, "-f") {
+		if strings.Contains(cmd, "-F") || strings.Contains(cmd, "-f") {
 			// Follow mode: block until channel closes
 			buf := make([]byte, 1)
 			for {
@@ -914,4 +924,214 @@ func TestStreamLogsFollowWithDelayedLines(t *testing.T) {
 	}
 
 	cancel()
+}
+
+// --- Log rotation tests ---
+
+// TestStreamLogsDefaultUsesFollowByName verifies that the default StreamLogs
+// call uses -F (follow by name) for log rotation awareness.
+func TestStreamLogsDefaultUsesFollowByName(t *testing.T) {
+	var receivedCmd string
+
+	client, cleanup := startSSHServer(t, func(cmd string, ch gossh.Channel) {
+		receivedCmd = cmd
+		ch.Write([]byte("line 1\n"))
+
+		// Block until channel closes (simulating tail -F)
+		buf := make([]byte, 1)
+		for {
+			_, err := ch.Read(buf)
+			if err != nil {
+				break
+			}
+		}
+		sendExitStatus(ch, 0)
+	})
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	logCh, err := StreamLogs(ctx, client, "/var/log/test.log", 100, true)
+	if err != nil {
+		t.Fatalf("StreamLogs: %v", err)
+	}
+
+	// Read one line to ensure command was executed
+	select {
+	case <-logCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for line")
+	}
+
+	cancel()
+	for range logCh {
+	}
+
+	// Default should use -F (follow by name with retry)
+	if !strings.Contains(receivedCmd, "-F") {
+		t.Errorf("default follow mode should use -F, got command: %q", receivedCmd)
+	}
+	// Should NOT contain lowercase -f
+	if strings.Contains(receivedCmd, " -f ") {
+		t.Errorf("default follow mode should not use -f, got command: %q", receivedCmd)
+	}
+}
+
+// TestStreamLogsFollowByDescriptorOption verifies that StreamOptions can
+// override the default to use tail -f instead of tail -F.
+func TestStreamLogsFollowByDescriptorOption(t *testing.T) {
+	var receivedCmd string
+
+	client, cleanup := startSSHServer(t, func(cmd string, ch gossh.Channel) {
+		receivedCmd = cmd
+		ch.Write([]byte("line 1\n"))
+
+		buf := make([]byte, 1)
+		for {
+			_, err := ch.Read(buf)
+			if err != nil {
+				break
+			}
+		}
+		sendExitStatus(ch, 0)
+	})
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	opts := StreamOptions{FollowByName: false}
+	logCh, err := StreamLogs(ctx, client, "/var/log/test.log", 100, true, opts)
+	if err != nil {
+		t.Fatalf("StreamLogs: %v", err)
+	}
+
+	select {
+	case <-logCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for line")
+	}
+
+	cancel()
+	for range logCh {
+	}
+
+	// Should use -f (follow by descriptor), not -F
+	if strings.Contains(receivedCmd, "-F") {
+		t.Errorf("FollowByName=false should use -f, got command: %q", receivedCmd)
+	}
+	if !strings.Contains(receivedCmd, "-f") {
+		t.Errorf("FollowByName=false should use -f flag, got command: %q", receivedCmd)
+	}
+}
+
+// TestStreamLogsLogRotation simulates a log rotation scenario where the
+// server (via tail -F) continues streaming after the file is replaced.
+// The test verifies that lines from both before and after the simulated
+// rotation are delivered to the client.
+func TestStreamLogsLogRotation(t *testing.T) {
+	client, cleanup := startSSHServer(t, func(cmd string, ch gossh.Channel) {
+		// Verify -F flag is used
+		if !strings.Contains(cmd, "-F") {
+			ch.Stderr().Write([]byte("expected -F flag for rotation test"))
+			sendExitStatus(ch, 1)
+			return
+		}
+
+		// Simulate pre-rotation lines
+		ch.Write([]byte("pre-rotation line 1\n"))
+		ch.Write([]byte("pre-rotation line 2\n"))
+
+		// Simulate the brief pause during log rotation
+		time.Sleep(50 * time.Millisecond)
+
+		// Simulate tail -F reopening the new file and continuing
+		ch.Write([]byte("post-rotation line 1\n"))
+		ch.Write([]byte("post-rotation line 2\n"))
+
+		// Block until channel closes
+		buf := make([]byte, 1)
+		for {
+			_, err := ch.Read(buf)
+			if err != nil {
+				break
+			}
+		}
+		sendExitStatus(ch, 0)
+	})
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	logCh, err := StreamLogs(ctx, client, "/var/log/test.log", 100, true)
+	if err != nil {
+		t.Fatalf("StreamLogs: %v", err)
+	}
+
+	// Collect all 4 lines (2 pre-rotation + 2 post-rotation)
+	var received []string
+	for i := 0; i < 4; i++ {
+		select {
+		case line, ok := <-logCh:
+			if !ok {
+				t.Fatalf("channel closed after %d lines", i)
+			}
+			received = append(received, line)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timeout waiting for line %d", i)
+		}
+	}
+
+	cancel()
+	for range logCh {
+	}
+
+	if len(received) != 4 {
+		t.Fatalf("expected 4 lines, got %d: %v", len(received), received)
+	}
+	if received[0] != "pre-rotation line 1" {
+		t.Errorf("line 0: expected 'pre-rotation line 1', got %q", received[0])
+	}
+	if received[2] != "post-rotation line 1" {
+		t.Errorf("line 2: expected 'post-rotation line 1', got %q", received[2])
+	}
+}
+
+// TestDefaultStreamOptions verifies the default options have log rotation
+// awareness enabled.
+func TestDefaultStreamOptions(t *testing.T) {
+	opts := DefaultStreamOptions()
+	if !opts.FollowByName {
+		t.Error("DefaultStreamOptions should have FollowByName=true")
+	}
+}
+
+// TestStreamLogsNoFollowIgnoresRotationOption verifies that in non-follow
+// mode, the FollowByName option has no effect (no follow flag is added).
+func TestStreamLogsNoFollowIgnoresRotationOption(t *testing.T) {
+	var receivedCmd string
+
+	client, cleanup := startSSHServer(t, func(cmd string, ch gossh.Channel) {
+		receivedCmd = cmd
+		ch.Write([]byte("line 1\n"))
+		sendExitStatus(ch, 0)
+	})
+	defer cleanup()
+
+	ctx := context.Background()
+	opts := StreamOptions{FollowByName: true}
+	logCh, err := StreamLogs(ctx, client, "/var/log/test.log", 50, false, opts)
+	if err != nil {
+		t.Fatalf("StreamLogs: %v", err)
+	}
+
+	for range logCh {
+	}
+
+	// Non-follow mode should not have any follow flags
+	if strings.Contains(receivedCmd, "-F") || strings.Contains(receivedCmd, "-f") {
+		t.Errorf("non-follow mode should not have follow flags, got command: %q", receivedCmd)
+	}
 }

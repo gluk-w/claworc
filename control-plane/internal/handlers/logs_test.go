@@ -392,9 +392,9 @@ func TestStreamLogs_FollowMode(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Verify the -f flag was used
-	if !strings.Contains(capturedCmd, "-f") {
-		t.Errorf("expected -f flag in command for follow mode, got %q", capturedCmd)
+	// Verify the -F flag was used (follow by name for log rotation)
+	if !strings.Contains(capturedCmd, "-F") {
+		t.Errorf("expected -F flag in command for follow mode, got %q", capturedCmd)
 	}
 
 	body := w.Body.String()
