@@ -632,3 +632,286 @@ func TestShellQuote(t *testing.T) {
 		}
 	}
 }
+
+// --- Integration / scenario tests ---
+
+// TestStreamLogsConcurrentStreams verifies that multiple log streams can run
+// simultaneously against the same SSH client (multiplexed connection).
+func TestStreamLogsConcurrentStreams(t *testing.T) {
+	var mu sync.Mutex
+	sessions := 0
+
+	client, cleanup := startSSHServer(t, func(cmd string, ch gossh.Channel) {
+		mu.Lock()
+		sessions++
+		mu.Unlock()
+
+		// Each "file" produces different output
+		if strings.Contains(cmd, "openclaw") {
+			ch.Write([]byte("openclaw line 1\nopenclaw line 2\n"))
+		} else if strings.Contains(cmd, "browser") {
+			ch.Write([]byte("browser line 1\nbrowser line 2\n"))
+		} else if strings.Contains(cmd, "sshd") {
+			ch.Write([]byte("system line 1\nsystem line 2\n"))
+		}
+		sendExitStatus(ch, 0)
+	})
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Start 3 concurrent streams for different log types
+	type result struct {
+		lines []string
+		err   error
+	}
+	results := make([]result, 3)
+	var wg sync.WaitGroup
+
+	paths := []string{"/var/log/openclaw.log", "/tmp/browser.log", "/var/log/sshd.log"}
+	for i, path := range paths {
+		wg.Add(1)
+		go func(idx int, logPath string) {
+			defer wg.Done()
+			logCh, err := StreamLogs(ctx, client, logPath, 50, false)
+			if err != nil {
+				results[idx] = result{err: err}
+				return
+			}
+			var lines []string
+			for line := range logCh {
+				lines = append(lines, line)
+			}
+			results[idx] = result{lines: lines}
+		}(i, path)
+	}
+
+	wg.Wait()
+
+	// Verify all 3 streams worked
+	for i, r := range results {
+		if r.err != nil {
+			t.Errorf("stream %d failed: %v", i, r.err)
+			continue
+		}
+		if len(r.lines) != 2 {
+			t.Errorf("stream %d: expected 2 lines, got %d: %v", i, len(r.lines), r.lines)
+		}
+	}
+
+	// Verify all 3 SSH sessions were opened
+	mu.Lock()
+	if sessions != 3 {
+		t.Errorf("expected 3 SSH sessions, got %d", sessions)
+	}
+	mu.Unlock()
+
+	// Verify content is from the correct log file
+	if len(results[0].lines) > 0 && !strings.Contains(results[0].lines[0], "openclaw") {
+		t.Errorf("stream 0 expected openclaw content, got %q", results[0].lines[0])
+	}
+	if len(results[1].lines) > 0 && !strings.Contains(results[1].lines[0], "browser") {
+		t.Errorf("stream 1 expected browser content, got %q", results[1].lines[0])
+	}
+	if len(results[2].lines) > 0 && !strings.Contains(results[2].lines[0], "system") {
+		t.Errorf("stream 2 expected system content, got %q", results[2].lines[0])
+	}
+}
+
+// TestStreamLogsGoroutineCleanup verifies that goroutines are cleaned up after
+// streaming ends, both for normal completion and context cancellation.
+func TestStreamLogsGoroutineCleanup(t *testing.T) {
+	client, cleanup := startSSHServer(t, func(cmd string, ch gossh.Channel) {
+		ch.Write([]byte("line 1\nline 2\n"))
+
+		if strings.Contains(cmd, "-f") {
+			// Follow mode: block until channel closes
+			buf := make([]byte, 1)
+			for {
+				_, err := ch.Read(buf)
+				if err != nil {
+					break
+				}
+			}
+		}
+		sendExitStatus(ch, 0)
+	})
+	defer cleanup()
+
+	// Test 1: Normal completion (non-follow) — goroutine should exit after drain
+	ctx1 := context.Background()
+	logCh1, err := StreamLogs(ctx1, client, "/var/log/test.log", 50, false)
+	if err != nil {
+		t.Fatalf("StreamLogs non-follow: %v", err)
+	}
+	for range logCh1 {
+	}
+	// Channel closed means goroutine exited
+
+	// Test 2: Context cancellation (follow mode) — goroutine should exit promptly
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	logCh2, err := StreamLogs(ctx2, client, "/var/log/test.log", 50, true)
+	if err != nil {
+		t.Fatalf("StreamLogs follow: %v", err)
+	}
+
+	// Read initial lines
+	for i := 0; i < 2; i++ {
+		select {
+		case _, ok := <-logCh2:
+			if !ok {
+				t.Fatal("channel closed prematurely")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout reading lines")
+		}
+	}
+
+	// Cancel context
+	cancel2()
+
+	// Channel should close within a reasonable time
+	select {
+	case _, ok := <-logCh2:
+		if ok {
+			for range logCh2 {
+			}
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("goroutine did not clean up after context cancel")
+	}
+}
+
+// TestStreamLogsLargeVolume verifies that streaming a large number of lines
+// works correctly without losing data or blocking.
+func TestStreamLogsLargeVolume(t *testing.T) {
+	const lineCount = 5000
+	client, cleanup := startSSHServer(t, func(cmd string, ch gossh.Channel) {
+		for i := 0; i < lineCount; i++ {
+			fmt.Fprintf(ch, "log line %05d\n", i)
+		}
+		sendExitStatus(ch, 0)
+	})
+	defer cleanup()
+
+	ctx := context.Background()
+	logCh, err := StreamLogs(ctx, client, "/var/log/test.log", lineCount, false)
+	if err != nil {
+		t.Fatalf("StreamLogs: %v", err)
+	}
+
+	var received []string
+	for line := range logCh {
+		received = append(received, line)
+	}
+
+	if len(received) != lineCount {
+		t.Fatalf("expected %d lines, got %d", lineCount, len(received))
+	}
+
+	// Verify first and last lines for correctness
+	if received[0] != "log line 00000" {
+		t.Errorf("first line: expected 'log line 00000', got %q", received[0])
+	}
+	if received[lineCount-1] != fmt.Sprintf("log line %05d", lineCount-1) {
+		t.Errorf("last line: expected 'log line %05d', got %q", lineCount-1, received[lineCount-1])
+	}
+}
+
+// TestStreamLogsSlowConsumer verifies that a slow consumer doesn't block the
+// streaming goroutine indefinitely (channel has 100-capacity buffer, context
+// cancellation should abort delivery).
+func TestStreamLogsSlowConsumer(t *testing.T) {
+	client, cleanup := startSSHServer(t, func(cmd string, ch gossh.Channel) {
+		// Write more lines than the channel buffer can hold
+		for i := 0; i < 200; i++ {
+			fmt.Fprintf(ch, "line %d\n", i)
+		}
+		sendExitStatus(ch, 0)
+	})
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	logCh, err := StreamLogs(ctx, client, "/var/log/test.log", 200, false)
+	if err != nil {
+		t.Fatalf("StreamLogs: %v", err)
+	}
+
+	// Read just a few lines slowly, then cancel
+	for i := 0; i < 5; i++ {
+		select {
+		case _, ok := <-logCh:
+			if !ok {
+				t.Fatal("channel closed too early")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Cancel while there are still buffered lines
+	cancel()
+
+	// Channel should close soon (goroutine should not be stuck)
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case _, ok := <-logCh:
+			if !ok {
+				return // success
+			}
+		case <-timeout:
+			t.Fatal("goroutine stuck after context cancel with buffered data")
+		}
+	}
+}
+
+// TestStreamLogsFollowWithDelayedLines verifies real-time streaming where lines
+// arrive with delays, simulating a real tail -f scenario.
+func TestStreamLogsFollowWithDelayedLines(t *testing.T) {
+	client, cleanup := startSSHServer(t, func(cmd string, ch gossh.Channel) {
+		// Simulate a log file that receives entries at intervals
+		ch.Write([]byte("startup complete\n"))
+		time.Sleep(50 * time.Millisecond)
+		ch.Write([]byte("request received\n"))
+		time.Sleep(50 * time.Millisecond)
+		ch.Write([]byte("response sent\n"))
+
+		// Block to simulate tail -f waiting
+		buf := make([]byte, 1)
+		for {
+			_, err := ch.Read(buf)
+			if err != nil {
+				break
+			}
+		}
+		sendExitStatus(ch, 0)
+	})
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	logCh, err := StreamLogs(ctx, client, "/var/log/test.log", 100, true)
+	if err != nil {
+		t.Fatalf("StreamLogs: %v", err)
+	}
+
+	expected := []string{"startup complete", "request received", "response sent"}
+	for i, want := range expected {
+		select {
+		case got, ok := <-logCh:
+			if !ok {
+				t.Fatalf("channel closed after %d lines", i)
+			}
+			if got != want {
+				t.Errorf("line %d: expected %q, got %q", i, want, got)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timeout waiting for line %d", i)
+		}
+	}
+
+	cancel()
+}
