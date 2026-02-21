@@ -885,6 +885,392 @@ func TestConcurrentSessions(t *testing.T) {
 	mu.Unlock()
 }
 
+// --- Special key / control character tests ---
+
+func TestSpecialKeysControlCharacters(t *testing.T) {
+	shellReady := make(chan struct{})
+
+	// Collect all bytes received by the shell
+	var mu sync.Mutex
+	var received []byte
+
+	client, cleanup := startPTYServer(t, ptyHandler{
+		onPTY: func(term string, cols, rows uint32, modes gossh.TerminalModes) bool {
+			return true
+		},
+		onExec: func(cmd string, ch gossh.Channel) {
+			close(shellReady)
+			buf := make([]byte, 4096)
+			for {
+				n, err := ch.Read(buf)
+				if n > 0 {
+					mu.Lock()
+					received = append(received, buf[:n]...)
+					mu.Unlock()
+					// Echo back
+					ch.Write(buf[:n])
+				}
+				if err != nil {
+					break
+				}
+			}
+			sendExitStatus(ch, 0)
+		},
+	})
+	defer cleanup()
+
+	session, err := CreateInteractiveSession(client, "/bin/bash")
+	if err != nil {
+		t.Fatalf("CreateInteractiveSession: %v", err)
+	}
+	defer session.Close()
+
+	select {
+	case <-shellReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for shell")
+	}
+
+	// Send control characters: Ctrl+C (0x03), Ctrl+D (0x04), Ctrl+Z (0x1a)
+	controlChars := []byte{0x03, 0x04, 0x1a}
+	for _, c := range controlChars {
+		_, err := session.Stdin.Write([]byte{c})
+		if err != nil {
+			t.Fatalf("write control char 0x%02x: %v", c, err)
+		}
+	}
+
+	// Give time for transmission
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	for _, c := range controlChars {
+		found := false
+		for _, r := range received {
+			if r == c {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("control character 0x%02x not received by shell", c)
+		}
+	}
+}
+
+func TestArrowKeysAndTabEscapeSequences(t *testing.T) {
+	shellReady := make(chan struct{})
+
+	var mu sync.Mutex
+	var received []byte
+
+	client, cleanup := startPTYServer(t, ptyHandler{
+		onPTY: func(term string, cols, rows uint32, modes gossh.TerminalModes) bool {
+			return true
+		},
+		onExec: func(cmd string, ch gossh.Channel) {
+			close(shellReady)
+			buf := make([]byte, 4096)
+			for {
+				n, err := ch.Read(buf)
+				if n > 0 {
+					mu.Lock()
+					received = append(received, buf[:n]...)
+					mu.Unlock()
+					ch.Write(buf[:n])
+				}
+				if err != nil {
+					break
+				}
+			}
+			sendExitStatus(ch, 0)
+		},
+	})
+	defer cleanup()
+
+	session, err := CreateInteractiveSession(client, "/bin/bash")
+	if err != nil {
+		t.Fatalf("CreateInteractiveSession: %v", err)
+	}
+	defer session.Close()
+
+	select {
+	case <-shellReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for shell")
+	}
+
+	// Arrow key escape sequences (xterm style)
+	arrowUp := "\x1b[A"
+	arrowDown := "\x1b[B"
+	arrowRight := "\x1b[C"
+	arrowLeft := "\x1b[D"
+	tab := "\x09"
+
+	sequences := []string{arrowUp, arrowDown, arrowRight, arrowLeft, tab}
+	for _, seq := range sequences {
+		_, err := session.Stdin.Write([]byte(seq))
+		if err != nil {
+			t.Fatalf("write sequence %q: %v", seq, err)
+		}
+	}
+
+	// Give time for transmission
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	receivedStr := string(received)
+	for _, seq := range sequences {
+		if !strings.Contains(receivedStr, seq) {
+			t.Errorf("escape sequence %q not found in received data %q", seq, receivedStr)
+		}
+	}
+}
+
+func TestInteractiveREPLSession(t *testing.T) {
+	shellReady := make(chan struct{})
+
+	client, cleanup := startPTYServer(t, ptyHandler{
+		onPTY: func(term string, cols, rows uint32, modes gossh.TerminalModes) bool {
+			return true
+		},
+		onExec: func(cmd string, ch gossh.Channel) {
+			close(shellReady)
+
+			// Simulate a REPL: send prompt, wait for input, process it, repeat
+			ch.Write([]byte(">>> "))
+
+			buf := make([]byte, 4096)
+			var line []byte
+			for {
+				n, err := ch.Read(buf)
+				if err != nil {
+					break
+				}
+				for i := 0; i < n; i++ {
+					if buf[i] == '\n' || buf[i] == '\r' {
+						input := strings.TrimSpace(string(line))
+						line = nil
+						if input == "exit" {
+							ch.Write([]byte("\r\nbye\r\n"))
+							sendExitStatus(ch, 0)
+							return
+						}
+						// Echo the input as REPL output
+						ch.Write([]byte(fmt.Sprintf("\r\nresult: %s\r\n>>> ", input)))
+					} else {
+						line = append(line, buf[i])
+					}
+				}
+			}
+			sendExitStatus(ch, 0)
+		},
+	})
+	defer cleanup()
+
+	session, err := CreateInteractiveSession(client, "python3")
+	if err != nil {
+		t.Fatalf("CreateInteractiveSession: %v", err)
+	}
+	defer session.Close()
+
+	select {
+	case <-shellReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for shell")
+	}
+
+	// Read initial prompt
+	buf := make([]byte, 4096)
+	n, err := session.Stdout.Read(buf)
+	if err != nil {
+		t.Fatalf("read initial prompt: %v", err)
+	}
+	prompt := string(buf[:n])
+	if !strings.Contains(prompt, ">>>") {
+		t.Errorf("expected REPL prompt '>>>', got %q", prompt)
+	}
+
+	// Send input
+	session.Stdin.Write([]byte("1+1\n"))
+
+	// Read result - may arrive in multiple reads
+	var output strings.Builder
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("timeout waiting for REPL output, got so far: %q", output.String())
+		default:
+		}
+		n, err = session.Stdout.Read(buf)
+		if err != nil {
+			break
+		}
+		output.Write(buf[:n])
+		if strings.Contains(output.String(), "result:") {
+			break
+		}
+	}
+
+	if !strings.Contains(output.String(), "result: 1+1") {
+		t.Errorf("expected REPL output containing 'result: 1+1', got %q", output.String())
+	}
+
+	// Send exit
+	session.Stdin.Write([]byte("exit\n"))
+
+	// Read remaining output
+	var finalOutput strings.Builder
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		io.Copy(&finalOutput, session.Stdout)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for REPL to exit")
+	}
+
+	if !strings.Contains(finalOutput.String(), "bye") {
+		t.Errorf("expected 'bye' in final output, got %q", finalOutput.String())
+	}
+}
+
+func TestLongRunningStreamingOutput(t *testing.T) {
+	shellReady := make(chan struct{})
+
+	const numLines = 50
+	const lineDelay = 10 * time.Millisecond
+
+	client, cleanup := startPTYServer(t, ptyHandler{
+		onPTY: func(term string, cols, rows uint32, modes gossh.TerminalModes) bool {
+			return true
+		},
+		onExec: func(cmd string, ch gossh.Channel) {
+			close(shellReady)
+			// Simulate a long-running command that produces output over time
+			for i := 0; i < numLines; i++ {
+				ch.Write([]byte(fmt.Sprintf("progress: %d/%d\r\n", i+1, numLines)))
+				time.Sleep(lineDelay)
+			}
+			ch.Write([]byte("done\r\n"))
+			sendExitStatus(ch, 0)
+		},
+	})
+	defer cleanup()
+
+	session, err := CreateInteractiveSession(client, "/bin/bash")
+	if err != nil {
+		t.Fatalf("CreateInteractiveSession: %v", err)
+	}
+	defer session.Close()
+
+	select {
+	case <-shellReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for shell")
+	}
+
+	var output bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		io.Copy(&output, session.Stdout)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for streaming output")
+	}
+
+	result := output.String()
+	// Verify first and last progress lines
+	if !strings.Contains(result, "progress: 1/50") {
+		t.Errorf("missing first progress line in output")
+	}
+	if !strings.Contains(result, "progress: 50/50") {
+		t.Errorf("missing last progress line in output")
+	}
+	if !strings.Contains(result, "done") {
+		t.Errorf("missing 'done' marker in output")
+	}
+}
+
+func TestRapidInputStress(t *testing.T) {
+	shellReady := make(chan struct{})
+
+	var mu sync.Mutex
+	var totalReceived int
+
+	client, cleanup := startPTYServer(t, ptyHandler{
+		onPTY: func(term string, cols, rows uint32, modes gossh.TerminalModes) bool {
+			return true
+		},
+		onExec: func(cmd string, ch gossh.Channel) {
+			close(shellReady)
+			buf := make([]byte, 32 * 1024)
+			for {
+				n, err := ch.Read(buf)
+				if n > 0 {
+					mu.Lock()
+					totalReceived += n
+					mu.Unlock()
+				}
+				if err != nil {
+					break
+				}
+			}
+			sendExitStatus(ch, 0)
+		},
+	})
+	defer cleanup()
+
+	session, err := CreateInteractiveSession(client, "/bin/bash")
+	if err != nil {
+		t.Fatalf("CreateInteractiveSession: %v", err)
+	}
+	defer session.Close()
+
+	select {
+	case <-shellReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for shell")
+	}
+
+	// Send 1000 rapid messages without waiting between them
+	const numMessages = 1000
+	const messageSize = 64
+	message := strings.Repeat("x", messageSize) + "\n"
+	totalSent := 0
+
+	for i := 0; i < numMessages; i++ {
+		n, err := session.Stdin.Write([]byte(message))
+		if err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+		totalSent += n
+	}
+
+	// Give time for data to be processed
+	time.Sleep(500 * time.Millisecond)
+
+	mu.Lock()
+	got := totalReceived
+	mu.Unlock()
+
+	if got != totalSent {
+		t.Errorf("sent %d bytes but shell received %d bytes", totalSent, got)
+	}
+}
+
 // --- DefaultShell constant test ---
 
 func TestDefaultShellConstant(t *testing.T) {

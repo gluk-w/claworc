@@ -792,6 +792,415 @@ func TestTerminalWSProxy_ClientDisconnectCleansUp(t *testing.T) {
 	}
 }
 
+func TestTerminalWSProxy_SpecialKeys(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	inst := createTestInstance(t, "bot-term-skeys", "Term SpecialKeys")
+	admin := createTestAdmin(t)
+
+	var mu sync.Mutex
+	var received []byte
+
+	sshClient, sshCleanup := startTermPTYServer(t, termPTYHandler{
+		onExec: func(cmd string, ch gossh.Channel) {
+			buf := make([]byte, 4096)
+			for {
+				n, err := ch.Read(buf)
+				if n > 0 {
+					mu.Lock()
+					received = append(received, buf[:n]...)
+					mu.Unlock()
+					ch.Write(buf[:n])
+				}
+				if err != nil {
+					break
+				}
+			}
+		},
+	})
+	defer sshCleanup()
+
+	smCleanup := setupSSHManagerWithClient(t, "bot-term-skeys", sshClient)
+	defer smCleanup()
+
+	ts, tsCleanup := setupTerminalServer(t, admin)
+	defer tsCleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := fmt.Sprintf("ws%s/api/v1/instances/%d/terminal",
+		strings.TrimPrefix(ts.URL, "http"), inst.ID)
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.CloseNow()
+
+	// Send special keys as binary messages: Ctrl+C (0x03), Ctrl+D (0x04), Ctrl+Z (0x1a)
+	specialKeys := []byte{0x03, 0x04, 0x1a}
+	for _, key := range specialKeys {
+		if err := conn.Write(ctx, websocket.MessageBinary, []byte{key}); err != nil {
+			t.Fatalf("failed to write special key 0x%02x: %v", key, err)
+		}
+	}
+
+	// Send arrow keys and tab as JSON input messages
+	arrowSequences := []string{"\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D", "\x09"}
+	for _, seq := range arrowSequences {
+		msg, _ := json.Marshal(termMsg{Type: "input", Data: seq})
+		if err := conn.Write(ctx, websocket.MessageText, msg); err != nil {
+			t.Fatalf("failed to write escape sequence: %v", err)
+		}
+	}
+
+	// Read echoed output to allow processing time
+	readCtx, readCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer readCancel()
+	for {
+		_, _, err := conn.Read(readCtx)
+		if err != nil {
+			break
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Verify control characters arrived
+	for _, key := range specialKeys {
+		found := false
+		for _, r := range received {
+			if r == key {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("special key 0x%02x not received by SSH shell", key)
+		}
+	}
+
+	// Verify escape sequences arrived
+	receivedStr := string(received)
+	for _, seq := range arrowSequences {
+		if !strings.Contains(receivedStr, seq) {
+			t.Errorf("escape sequence %q not found in received data", seq)
+		}
+	}
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestTerminalWSProxy_InteractiveREPL(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	inst := createTestInstance(t, "bot-term-repl", "Term REPL")
+	admin := createTestAdmin(t)
+
+	sshClient, sshCleanup := startTermPTYServer(t, termPTYHandler{
+		onExec: func(cmd string, ch gossh.Channel) {
+			// Simulate a REPL: prompt → input → output → prompt
+			ch.Write([]byte(">>> "))
+
+			buf := make([]byte, 4096)
+			var line []byte
+			for {
+				n, err := ch.Read(buf)
+				if err != nil {
+					return
+				}
+				for i := 0; i < n; i++ {
+					if buf[i] == '\n' || buf[i] == '\r' {
+						input := string(line)
+						line = nil
+						ch.Write([]byte(fmt.Sprintf("\r\nresult: %s\r\n>>> ", input)))
+					} else {
+						line = append(line, buf[i])
+					}
+				}
+			}
+		},
+	})
+	defer sshCleanup()
+
+	smCleanup := setupSSHManagerWithClient(t, "bot-term-repl", sshClient)
+	defer smCleanup()
+
+	ts, tsCleanup := setupTerminalServer(t, admin)
+	defer tsCleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := fmt.Sprintf("ws%s/api/v1/instances/%d/terminal",
+		strings.TrimPrefix(ts.URL, "http"), inst.ID)
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.CloseNow()
+
+	// Read initial prompt
+	_, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("failed to read initial prompt: %v", err)
+	}
+	if !strings.Contains(string(data), ">>>") {
+		t.Errorf("expected REPL prompt '>>>', got %q", data)
+	}
+
+	// Send expression via JSON input
+	inputMsg, _ := json.Marshal(termMsg{Type: "input", Data: "2+2\n"})
+	if err := conn.Write(ctx, websocket.MessageText, inputMsg); err != nil {
+		t.Fatalf("failed to write input: %v", err)
+	}
+
+	// Read REPL output - may come in multiple messages
+	var output strings.Builder
+	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer readCancel()
+	for {
+		_, data, err := conn.Read(readCtx)
+		if err != nil {
+			break
+		}
+		output.Write(data)
+		if strings.Contains(output.String(), "result:") {
+			break
+		}
+	}
+
+	if !strings.Contains(output.String(), "result: 2+2") {
+		t.Errorf("expected REPL result 'result: 2+2', got %q", output.String())
+	}
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestTerminalWSProxy_LongRunningStreaming(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	inst := createTestInstance(t, "bot-term-lrun", "Term LongRun")
+	admin := createTestAdmin(t)
+
+	const numLines = 20
+
+	sshClient, sshCleanup := startTermPTYServer(t, termPTYHandler{
+		onExec: func(cmd string, ch gossh.Channel) {
+			// Simulate long-running command with periodic output
+			for i := 0; i < numLines; i++ {
+				ch.Write([]byte(fmt.Sprintf("progress %d/%d\r\n", i+1, numLines)))
+				time.Sleep(10 * time.Millisecond)
+			}
+			ch.Write([]byte("complete\r\n"))
+			exitPayload := gossh.Marshal(struct{ Status uint32 }{0})
+			ch.SendRequest("exit-status", false, exitPayload)
+		},
+	})
+	defer sshCleanup()
+
+	smCleanup := setupSSHManagerWithClient(t, "bot-term-lrun", sshClient)
+	defer smCleanup()
+
+	ts, tsCleanup := setupTerminalServer(t, admin)
+	defer tsCleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	wsURL := fmt.Sprintf("ws%s/api/v1/instances/%d/terminal",
+		strings.TrimPrefix(ts.URL, "http"), inst.ID)
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.CloseNow()
+
+	// Collect all streaming output
+	var output strings.Builder
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			break
+		}
+		output.Write(data)
+	}
+
+	result := output.String()
+	if !strings.Contains(result, "progress 1/20") {
+		t.Errorf("missing first progress line")
+	}
+	if !strings.Contains(result, "progress 20/20") {
+		t.Errorf("missing last progress line")
+	}
+	if !strings.Contains(result, "complete") {
+		t.Errorf("missing completion marker")
+	}
+}
+
+func TestTerminalWSProxy_RapidInput(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	inst := createTestInstance(t, "bot-term-rapid", "Term Rapid")
+	admin := createTestAdmin(t)
+
+	var mu sync.Mutex
+	var totalReceived int
+
+	sshClient, sshCleanup := startTermPTYServer(t, termPTYHandler{
+		onExec: func(cmd string, ch gossh.Channel) {
+			buf := make([]byte, 32 * 1024)
+			for {
+				n, err := ch.Read(buf)
+				if n > 0 {
+					mu.Lock()
+					totalReceived += n
+					mu.Unlock()
+				}
+				if err != nil {
+					break
+				}
+			}
+		},
+	})
+	defer sshCleanup()
+
+	smCleanup := setupSSHManagerWithClient(t, "bot-term-rapid", sshClient)
+	defer smCleanup()
+
+	ts, tsCleanup := setupTerminalServer(t, admin)
+	defer tsCleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	wsURL := fmt.Sprintf("ws%s/api/v1/instances/%d/terminal",
+		strings.TrimPrefix(ts.URL, "http"), inst.ID)
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.CloseNow()
+
+	// Send 500 rapid binary messages
+	const numMessages = 500
+	message := []byte("rapid-input-test\n")
+	totalSent := 0
+
+	for i := 0; i < numMessages; i++ {
+		if err := conn.Write(ctx, websocket.MessageBinary, message); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+		totalSent += len(message)
+	}
+
+	// Give time for all data to be processed through WebSocket → SSH pipeline
+	time.Sleep(500 * time.Millisecond)
+
+	mu.Lock()
+	got := totalReceived
+	mu.Unlock()
+
+	if got != totalSent {
+		t.Errorf("sent %d bytes but SSH shell received %d bytes (%.1f%% delivered)",
+			totalSent, got, float64(got)/float64(totalSent)*100)
+	}
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestTerminalWSProxy_DisconnectReconnectNewSession(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	inst := createTestInstance(t, "bot-term-reconn", "Term Reconnect")
+	admin := createTestAdmin(t)
+
+	var mu sync.Mutex
+	sessionCounter := 0
+
+	sshClient, sshCleanup := startTermPTYServer(t, termPTYHandler{
+		onExec: func(cmd string, ch gossh.Channel) {
+			mu.Lock()
+			sessionCounter++
+			id := sessionCounter
+			mu.Unlock()
+
+			// Each session writes its unique ID
+			ch.Write([]byte(fmt.Sprintf("session-%d\r\n", id)))
+			buf := make([]byte, 1)
+			for {
+				_, err := ch.Read(buf)
+				if err != nil {
+					break
+				}
+			}
+		},
+	})
+	defer sshCleanup()
+
+	smCleanup := setupSSHManagerWithClient(t, "bot-term-reconn", sshClient)
+	defer smCleanup()
+
+	ts, tsCleanup := setupTerminalServer(t, admin)
+	defer tsCleanup()
+
+	wsURL := fmt.Sprintf("ws%s/api/v1/instances/%d/terminal",
+		strings.TrimPrefix(ts.URL, "http"), inst.ID)
+
+	// First connection
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel1()
+
+	conn1, _, err := websocket.Dial(ctx1, wsURL, nil)
+	if err != nil {
+		t.Fatalf("first dial failed: %v", err)
+	}
+
+	_, data1, err := conn1.Read(ctx1)
+	if err != nil {
+		t.Fatalf("first read failed: %v", err)
+	}
+	if !strings.Contains(string(data1), "session-1") {
+		t.Errorf("first connection: expected 'session-1', got %q", data1)
+	}
+
+	// Disconnect
+	conn1.Close(websocket.StatusNormalClosure, "")
+	time.Sleep(100 * time.Millisecond)
+
+	// Second connection - should get a NEW session
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+
+	conn2, _, err := websocket.Dial(ctx2, wsURL, nil)
+	if err != nil {
+		t.Fatalf("second dial failed: %v", err)
+	}
+	defer conn2.CloseNow()
+
+	_, data2, err := conn2.Read(ctx2)
+	if err != nil {
+		t.Fatalf("second read failed: %v", err)
+	}
+	if !strings.Contains(string(data2), "session-2") {
+		t.Errorf("second connection: expected 'session-2', got %q", data2)
+	}
+
+	mu.Lock()
+	if sessionCounter != 2 {
+		t.Errorf("expected 2 sessions created, got %d", sessionCounter)
+	}
+	mu.Unlock()
+
+	conn2.Close(websocket.StatusNormalClosure, "")
+}
+
 func TestTerminalWSProxy_MultipleResizes(t *testing.T) {
 	cleanup := setupTestDB(t)
 	defer cleanup()
