@@ -345,3 +345,156 @@ func TestCreateInteractiveSession_MultipleResizes(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateInteractiveSession_ANSIEscapeCodes(t *testing.T) {
+	client := newTestClient(t)
+
+	ts, err := CreateInteractiveSession(client, "/bin/bash")
+	if err != nil {
+		t.Fatalf("CreateInteractiveSession() error: %v", err)
+	}
+	defer ts.Close()
+
+	readUntil(t, ts.Stdout, "PTY:true", 2*time.Second)
+
+	// Send ANSI color codes as a single payload so the echo server returns them as one chunk
+	ansiInput := "\x1b[31mRed\x1b[0m\x1b[1;32mBoldGreen\x1b[0m"
+	if _, err := ts.Stdin.Write([]byte(ansiInput)); err != nil {
+		t.Fatalf("write ANSI sequence: %v", err)
+	}
+
+	// Verify escape codes pass through the SSH channel intact
+	output := readUntil(t, ts.Stdout, "BoldGreen", 3*time.Second)
+	if !strings.Contains(output, "\x1b[31m") {
+		t.Error("ANSI red color sequence was corrupted")
+	}
+	if !strings.Contains(output, "\x1b[0m") {
+		t.Error("ANSI reset sequence was corrupted")
+	}
+	if !strings.Contains(output, "\x1b[1;32m") {
+		t.Error("ANSI bold green sequence was corrupted")
+	}
+}
+
+func TestCreateInteractiveSession_SpecialKeys(t *testing.T) {
+	client := newTestClient(t)
+
+	ts, err := CreateInteractiveSession(client, "/bin/bash")
+	if err != nil {
+		t.Fatalf("CreateInteractiveSession() error: %v", err)
+	}
+	defer ts.Close()
+
+	readUntil(t, ts.Stdout, "PTY:true", 2*time.Second)
+
+	// Send all special keys as a single payload so they're echoed together
+	// Ctrl+C (0x03), Tab (0x09), ArrowUp (ESC[A), ArrowLeft (ESC[D)
+	payload := []byte{0x03, 0x09}
+	payload = append(payload, 0x1b, '[', 'A') // ArrowUp
+	payload = append(payload, 0x1b, '[', 'D') // ArrowLeft
+	payload = append(payload, "KEYS_END"...)
+
+	if _, err := ts.Stdin.Write(payload); err != nil {
+		t.Fatalf("write special keys: %v", err)
+	}
+
+	// Verify the payload passes through intact (including control bytes and escape sequences)
+	output := readUntil(t, ts.Stdout, "KEYS_END", 3*time.Second)
+	if !strings.Contains(output, "\x03") {
+		t.Error("Ctrl+C byte was lost")
+	}
+	if !strings.Contains(output, "\x09") {
+		t.Error("Tab byte was lost")
+	}
+	if !strings.Contains(output, "\x1b[A") {
+		t.Error("ArrowUp escape sequence was corrupted")
+	}
+	if !strings.Contains(output, "\x1b[D") {
+		t.Error("ArrowLeft escape sequence was corrupted")
+	}
+}
+
+func TestCreateInteractiveSession_RapidInput(t *testing.T) {
+	client := newTestClient(t)
+
+	ts, err := CreateInteractiveSession(client, "/bin/bash")
+	if err != nil {
+		t.Fatalf("CreateInteractiveSession() error: %v", err)
+	}
+	defer ts.Close()
+
+	readUntil(t, ts.Stdout, "PTY:true", 2*time.Second)
+
+	// Send 100 rapid messages to check for buffer overflow
+	const messageCount = 100
+
+	for i := 0; i < messageCount; i++ {
+		msg := fmt.Sprintf("rapid_%d|", i)
+		if _, err := ts.Stdin.Write([]byte(msg)); err != nil {
+			t.Fatalf("write rapid message %d: %v", i, err)
+		}
+	}
+	// Send a unique end marker to confirm all data was delivered
+	marker := "RAPID_END_MARKER"
+	if _, err := ts.Stdin.Write([]byte(marker)); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	// Verify the end marker arrives, which means all prior messages were processed
+	readUntil(t, ts.Stdout, marker, 5*time.Second)
+}
+
+func TestCreateInteractiveSession_LargePayload(t *testing.T) {
+	client := newTestClient(t)
+
+	ts, err := CreateInteractiveSession(client, "/bin/bash")
+	if err != nil {
+		t.Fatalf("CreateInteractiveSession() error: %v", err)
+	}
+	defer ts.Close()
+
+	readUntil(t, ts.Stdout, "PTY:true", 2*time.Second)
+
+	// Send a large payload to test streaming and buffering
+	large := strings.Repeat("X", 8192) + "LARGE_END"
+	if _, err := ts.Stdin.Write([]byte(large)); err != nil {
+		t.Fatalf("write large payload: %v", err)
+	}
+
+	readUntil(t, ts.Stdout, "LARGE_END", 5*time.Second)
+}
+
+func TestCreateInteractiveSession_MultipleSessions(t *testing.T) {
+	// Verify that multiple independent sessions can be created on one SSH client
+	client := newTestClient(t)
+
+	ts1, err := CreateInteractiveSession(client, "/bin/bash")
+	if err != nil {
+		t.Fatalf("CreateInteractiveSession(1) error: %v", err)
+	}
+	defer ts1.Close()
+
+	ts2, err := CreateInteractiveSession(client, "/bin/bash")
+	if err != nil {
+		t.Fatalf("CreateInteractiveSession(2) error: %v", err)
+	}
+	defer ts2.Close()
+
+	// Both sessions should get PTY:true
+	readUntil(t, ts1.Stdout, "PTY:true", 2*time.Second)
+	readUntil(t, ts2.Stdout, "PTY:true", 2*time.Second)
+
+	// Send different data to each and verify they're independent
+	ts1.Stdin.Write([]byte("session1"))
+	ts2.Stdin.Write([]byte("session2"))
+
+	out1 := readUntil(t, ts1.Stdout, "echo:session1", 2*time.Second)
+	out2 := readUntil(t, ts2.Stdout, "echo:session2", 2*time.Second)
+
+	if strings.Contains(out1, "session2") {
+		t.Error("session1 received session2 data")
+	}
+	if strings.Contains(out2, "session1") {
+		t.Error("session2 received session1 data")
+	}
+}

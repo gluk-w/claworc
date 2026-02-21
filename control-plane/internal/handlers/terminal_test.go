@@ -499,3 +499,264 @@ func readUntilWS(t *testing.T, conn *websocket.Conn, ctx context.Context, target
 		}
 	}
 }
+
+func TestTerminalWSProxy_ANSIEscapeCodesPreserved(t *testing.T) {
+	proxyServer := setupTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.CloseNow()
+
+	readUntilWS(t, conn, ctx, "PTY:true", 3*time.Second)
+
+	// Send ANSI color codes and escape sequences as binary data
+	ansiInput := "\x1b[31mRedText\x1b[0m"
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte(ansiInput)); err != nil {
+		t.Fatalf("write ANSI input: %v", err)
+	}
+
+	// The echo server returns "echo:" + input, so ANSI codes must be intact
+	output := readUntilWS(t, conn, ctx, "echo:\x1b[31mRedText\x1b[0m", 3*time.Second)
+
+	// Verify the escape bytes survived the WebSocket round-trip
+	if !strings.Contains(output, "\x1b[31m") {
+		t.Error("ANSI color start sequence was corrupted")
+	}
+	if !strings.Contains(output, "\x1b[0m") {
+		t.Error("ANSI reset sequence was corrupted")
+	}
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestTerminalWSProxy_SpecialKeys(t *testing.T) {
+	proxyServer := setupTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.CloseNow()
+
+	readUntilWS(t, conn, ctx, "PTY:true", 3*time.Second)
+
+	// Test Ctrl+C (ETX byte 0x03)
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte{0x03}); err != nil {
+		t.Fatalf("write Ctrl+C: %v", err)
+	}
+	readUntilWS(t, conn, ctx, "echo:\x03", 3*time.Second)
+
+	// Test arrow keys (ESC [ A/B/C/D)
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte("\x1b[A")); err != nil {
+		t.Fatalf("write ArrowUp: %v", err)
+	}
+	readUntilWS(t, conn, ctx, "echo:\x1b[A", 3*time.Second)
+
+	// Test Tab (0x09)
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte{0x09}); err != nil {
+		t.Fatalf("write Tab: %v", err)
+	}
+	readUntilWS(t, conn, ctx, "echo:\x09", 3*time.Second)
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestTerminalWSProxy_RapidInput(t *testing.T) {
+	proxyServer := setupTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.CloseNow()
+	conn.SetReadLimit(1024 * 1024)
+
+	readUntilWS(t, conn, ctx, "PTY:true", 3*time.Second)
+
+	// Send 50 rapid messages without waiting for responses
+	const messageCount = 50
+	for i := 0; i < messageCount; i++ {
+		msg := fmt.Sprintf("r%d_", i)
+		if err := conn.Write(ctx, websocket.MessageBinary, []byte(msg)); err != nil {
+			t.Fatalf("write rapid message %d: %v", i, err)
+		}
+	}
+
+	// Send a unique end marker to verify all prior data was relayed
+	marker := "RAPID_DONE"
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte(marker)); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	// Look for the marker without "echo:" prefix since rapid writes coalesce
+	readUntilWS(t, conn, ctx, marker, 5*time.Second)
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestTerminalWSProxy_LongRunningStreaming(t *testing.T) {
+	proxyServer := setupTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.CloseNow()
+	conn.SetReadLimit(1024 * 1024)
+
+	readUntilWS(t, conn, ctx, "PTY:true", 3*time.Second)
+
+	// Simulate a long-running command by sending large data and verifying streaming
+	largePayload := strings.Repeat("A", 4096) + "STREAM_END"
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte(largePayload)); err != nil {
+		t.Fatalf("write large payload: %v", err)
+	}
+
+	// Verify the end marker arrives (all data was streamed through)
+	readUntilWS(t, conn, ctx, "STREAM_END", 5*time.Second)
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestTerminalWSProxy_DisconnectAndReconnect(t *testing.T) {
+	proxyServer := setupTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+
+	// First connection
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel1()
+
+	conn1, _, err := websocket.Dial(ctx1, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy (1st): %v", err)
+	}
+
+	readUntilWS(t, conn1, ctx1, "PTY:true", 3*time.Second)
+
+	// Send data to verify this session works
+	if err := conn1.Write(ctx1, websocket.MessageBinary, []byte("session1")); err != nil {
+		t.Fatalf("write session1: %v", err)
+	}
+	readUntilWS(t, conn1, ctx1, "echo:session1", 3*time.Second)
+
+	// Disconnect
+	conn1.Close(websocket.StatusNormalClosure, "")
+
+	// Small delay to ensure server cleans up
+	time.Sleep(100 * time.Millisecond)
+
+	// Second connection — should get a new session
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+
+	conn2, _, err := websocket.Dial(ctx2, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy (2nd): %v", err)
+	}
+	defer conn2.CloseNow()
+
+	// New session should send fresh PTY:true (proving it's a new session)
+	readUntilWS(t, conn2, ctx2, "PTY:true", 3*time.Second)
+
+	// Verify the new session is functional
+	if err := conn2.Write(ctx2, websocket.MessageBinary, []byte("session2")); err != nil {
+		t.Fatalf("write session2: %v", err)
+	}
+	readUntilWS(t, conn2, ctx2, "echo:session2", 3*time.Second)
+
+	conn2.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestTerminalWSProxy_InteractiveREPL(t *testing.T) {
+	proxyServer := setupTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.CloseNow()
+
+	readUntilWS(t, conn, ctx, "PTY:true", 3*time.Second)
+
+	// Simulate interactive REPL-style input/output (command, response, command, response)
+	exchanges := []string{
+		"print('hello')\n",
+		"x = 42\n",
+		"print(x)\n",
+		"exit()\n",
+	}
+
+	for _, cmd := range exchanges {
+		if err := conn.Write(ctx, websocket.MessageBinary, []byte(cmd)); err != nil {
+			t.Fatalf("write REPL command %q: %v", cmd, err)
+		}
+		// Verify the command is echoed back (proving it passed through the terminal)
+		readUntilWS(t, conn, ctx, "echo:"+cmd, 3*time.Second)
+	}
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestTerminalWSProxy_InvalidResizeIgnored(t *testing.T) {
+	proxyServer := setupTerminalTest(t)
+
+	wsURL := strings.Replace(proxyServer.URL, "http://", "ws://", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.CloseNow()
+
+	readUntilWS(t, conn, ctx, "PTY:true", 3*time.Second)
+
+	// Send resize with zero dimensions (should be ignored per handler code)
+	zeroResize, _ := json.Marshal(termResizeMsg{Type: "resize", Cols: 0, Rows: 0})
+	if err := conn.Write(ctx, websocket.MessageText, zeroResize); err != nil {
+		t.Fatalf("write zero resize: %v", err)
+	}
+
+	// Send invalid JSON text message (should be silently ignored)
+	if err := conn.Write(ctx, websocket.MessageText, []byte("not json")); err != nil {
+		t.Fatalf("write invalid json: %v", err)
+	}
+
+	// Send unknown message type (should be ignored)
+	unknownMsg, _ := json.Marshal(map[string]interface{}{"type": "unknown"})
+	if err := conn.Write(ctx, websocket.MessageText, unknownMsg); err != nil {
+		t.Fatalf("write unknown type: %v", err)
+	}
+
+	// Verify session is still functional after invalid messages
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte("still_alive")); err != nil {
+		t.Fatalf("write after invalid: %v", err)
+	}
+	readUntilWS(t, conn, ctx, "echo:still_alive", 3*time.Second)
+
+	conn.Close(websocket.StatusNormalClosure, "")
+}
