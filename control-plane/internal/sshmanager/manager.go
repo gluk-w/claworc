@@ -2,6 +2,7 @@ package sshmanager
 
 import (
 	"fmt"
+	"log"
 	"sync"
 
 	"golang.org/x/crypto/ssh"
@@ -54,4 +55,23 @@ func (m *SSHManager) HasClient(instanceName string) bool {
 	defer m.mu.RUnlock()
 	_, ok := m.clients[instanceName]
 	return ok
+}
+
+// CloseAll closes all SSH connections and clears the client pool.
+func (m *SSHManager) CloseAll() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	count := 0
+	for name, client := range m.clients {
+		if client != nil {
+			if err := client.Close(); err != nil {
+				log.Printf("[ssh] error closing connection for %s: %v", name, err)
+			}
+		}
+		count++
+	}
+	m.clients = make(map[string]*ssh.Client)
+	if count > 0 {
+		log.Printf("[ssh] closed all %d connection(s)", count)
+	}
 }

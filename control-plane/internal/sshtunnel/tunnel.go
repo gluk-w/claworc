@@ -350,6 +350,22 @@ func (tm *TunnelManager) StopTunnelsForInstance(instanceName string) error {
 	return nil
 }
 
+// Shutdown stops all health monitors and closes all tunnels. Use this during
+// application shutdown to ensure clean cleanup.
+func (tm *TunnelManager) Shutdown() {
+	// Stop all monitors first
+	tm.monMu.Lock()
+	for name, cancel := range tm.monitors {
+		cancel()
+		delete(tm.monitors, name)
+	}
+	tm.monMu.Unlock()
+
+	// Close all tunnels
+	tm.CloseAll()
+	log.Printf("[tunnel] shutdown complete")
+}
+
 // monitorInstance periodically checks tunnel health and attempts reconnection.
 func (tm *TunnelManager) monitorInstance(ctx context.Context, instanceName string) {
 	ticker := time.NewTicker(defaultHealthCheckInterval)

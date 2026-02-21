@@ -55,3 +55,46 @@ func TestRemoveClient(t *testing.T) {
 		t.Error("HasClient should return false after RemoveClient")
 	}
 }
+
+func TestCloseAllEmpty(t *testing.T) {
+	m := NewSSHManager()
+	// Should not panic on empty manager
+	m.CloseAll()
+	if len(m.clients) != 0 {
+		t.Errorf("expected 0 clients after CloseAll, got %d", len(m.clients))
+	}
+}
+
+func TestCloseAllClearsClients(t *testing.T) {
+	m := NewSSHManager()
+	// Store nil clients (we can't create real SSH clients without a server)
+	m.SetClient("instance-a", nil)
+	m.SetClient("instance-b", nil)
+
+	if len(m.clients) != 2 {
+		t.Fatalf("expected 2 clients before CloseAll, got %d", len(m.clients))
+	}
+
+	m.CloseAll()
+
+	if len(m.clients) != 0 {
+		t.Errorf("expected 0 clients after CloseAll, got %d", len(m.clients))
+	}
+	if m.HasClient("instance-a") {
+		t.Error("HasClient should return false for instance-a after CloseAll")
+	}
+	if m.HasClient("instance-b") {
+		t.Error("HasClient should return false for instance-b after CloseAll")
+	}
+}
+
+func TestCloseAllIdempotent(t *testing.T) {
+	m := NewSSHManager()
+	m.SetClient("test", nil)
+	m.CloseAll()
+	// Calling again should not panic
+	m.CloseAll()
+	if len(m.clients) != 0 {
+		t.Errorf("expected 0 clients after double CloseAll, got %d", len(m.clients))
+	}
+}

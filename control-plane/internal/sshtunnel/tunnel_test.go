@@ -724,6 +724,103 @@ func TestStartTunnelsForInstanceReplacesExistingMonitor(t *testing.T) {
 	}
 }
 
+func TestShutdownEmpty(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+	// Should not panic on empty state
+	tm.Shutdown()
+}
+
+func TestShutdownClosesAllTunnelsAndMonitors(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	// Add tunnels for two instances
+	t1 := &ActiveTunnel{
+		Config:    TunnelConfig{RemotePort: DefaultVNCPort, Type: TunnelReverse, Protocol: ProtocolTCP, Service: ServiceVNC},
+		LocalPort: 12345,
+		StartedAt: time.Now(),
+	}
+	t2 := &ActiveTunnel{
+		Config:    TunnelConfig{RemotePort: DefaultGatewayPort, Type: TunnelReverse, Protocol: ProtocolTCP, Service: ServiceGateway},
+		LocalPort: 12346,
+		StartedAt: time.Now(),
+	}
+	t3 := &ActiveTunnel{
+		Config:    TunnelConfig{RemotePort: DefaultVNCPort, Type: TunnelReverse, Protocol: ProtocolTCP, Service: ServiceVNC},
+		LocalPort: 12347,
+		StartedAt: time.Now(),
+	}
+	tm.addTunnel("instance-a", t1)
+	tm.addTunnel("instance-a", t2)
+	tm.addTunnel("instance-b", t3)
+
+	// Add mock monitors
+	monCtxA, monCancelA := context.WithCancel(t.Context())
+	monCtxB, monCancelB := context.WithCancel(t.Context())
+	tm.monMu.Lock()
+	tm.monitors["instance-a"] = monCancelA
+	tm.monitors["instance-b"] = monCancelB
+	tm.monMu.Unlock()
+
+	tm.Shutdown()
+
+	// All tunnels should be closed
+	if !t1.IsClosed() {
+		t.Error("t1 should be closed")
+	}
+	if !t2.IsClosed() {
+		t.Error("t2 should be closed")
+	}
+	if !t3.IsClosed() {
+		t.Error("t3 should be closed")
+	}
+
+	// All tunnels should be removed
+	all := tm.GetAllTunnels()
+	if len(all) != 0 {
+		t.Errorf("expected empty map after Shutdown, got %d entries", len(all))
+	}
+
+	// Monitor contexts should be cancelled
+	select {
+	case <-monCtxA.Done():
+		// expected
+	default:
+		t.Error("monitor context A should be cancelled")
+	}
+	select {
+	case <-monCtxB.Done():
+		// expected
+	default:
+		t.Error("monitor context B should be cancelled")
+	}
+
+	// Monitors map should be empty
+	tm.monMu.Lock()
+	monLen := len(tm.monitors)
+	tm.monMu.Unlock()
+	if monLen != 0 {
+		t.Errorf("expected 0 monitors after Shutdown, got %d", monLen)
+	}
+}
+
+func TestShutdownIdempotent(t *testing.T) {
+	sm := sshmanager.NewSSHManager()
+	tm := NewTunnelManager(sm)
+
+	tunnel := &ActiveTunnel{
+		Config:    TunnelConfig{RemotePort: 3000, Type: TunnelReverse, Protocol: ProtocolTCP},
+		LocalPort: 8080,
+		StartedAt: time.Now(),
+	}
+	tm.addTunnel("test", tunnel)
+
+	tm.Shutdown()
+	// Second call should not panic
+	tm.Shutdown()
+}
+
 func TestLifecycleConstants(t *testing.T) {
 	if defaultHealthCheckInterval <= 0 {
 		t.Error("defaultHealthCheckInterval should be positive")

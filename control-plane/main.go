@@ -19,6 +19,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshtunnel"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
@@ -70,6 +71,10 @@ func main() {
 	if err := orchestrator.InitOrchestrator(ctx); err != nil {
 		log.Printf("WARNING: %v", err)
 	}
+
+	// Initialize SSH tunnel subsystem
+	sshtunnel.InitGlobal()
+	log.Println("SSH tunnel manager initialized")
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
@@ -174,6 +179,9 @@ func main() {
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Start background tunnel maintenance goroutine
+	go tunnelMaintenanceLoop(sigCtx)
+
 	go func() {
 		log.Printf("Server starting on :8000")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -184,6 +192,14 @@ func main() {
 	<-sigCtx.Done()
 	log.Println("Shutting down...")
 
+	// Shut down SSH tunnels and connections
+	if tm := sshtunnel.GetTunnelManager(); tm != nil {
+		tm.Shutdown()
+	}
+	if sm := sshtunnel.GetSSHManager(); sm != nil {
+		sm.CloseAll()
+	}
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -191,6 +207,80 @@ func main() {
 		log.Fatalf("Shutdown error: %v", err)
 	}
 	log.Println("Server stopped")
+}
+
+// tunnelMaintenanceLoop periodically checks running instances and ensures
+// tunnels are established for those with SSH connections, and cleans up
+// tunnels for stopped or deleted instances.
+func tunnelMaintenanceLoop(ctx context.Context) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			maintainTunnels(ctx)
+		}
+	}
+}
+
+func maintainTunnels(ctx context.Context) {
+	orch := orchestrator.Get()
+	tm := sshtunnel.GetTunnelManager()
+	sm := sshtunnel.GetSSHManager()
+	if orch == nil || tm == nil || sm == nil {
+		return
+	}
+
+	// List all instances from the database
+	var instances []database.Instance
+	if err := database.DB.Find(&instances).Error; err != nil {
+		log.Printf("[tunnel-maint] failed to list instances: %v", err)
+		return
+	}
+
+	// Build a set of running instance names
+	runningInstances := make(map[string]bool)
+	for _, inst := range instances {
+		status, _ := orch.GetInstanceStatus(ctx, inst.Name)
+		if status == "running" {
+			runningInstances[inst.Name] = true
+		}
+	}
+
+	// Ensure tunnels exist for running instances that have SSH connections
+	for name := range runningInstances {
+		if sm.HasClient(name) {
+			tunnels := tm.GetTunnels(name)
+			if len(tunnels) == 0 {
+				log.Printf("[tunnel-maint] creating tunnels for running instance %s", name)
+				if err := tm.StartTunnelsForInstance(ctx, name); err != nil {
+					log.Printf("[tunnel-maint] failed to start tunnels for %s: %v", name, err)
+				}
+			}
+		}
+	}
+
+	// Remove tunnels for stopped/deleted instances
+	allTunnels := tm.GetAllTunnels()
+	for name := range allTunnels {
+		if !runningInstances[name] {
+			log.Printf("[tunnel-maint] removing tunnels for non-running instance %s", name)
+			tm.StopTunnelsForInstance(name)
+		}
+	}
+
+	// Log tunnel status for observability
+	allTunnels = tm.GetAllTunnels()
+	totalTunnels := 0
+	for _, tunnels := range allTunnels {
+		totalTunnels += len(tunnels)
+	}
+	if totalTunnels > 0 {
+		log.Printf("[tunnel-maint] active: %d tunnel(s) across %d instance(s)", totalTunnels, len(allTunnels))
+	}
 }
 
 func runCLICommand(command string) {
