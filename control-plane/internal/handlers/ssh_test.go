@@ -13,8 +13,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
-	"github.com/gluk-w/claworc/control-plane/internal/sshkeys"
-	"github.com/gluk-w/claworc/control-plane/internal/sshmanager"
+	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/crypto/ssh"
 	"gorm.io/driver/sqlite"
@@ -27,7 +26,7 @@ import (
 func testSSHServer(t *testing.T, authorizedKey ssh.PublicKey) (string, func()) {
 	t.Helper()
 
-	_, hostKeyPEM, err := sshkeys.GenerateKeyPair()
+	_, hostKeyPEM, err := sshproxy.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate host key: %v", err)
 	}
@@ -256,11 +255,11 @@ func parseResponse(t *testing.T, w *httptest.ResponseRecorder) map[string]interf
 func TestSSHConnectionTest_Success(t *testing.T) {
 	setupTestDB(t)
 
-	pubKeyBytes, privKeyPEM, err := sshkeys.GenerateKeyPair()
+	pubKeyBytes, privKeyPEM, err := sshproxy.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate key pair: %v", err)
 	}
-	signer, err := sshkeys.ParsePrivateKey(privKeyPEM)
+	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
 	if err != nil {
 		t.Fatalf("parse private key: %v", err)
 	}
@@ -272,7 +271,7 @@ func TestSSHConnectionTest_Success(t *testing.T) {
 	var port int
 	fmt.Sscanf(portStr, "%d", &port)
 
-	mgr := sshmanager.NewSSHManager(signer, string(pubKeyBytes))
+	mgr := sshproxy.NewSSHManager(signer, string(pubKeyBytes))
 	SSHMgr = mgr
 	defer mgr.CloseAll()
 
@@ -355,7 +354,7 @@ func TestSSHConnectionTest_NoOrchestrator(t *testing.T) {
 	inst := createTestInstance(t, "bot-test", "Test")
 	user := createTestUser(t, "admin")
 
-	SSHMgr = sshmanager.NewSSHManager(nil, "")
+	SSHMgr = sshproxy.NewSSHManager(nil, "")
 
 	req := buildRequest(t, "GET", "/api/v1/instances/1/ssh-test", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
 	w := httptest.NewRecorder()
@@ -375,16 +374,16 @@ func TestSSHConnectionTest_NoOrchestrator(t *testing.T) {
 func TestSSHConnectionTest_ConnectionFailure(t *testing.T) {
 	setupTestDB(t)
 
-	pubKeyBytes, privKeyPEM, err := sshkeys.GenerateKeyPair()
+	pubKeyBytes, privKeyPEM, err := sshproxy.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate key pair: %v", err)
 	}
-	signer, err := sshkeys.ParsePrivateKey(privKeyPEM)
+	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
 	if err != nil {
 		t.Fatalf("parse private key: %v", err)
 	}
 
-	mgr := sshmanager.NewSSHManager(signer, string(pubKeyBytes))
+	mgr := sshproxy.NewSSHManager(signer, string(pubKeyBytes))
 	SSHMgr = mgr
 	defer mgr.CloseAll()
 
@@ -419,11 +418,11 @@ func TestSSHConnectionTest_ConnectionFailure(t *testing.T) {
 func TestSSHConnectionTest_ResponseFormat(t *testing.T) {
 	setupTestDB(t)
 
-	pubKeyBytes, privKeyPEM, err := sshkeys.GenerateKeyPair()
+	pubKeyBytes, privKeyPEM, err := sshproxy.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate key pair: %v", err)
 	}
-	signer, err := sshkeys.ParsePrivateKey(privKeyPEM)
+	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
 	if err != nil {
 		t.Fatalf("parse private key: %v", err)
 	}
@@ -435,7 +434,7 @@ func TestSSHConnectionTest_ResponseFormat(t *testing.T) {
 	var port int
 	fmt.Sscanf(portStr, "%d", &port)
 
-	mgr := sshmanager.NewSSHManager(signer, string(pubKeyBytes))
+	mgr := sshproxy.NewSSHManager(signer, string(pubKeyBytes))
 	SSHMgr = mgr
 	defer mgr.CloseAll()
 
