@@ -27,4 +27,5 @@ chown -R abc:abc /config/.openclaw
 
 echo "Starting OpenClaw Gateway (foreground) as abc..."
 # OpenClaw requires an open stdin stream or it exits.
-exec bash -c "tail -f /dev/null | s6-setuidgid abc /usr/bin/openclaw gateway run"
+# Redirect stdout/stderr to log file for SSH-based log streaming.
+exec bash -c "tail -f /dev/null | s6-setuidgid abc /usr/bin/openclaw gateway run" >> /var/log/openclaw.log 2>&1

@@ -524,6 +524,93 @@ func TestBuildTailCommandWithSpecialPath(t *testing.T) {
 	}
 }
 
+// --- LogType and path resolution tests ---
+
+func TestAllLogTypes(t *testing.T) {
+	types := AllLogTypes()
+	if len(types) != 3 {
+		t.Fatalf("expected 3 log types, got %d", len(types))
+	}
+	expected := map[LogType]bool{LogTypeOpenClaw: true, LogTypeBrowser: true, LogTypeSystem: true}
+	for _, lt := range types {
+		if !expected[lt] {
+			t.Errorf("unexpected log type %q", lt)
+		}
+	}
+}
+
+func TestDefaultPathForType(t *testing.T) {
+	tests := []struct {
+		logType  LogType
+		wantPath string
+		wantOK   bool
+	}{
+		{LogTypeOpenClaw, "/var/log/openclaw.log", true},
+		{LogTypeBrowser, "/tmp/browser.log", true},
+		{LogTypeSystem, "/var/log/sshd.log", true},
+		{LogType("nonexistent"), "", false},
+	}
+
+	for _, tt := range tests {
+		path, ok := DefaultPathForType(tt.logType)
+		if ok != tt.wantOK {
+			t.Errorf("DefaultPathForType(%q): ok = %v, want %v", tt.logType, ok, tt.wantOK)
+		}
+		if path != tt.wantPath {
+			t.Errorf("DefaultPathForType(%q) = %q, want %q", tt.logType, path, tt.wantPath)
+		}
+	}
+}
+
+func TestResolveLogPathDefaults(t *testing.T) {
+	// With nil custom paths, should return defaults
+	path, ok := ResolveLogPath(LogTypeOpenClaw, nil)
+	if !ok || path != "/var/log/openclaw.log" {
+		t.Errorf("expected default openclaw path, got %q (ok=%v)", path, ok)
+	}
+
+	path, ok = ResolveLogPath(LogTypeBrowser, nil)
+	if !ok || path != "/tmp/browser.log" {
+		t.Errorf("expected default browser path, got %q (ok=%v)", path, ok)
+	}
+}
+
+func TestResolveLogPathCustomOverride(t *testing.T) {
+	custom := map[string]string{
+		"openclaw": "/custom/openclaw.log",
+	}
+
+	// Custom path should override default
+	path, ok := ResolveLogPath(LogTypeOpenClaw, custom)
+	if !ok || path != "/custom/openclaw.log" {
+		t.Errorf("expected custom openclaw path, got %q (ok=%v)", path, ok)
+	}
+
+	// Non-overridden type should fall back to default
+	path, ok = ResolveLogPath(LogTypeBrowser, custom)
+	if !ok || path != "/tmp/browser.log" {
+		t.Errorf("expected default browser path, got %q (ok=%v)", path, ok)
+	}
+}
+
+func TestResolveLogPathEmptyCustomValue(t *testing.T) {
+	custom := map[string]string{
+		"openclaw": "", // empty should fall back to default
+	}
+
+	path, ok := ResolveLogPath(LogTypeOpenClaw, custom)
+	if !ok || path != "/var/log/openclaw.log" {
+		t.Errorf("expected default path for empty custom, got %q (ok=%v)", path, ok)
+	}
+}
+
+func TestResolveLogPathUnknownType(t *testing.T) {
+	_, ok := ResolveLogPath(LogType("unknown"), nil)
+	if ok {
+		t.Error("expected ok=false for unknown log type")
+	}
+}
+
 // --- shellQuote tests ---
 
 func TestShellQuote(t *testing.T) {

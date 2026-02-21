@@ -21,11 +21,58 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// LogType identifies a category of logs on the agent.
+type LogType string
+
+const (
+	LogTypeOpenClaw LogType = "openclaw"
+	LogTypeBrowser  LogType = "browser"
+	LogTypeSystem   LogType = "system"
+)
+
+// defaultLogPathMap maps each log type to its default file path on the agent.
+//
+// Agent log locations (s6-overlay services):
+//   - openclaw: OpenClaw gateway stdout/stderr → /var/log/openclaw.log
+//   - browser:  Chromium stdout/stderr         → /tmp/browser.log
+//   - system:   SSH daemon stderr              → /var/log/sshd.log
+//
+// The agent uses s6-overlay (not systemd), so journalctl is not available.
+// Logs are written via shell redirection in each service's run script.
+var defaultLogPathMap = map[LogType]string{
+	LogTypeOpenClaw: "/var/log/openclaw.log",
+	LogTypeBrowser:  "/tmp/browser.log",
+	LogTypeSystem:   "/var/log/sshd.log",
+}
+
 // DefaultLogPaths is the set of standard log file paths checked on the agent.
 var DefaultLogPaths = []string{
 	"/var/log/openclaw.log",
-	"/var/log/clawd.log",
 	"/tmp/browser.log",
+	"/var/log/sshd.log",
+}
+
+// AllLogTypes returns the list of supported log types.
+func AllLogTypes() []LogType {
+	return []LogType{LogTypeOpenClaw, LogTypeBrowser, LogTypeSystem}
+}
+
+// DefaultPathForType returns the default log file path for a given log type.
+func DefaultPathForType(lt LogType) (string, bool) {
+	p, ok := defaultLogPathMap[lt]
+	return p, ok
+}
+
+// ResolveLogPath returns the log file path for a log type, using custom paths
+// from the instance configuration if available, otherwise falling back to the
+// default path. The customPaths map is keyed by LogType string values.
+func ResolveLogPath(lt LogType, customPaths map[string]string) (string, bool) {
+	if customPaths != nil {
+		if p, ok := customPaths[string(lt)]; ok && p != "" {
+			return p, true
+		}
+	}
+	return DefaultPathForType(lt)
 }
 
 // StreamLogs streams log lines from a remote file via SSH. It executes a tail

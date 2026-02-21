@@ -19,5 +19,6 @@ if [ -f /root/.ssh/authorized_keys ]; then
 fi
 
 echo "Starting SSH daemon..."
-# Run sshd in foreground mode (-D) so s6 can supervise it
-exec /usr/sbin/sshd -D -e
+# Run sshd in foreground mode (-D) so s6 can supervise it.
+# Redirect stderr to log file for SSH-based log streaming (-e sends logs to stderr).
+exec /usr/sbin/sshd -D -e 2>> /var/log/sshd.log

@@ -18,6 +18,7 @@ COPY rootfs/ /
 
 RUN chmod +x /etc/s6-overlay/s6-rc.d/svc-openclaw/run \
     && chmod +x /etc/s6-overlay/s6-rc.d/svc-sshd/run \
-    && chmod +x /custom-cont-init.d/50-force-autostart
+    && chmod +x /custom-cont-init.d/50-force-autostart \
+    && chmod +x /custom-cont-init.d/60-setup-logs
 
 ENV START_DOCKER=false

@@ -1,0 +1,15 @@
+#!/bin/bash
+# Create log files with correct permissions so services can write to them.
+# This runs as root before any s6 services start.
+
+# Standard log locations for SSH-based log streaming
+touch /var/log/openclaw.log /var/log/sshd.log /tmp/browser.log
+
+# openclaw runs as abc; browser (chromium) also runs as abc via openbox
+chown abc:abc /var/log/openclaw.log /tmp/browser.log
+
+# sshd runs as root
+chown root:root /var/log/sshd.log
+
+# Ensure readable by the SSH log streaming user (root)
+chmod 644 /var/log/openclaw.log /var/log/sshd.log /tmp/browser.log

@@ -23,6 +23,7 @@ type Instance struct {
 	SSHPublicKey     string `gorm:"type:text" json:"-"`
 	SSHPrivateKeyPath string `gorm:"type:text" json:"-"`
 	SSHPort          int    `gorm:"default:22" json:"ssh_port"`
+	LogPaths         string `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"openclaw":"/custom/path.log",...}
 	SortOrder       int       `gorm:"not null;default:0" json:"sort_order"`
 	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt       time.Time `gorm:"autoUpdateTime" json:"updated_at"`
