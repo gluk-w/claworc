@@ -19,6 +19,28 @@
 //
 // The agent does NOT use systemd (it uses s6-overlay), so journalctl is not
 // available. All logs must be read as files via tail over SSH.
+//
+// # Log Rotation Handling
+//
+// When streaming in follow mode, log rotation must be handled gracefully. The
+// agent may use logrotate (or similar) to rotate log files, which typically:
+//
+//  1. Renames the current file (e.g. syslog → syslog.1)
+//  2. Creates a new empty file at the original path
+//  3. Optionally compresses the rotated file
+//
+// By default, StreamLogs uses tail -F (--follow=name --retry), which detects
+// rotation and reopens the file by name. This ensures continuous streaming
+// even when the underlying file is replaced. When tail detects rotation it
+// emits a diagnostic line to stderr (not forwarded to the SSE stream):
+//
+//	tail: '/var/log/syslog' has been replaced; following new file
+//
+// If FollowName is set to false in StreamOptions, tail -f is used instead,
+// which follows the file descriptor. In that mode, tail continues reading
+// the old (renamed) file after rotation and will NOT pick up the new file.
+// This is only useful for files that are never rotated or when you
+// intentionally want to read the pre-rotation content to completion.
 package sshlogs
 
 import (
@@ -62,6 +84,46 @@ func AllLogTypes() []LogType {
 	return []LogType{LogTypeOpenClaw, LogTypeSystem, LogTypeAuth, LogTypeSSHD}
 }
 
+// StreamOptions configures how log streaming behaves.
+type StreamOptions struct {
+	// Tail is the number of lines to read from the end of the file before
+	// streaming new content. Defaults to 100 if zero.
+	Tail int
+
+	// Follow keeps the stream open after reaching EOF, sending new lines as
+	// they are appended to the file. When false, the stream ends at EOF.
+	Follow bool
+
+	// FollowName controls whether tail follows the file by name (tail -F) or
+	// by file descriptor (tail -f). Following by name handles log rotation
+	// gracefully: when the file is renamed and a new file is created at the
+	// same path, tail detects this and switches to the new file.
+	//
+	// Defaults to true. Set to false only if you want to continue reading
+	// a rotated (renamed) file rather than the newly created replacement.
+	FollowName *bool
+}
+
+// DefaultStreamOptions returns StreamOptions with sensible defaults:
+// 100-line tail, follow enabled, follow-by-name enabled.
+func DefaultStreamOptions() StreamOptions {
+	followName := true
+	return StreamOptions{
+		Tail:       100,
+		Follow:     true,
+		FollowName: &followName,
+	}
+}
+
+// followByName returns whether the stream should follow by file name.
+// Defaults to true if FollowName is nil.
+func (o StreamOptions) followByName() bool {
+	if o.FollowName == nil {
+		return true
+	}
+	return *o.FollowName
+}
+
 // ResolveLogPath returns the file path for a log type. If customPaths contains
 // an override for the type it is used; otherwise the default path is returned.
 // Returns empty string if the type is unknown and not in customPaths.
@@ -76,16 +138,22 @@ func ResolveLogPath(logType LogType, customPaths map[LogType]string) string {
 
 // StreamLogs streams log output from a remote file via SSH using tail.
 //
-// It opens a persistent SSH session, runs `tail -n {tail} [-F] {logPath}`,
+// It opens a persistent SSH session, runs `tail -n {tail} [-F|-f] {logPath}`,
 // and sends each line to the returned channel. The channel is closed when the
 // context is cancelled, the SSH session ends, or the stream reaches EOF (non-follow mode).
 //
-// When follow is true, tail -F is used instead of tail -f so that log rotation
-// is handled gracefully (tail follows by name, reconnecting to the new file).
+// Log rotation behavior is controlled by StreamOptions.FollowName (default true):
+//
+//   - FollowName=true  → tail -F (follow by name + retry). Handles log rotation
+//     by detecting when the file is replaced and reopening it. This is the
+//     recommended mode for long-lived streams on files managed by logrotate.
+//   - FollowName=false → tail -f (follow by descriptor). Continues reading the
+//     original file descriptor after rotation. Use this only when you want to
+//     read the old file to completion.
 //
 // The caller must cancel the context to stop streaming; this closes the SSH
 // session and drains the goroutine.
-func StreamLogs(ctx context.Context, client *ssh.Client, logPath string, tail int, follow bool) (<-chan string, error) {
+func StreamLogs(ctx context.Context, client *ssh.Client, logPath string, opts StreamOptions) (<-chan string, error) {
 	session, err := client.NewSession()
 	if err != nil {
 		return nil, fmt.Errorf("open ssh session: %w", err)
@@ -97,10 +165,21 @@ func StreamLogs(ctx context.Context, client *ssh.Client, logPath string, tail in
 		return nil, fmt.Errorf("create stdout pipe: %w", err)
 	}
 
-	// Build tail command
+	tail := opts.Tail
+	if tail <= 0 {
+		tail = 100
+	}
+
+	// Build tail command. The flag choice determines log rotation behavior:
+	//   -F (--follow=name --retry): reopens the file by name after rotation
+	//   -f (--follow=descriptor):   keeps reading the old file descriptor
 	cmd := fmt.Sprintf("tail -n %d", tail)
-	if follow {
-		cmd += " -F" // -F follows by name (handles log rotation)
+	if opts.Follow {
+		if opts.followByName() {
+			cmd += " -F" // follow by name — handles log rotation
+		} else {
+			cmd += " -f" // follow by descriptor — ignores rotation
+		}
 	}
 	cmd += " " + shellQuote(logPath)
 

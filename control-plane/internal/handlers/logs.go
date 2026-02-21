@@ -81,7 +81,10 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ch, err := sshlogs.StreamLogs(r.Context(), client, logPath, tail, follow)
+	ch, err := sshlogs.StreamLogs(r.Context(), client, logPath, sshlogs.StreamOptions{
+		Tail:   tail,
+		Follow: follow,
+	})
 	if err != nil {
 		log.Printf("Failed to stream logs for instance %d (%s): %v", inst.ID, logPath, err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to stream logs: %v", err))

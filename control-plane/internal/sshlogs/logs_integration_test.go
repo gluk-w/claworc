@@ -164,7 +164,7 @@ func TestExternalIntegration_StreamLogsNonFollow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ch, err := StreamLogs(ctx, client, logPath, 100, false)
+	ch, err := StreamLogs(ctx, client, logPath, StreamOptions{Tail: 100})
 	if err != nil {
 		t.Fatalf("StreamLogs error: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestExternalIntegration_StreamLogsTailParameter(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ch, err := StreamLogs(ctx, client, logPath, 2, false)
+	ch, err := StreamLogs(ctx, client, logPath, StreamOptions{Tail: 2})
 	if err != nil {
 		t.Fatalf("StreamLogs error: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestExternalIntegration_StreamLogsFollowRealTime(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ch, err := StreamLogs(ctx, client, logPath, 100, true)
+	ch, err := StreamLogs(ctx, client, logPath, StreamOptions{Tail: 100, Follow: true})
 	if err != nil {
 		t.Fatalf("StreamLogs error: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestExternalIntegration_StreamLogsClientDisconnect(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	ch, err := StreamLogs(ctx, client, logPath, 100, true)
+	ch, err := StreamLogs(ctx, client, logPath, StreamOptions{Tail: 100, Follow: true})
 	if err != nil {
 		t.Fatalf("StreamLogs error: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestExternalIntegration_StreamLogsMultipleSimultaneous(t *testing.T) {
 		wg.Add(1)
 		go func(p string) {
 			defer wg.Done()
-			ch, err := StreamLogs(ctx, client, p, 100, false)
+			ch, err := StreamLogs(ctx, client, p, StreamOptions{Tail: 100})
 			if err != nil {
 				results <- streamResult{path: p, err: err}
 				return
@@ -405,7 +405,7 @@ func TestExternalIntegration_StreamLogsNonExistentFile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ch, err := StreamLogs(ctx, client, "/nonexistent/path/to/log.file", 10, false)
+	ch, err := StreamLogs(ctx, client, "/nonexistent/path/to/log.file", StreamOptions{Tail: 10})
 	if err != nil {
 		t.Fatalf("StreamLogs error: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestExternalIntegration_StreamLogsMemoryStability(t *testing.T) {
 	iterations := 10
 	for i := 0; i < iterations; i++ {
 		ctx, cancel := context.WithCancel(context.Background())
-		ch, err := StreamLogs(ctx, client, logPath, 1, true)
+		ch, err := StreamLogs(ctx, client, logPath, StreamOptions{Tail: 1, Follow: true})
 		if err != nil {
 			t.Fatalf("iteration %d: StreamLogs error: %v", i, err)
 		}
@@ -517,7 +517,7 @@ func TestExternalIntegration_StreamLogsFollowWithCancel(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		ctx, cancel := context.WithCancel(context.Background())
-		ch, err := StreamLogs(ctx, client, logPath, 1, true)
+		ch, err := StreamLogs(ctx, client, logPath, StreamOptions{Tail: 1, Follow: true})
 		if err != nil {
 			t.Fatalf("cycle %d: StreamLogs error: %v", i, err)
 		}
@@ -545,4 +545,86 @@ func TestExternalIntegration_StreamLogsFollowWithCancel(t *testing.T) {
 	}
 
 	t.Log("Rapid cancel/restart cycles OK")
+}
+
+// rotateLogFileViaDocker simulates logrotate by renaming the current file
+// and creating a fresh empty file at the original path.
+func rotateLogFileViaDocker(t *testing.T, containerID, path string) {
+	t.Helper()
+	rotateCmd := fmt.Sprintf("mv '%s' '%s.1' && touch '%s'", path, path, path)
+	cmd := exec.Command("docker", "exec", containerID, "sh", "-c", rotateCmd)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("rotate log file %s: %v\n%s", path, err, out)
+	}
+}
+
+// TestExternalIntegration_StreamLogsLogRotation tests that follow-by-name mode
+// (tail -F) continues streaming after log rotation. This simulates what
+// logrotate does: rename the current file and create a fresh one.
+func TestExternalIntegration_StreamLogsLogRotation(t *testing.T) {
+	client, containerID := setupExternalSSH(t)
+
+	logPath := "/tmp/test-stream-rotation.log"
+	content := "pre-rotation-line-1\npre-rotation-line-2\n"
+	writeLogFileViaDocker(t, containerID, logPath, content)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Start streaming with follow-by-name (default, rotation-aware)
+	ch, err := StreamLogs(ctx, client, logPath, StreamOptions{Tail: 100, Follow: true})
+	if err != nil {
+		t.Fatalf("StreamLogs error: %v", err)
+	}
+
+	// Read the initial lines
+	for i := 0; i < 2; i++ {
+		select {
+		case line, ok := <-ch:
+			if !ok {
+				t.Fatal("channel closed before initial lines")
+			}
+			expected := fmt.Sprintf("pre-rotation-line-%d", i+1)
+			if line != expected {
+				t.Errorf("expected %q, got %q", expected, line)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for initial lines")
+		}
+	}
+	t.Log("Initial pre-rotation lines received")
+
+	// Simulate log rotation: rename current file and create fresh one
+	rotateLogFileViaDocker(t, containerID, logPath)
+	t.Log("Log file rotated")
+
+	// Wait for tail -F to detect the rotation. tail -F checks periodically
+	// (typically every ~1s) and prints a diagnostic to stderr when it detects
+	// that the file was replaced.
+	time.Sleep(2 * time.Second)
+
+	// Write new lines to the fresh (post-rotation) file
+	for i := 1; i <= 3; i++ {
+		line := fmt.Sprintf("post-rotation-line-%d", i)
+		appendLogLineViaDocker(t, containerID, logPath, line)
+	}
+
+	// Verify the post-rotation lines appear in the stream
+	for i := 1; i <= 3; i++ {
+		expected := fmt.Sprintf("post-rotation-line-%d", i)
+		select {
+		case line, ok := <-ch:
+			if !ok {
+				t.Fatalf("channel closed before receiving %s", expected)
+			}
+			if line != expected {
+				t.Errorf("expected %q, got %q", expected, line)
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatalf("timed out waiting for %s after rotation", expected)
+		}
+	}
+
+	cancel()
+	t.Log("Log rotation streaming OK — tail -F continued after file replacement")
 }

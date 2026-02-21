@@ -15,19 +15,21 @@ import (
 )
 
 // testLogServer is an in-memory filesystem for the test SSH server that
-// supports both instant commands and streaming tail.
+// supports both instant commands and streaming tail. It also records
+// executed commands for assertion purposes.
 type testLogServer struct {
-	mu    sync.Mutex
-	files map[string]string // path → content
+	mu       sync.Mutex
+	files    map[string]string // path → content
+	commands []string          // recorded commands in execution order
 }
 
 func newTestLogServer() *testLogServer {
 	return &testLogServer{
 		files: map[string]string{
-			"/var/log/syslog":                "line1\nline2\nline3\nline4\nline5\n",
-			"/var/log/auth.log":              "auth-line1\nauth-line2\n",
-			"/var/log/claworc/openclaw.log":  "oc-line1\noc-line2\noc-line3\n",
-			"/var/log/claworc/sshd.log":      "sshd-line1\n",
+			"/var/log/syslog":               "line1\nline2\nline3\nline4\nline5\n",
+			"/var/log/auth.log":             "auth-line1\nauth-line2\n",
+			"/var/log/claworc/openclaw.log": "oc-line1\noc-line2\noc-line3\n",
+			"/var/log/claworc/sshd.log":     "sshd-line1\n",
 		},
 	}
 }
@@ -167,6 +169,7 @@ func handleSession(ch ssh.Channel, requests <-chan *ssh.Request, srv *testLogSer
 		}
 
 		srv.mu.Lock()
+		srv.commands = append(srv.commands, cmd)
 
 		if strings.HasPrefix(cmd, "tail ") {
 			handleTailCmd(ch, cmd, srv)
@@ -192,8 +195,9 @@ func handleSession(ch ssh.Channel, requests <-chan *ssh.Request, srv *testLogSer
 }
 
 func handleTailCmd(ch ssh.Channel, cmd string, srv *testLogServer) {
-	// Parse: tail -n N [-F] '/path'
-	follow := strings.Contains(cmd, " -F ")
+	// Parse: tail -n N [-F|-f] '/path'
+	// -F = follow by name (rotation-aware), -f = follow by descriptor
+	follow := strings.Contains(cmd, " -F ") || strings.Contains(cmd, " -f ")
 
 	// Extract tail count
 	tailN := 100
@@ -282,7 +286,7 @@ func TestStreamLogs_NonFollow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	ch, err := StreamLogs(ctx, client, "/var/log/syslog", 3, false)
+	ch, err := StreamLogs(ctx, client, "/var/log/syslog", StreamOptions{Tail: 3})
 	if err != nil {
 		t.Fatalf("StreamLogs error: %v", err)
 	}
@@ -314,7 +318,7 @@ func TestStreamLogs_NonFollow_AllLines(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	ch, err := StreamLogs(ctx, client, "/var/log/syslog", 100, false)
+	ch, err := StreamLogs(ctx, client, "/var/log/syslog", StreamOptions{Tail: 100})
 	if err != nil {
 		t.Fatalf("StreamLogs error: %v", err)
 	}
@@ -337,7 +341,7 @@ func TestStreamLogs_Follow_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	ch, err := StreamLogs(ctx, client, "/var/log/syslog", 2, true)
+	ch, err := StreamLogs(ctx, client, "/var/log/syslog", StreamOptions{Tail: 2, Follow: true})
 	if err != nil {
 		t.Fatalf("StreamLogs error: %v", err)
 	}
@@ -391,7 +395,7 @@ func TestStreamLogs_NonExistentFile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	ch, err := StreamLogs(ctx, client, "/nonexistent/file.log", 10, false)
+	ch, err := StreamLogs(ctx, client, "/nonexistent/file.log", StreamOptions{Tail: 10})
 	if err != nil {
 		t.Fatalf("StreamLogs error: %v", err)
 	}
@@ -418,7 +422,7 @@ func TestStreamLogs_ClosedClient(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := StreamLogs(ctx, client, "/var/log/syslog", 10, false)
+	_, err := StreamLogs(ctx, client, "/var/log/syslog", StreamOptions{Tail: 10})
 	if err == nil {
 		t.Fatal("expected error with closed client")
 	}
@@ -431,7 +435,7 @@ func TestStreamLogs_GoroutineCleanup(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	ch, err := StreamLogs(ctx, client, "/var/log/syslog", 2, true)
+	ch, err := StreamLogs(ctx, client, "/var/log/syslog", StreamOptions{Tail: 2, Follow: true})
 	if err != nil {
 		t.Fatalf("StreamLogs error: %v", err)
 	}
@@ -473,7 +477,7 @@ func TestStreamLogs_DifferentFiles(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	ch, err := StreamLogs(ctx, client, "/var/log/auth.log", 100, false)
+	ch, err := StreamLogs(ctx, client, "/var/log/auth.log", StreamOptions{Tail: 100})
 	if err != nil {
 		t.Fatalf("StreamLogs error: %v", err)
 	}
@@ -638,7 +642,7 @@ func TestStreamLogs_OpenClawLog(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	ch, err := StreamLogs(ctx, client, LogPathOpenClaw, 100, false)
+	ch, err := StreamLogs(ctx, client, LogPathOpenClaw, StreamOptions{Tail: 100})
 	if err != nil {
 		t.Fatalf("StreamLogs error: %v", err)
 	}
@@ -673,5 +677,186 @@ func TestShellQuote(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("shellQuote(%q) = %q, want %q", tt.input, got, tt.expected)
 		}
+	}
+}
+
+// --- StreamOptions tests ---
+
+func TestDefaultStreamOptions(t *testing.T) {
+	opts := DefaultStreamOptions()
+	if opts.Tail != 100 {
+		t.Errorf("expected Tail=100, got %d", opts.Tail)
+	}
+	if !opts.Follow {
+		t.Error("expected Follow=true")
+	}
+	if opts.FollowName == nil || !*opts.FollowName {
+		t.Error("expected FollowName=true")
+	}
+}
+
+func TestStreamOptions_FollowByName_Default(t *testing.T) {
+	// nil FollowName should default to true (rotation-aware)
+	opts := StreamOptions{Follow: true}
+	if !opts.followByName() {
+		t.Error("expected followByName()=true when FollowName is nil")
+	}
+}
+
+func TestStreamOptions_FollowByName_Explicit(t *testing.T) {
+	followName := true
+	opts := StreamOptions{Follow: true, FollowName: &followName}
+	if !opts.followByName() {
+		t.Error("expected followByName()=true")
+	}
+
+	followName = false
+	opts.FollowName = &followName
+	if opts.followByName() {
+		t.Error("expected followByName()=false")
+	}
+}
+
+// --- Log rotation awareness tests ---
+
+func TestStreamLogs_Follow_UsesDashF_ByDefault(t *testing.T) {
+	srv := newTestLogServer()
+	client, cleanup := startTestSSHServer(t, srv)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ch, err := StreamLogs(ctx, client, "/var/log/syslog", StreamOptions{Tail: 1, Follow: true})
+	if err != nil {
+		t.Fatalf("StreamLogs error: %v", err)
+	}
+
+	// Read one line to ensure the command executed
+	select {
+	case <-ch:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for line")
+	}
+
+	cancel()
+	for range ch {
+	}
+
+	// Verify the command used -F (follow by name, rotation-aware)
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+
+	if len(srv.commands) == 0 {
+		t.Fatal("no commands recorded")
+	}
+	cmd := srv.commands[0]
+	if !strings.Contains(cmd, " -F ") {
+		t.Errorf("expected command to contain ' -F ' for rotation-aware following, got: %s", cmd)
+	}
+	if strings.Contains(cmd, " -f ") {
+		t.Errorf("expected command NOT to contain ' -f ' (descriptor following), got: %s", cmd)
+	}
+}
+
+func TestStreamLogs_Follow_UsesDashSmallF_WhenFollowNameDisabled(t *testing.T) {
+	srv := newTestLogServer()
+	client, cleanup := startTestSSHServer(t, srv)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	followName := false
+	ch, err := StreamLogs(ctx, client, "/var/log/syslog", StreamOptions{
+		Tail:       1,
+		Follow:     true,
+		FollowName: &followName,
+	})
+	if err != nil {
+		t.Fatalf("StreamLogs error: %v", err)
+	}
+
+	// Read one line to ensure the command executed
+	select {
+	case <-ch:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for line")
+	}
+
+	cancel()
+	for range ch {
+	}
+
+	// Verify the command used -f (follow by descriptor, NOT rotation-aware)
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+
+	if len(srv.commands) == 0 {
+		t.Fatal("no commands recorded")
+	}
+	cmd := srv.commands[0]
+	if !strings.Contains(cmd, " -f ") {
+		t.Errorf("expected command to contain ' -f ' for descriptor following, got: %s", cmd)
+	}
+	if strings.Contains(cmd, " -F ") {
+		t.Errorf("expected command NOT to contain ' -F ' (name following), got: %s", cmd)
+	}
+}
+
+func TestStreamLogs_NonFollow_NeitherFFlag(t *testing.T) {
+	srv := newTestLogServer()
+	client, cleanup := startTestSSHServer(t, srv)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ch, err := StreamLogs(ctx, client, "/var/log/syslog", StreamOptions{Tail: 1})
+	if err != nil {
+		t.Fatalf("StreamLogs error: %v", err)
+	}
+
+	for range ch {
+	}
+
+	// Verify the command does not use -F or -f (non-follow mode)
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+
+	if len(srv.commands) == 0 {
+		t.Fatal("no commands recorded")
+	}
+	cmd := srv.commands[0]
+	if strings.Contains(cmd, " -F ") || strings.Contains(cmd, " -f ") {
+		t.Errorf("expected command to have neither -F nor -f in non-follow mode, got: %s", cmd)
+	}
+}
+
+func TestStreamLogs_TailDefaultsTo100_WhenZero(t *testing.T) {
+	srv := newTestLogServer()
+	client, cleanup := startTestSSHServer(t, srv)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ch, err := StreamLogs(ctx, client, "/var/log/syslog", StreamOptions{})
+	if err != nil {
+		t.Fatalf("StreamLogs error: %v", err)
+	}
+
+	for range ch {
+	}
+
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+
+	if len(srv.commands) == 0 {
+		t.Fatal("no commands recorded")
+	}
+	cmd := srv.commands[0]
+	if !strings.Contains(cmd, "-n 100") {
+		t.Errorf("expected command to contain '-n 100' when Tail=0, got: %s", cmd)
 	}
 }
