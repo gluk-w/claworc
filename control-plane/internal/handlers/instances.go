@@ -1159,6 +1159,101 @@ func GetTunnelStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"tunnels": infos})
 }
 
+type sshTestResponse struct {
+	Status     string `json:"status"`
+	Output     string `json:"output,omitempty"`
+	LatencyMs  int64  `json:"latency_ms"`
+	Error      string `json:"error,omitempty"`
+}
+
+func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	sm := sshtunnel.GetSSHManager()
+	if sm == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	if inst.SSHPrivateKeyPath == "" {
+		writeError(w, http.StatusBadRequest, "Instance has no SSH key configured")
+		return
+	}
+
+	host, port, err := orch.GetInstanceSSHEndpoint(r.Context(), inst.Name)
+	if err != nil {
+		writeJSON(w, http.StatusOK, sshTestResponse{
+			Status: "error",
+			Error:  fmt.Sprintf("Failed to get SSH endpoint: %v", err),
+		})
+		return
+	}
+
+	start := time.Now()
+
+	client, err := sm.Connect(r.Context(), inst.Name, host, port, inst.SSHPrivateKeyPath)
+	if err != nil {
+		latency := time.Since(start).Milliseconds()
+		writeJSON(w, http.StatusOK, sshTestResponse{
+			Status:    "error",
+			LatencyMs: latency,
+			Error:     fmt.Sprintf("SSH connection failed: %v", err),
+		})
+		return
+	}
+
+	session, err := client.NewSession()
+	if err != nil {
+		latency := time.Since(start).Milliseconds()
+		writeJSON(w, http.StatusOK, sshTestResponse{
+			Status:    "error",
+			LatencyMs: latency,
+			Error:     fmt.Sprintf("Failed to create SSH session: %v", err),
+		})
+		return
+	}
+	defer session.Close()
+
+	output, err := session.CombinedOutput("echo 'SSH test successful'")
+	latency := time.Since(start).Milliseconds()
+
+	if err != nil {
+		writeJSON(w, http.StatusOK, sshTestResponse{
+			Status:    "error",
+			LatencyMs: latency,
+			Error:     fmt.Sprintf("Command execution failed: %v", err),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, sshTestResponse{
+		Status:    "success",
+		Output:    strings.TrimSpace(string(output)),
+		LatencyMs: latency,
+	})
+}
+
 func ReorderInstances(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		OrderedIDs []uint `json:"ordered_ids"`
