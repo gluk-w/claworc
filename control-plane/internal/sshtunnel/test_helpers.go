@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/sshmanager"
+	"github.com/gluk-w/claworc/control-plane/internal/sshterminal"
 )
 
 // SetGlobalForTest sets the global SSHManager and TunnelManager for tests.
@@ -14,12 +15,22 @@ func SetGlobalForTest(sm *sshmanager.SSHManager, tm *TunnelManager) {
 	globalTunnelManager = tm
 }
 
+// SetGlobalForTestWithSessions sets all global managers including SessionManager for tests.
+func SetGlobalForTestWithSessions(sm *sshmanager.SSHManager, tm *TunnelManager, sessMgr *sshterminal.SessionManager) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	globalSSHManager = sm
+	globalTunnelManager = tm
+	globalSessionManager = sessMgr
+}
+
 // ResetGlobalForTest clears the global SSHManager and TunnelManager.
 func ResetGlobalForTest() {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	globalSSHManager = nil
 	globalTunnelManager = nil
+	globalSessionManager = nil
 }
 
 // TestTunnelOpts holds parameters for creating a test tunnel.

@@ -134,8 +134,13 @@ func main() {
 			// Chat WebSocket
 			r.Get("/instances/{id}/chat", handlers.ChatProxy)
 
-			// Terminal WebSocket
+			// Terminal WebSocket (supports ?session_id= for reconnection)
 			r.Get("/instances/{id}/terminal", handlers.TerminalWSProxy)
+
+			// Terminal session management
+			r.Get("/instances/{id}/terminal/sessions", handlers.ListTerminalSessions)
+			r.Delete("/instances/{id}/terminal/sessions/{sessionId}", handlers.DeleteTerminalSession)
+			r.Get("/instances/{id}/terminal/sessions/{sessionId}/recording", handlers.GetTerminalRecording)
 
 			// Desktop proxy (Selkies streaming UI)
 			r.HandleFunc("/instances/{id}/desktop/*", handlers.DesktopProxy)
