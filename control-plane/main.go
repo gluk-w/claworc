@@ -20,6 +20,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshkeys"
+	"github.com/gluk-w/claworc/control-plane/internal/sshmanager"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
@@ -54,9 +55,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("SSH key init: %v", err)
 	}
-	// sshSigner and sshPublicKey will be used by SSHManager in future tasks
-	_ = sshSigner
-	_ = sshPublicKey
+	sshMgr := sshmanager.NewSSHManager(sshSigner)
+	log.Printf("SSH manager initialized (public key: %d bytes)", len(sshPublicKey))
 
 	// Init WebAuthn
 	if err := auth.InitWebAuthn(config.Cfg.RPID, config.Cfg.RPOrigins); err != nil {
@@ -193,6 +193,10 @@ func main() {
 
 	<-sigCtx.Done()
 	log.Println("Shutting down...")
+
+	if err := sshMgr.CloseAll(); err != nil {
+		log.Printf("SSH manager shutdown: %v", err)
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
