@@ -21,6 +21,7 @@ const (
 	EventKeyRotation           = "key_rotation"
 	EventConnectionFailed      = "connection_failed"
 	EventFingerprintMismatch   = "fingerprint_mismatch"
+	EventIPRestricted          = "ip_restricted"
 )
 
 // DefaultRetentionDays is the default number of days to keep audit logs.

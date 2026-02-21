@@ -7,6 +7,7 @@ import type {
   SSHFingerprintResponse,
   GlobalSSHStatusResponse,
   SSHMetricsResponse,
+  IPRestrictResponse,
 } from "@/types/ssh";
 
 export async function fetchSSHStatus(
@@ -61,5 +62,25 @@ export async function fetchGlobalSSHStatus(): Promise<GlobalSSHStatusResponse> {
 
 export async function fetchSSHMetrics(): Promise<SSHMetricsResponse> {
   const { data } = await client.get<SSHMetricsResponse>("/ssh-metrics");
+  return data;
+}
+
+export async function fetchAllowedSourceIPs(
+  instanceId: number,
+): Promise<IPRestrictResponse> {
+  const { data } = await client.get<IPRestrictResponse>(
+    `/instances/${instanceId}/ssh-allowed-ips`,
+  );
+  return data;
+}
+
+export async function updateAllowedSourceIPs(
+  instanceId: number,
+  allowedIPs: string,
+): Promise<IPRestrictResponse> {
+  const { data } = await client.put<IPRestrictResponse>(
+    `/instances/${instanceId}/ssh-allowed-ips`,
+    { allowed_ips: allowedIPs },
+  );
   return data;
 }

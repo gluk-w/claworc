@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import toast from "react-hot-toast";
 import {
   fetchSSHStatus,
   fetchSSHEvents,
@@ -7,6 +8,8 @@ import {
   fetchSSHFingerprint,
   fetchGlobalSSHStatus,
   fetchSSHMetrics,
+  fetchAllowedSourceIPs,
+  updateAllowedSourceIPs,
 } from "@/api/ssh";
 
 export function useSSHStatus(instanceId: number, enabled = true) {
@@ -74,5 +77,29 @@ export function useSSHMetrics() {
     queryFn: fetchSSHMetrics,
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
+  });
+}
+
+export function useAllowedSourceIPs(instanceId: number, enabled = true) {
+  return useQuery({
+    queryKey: ["ssh-allowed-ips", instanceId],
+    queryFn: () => fetchAllowedSourceIPs(instanceId),
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useUpdateAllowedSourceIPs(instanceId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (allowedIPs: string) =>
+      updateAllowedSourceIPs(instanceId, allowedIPs),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ssh-allowed-ips", instanceId] });
+      toast.success("Allowed source IPs updated");
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.detail || "Failed to update allowed source IPs");
+    },
   });
 }

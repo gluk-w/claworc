@@ -26,6 +26,7 @@ type Instance struct {
 	SSHPort            int        `gorm:"default:22" json:"ssh_port"`
 	LastKeyRotation    *time.Time `json:"last_key_rotation,omitempty"`
 	KeyRotationPolicy  int        `gorm:"default:90" json:"key_rotation_policy"` // days between rotations, 0 = disabled
+	AllowedSourceIPs   string     `gorm:"type:text;default:''" json:"allowed_source_ips"` // comma-separated IPs/CIDRs, empty = allow all
 	LogPaths         string `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"openclaw":"/custom/path.log",...}
 	SortOrder       int       `gorm:"not null;default:0" json:"sort_order"`
 	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`

@@ -77,6 +77,7 @@ type instanceResponse struct {
 	HasResolutionOverride bool            `json:"has_resolution_override"`
 	ControlURL            string          `json:"control_url"`
 	GatewayToken          string          `json:"gateway_token"`
+	AllowedSourceIPs      string          `json:"allowed_source_ips"`
 	SortOrder             int             `json:"sort_order"`
 	CreatedAt             string          `json:"created_at"`
 	UpdatedAt             string          `json:"updated_at"`
@@ -260,6 +261,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		HasResolutionOverride: inst.VNCResolution != "",
 		ControlURL:            fmt.Sprintf("/api/v1/instances/%d/control/", inst.ID),
 		GatewayToken:          gatewayToken,
+		AllowedSourceIPs:      inst.AllowedSourceIPs,
 		SortOrder:             inst.SortOrder,
 		CreatedAt:             formatTimestamp(inst.CreatedAt),
 		UpdatedAt:             formatTimestamp(inst.UpdatedAt),
@@ -1255,6 +1257,24 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Check source IP restriction before connecting
+	sourceIP := sshaudit.ExtractSourceIP(r)
+	if inst.AllowedSourceIPs != "" {
+		if ipErr := sshmanager.CheckIPAllowed(sourceIP, inst.AllowedSourceIPs); ipErr != nil {
+			var userName string
+			if u := middleware.GetUser(r); u != nil {
+				userName = u.Username
+			}
+			sshaudit.LogIPRestricted(inst.ID, inst.Name, userName, sourceIP, ipErr.Error())
+			writeJSON(w, http.StatusOK, sshTestResponse{
+				Success:      false,
+				TunnelStatus: []sshTunnelTest{},
+				Error:        fmt.Sprintf("Source IP restriction: %v", ipErr),
+			})
+			return
+		}
+	}
+
 	host, port, err := orch.GetInstanceSSHEndpoint(r.Context(), inst.Name)
 	if err != nil {
 		writeJSON(w, http.StatusOK, sshTestResponse{
@@ -1285,7 +1305,6 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceIP := sshaudit.ExtractSourceIP(r)
 	sshaudit.LogConnection(inst.ID, inst.Name, userName, sourceIP)
 
 	session, err := client.NewSession()
@@ -1604,6 +1623,23 @@ func SSHReconnect(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, sshReconnectResponse{
 				Success: false,
 				Message: fmt.Sprintf("SSH key integrity check failed: %v", err),
+			})
+			return
+		}
+	}
+
+	// Check source IP restriction before reconnecting
+	sourceIP := sshaudit.ExtractSourceIP(r)
+	if inst.AllowedSourceIPs != "" {
+		if ipErr := sshmanager.CheckIPAllowed(sourceIP, inst.AllowedSourceIPs); ipErr != nil {
+			username := ""
+			if u := middleware.GetUser(r); u != nil {
+				username = u.Username
+			}
+			sshaudit.LogIPRestricted(inst.ID, inst.Name, username, sourceIP, ipErr.Error())
+			writeJSON(w, http.StatusOK, sshReconnectResponse{
+				Success: false,
+				Message: fmt.Sprintf("Source IP restriction: %v", ipErr),
 			})
 			return
 		}

@@ -171,6 +171,8 @@ func main() {
 				r.Post("/instances/{id}/clone", handlers.CloneInstance)
 				r.Delete("/instances/{id}", handlers.DeleteInstance)
 				r.Post("/instances/{id}/rotate-ssh-key", handlers.RotateSSHKey)
+				r.Get("/instances/{id}/ssh-allowed-ips", handlers.GetAllowedSourceIPs)
+				r.Put("/instances/{id}/ssh-allowed-ips", handlers.UpdateAllowedSourceIPs)
 
 				// SSH audit logs
 				r.Get("/ssh-audit-logs", handlers.GetSSHAuditLogs)

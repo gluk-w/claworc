@@ -113,6 +113,21 @@ func LogFingerprintMismatch(instanceID uint, instanceName, username, details str
 	}
 }
 
+// LogIPRestricted logs a security event when an SSH connection is blocked
+// because the source IP is not in the instance's allowed IP list.
+func LogIPRestricted(instanceID uint, instanceName, username, sourceIP, details string) {
+	if a := GetAuditor(); a != nil {
+		a.Log(AuditEntry{
+			InstanceID:   instanceID,
+			InstanceName: instanceName,
+			EventType:    EventIPRestricted,
+			Username:     username,
+			SourceIP:     sourceIP,
+			Details:      details,
+		})
+	}
+}
+
 // LogKeyRotation logs an SSH key rotation event.
 func LogKeyRotation(instanceID uint, instanceName, username, fingerprint string) {
 	if a := GetAuditor(); a != nil {

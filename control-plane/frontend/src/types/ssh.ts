@@ -116,3 +116,9 @@ export interface SSHMetricsResponse {
   health_rates: SSHHealthRate[];
   reconnection_counts: SSHReconnectionCount[];
 }
+
+export interface IPRestrictResponse {
+  instance_id: number;
+  allowed_ips: string;
+  normalized_list: string;
+}

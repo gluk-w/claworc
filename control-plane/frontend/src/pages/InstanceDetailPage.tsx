@@ -14,6 +14,7 @@ import SSHStatus from "@/components/SSHStatus";
 import SSHTunnelList from "@/components/SSHTunnelList";
 import SSHEventLog from "@/components/SSHEventLog";
 import SSHTroubleshoot from "@/components/SSHTroubleshoot";
+import SSHIPRestrict from "@/components/SSHIPRestrict";
 import {
   useInstance,
   useStartInstance,
@@ -33,6 +34,7 @@ import { useTerminal } from "@/hooks/useTerminal";
 import { useDesktop } from "@/hooks/useDesktop";
 import { useChat } from "@/hooks/useChat";
 import type { InstanceUpdatePayload } from "@/types/instance";
+import { useAuth } from "@/contexts/AuthContext";
 
 type Tab = "overview" | "chrome" | "terminal" | "files" | "config" | "logs";
 
@@ -42,6 +44,7 @@ export default function InstanceDetailPage() {
   const location = useLocation();
   const instanceId = Number(id);
 
+  const { isAdmin } = useAuth();
   const { data: instance, isLoading } = useInstance(instanceId);
   const { data: settings } = useSettings();
   useRestartedToast(instance ? [instance] : undefined);
@@ -427,6 +430,9 @@ export default function InstanceDetailPage() {
               )}
             </>
           )}
+
+          {/* Source IP Restrictions (admin only) */}
+          {isAdmin && <SSHIPRestrict instanceId={instanceId} />}
 
           {/* API Key Overrides Section */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
