@@ -175,14 +175,19 @@ func (tm *TunnelManager) CreateTunnelForGateway(ctx context.Context, instanceID 
 // underlying SSH connection verified), this is a no-op. Unhealthy tunnels are
 // torn down and recreated.
 func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID uint, orch Orchestrator) error {
+	// Check tunnel health BEFORE reconnecting. If the SSH connection is dead,
+	// tunnels are stale (they hold a reference to the old SSH client) even if
+	// their status says "active". Checking before EnsureConnected captures
+	// this state before a new connection masks the issue.
+	needsRecreation := !tm.areTunnelsHealthy(instanceID)
+
 	// Ensure SSH connection is established (uploads key on-demand)
 	_, err := tm.sshMgr.EnsureConnected(ctx, instanceID, orch)
 	if err != nil {
 		return fmt.Errorf("ensure connected for instance %d: %w", instanceID, err)
 	}
 
-	// Check if tunnels already exist and are healthy
-	if tm.areTunnelsHealthy(instanceID) {
+	if !needsRecreation {
 		return nil
 	}
 
