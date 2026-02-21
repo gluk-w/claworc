@@ -56,6 +56,7 @@ func main() {
 		log.Fatalf("SSH key init: %v", err)
 	}
 	sshMgr := sshmanager.NewSSHManager(sshSigner, sshPublicKey)
+	handlers.SSHMgr = sshMgr
 	log.Printf("SSH manager initialized (public key: %d bytes)", len(sshPublicKey))
 
 	// Init WebAuthn
@@ -125,6 +126,7 @@ func main() {
 			r.Get("/instances/{id}/config", handlers.GetInstanceConfig)
 			r.Put("/instances/{id}/config", handlers.UpdateInstanceConfig)
 			r.Get("/instances/{id}/logs", handlers.StreamLogs)
+			r.Get("/instances/{id}/ssh-test", handlers.SSHConnectionTest)
 
 			// Files
 			r.Get("/instances/{id}/files/browse", handlers.BrowseFiles)
