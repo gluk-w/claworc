@@ -69,6 +69,9 @@ type SSHManager struct {
 
 	// Connection event log (has its own mutex)
 	eventLog *eventLog
+
+	// Connection rate limiter (has its own mutex)
+	rateLimiter *RateLimiter
 }
 
 // managedConn wraps an SSH client with its cancel function for stopping keepalive.
@@ -113,13 +116,26 @@ func NewSSHManager(privateKey ssh.Signer, publicKey string) *SSHManager {
 		reconnecting: make(map[uint]context.CancelFunc),
 		stateTracker: newStateTracker(),
 		eventLog:     newEventLog(),
+		rateLimiter:  NewRateLimiter(),
 	}
+}
+
+// RateLimiter returns the connection rate limiter for external inspection.
+func (m *SSHManager) RateLimiter() *RateLimiter {
+	return m.rateLimiter
 }
 
 // Connect establishes an SSH connection to the given host:port using the global
 // private key, and stores it in the connection map keyed by instanceID.
 // If a connection already exists for the instance, it is closed first.
+// Connection attempts are subject to rate limiting: max 10 attempts per minute
+// per instance, and temporary blocking after 5 consecutive failures.
 func (m *SSHManager) Connect(ctx context.Context, instanceID uint, host string, port int) (*ssh.Client, error) {
+	// Check rate limit before attempting connection.
+	if err := m.rateLimiter.Allow(instanceID); err != nil {
+		return nil, err
+	}
+
 	cfg := &ssh.ClientConfig{
 		User: "root",
 		Auth: []ssh.AuthMethod{
@@ -137,6 +153,7 @@ func (m *SSHManager) Connect(ctx context.Context, instanceID uint, host string, 
 	dialer := net.Dialer{Timeout: connectTimeout}
 	netConn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
+		m.rateLimiter.RecordFailure(instanceID)
 		m.stateTracker.setState(instanceID, StateDisconnected, fmt.Sprintf("dial failed: %v", err))
 		return nil, fmt.Errorf("dial %s: %w", addr, err)
 	}
@@ -144,11 +161,15 @@ func (m *SSHManager) Connect(ctx context.Context, instanceID uint, host string, 
 	sshConn, chans, reqs, err := ssh.NewClientConn(netConn, addr, cfg)
 	if err != nil {
 		netConn.Close()
+		m.rateLimiter.RecordFailure(instanceID)
 		m.stateTracker.setState(instanceID, StateDisconnected, fmt.Sprintf("ssh handshake failed: %v", err))
 		return nil, fmt.Errorf("ssh handshake with %s: %w", addr, err)
 	}
 
 	client := ssh.NewClient(sshConn, chans, reqs)
+
+	// Connection succeeded — reset failure counters.
+	m.rateLimiter.RecordSuccess(instanceID)
 
 	// Close any existing connection for this instance
 	m.mu.Lock()
