@@ -197,7 +197,7 @@ func TestConfigureSSHAccess_WriteError(t *testing.T) {
 		exitCode int
 		err      error
 	}{
-		{"", "", 0, nil},                                     // mkdir succeeds
+		{"", "", 0, nil}, // mkdir succeeds
 		{"", "", 0, fmt.Errorf("container stopped suddenly")}, // write fails
 	})
 
@@ -219,8 +219,8 @@ func TestConfigureSSHAccess_WriteNonZeroExit(t *testing.T) {
 		exitCode int
 		err      error
 	}{
-		{"", "", 0, nil},                  // mkdir succeeds
-		{"", "disk full", 1, nil},         // write exits non-zero
+		{"", "", 0, nil},          // mkdir succeeds
+		{"", "disk full", 1, nil}, // write exits non-zero
 	})
 
 	err := configureSSHAccess(context.Background(), execFn, "test-instance", publicKey)

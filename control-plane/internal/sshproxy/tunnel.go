@@ -53,7 +53,7 @@ type ActiveTunnel struct {
 	Error     string // last error message, if any
 	LastCheck time.Time
 
-	listener net.Listener   // the local listener (for reverse tunnels)
+	listener net.Listener // the local listener (for reverse tunnels)
 	cancel   context.CancelFunc
 }
 

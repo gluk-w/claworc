@@ -123,9 +123,9 @@ type mockOrchestrator struct {
 	addressErr   error
 }
 
-func (m *mockOrchestrator) Initialize(_ context.Context) error                          { return nil }
-func (m *mockOrchestrator) IsAvailable(_ context.Context) bool                          { return true }
-func (m *mockOrchestrator) BackendName() string                                         { return "mock" }
+func (m *mockOrchestrator) Initialize(_ context.Context) error { return nil }
+func (m *mockOrchestrator) IsAvailable(_ context.Context) bool { return true }
+func (m *mockOrchestrator) BackendName() string                { return "mock" }
 func (m *mockOrchestrator) CreateInstance(_ context.Context, _ orchestrator.CreateParams) error {
 	return nil
 }
