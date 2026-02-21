@@ -19,7 +19,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
-	"github.com/gluk-w/claworc/control-plane/internal/sshfiles"
+	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -71,6 +71,7 @@ type instanceResponse struct {
 	HasImageOverride      bool            `json:"has_image_override"`
 	VNCResolution         *string         `json:"vnc_resolution"`
 	HasResolutionOverride bool            `json:"has_resolution_override"`
+	AllowedSourceIPs      string          `json:"allowed_source_ips"`
 	ControlURL            string          `json:"control_url"`
 	GatewayToken          string          `json:"gateway_token"`
 	SortOrder             int             `json:"sort_order"`
@@ -254,6 +255,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		HasImageOverride:      inst.ContainerImage != "",
 		VNCResolution:         vncResolution,
 		HasResolutionOverride: inst.VNCResolution != "",
+		AllowedSourceIPs:      inst.AllowedSourceIPs,
 		ControlURL:            fmt.Sprintf("/api/v1/instances/%d/control/", inst.ID),
 		GatewayToken:          gatewayToken,
 		SortOrder:             inst.SortOrder,
@@ -590,10 +592,11 @@ func GetInstance(w http.ResponseWriter, r *http.Request) {
 }
 
 type instanceUpdateRequest struct {
-	APIKeys      map[string]*string `json:"api_keys"` // null value = delete
-	BraveAPIKey  *string            `json:"brave_api_key"`
-	Models       *modelsConfig      `json:"models"`
-	DefaultModel *string            `json:"default_model"`
+	APIKeys          map[string]*string `json:"api_keys"` // null value = delete
+	BraveAPIKey      *string            `json:"brave_api_key"`
+	Models           *modelsConfig      `json:"models"`
+	DefaultModel     *string            `json:"default_model"`
+	AllowedSourceIPs *string            `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
 }
 
 func UpdateInstance(w http.ResponseWriter, r *http.Request) {
@@ -664,6 +667,23 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	// Update default model
 	if body.DefaultModel != nil {
 		database.DB.Model(&inst).Update("default_model", *body.DefaultModel)
+	}
+
+	// Update allowed source IPs (admin only)
+	if body.AllowedSourceIPs != nil {
+		user := middleware.GetUser(r)
+		if user == nil || user.Role != "admin" {
+			writeError(w, http.StatusForbidden, "Only admins can configure source IP restrictions")
+			return
+		}
+		// Validate the IP list before saving
+		if *body.AllowedSourceIPs != "" {
+			if _, err := sshproxy.ParseIPRestrictions(*body.AllowedSourceIPs); err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid source IP restriction: %v", err))
+				return
+			}
+		}
+		database.DB.Model(&inst).Update("allowed_source_ips", *body.AllowedSourceIPs)
 	}
 
 	// Update models config
@@ -867,7 +887,7 @@ func GetInstanceConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := sshfiles.ReadFile(client, orchestrator.PathOpenClawConfig)
+	content, err := sshproxy.ReadFile(client, orchestrator.PathOpenClawConfig)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "Instance must be running to read config")
 		return

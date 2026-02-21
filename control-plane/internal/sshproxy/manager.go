@@ -272,7 +272,19 @@ func (m *SSHManager) IsConnected(instanceID uint) bool {
 // and if none exists, uploads the public key via the orchestrator and
 // establishes a new SSH connection. The instance ID is used as the map key
 // so connections survive instance renames.
+//
+// If allowedSourceIPs is non-empty, the control plane's outbound IP for the
+// target is verified against the whitelist before connecting. This provides
+// defense-in-depth in segmented network environments.
 func (m *SSHManager) EnsureConnected(ctx context.Context, instanceID uint, orch Orchestrator) (*ssh.Client, error) {
+	return m.EnsureConnectedWithIPCheck(ctx, instanceID, orch, "")
+}
+
+// EnsureConnectedWithIPCheck is like EnsureConnected but also enforces source
+// IP restrictions. If allowedSourceIPs is non-empty, the control plane's
+// outbound IP for the target must fall within the whitelist (comma-separated
+// IPs/CIDRs). An empty string means no restriction.
+func (m *SSHManager) EnsureConnectedWithIPCheck(ctx context.Context, instanceID uint, orch Orchestrator, allowedSourceIPs string) (*ssh.Client, error) {
 	// 1. Check if a healthy connection already exists
 	if m.IsConnected(instanceID) {
 		client, _ := m.GetConnection(instanceID)
@@ -285,12 +297,24 @@ func (m *SSHManager) EnsureConnected(ctx context.Context, instanceID uint, orch 
 		return nil, fmt.Errorf("get ssh address for instance %d: %w", instanceID, err)
 	}
 
-	// 3. Upload public key to the instance
+	// 3. Check source IP restrictions before connecting
+	if err := CheckSourceIPAllowed(instanceID, allowedSourceIPs, host, port); err != nil {
+		m.stateTracker.setState(instanceID, StateDisconnected, fmt.Sprintf("blocked by IP restriction: %v", err))
+		m.emitEvent(ConnectionEvent{
+			InstanceID: instanceID,
+			Type:       EventDisconnected,
+			Timestamp:  time.Now(),
+			Details:    fmt.Sprintf("connection blocked by IP restriction: %v", err),
+		})
+		return nil, err
+	}
+
+	// 4. Upload public key to the instance
 	if err := orch.ConfigureSSHAccess(ctx, instanceID, m.getPublicKey()); err != nil {
 		return nil, fmt.Errorf("configure ssh access for instance %d: %w", instanceID, err)
 	}
 
-	// 4. Establish SSH connection
+	// 5. Establish SSH connection
 	client, err := m.Connect(ctx, instanceID, host, port)
 	if err != nil {
 		return nil, fmt.Errorf("ssh connect to instance %d: %w", instanceID, err)

@@ -63,7 +63,7 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	client, err := SSHMgr.EnsureConnected(r.Context(), inst.ID, orch)
+	client, err := SSHMgr.EnsureConnectedWithIPCheck(r.Context(), inst.ID, orch, inst.AllowedSourceIPs)
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
 		writeJSON(w, http.StatusOK, map[string]interface{}{

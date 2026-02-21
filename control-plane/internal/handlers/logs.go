@@ -10,7 +10,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
-	"github.com/gluk-w/claworc/control-plane/internal/sshlogs"
+	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -33,9 +33,9 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 		follow = false
 	}
 
-	logType := sshlogs.LogType(r.URL.Query().Get("type"))
+	logType := sshproxy.LogType(r.URL.Query().Get("type"))
 	if logType == "" {
-		logType = sshlogs.LogTypeOpenClaw
+		logType = sshproxy.LogTypeOpenClaw
 	}
 
 	var inst database.Instance
@@ -61,27 +61,27 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse custom log paths from instance if set
-	var customPaths map[sshlogs.LogType]string
+	var customPaths map[sshproxy.LogType]string
 	if inst.LogPaths != "" {
 		if err := json.Unmarshal([]byte(inst.LogPaths), &customPaths); err != nil {
 			log.Printf("Invalid log_paths JSON for instance %d: %v", inst.ID, err)
 		}
 	}
 
-	logPath := sshlogs.ResolveLogPath(logType, customPaths)
+	logPath := sshproxy.ResolveLogPath(logType, customPaths)
 	if logPath == "" {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("Unknown log type: %s", logType))
 		return
 	}
 
-	client, err := SSHMgr.EnsureConnected(r.Context(), inst.ID, orch)
+	client, err := SSHMgr.EnsureConnectedWithIPCheck(r.Context(), inst.ID, orch, inst.AllowedSourceIPs)
 	if err != nil {
 		log.Printf("Failed to get SSH connection for instance %d: %v", inst.ID, err)
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("SSH connection failed: %v", err))
 		return
 	}
 
-	ch, err := sshlogs.StreamLogs(r.Context(), client, logPath, sshlogs.StreamOptions{
+	ch, err := sshproxy.StreamLogs(r.Context(), client, logPath, sshproxy.StreamOptions{
 		Tail:   tail,
 		Follow: follow,
 	})

@@ -87,7 +87,7 @@ func TerminalWSProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sshClient, err := SSHMgr.EnsureConnected(ctx, inst.ID, orch)
+	sshClient, err := SSHMgr.EnsureConnectedWithIPCheck(ctx, inst.ID, orch, inst.AllowedSourceIPs)
 	if err != nil {
 		log.Printf("Failed to get SSH connection for instance %d: %v", inst.ID, err)
 		clientConn.Close(4500, "Failed to establish SSH connection")
