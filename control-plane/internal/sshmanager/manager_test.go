@@ -1384,7 +1384,7 @@ func TestReconnectWithBackoffSuccess(t *testing.T) {
 		if e.Type == EventReconnecting {
 			hasReconnecting = true
 		}
-		if e.Type == EventReconnected {
+		if e.Type == EventReconnectSuccess {
 			hasReconnected = true
 		}
 	}
@@ -1392,7 +1392,7 @@ func TestReconnectWithBackoffSuccess(t *testing.T) {
 		t.Error("expected EventReconnecting event")
 	}
 	if !hasReconnected {
-		t.Error("expected EventReconnected event")
+		t.Error("expected EventReconnectSuccess event")
 	}
 }
 

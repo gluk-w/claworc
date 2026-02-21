@@ -29,24 +29,6 @@ const (
 	reconnectBackoffFactor = 2
 )
 
-// ConnectionEvent represents a state change event for an SSH connection.
-type ConnectionEvent struct {
-	InstanceName string    `json:"instance_name"`
-	Type         EventType `json:"type"`
-	Details      string    `json:"details"`
-	Timestamp    time.Time `json:"timestamp"`
-}
-
-// EventType identifies the type of connection event.
-type EventType string
-
-const (
-	EventConnected       EventType = "connected"
-	EventDisconnected    EventType = "disconnected"
-	EventReconnecting    EventType = "reconnecting"
-	EventReconnected     EventType = "reconnected"
-	EventReconnectFailed EventType = "reconnect_failed"
-)
 
 // ConnectionParams stores the parameters needed to reconnect an SSH connection.
 type ConnectionParams struct {
@@ -375,11 +357,12 @@ func (m *SSHManager) HealthCheck(instanceName string) error {
 }
 
 // recordHealthCheck updates the connection metrics after a health check.
+// When the check fails, it also emits an EventHealthCheckFailed event.
 func (m *SSHManager) recordHealthCheck(instanceName string, err error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	met, ok := m.metrics[instanceName]
 	if !ok {
+		m.mu.Unlock()
 		return
 	}
 	met.LastHealthCheck = time.Now()
@@ -389,6 +372,11 @@ func (m *SSHManager) recordHealthCheck(instanceName string, err error) {
 	} else {
 		met.SuccessfulChecks++
 		met.Healthy = true
+	}
+	m.mu.Unlock()
+
+	if err != nil {
+		m.emitEvent(instanceName, EventHealthCheckFailed, err.Error())
 	}
 }
 
@@ -555,7 +543,7 @@ func (m *SSHManager) reconnectWithBackoff(ctx context.Context, instanceName stri
 		cancel()
 
 		if err == nil {
-			m.emitEvent(instanceName, EventReconnected, fmt.Sprintf("reconnected after %d attempt(s)", attempt))
+			m.emitEvent(instanceName, EventReconnectSuccess, fmt.Sprintf("reconnected after %d attempt(s)", attempt))
 			log.Printf("[ssh] reconnected %s after %d attempt(s)", logutil.SanitizeForLog(instanceName), attempt)
 			return nil
 		}
@@ -630,51 +618,3 @@ func (m *SSHManager) OnConnectionStateChange(cb StateCallback) {
 	m.stateTracker.OnStateChange(cb)
 }
 
-// maxEventsPerInstance limits the number of stored events per instance.
-const maxEventsPerInstance = 100
-
-// emitEvent records a connection event and logs it.
-func (m *SSHManager) emitEvent(instanceName string, eventType EventType, details string) {
-	event := ConnectionEvent{
-		InstanceName: instanceName,
-		Type:         eventType,
-		Details:      details,
-		Timestamp:    time.Now(),
-	}
-
-	m.eventsMu.Lock()
-	events := m.events[instanceName]
-	events = append(events, event)
-	if len(events) > maxEventsPerInstance {
-		events = events[len(events)-maxEventsPerInstance:]
-	}
-	m.events[instanceName] = events
-	m.eventsMu.Unlock()
-
-	log.Printf("[ssh] event %s/%s: %s", logutil.SanitizeForLog(instanceName), eventType, details)
-}
-
-// GetEvents returns recent connection events for the given instance.
-func (m *SSHManager) GetEvents(instanceName string) []ConnectionEvent {
-	m.eventsMu.RLock()
-	defer m.eventsMu.RUnlock()
-	events := m.events[instanceName]
-	result := make([]ConnectionEvent, len(events))
-	copy(result, events)
-	return result
-}
-
-// GetRecentEvents returns the most recent n events for the given instance.
-func (m *SSHManager) GetRecentEvents(instanceName string, n int) []ConnectionEvent {
-	m.eventsMu.RLock()
-	defer m.eventsMu.RUnlock()
-	events := m.events[instanceName]
-	if len(events) <= n {
-		result := make([]ConnectionEvent, len(events))
-		copy(result, events)
-		return result
-	}
-	result := make([]ConnectionEvent, n)
-	copy(result, events[len(events)-n:])
-	return result
-}
