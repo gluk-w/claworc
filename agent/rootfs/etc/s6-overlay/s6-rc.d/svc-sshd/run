@@ -1,0 +1,14 @@
+#!/command/with-contenv bash
+
+# Generate host keys if missing
+ssh-keygen -A
+
+# Create privilege-separation directory
+mkdir -p /run/sshd
+
+# Ensure /root/.ssh directory exists with correct permissions
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+
+echo "Starting sshd in foreground..."
+exec /usr/sbin/sshd -D -e
