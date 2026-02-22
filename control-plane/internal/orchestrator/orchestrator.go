@@ -2,8 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"io"
-	"net/http"
 )
 
 // ContainerOrchestrator thin abstraction providing generic primitives (exec, read/write files)
@@ -23,36 +21,15 @@ type ContainerOrchestrator interface {
 	// Config
 	UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error
 
-	// Logs
-	StreamInstanceLogs(ctx context.Context, name string, tail int, follow bool) (<-chan string, error)
-
 	// Clone
 	CloneVolumes(ctx context.Context, srcName, dstName string) error
 
-	// Exec & Files
+	// SSH
+	ConfigureSSHAccess(ctx context.Context, instanceID uint, publicKey string) error
+	GetSSHAddress(ctx context.Context, instanceID uint) (host string, port int, err error)
+
+	// Exec
 	ExecInInstance(ctx context.Context, name string, cmd []string) (stdout string, stderr string, exitCode int, err error)
-	ExecInteractive(ctx context.Context, name string, cmd []string) (*ExecSession, error)
-	ListDirectory(ctx context.Context, name string, path string) ([]FileEntry, error)
-	ReadFile(ctx context.Context, name string, path string) ([]byte, error)
-	CreateFile(ctx context.Context, name string, path string, content string) error
-	CreateDirectory(ctx context.Context, name string, path string) error
-	WriteFile(ctx context.Context, name string, path string, data []byte) error
-
-	// URLs
-	GetVNCBaseURL(ctx context.Context, name string, display string) (string, error)
-	GetGatewayWSURL(ctx context.Context, name string) (string, error)
-
-	// GetHTTPTransport returns a custom transport for reaching service URLs,
-	// or nil if the default transport is sufficient (e.g. in-cluster).
-	GetHTTPTransport() http.RoundTripper
-}
-
-// ExecSession represents an interactive exec session with stdin/stdout and resize support.
-type ExecSession struct {
-	Stdin  io.WriteCloser
-	Stdout io.Reader
-	Resize func(cols, rows uint16) error
-	Close  func() error
 }
 
 type CreateParams struct {

@@ -169,7 +169,7 @@ function Install-Docker {
         -p "${port}:8000" `
         -v /var/run/docker.sock:/var/run/docker.sock `
         -v "${dataDirUnix}:${dataDirUnix}" `
-        -e "CLAWORC_DATABASE_PATH=${dataDirUnix}/claworc.db" `
+        -e "CLAWORC_DATA_PATH=${dataDirUnix}" `
         --restart unless-stopped `
         "${DashboardImage}:${Tag}" | Out-Null
 

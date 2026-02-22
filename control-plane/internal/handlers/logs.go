@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -31,6 +33,11 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 		follow = false
 	}
 
+	logType := sshproxy.LogType(r.URL.Query().Get("type"))
+	if logType == "" {
+		logType = sshproxy.LogTypeOpenClaw
+	}
+
 	var inst database.Instance
 	if err := database.DB.First(&inst, id).Error; err != nil {
 		writeError(w, http.StatusNotFound, "Instance not found")
@@ -48,9 +55,38 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ch, err := orch.StreamInstanceLogs(r.Context(), inst.Name, tail, follow)
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	// Parse custom log paths from instance if set
+	var customPaths map[sshproxy.LogType]string
+	if inst.LogPaths != "" {
+		if err := json.Unmarshal([]byte(inst.LogPaths), &customPaths); err != nil {
+			log.Printf("Invalid log_paths JSON for instance %d: %v", inst.ID, err)
+		}
+	}
+
+	logPath := sshproxy.ResolveLogPath(logType, customPaths)
+	if logPath == "" {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Unknown log type: %s", logType))
+		return
+	}
+
+	client, err := SSHMgr.EnsureConnectedWithIPCheck(r.Context(), inst.ID, orch, inst.AllowedSourceIPs)
 	if err != nil {
-		log.Printf("Failed to stream logs for %s: %v", inst.Name, err)
+		log.Printf("Failed to get SSH connection for instance %d: %v", inst.ID, err)
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("SSH connection failed: %v", err))
+		return
+	}
+
+	ch, err := sshproxy.StreamLogs(r.Context(), client, logPath, sshproxy.StreamOptions{
+		Tail:   tail,
+		Follow: follow,
+	})
+	if err != nil {
+		log.Printf("Failed to stream logs for instance %d (%s): %v", inst.ID, logPath, err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to stream logs: %v", err))
 		return
 	}

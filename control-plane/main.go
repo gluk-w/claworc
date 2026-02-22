@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -19,6 +20,9 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
+	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
+	"github.com/gluk-w/claworc/control-plane/internal/sshterminal"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
@@ -48,6 +52,60 @@ func main() {
 
 	log.Printf("Config: AuthDisabled=%v, RPID=%s, RPOrigins=%v", config.Cfg.AuthDisabled, config.Cfg.RPID, config.Cfg.RPOrigins)
 
+	// Init global SSH key pair
+	sshSigner, sshPublicKey, err := sshproxy.EnsureKeyPair(config.Cfg.DataPath)
+	if err != nil {
+		log.Fatalf("SSH key init: %v", err)
+	}
+	sshMgr := sshproxy.NewSSHManager(sshSigner, sshPublicKey)
+	handlers.SSHMgr = sshMgr
+	tunnelMgr := sshproxy.NewTunnelManager(sshMgr)
+	handlers.TunnelMgr = tunnelMgr
+	log.Printf("SSH manager initialized (public key: %d bytes)", len(sshPublicKey))
+
+	// Init SSH audit logger
+	retentionDays := 90
+	if retStr, err := database.GetSetting("ssh_audit_retention_days"); err == nil {
+		if d, err := strconv.Atoi(retStr); err == nil && d > 0 {
+			retentionDays = d
+		}
+	}
+	auditor, err := sshaudit.NewAuditor(database.DB, retentionDays)
+	if err != nil {
+		log.Fatalf("SSH audit init: %v", err)
+	}
+	handlers.AuditLog = auditor
+	ctx := context.Background()
+	cancelAuditCleanup := auditor.StartRetentionCleanup(ctx)
+	_ = cancelAuditCleanup
+
+	// Register audit listener for SSH connection events
+	sshMgr.OnEvent(func(event sshproxy.ConnectionEvent) {
+		switch event.Type {
+		case sshproxy.EventConnected, sshproxy.EventReconnected:
+			auditor.LogConnection(event.InstanceID, "system", event.Details)
+		case sshproxy.EventDisconnected:
+			auditor.LogDisconnection(event.InstanceID, "system", event.Details)
+		case sshproxy.EventKeyUploaded:
+			auditor.LogKeyUpload(event.InstanceID, event.Details)
+		}
+	})
+	log.Printf("SSH audit logger initialized (retention=%d days)", retentionDays)
+
+	// Init terminal session manager
+	sessionTimeout, err := time.ParseDuration(config.Cfg.TerminalSessionTimeout)
+	if err != nil {
+		sessionTimeout = 30 * time.Minute
+	}
+	termMgr := sshterminal.NewSessionManager(sshterminal.SessionManagerConfig{
+		HistoryLines: config.Cfg.TerminalHistoryLines,
+		RecordingDir: config.Cfg.TerminalRecordingDir,
+		IdleTimeout:  sessionTimeout,
+	})
+	handlers.TermSessionMgr = termMgr
+	log.Printf("Terminal session manager initialized (history=%d lines, recording=%q, idle_timeout=%s)",
+		config.Cfg.TerminalHistoryLines, config.Cfg.TerminalRecordingDir, sessionTimeout)
+
 	// Init WebAuthn
 	if err := auth.InitWebAuthn(config.Cfg.RPID, config.Cfg.RPOrigins); err != nil {
 		log.Printf("WARNING: WebAuthn init failed: %v", err)
@@ -66,10 +124,35 @@ func main() {
 		}
 	}()
 
-	ctx := context.Background()
 	if err := orchestrator.InitOrchestrator(ctx); err != nil {
 		log.Printf("WARNING: %v", err)
 	}
+
+	// Configure SSH manager with orchestrator for automatic reconnection
+	if orch := orchestrator.Get(); orch != nil {
+		sshMgr.SetOrchestrator(orch)
+	}
+	sshMgr.StartHealthChecker(ctx)
+
+	// Start background tunnel manager to maintain SSH tunnels for running instances
+	if orch := orchestrator.Get(); orch != nil {
+		tunnelMgr.StartBackgroundManager(ctx, func(ctx context.Context) ([]uint, error) {
+			var instances []database.Instance
+			if err := database.DB.Where("status = ?", "running").Find(&instances).Error; err != nil {
+				return nil, err
+			}
+			ids := make([]uint, len(instances))
+			for i, inst := range instances {
+				ids[i] = inst.ID
+			}
+			return ids, nil
+		}, orch)
+		tunnelMgr.StartTunnelHealthChecker(ctx)
+	}
+
+	// Start background SSH key rotation job (checks daily)
+	cancelRotation := handlers.StartKeyRotationJob(ctx)
+	_ = cancelRotation // stopped via context cancellation on shutdown
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
@@ -115,6 +198,12 @@ func main() {
 			r.Get("/instances/{id}/config", handlers.GetInstanceConfig)
 			r.Put("/instances/{id}/config", handlers.UpdateInstanceConfig)
 			r.Get("/instances/{id}/logs", handlers.StreamLogs)
+			r.Get("/instances/{id}/ssh-test", handlers.SSHConnectionTest)
+			r.Get("/instances/{id}/ssh-status", handlers.GetSSHStatus)
+			r.Get("/instances/{id}/ssh-events", handlers.GetSSHEvents)
+			r.Post("/instances/{id}/ssh-reconnect", handlers.SSHReconnect)
+			r.Get("/instances/{id}/tunnels", handlers.GetTunnelStatus)
+			r.Get("/ssh-fingerprint", handlers.GetSSHFingerprint)
 
 			// Files
 			r.Get("/instances/{id}/files/browse", handlers.BrowseFiles)
@@ -127,8 +216,10 @@ func main() {
 			// Chat WebSocket
 			r.Get("/instances/{id}/chat", handlers.ChatProxy)
 
-			// Terminal WebSocket
+			// Terminal WebSocket and session management
 			r.Get("/instances/{id}/terminal", handlers.TerminalWSProxy)
+			r.Get("/instances/{id}/terminal/sessions", handlers.ListTerminalSessions)
+			r.Delete("/instances/{id}/terminal/sessions/{sessionId}", handlers.CloseTerminalSession)
 
 			// Desktop proxy (Selkies streaming UI)
 			r.HandleFunc("/instances/{id}/desktop/*", handlers.DesktopProxy)
@@ -147,6 +238,8 @@ func main() {
 				// Settings
 				r.Get("/settings", handlers.GetSettings)
 				r.Put("/settings", handlers.UpdateSettings)
+				r.Post("/settings/rotate-ssh-key", handlers.RotateSSHKey)
+				r.Get("/audit-logs", handlers.GetAuditLogs)
 
 				// User management
 				r.Get("/users", handlers.ListUsers)
@@ -183,6 +276,13 @@ func main() {
 
 	<-sigCtx.Done()
 	log.Println("Shutting down...")
+
+	termMgr.Stop()
+	tunnelMgr.StopAll()
+
+	if err := sshMgr.CloseAll(); err != nil {
+		log.Printf("SSH manager shutdown: %v", err)
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

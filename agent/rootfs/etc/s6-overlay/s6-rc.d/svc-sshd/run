@@ -1,0 +1,26 @@
+#!/command/with-contenv bash
+
+# Remove legacy DSA/ECDSA host keys (keep only Ed25519 and RSA)
+rm -f /etc/ssh/ssh_host_dsa_key /etc/ssh/ssh_host_dsa_key.pub
+rm -f /etc/ssh/ssh_host_ecdsa_key /etc/ssh/ssh_host_ecdsa_key.pub
+
+# Generate host keys if missing (only Ed25519 and RSA will be created
+# since we removed DSA/ECDSA above)
+ssh-keygen -A
+
+# Remove any DSA/ECDSA keys that ssh-keygen -A may have regenerated
+rm -f /etc/ssh/ssh_host_dsa_key /etc/ssh/ssh_host_dsa_key.pub
+rm -f /etc/ssh/ssh_host_ecdsa_key /etc/ssh/ssh_host_ecdsa_key.pub
+
+# Create privilege-separation directory
+mkdir -p /run/sshd
+
+# Ensure /root/.ssh directory exists with correct permissions
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+
+echo "Starting sshd in foreground..."
+# The -e flag sends sshd logs to stderr (in addition to syslog facility
+# configured in claworc.conf). We redirect to the log file for SSH-based
+# log streaming used by the control plane.
+exec /usr/sbin/sshd -D -e >> /var/log/claworc/sshd.log 2>&1

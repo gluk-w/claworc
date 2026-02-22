@@ -13,9 +13,10 @@ KUBECONFIG := ../kubeconfig
 HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
 
-.PHONY: agent agent-build agent-test agent-push dashboard docker-prune release \
+.PHONY: agent agent-build agent-test agent-push agent-exec dashboard docker-prune release \
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-stop \
-	pull-agent local-build local-up local-down local-logs local-clean control-plane
+	pull-agent local-build local-up local-down local-logs local-clean control-plane \
+	ssh-integration-test ssh-file-integration-test
 
 agent: agent-build agent-test agent-push
 
@@ -27,6 +28,31 @@ agent-test:
 
 agent-push:
 	docker buildx build --platform $(PLATFORMS) -t $(AGENT_IMAGE):$(TAG) --push agent/
+
+AGENT_CONTAINER := claworc-agent-exec
+AGENT_SSH_PORT := 2222
+
+agent-exec:
+	@echo "Stopping existing container (if any)..."
+	@-docker rm -f $(AGENT_CONTAINER) 2>/dev/null || true
+	@echo "Starting $(AGENT_IMAGE_NAME):test in background..."
+	docker run -d --name $(AGENT_CONTAINER) -p $(AGENT_SSH_PORT):22 $(AGENT_IMAGE_NAME):test
+	@echo "Installing SSH public key..."
+	@docker exec $(AGENT_CONTAINER) bash -c 'mkdir -p /root/.ssh && chmod 700 /root/.ssh'
+	@docker cp $(CURDIR)/ssh_key.pub $(AGENT_CONTAINER):/root/.ssh/authorized_keys
+	@docker exec $(AGENT_CONTAINER) chown root:root /root/.ssh/authorized_keys
+	@docker exec $(AGENT_CONTAINER) chmod 600 /root/.ssh/authorized_keys
+	# @docker exec openclaw config set gateway.auth.token the-token-does-not-matter
+	@echo ""
+	@echo "=== Container Running ==="
+	@echo "  Name:  $(AGENT_CONTAINER)"
+	@echo "  Image: $(AGENT_IMAGE_NAME):test"
+	@echo ""
+	@echo "=== SSH Access ==="
+	@echo "  ssh -i ./ssh_key -o StrictHostKeyChecking=no -p $(AGENT_SSH_PORT) root@localhost"
+	@echo ""
+	@echo "  Or exec directly:"
+	@echo "  docker exec -it $(AGENT_CONTAINER) bash"
 
 control-plane:
 	docker buildx build --platform $(PLATFORMS) -t $(DASHBOARD_IMAGE):$(TAG) --push control-plane/
@@ -61,12 +87,13 @@ install-dev: install-test
 
 dev:
 	@echo "=== Development Config ==="
-	@echo "  DATABASE_PATH: $(CLAWORC_DATABASE_PATH)"
+	@echo "  DATA_PATH: $(CLAWORC_DATA_PATH)"
 	@echo ""
 	@echo "Control plane: http://localhost:8000"
 	@echo "Frontend:      http://localhost:5173"
 	@echo ""
-	@(cd control-plane && $(shell go env GOPATH)/bin/air) & \
+	@export CLAWORC_AUTH_DISABLED=true; \
+	(cd control-plane && $(shell go env GOPATH)/bin/air) & \
 	(cd control-plane/frontend && npm run dev) & \
 	wait
 
@@ -99,6 +126,14 @@ local-logs:
 local-clean:
 	docker compose down --rmi local -v
 	rm -rf "$(CURDIR)/data"
+
+ssh-integration-test:
+	docker build -t claworc-agent:local agent/
+	cd control-plane && go test -tags docker_integration -v -timeout 300s ./internal/sshproxy/ -run TestIntegration
+
+ssh-file-integration-test:
+	docker build -t claworc-agent:local agent/
+	cd tests && npm run test:ssh -- --testPathPattern file.test
 
 e2e-docker-tests:
 	./scripts/run_tests.sh

@@ -25,3 +25,6 @@ Claworc replaces this manual approach by:
 | [Data Model](data-model.md) | Database schema and Kubernetes resource model |
 | [Authentication](auth.md) | Authentication, authorization, and user management |
 | [UI](ui.md) | Frontend pages, components, and interaction patterns |
+| [SSH Connectivity](ssh-connectivity.md) | SSH architecture, tunnels, health monitoring, and key rotation |
+| [Kubernetes Deployment](deployment/kubernetes.md) | Kubernetes deployment guide with SSH network policies and security contexts |
+| [Docker Deployment](deployment/docker.md) | Docker deployment guide with SSH network configuration |

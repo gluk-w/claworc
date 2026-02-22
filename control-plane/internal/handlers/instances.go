@@ -19,6 +19,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -70,6 +71,7 @@ type instanceResponse struct {
 	HasImageOverride      bool            `json:"has_image_override"`
 	VNCResolution         *string         `json:"vnc_resolution"`
 	HasResolutionOverride bool            `json:"has_resolution_override"`
+	AllowedSourceIPs      string          `json:"allowed_source_ips"`
 	ControlURL            string          `json:"control_url"`
 	GatewayToken          string          `json:"gateway_token"`
 	SortOrder             int             `json:"sort_order"`
@@ -253,6 +255,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		HasImageOverride:      inst.ContainerImage != "",
 		VNCResolution:         vncResolution,
 		HasResolutionOverride: inst.VNCResolution != "",
+		AllowedSourceIPs:      inst.AllowedSourceIPs,
 		ControlURL:            fmt.Sprintf("/api/v1/instances/%d/control/", inst.ID),
 		GatewayToken:          gatewayToken,
 		SortOrder:             inst.SortOrder,
@@ -589,10 +592,11 @@ func GetInstance(w http.ResponseWriter, r *http.Request) {
 }
 
 type instanceUpdateRequest struct {
-	APIKeys      map[string]*string `json:"api_keys"` // null value = delete
-	BraveAPIKey  *string            `json:"brave_api_key"`
-	Models       *modelsConfig      `json:"models"`
-	DefaultModel *string            `json:"default_model"`
+	APIKeys          map[string]*string `json:"api_keys"` // null value = delete
+	BraveAPIKey      *string            `json:"brave_api_key"`
+	Models           *modelsConfig      `json:"models"`
+	DefaultModel     *string            `json:"default_model"`
+	AllowedSourceIPs *string            `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
 }
 
 func UpdateInstance(w http.ResponseWriter, r *http.Request) {
@@ -665,6 +669,23 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		database.DB.Model(&inst).Update("default_model", *body.DefaultModel)
 	}
 
+	// Update allowed source IPs (admin only)
+	if body.AllowedSourceIPs != nil {
+		user := middleware.GetUser(r)
+		if user == nil || user.Role != "admin" {
+			writeError(w, http.StatusForbidden, "Only admins can configure source IP restrictions")
+			return
+		}
+		// Validate the IP list before saving
+		if *body.AllowedSourceIPs != "" {
+			if _, err := sshproxy.ParseIPRestrictions(*body.AllowedSourceIPs); err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid source IP restriction: %v", err))
+				return
+			}
+		}
+		database.DB.Model(&inst).Update("allowed_source_ips", *body.AllowedSourceIPs)
+	}
+
 	// Update models config
 	if body.Models != nil {
 		if body.Models.Disabled == nil {
@@ -706,6 +727,16 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 	if err := database.DB.First(&inst, id).Error; err != nil {
 		writeError(w, http.StatusNotFound, "Instance not found")
 		return
+	}
+
+	// Stop SSH tunnels and close connection before deleting
+	if SSHMgr != nil {
+		SSHMgr.CancelReconnection(inst.ID)
+	}
+	if TunnelMgr != nil {
+		if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
+			log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)
+		}
 	}
 
 	if orch := orchestrator.Get(); orch != nil {
@@ -770,6 +801,16 @@ func StopInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Stop SSH tunnels and close connection for this instance
+	if SSHMgr != nil {
+		SSHMgr.CancelReconnection(inst.ID)
+	}
+	if TunnelMgr != nil {
+		if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
+			log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)
+		}
+	}
+
 	if orch := orchestrator.Get(); orch != nil {
 		if err := orch.StopInstance(r.Context(), inst.Name); err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to stop instance: %v", err))
@@ -800,6 +841,16 @@ func RestartInstance(w http.ResponseWriter, r *http.Request) {
 	if !middleware.CanAccessInstance(r, inst.ID) {
 		writeError(w, http.StatusForbidden, "Access denied")
 		return
+	}
+
+	// Stop SSH tunnels and close connection before restart; they will be recreated by the background manager
+	if SSHMgr != nil {
+		SSHMgr.CancelReconnection(inst.ID)
+	}
+	if TunnelMgr != nil {
+		if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
+			log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)
+		}
 	}
 
 	if orch := orchestrator.Get(); orch != nil {
@@ -834,13 +885,18 @@ func GetInstanceConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.Get()
-	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
 		return
 	}
 
-	content, err := orch.ReadFile(r.Context(), inst.Name, orchestrator.PathOpenClawConfig)
+	client, ok := SSHMgr.GetConnection(inst.ID)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "No SSH connection for instance")
+		return
+	}
+
+	content, err := sshproxy.ReadFile(client, orchestrator.PathOpenClawConfig)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "Instance must be running to read config")
 		return

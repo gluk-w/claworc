@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Shield, Wrench } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 import StatusBadge from "@/components/StatusBadge";
 import ActionButtons from "@/components/ActionButtons";
 import ProviderTable from "@/components/ProviderTable";
@@ -10,6 +11,10 @@ import TerminalPanel from "@/components/TerminalPanel";
 import VncPanel from "@/components/VncPanel";
 import ChatPanel from "@/components/ChatPanel";
 import FileBrowser from "@/components/FileBrowser";
+import SSHStatus from "@/components/SSHStatus";
+import SSHTunnelList from "@/components/SSHTunnelList";
+import SSHEventLog from "@/components/SSHEventLog";
+import SSHTroubleshoot from "@/components/SSHTroubleshoot";
 import {
   useInstance,
   useStartInstance,
@@ -23,6 +28,7 @@ import {
   useRestartedToast,
 } from "@/hooks/useInstances";
 import { useSettings } from "@/hooks/useSettings";
+import { useSSHStatus, useSSHEvents } from "@/hooks/useSSHStatus";
 import { useInstanceLogs } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useDesktop } from "@/hooks/useDesktop";
@@ -37,10 +43,13 @@ export default function InstanceDetailPage() {
   const location = useLocation();
   const instanceId = Number(id);
 
+  const { isAdmin } = useAuth();
   const { data: instance, isLoading } = useInstance(instanceId);
   const { data: settings } = useSettings();
   useRestartedToast(instance ? [instance] : undefined);
   const { data: configData } = useInstanceConfig(instanceId, instance?.status === "running");
+  const sshStatus = useSSHStatus(instanceId, instance?.status === "running");
+  const sshEvents = useSSHEvents(instanceId, instance?.status === "running");
   const startMutation = useStartInstance();
   const stopMutation = useStopInstance();
   const restartMutation = useRestartInstance();
@@ -75,9 +84,21 @@ export default function InstanceDetailPage() {
   const [terminalActivated, setTerminalActivated] = useState(getTabFromHash() === "terminal");
   const [chromeActivated, setChromeActivated] = useState(getTabFromHash() === "chrome");
 
+  // SSH tunnel detail toggle
+  const [tunnelsExpanded, setTunnelsExpanded] = useState(false);
+  // SSH event log toggle
+  const [eventsExpanded, setEventsExpanded] = useState(false);
+  // SSH troubleshoot dialog
+  const [troubleshootOpen, setTroubleshootOpen] = useState(false);
+
   // API key editing state
   const [editingKeys, setEditingKeys] = useState(false);
   const [pendingKeyUpdates, setPendingKeyUpdates] = useState<Record<string, string | null>>({});
+
+  // Source IP restriction editing state (admin only)
+  const [editingSourceIPs, setEditingSourceIPs] = useState(false);
+  const [pendingSourceIPs, setPendingSourceIPs] = useState<string | null>(null);
+  const [sourceIPError, setSourceIPError] = useState<string | null>(null);
 
   // Update tab when hash changes
   useEffect(() => {
@@ -198,6 +219,24 @@ export default function InstanceDetailPage() {
     );
   };
 
+  const handleSaveSourceIPs = () => {
+    if (pendingSourceIPs === null) return;
+    setSourceIPError(null);
+    updateMutation.mutate(
+      { id: instanceId, payload: { allowed_source_ips: pendingSourceIPs } },
+      {
+        onSuccess: () => {
+          setEditingSourceIPs(false);
+          setPendingSourceIPs(null);
+          setSourceIPError(null);
+        },
+        onError: (error: any) => {
+          setSourceIPError(error.response?.data?.detail || "Invalid IP configuration");
+        },
+      },
+    );
+  };
+
   // Compute pending new keys (keys being added that aren't existing overrides)
   const pendingNewKeys: Record<string, string> = {};
   for (const [k, v] of Object.entries(pendingKeyUpdates)) {
@@ -275,7 +314,7 @@ export default function InstanceDetailPage() {
         <ActionButtons
           instance={instance}
           onStart={(id) => startMutation.mutate(id)}
-          onStop={(id) => stopMutation.mutate(id)}
+          onStop={(id) => stopMutation.mutate({ id, displayName: instance.display_name })}
           onRestart={(id) =>
             restartMutation.mutate({ id, displayName: instance.display_name })
           }
@@ -354,6 +393,71 @@ export default function InstanceDetailPage() {
             </div>
           </div>
 
+          {/* SSH Connection Status */}
+          <div className="relative">
+            <SSHStatus
+              status={sshStatus.data}
+              isLoading={sshStatus.isLoading}
+              isError={sshStatus.isError}
+              onRefresh={() => sshStatus.refetch()}
+            />
+            {instance.status === "running" && sshStatus.data && (
+              <button
+                onClick={() => setTroubleshootOpen(true)}
+                className="absolute top-4 right-12 inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded"
+                title="Troubleshoot SSH"
+              >
+                <Wrench size={12} />
+                Troubleshoot
+              </button>
+            )}
+          </div>
+          {troubleshootOpen && (
+            <SSHTroubleshoot
+              instanceId={instanceId}
+              onClose={() => setTroubleshootOpen(false)}
+            />
+          )}
+
+          {/* SSH Tunnel Details (expand/collapse) */}
+          {sshStatus.data && sshStatus.data.tunnels.length > 0 && (
+            <div>
+              <button
+                onClick={() => setTunnelsExpanded((prev) => !prev)}
+                className="flex items-center gap-1 text-sm font-medium text-gray-700 hover:text-gray-900 mb-2"
+              >
+                {tunnelsExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                Tunnel Details
+              </button>
+              {tunnelsExpanded && (
+                <SSHTunnelList
+                  tunnels={sshStatus.data.tunnels}
+                  isLoading={sshStatus.isLoading}
+                />
+              )}
+            </div>
+          )}
+
+          {/* SSH Connection Events (expand/collapse) */}
+          {instance.status === "running" && (
+            <div>
+              <button
+                onClick={() => setEventsExpanded((prev) => !prev)}
+                className="flex items-center gap-1 text-sm font-medium text-gray-700 hover:text-gray-900 mb-2"
+              >
+                {eventsExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                Connection Events
+              </button>
+              {eventsExpanded && (
+                <SSHEventLog
+                  events={sshEvents.data?.events}
+                  isLoading={sshEvents.isLoading}
+                  isError={sshEvents.isError}
+                />
+              )}
+            </div>
+          )}
+
           {/* API Key Overrides Section */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-4">
@@ -409,6 +513,84 @@ export default function InstanceDetailPage() {
               </div>
             )}
           </div>
+
+          {/* Source IP Restrictions (admin only) */}
+          {isAdmin && (
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Shield size={16} className="text-gray-500" />
+                  <h3 className="text-sm font-medium text-gray-900">
+                    SSH Source IP Restrictions
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (editingSourceIPs) {
+                      setPendingSourceIPs(null);
+                      setSourceIPError(null);
+                    } else {
+                      setPendingSourceIPs(instance.allowed_source_ips || "");
+                    }
+                    setEditingSourceIPs(!editingSourceIPs);
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  {editingSourceIPs ? "Cancel" : "Edit"}
+                </button>
+              </div>
+
+              {editingSourceIPs ? (
+                <div className="space-y-3">
+                  <textarea
+                    value={pendingSourceIPs ?? ""}
+                    onChange={(e) => {
+                      setPendingSourceIPs(e.target.value);
+                      setSourceIPError(null);
+                    }}
+                    placeholder="e.g., 10.0.0.0/8, 192.168.1.0/24, 172.16.0.1"
+                    rows={3}
+                    className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono"
+                  />
+                  <p className="text-xs text-gray-500">
+                    Comma-separated list of IP addresses and CIDR ranges. Only SSH connections originating from these IPs will be allowed. Leave empty to allow all.
+                  </p>
+                  {sourceIPError && (
+                    <p className="text-xs text-red-600">{sourceIPError}</p>
+                  )}
+                  <div className="flex justify-end">
+                    <button
+                      onClick={handleSaveSourceIPs}
+                      disabled={updateMutation.isPending || pendingSourceIPs === null}
+                      className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {updateMutation.isPending ? "Saving..." : "Save"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  {instance.allowed_source_ips ? (
+                    <div className="space-y-1">
+                      {instance.allowed_source_ips.split(",").map((ip, i) => (
+                        <span
+                          key={i}
+                          className="inline-block bg-gray-100 text-gray-700 text-xs font-mono px-2 py-1 rounded mr-2 mb-1"
+                        >
+                          {ip.trim()}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500">
+                      No restrictions configured. All source IPs are allowed.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
