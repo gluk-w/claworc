@@ -2,7 +2,9 @@
 <module type="PYTHON_MODULE" version="4">
   <component name="Go" enabled="true" />
   <component name="NewModuleRootManager">
-    <content url="file://$MODULE_DIR$" />
+    <content url="file://$MODULE_DIR$">
+      <excludeFolder url="file://$MODULE_DIR$/control-plane/frontend/dev-dist" />
+    </content>
     <orderEntry type="jdk" jdkName="Python 3.10 virtualenv at ~/Library/Caches/pypoetry/virtualenvs/claworc-0gnG6Dok-py3.10" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>

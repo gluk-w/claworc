@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	dockerclient "github.com/docker/docker/client"
+	"github.com/docker/go-connections/nat"
 	"github.com/docker/go-units"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
@@ -193,6 +194,9 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 		Image:  params.ContainerImage,
 		Env:    env,
 		Labels: map[string]string{"managed-by": labelManagedBy, "instance": params.Name},
+		ExposedPorts: nat.PortSet{
+			"22/tcp": struct{}{},
+		},
 		Healthcheck: &container.HealthConfig{
 			Test:          []string{"CMD", "curl", "-sf", "http://localhost:3000/"},
 			Interval:      30_000_000_000,
@@ -209,6 +213,9 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 		Resources: container.Resources{
 			NanoCPUs: nanoCPUs,
 			Memory:   memLimit,
+		},
+		PortBindings: nat.PortMap{
+			"22/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: ""}},
 		},
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 	}
@@ -398,12 +405,23 @@ func (d *DockerOrchestrator) GetSSHAddress(ctx context.Context, instanceID uint)
 	if err != nil {
 		return "", 0, fmt.Errorf("inspect container for instance %d: %w", instanceID, err)
 	}
+
+	// Use published host port for SSH (works on macOS where bridge IPs are unreachable)
+	if bindings, ok := inspect.NetworkSettings.Ports["22/tcp"]; ok && len(bindings) > 0 {
+		port := 0
+		fmt.Sscanf(bindings[0].HostPort, "%d", &port)
+		if port > 0 {
+			return "127.0.0.1", port, nil
+		}
+	}
+
+	// Fallback to container IP (works on Linux)
 	for _, net := range inspect.NetworkSettings.Networks {
 		if net.IPAddress != "" {
 			return net.IPAddress, 22, nil
 		}
 	}
-	return "", 0, fmt.Errorf("cannot determine container IP for instance %d", instanceID)
+	return "", 0, fmt.Errorf("cannot determine SSH address for instance %d", instanceID)
 }
 
 func (d *DockerOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {

@@ -729,7 +729,10 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stop any SSH tunnels for this instance before deleting
+	// Stop SSH tunnels and close connection before deleting
+	if SSHMgr != nil {
+		SSHMgr.CancelReconnection(inst.ID)
+	}
 	if TunnelMgr != nil {
 		if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
 			log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)
@@ -798,7 +801,10 @@ func StopInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stop any SSH tunnels for this instance
+	// Stop SSH tunnels and close connection for this instance
+	if SSHMgr != nil {
+		SSHMgr.CancelReconnection(inst.ID)
+	}
 	if TunnelMgr != nil {
 		if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
 			log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)
@@ -837,7 +843,10 @@ func RestartInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stop existing SSH tunnels before restart; they will be recreated by the background manager
+	// Stop SSH tunnels and close connection before restart; they will be recreated by the background manager
+	if SSHMgr != nil {
+		SSHMgr.CancelReconnection(inst.ID)
+	}
 	if TunnelMgr != nil {
 		if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
 			log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)

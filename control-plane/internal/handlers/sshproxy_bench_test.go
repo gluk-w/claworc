@@ -80,7 +80,7 @@ func BenchmarkProxyToLocalPort_Direct(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		req := httptest.NewRequest("GET", "/test", nil)
 		w := httptest.NewRecorder()
-		proxyToLocalPort(w, req, port, "test")
+		_ = proxyToLocalPort(w, req, port, "test")
 		if w.Code != http.StatusOK {
 			b.Fatalf("expected 200, got %d", w.Code)
 		}
@@ -108,7 +108,7 @@ func BenchmarkProxyToLocalPort_ViaTunnel(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		req := httptest.NewRequest("GET", "/test", nil)
 		w := httptest.NewRecorder()
-		proxyToLocalPort(w, req, tunnelPort, "test")
+		_ = proxyToLocalPort(w, req, tunnelPort, "test")
 		if w.Code != http.StatusOK {
 			b.Fatalf("expected 200, got %d", w.Code)
 		}
@@ -137,7 +137,7 @@ func BenchmarkProxyToLocalPort_Concurrent(b *testing.B) {
 		for pb.Next() {
 			req := httptest.NewRequest("GET", "/test", nil)
 			w := httptest.NewRecorder()
-			proxyToLocalPort(w, req, tunnelPort, "test")
+			_ = proxyToLocalPort(w, req, tunnelPort, "test")
 			if w.Code != http.StatusOK {
 				b.Errorf("expected 200, got %d", w.Code)
 			}
@@ -277,7 +277,7 @@ func TestConcurrentHTTPProxySameInstance(t *testing.T) {
 			req := httptest.NewRequest("GET", fmt.Sprintf("/test/%d", idx), nil)
 			w := httptest.NewRecorder()
 
-			proxyToLocalPort(w, req, tunnelPort, fmt.Sprintf("test/%d", idx))
+			_ = proxyToLocalPort(w, req, tunnelPort, fmt.Sprintf("test/%d", idx))
 
 			if w.Code != http.StatusOK {
 				mu.Lock()
@@ -498,7 +498,7 @@ func TestMultiInstanceHTTPProxy(t *testing.T) {
 			req := httptest.NewRequest("GET", "/test", nil)
 			w := httptest.NewRecorder()
 
-			proxyToLocalPort(w, req, tunnelPorts[idx], "test")
+			_ = proxyToLocalPort(w, req, tunnelPorts[idx], "test")
 
 			if w.Code != http.StatusOK {
 				t.Errorf("instance %d: expected 200, got %d", idx+1, w.Code)

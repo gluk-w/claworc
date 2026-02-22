@@ -1,140 +1,31 @@
 //go:build docker_integration
 
-package sshfiles
+package sshproxy
 
 import (
 	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"net"
-	"os"
-	"os/exec"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"golang.org/x/crypto/ssh"
-
-	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 )
 
-const (
-	sshReadyTimeout      = 90 * time.Second
-	sshReadyPollInterval = 1 * time.Second
-)
-
-// getExternalAgentInfo reads container info from environment variables set by
-// the TypeScript test harness (tests/ssh/file.test.ts). If any required
-// variable is missing, the test is skipped.
-func getExternalAgentInfo(t *testing.T) (containerID, sshHost string, sshPort int) {
+// setupExternalSSHFiles sets up an SSH connection to an externally managed container.
+// Returns only the SSH client (uses getExternalAgentInfo/uploadPublicKeyViaDocker
+// from logs_integration_test.go).
+func setupExternalSSHFiles(t *testing.T) *ssh.Client {
 	t.Helper()
-	containerID = os.Getenv("AGENT_CONTAINER_ID")
-	sshHost = os.Getenv("AGENT_SSH_HOST")
-	portStr := os.Getenv("AGENT_SSH_PORT")
-	if containerID == "" || sshHost == "" || portStr == "" {
-		t.Skip("External agent not configured (set AGENT_CONTAINER_ID, AGENT_SSH_HOST, AGENT_SSH_PORT)")
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		t.Fatalf("invalid AGENT_SSH_PORT %q: %v", portStr, err)
-	}
-	return containerID, sshHost, port
-}
-
-// waitForSSHD waits until sshd is accepting connections with a valid banner.
-func waitForSSHD(t *testing.T, host string, port int) {
-	t.Helper()
-	deadline := time.Now().Add(sshReadyTimeout)
-	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
-		if err != nil {
-			time.Sleep(sshReadyPollInterval)
-			continue
-		}
-		conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-		buf := make([]byte, 256)
-		n, err := conn.Read(buf)
-		conn.Close()
-		if err == nil && n > 0 && strings.HasPrefix(string(buf[:n]), "SSH-") {
-			t.Logf("sshd ready at %s (banner: %s)", addr, strings.TrimSpace(string(buf[:n])))
-			return
-		}
-		time.Sleep(sshReadyPollInterval)
-	}
-	t.Fatalf("sshd not ready at %s after %v", addr, sshReadyTimeout)
-}
-
-// uploadPublicKeyViaDocker installs a public key on the container using docker exec.
-func uploadPublicKeyViaDocker(t *testing.T, containerID, publicKey string) {
-	t.Helper()
-
-	// Create .ssh directory
-	cmd := exec.Command("docker", "exec", containerID, "sh", "-c", "mkdir -p /root/.ssh && chmod 700 /root/.ssh")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("create .ssh dir: %v\n%s", err, out)
-	}
-
-	// Write public key via base64 to safely pass content
-	b64 := base64.StdEncoding.EncodeToString([]byte(publicKey))
-	writeCmd := fmt.Sprintf("echo '%s' | base64 -d > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys", b64)
-	cmd = exec.Command("docker", "exec", containerID, "sh", "-c", writeCmd)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("write authorized_keys: %v\n%s", err, out)
-	}
-}
-
-// connectSSH establishes an SSH connection to the container using the given signer.
-func connectSSH(t *testing.T, host string, port int, signer ssh.Signer) *ssh.Client {
-	t.Helper()
-	cfg := &ssh.ClientConfig{
-		User:            "root",
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         30 * time.Second,
-	}
-	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	client, err := ssh.Dial("tcp", addr, cfg)
-	if err != nil {
-		t.Fatalf("ssh dial %s: %v", addr, err)
-	}
-	return client
-}
-
-// setupExternalSSH sets up an SSH connection to an externally managed container.
-// Returns the SSH client and a cleanup function.
-func setupExternalSSH(t *testing.T) *ssh.Client {
-	t.Helper()
-
-	containerID, sshHost, sshPort := getExternalAgentInfo(t)
-	waitForSSHD(t, sshHost, sshPort)
-
-	// Generate a key pair
-	_, privKeyPEM, err := sshproxy.GenerateKeyPair()
-	if err != nil {
-		t.Fatalf("generate key pair: %v", err)
-	}
-	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
-	if err != nil {
-		t.Fatalf("parse private key: %v", err)
-	}
-
-	// Upload public key to the container
-	pubKeyStr := string(ssh.MarshalAuthorizedKey(signer.PublicKey()))
-	uploadPublicKeyViaDocker(t, containerID, pubKeyStr)
-
-	// Connect
-	client := connectSSH(t, sshHost, sshPort, signer)
-	t.Cleanup(func() { client.Close() })
-
+	client, _ := setupExternalSSH(t)
 	return client
 }
 
 // TestExternalIntegration_ListDirectory tests listing directories on a real agent container.
 func TestExternalIntegration_ListDirectory(t *testing.T) {
-	client := setupExternalSSH(t)
+	client := setupExternalSSHFiles(t)
 
 	t.Run("root_directory", func(t *testing.T) {
 		entries, err := ListDirectory(client, "/root")
@@ -186,7 +77,7 @@ func TestExternalIntegration_ListDirectory(t *testing.T) {
 
 // TestExternalIntegration_ReadFile tests reading files on a real agent container.
 func TestExternalIntegration_ReadFile(t *testing.T) {
-	client := setupExternalSSH(t)
+	client := setupExternalSSHFiles(t)
 
 	t.Run("etc_hostname", func(t *testing.T) {
 		data, err := ReadFile(client, "/etc/hostname")
@@ -222,7 +113,7 @@ func TestExternalIntegration_ReadFile(t *testing.T) {
 
 // TestExternalIntegration_WriteAndReadFile tests write-then-read round trips.
 func TestExternalIntegration_WriteAndReadFile(t *testing.T) {
-	client := setupExternalSSH(t)
+	client := setupExternalSSHFiles(t)
 
 	t.Run("text_file", func(t *testing.T) {
 		content := []byte("Hello from integration test!\nLine 2\n")
@@ -345,7 +236,7 @@ func TestExternalIntegration_WriteAndReadFile(t *testing.T) {
 
 // TestExternalIntegration_LargeFile tests writing and verifying a large file (>1MB).
 func TestExternalIntegration_LargeFile(t *testing.T) {
-	client := setupExternalSSH(t)
+	client := setupExternalSSHFiles(t)
 
 	// Generate 1MB of random data
 	size := 1024 * 1024
@@ -408,7 +299,7 @@ func TestExternalIntegration_LargeFile(t *testing.T) {
 
 // TestExternalIntegration_CreateDirectory tests directory creation on a real agent.
 func TestExternalIntegration_CreateDirectory(t *testing.T) {
-	client := setupExternalSSH(t)
+	client := setupExternalSSHFiles(t)
 
 	t.Run("simple_directory", func(t *testing.T) {
 		path := "/tmp/sshfiles_test_dir"
@@ -463,7 +354,7 @@ func TestExternalIntegration_CreateDirectory(t *testing.T) {
 // TestExternalIntegration_CreateDirThenWriteAndList tests the full workflow:
 // create a directory, write a file into it, then list and read it back.
 func TestExternalIntegration_CreateDirThenWriteAndList(t *testing.T) {
-	client := setupExternalSSH(t)
+	client := setupExternalSSHFiles(t)
 
 	dir := "/tmp/sshfiles_test_workflow"
 	filePath := dir + "/document.txt"
@@ -512,7 +403,7 @@ func TestExternalIntegration_CreateDirThenWriteAndList(t *testing.T) {
 
 // TestExternalIntegration_PermissionDenied tests error handling for permission-denied scenarios.
 func TestExternalIntegration_PermissionDenied(t *testing.T) {
-	client := setupExternalSSH(t)
+	client := setupExternalSSHFiles(t)
 
 	// The agent runs as root, so most paths are accessible.
 	// Write to a read-only filesystem path if available.
@@ -527,7 +418,7 @@ func TestExternalIntegration_PermissionDenied(t *testing.T) {
 
 // TestExternalIntegration_FileOverwrite tests that writing to an existing file overwrites it.
 func TestExternalIntegration_FileOverwrite(t *testing.T) {
-	client := setupExternalSSH(t)
+	client := setupExternalSSHFiles(t)
 
 	path := "/tmp/sshfiles_test_overwrite.txt"
 

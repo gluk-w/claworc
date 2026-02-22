@@ -13,31 +13,50 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 )
 
+// tunnelPortInfo holds local and remote port information for an active tunnel.
+type tunnelPortInfo struct {
+	localPort  int
+	remotePort int
+}
+
 // getTunnelPort looks up the active SSH tunnel for an instance and returns
 // the local port for the given service type ("vnc" or "gateway").
-//
-// Performance: ~130ns per call (RLock + map lookup + short linear scan over 2-3 tunnels).
-// Zero allocations on the hot path when TunnelMgr is initialized and tunnel exists.
 func getTunnelPort(instanceID uint, serviceType string) (int, error) {
+	info, err := getTunnelPortInfo(instanceID, serviceType)
+	if err != nil {
+		return 0, err
+	}
+	return info.localPort, nil
+}
+
+// getTunnelPortInfo looks up the active SSH tunnel for an instance and returns
+// both the local and remote ports for the given service type.
+func getTunnelPortInfo(instanceID uint, serviceType string) (tunnelPortInfo, error) {
 	if TunnelMgr == nil {
-		return 0, fmt.Errorf("tunnel manager not initialized")
+		return tunnelPortInfo{}, fmt.Errorf("tunnel manager not initialized")
 	}
 
-	var port int
+	tunnels := TunnelMgr.GetTunnelsForInstance(instanceID)
+	label := ""
 	switch strings.ToLower(serviceType) {
 	case "vnc":
-		port = TunnelMgr.GetVNCLocalPort(instanceID)
+		label = "VNC"
 	case "gateway":
-		port = TunnelMgr.GetGatewayLocalPort(instanceID)
+		label = "Gateway"
 	default:
-		return 0, fmt.Errorf("unknown service type: %s", serviceType)
+		return tunnelPortInfo{}, fmt.Errorf("unknown service type: %s", serviceType)
 	}
 
-	if port == 0 {
-		return 0, fmt.Errorf("no active %s tunnel for instance %d", serviceType, instanceID)
+	for _, t := range tunnels {
+		if t.Label == label && t.Status == "active" {
+			return tunnelPortInfo{
+				localPort:  t.LocalPort,
+				remotePort: t.Config.RemotePort,
+			}, nil
+		}
 	}
 
-	return port, nil
+	return tunnelPortInfo{}, fmt.Errorf("no active %s tunnel for instance %d", serviceType, instanceID)
 }
 
 // tunnelProxyClient is a shared HTTP client configured for local tunnel traffic.
@@ -53,7 +72,7 @@ var tunnelProxyClient = &http.Client{
 //
 // Performance: ~67µs direct to localhost, ~124µs via SSH tunnel (~57µs tunnel overhead).
 // Supports 20+ concurrent requests through a single SSH tunnel without errors.
-func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path string) {
+func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path string) error {
 	targetURL := fmt.Sprintf("http://127.0.0.1:%d/%s", port, path)
 	if r.URL.RawQuery != "" {
 		targetURL += "?" + r.URL.RawQuery
@@ -64,7 +83,7 @@ func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path str
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to create proxy request")
-		return
+		return nil
 	}
 
 	// Forward relevant headers
@@ -81,8 +100,7 @@ func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path str
 	resp, err := tunnelProxyClient.Do(proxyReq)
 	if err != nil {
 		log.Printf("Tunnel proxy error: %v", err)
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("Cannot connect to service via tunnel: %v", err))
-		return
+		return fmt.Errorf("cannot connect to service via tunnel: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -98,6 +116,7 @@ func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path str
 
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+	return nil
 }
 
 // websocketProxyToLocalPort proxies a WebSocket connection to localhost:port/path.
@@ -107,7 +126,7 @@ func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path str
 // Performance: ~420µs per round-trip message (including WebSocket frame overhead).
 // Supports 10+ concurrent WebSocket connections through a single SSH tunnel.
 // Each connection uses two goroutines for bidirectional relay (client→upstream, upstream→client).
-func websocketProxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path string) {
+func websocketProxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path string, upstreamHeaders ...http.Header) {
 	// Accept with client's requested subprotocol
 	requestedProtocol := r.Header.Get("Sec-WebSocket-Protocol")
 	var subprotocols []string
@@ -137,9 +156,14 @@ func websocketProxyToLocalPort(w http.ResponseWriter, r *http.Request, port int,
 
 	log.Printf("Tunnel WS proxy: %s → %s", logutil.SanitizeForLog(r.URL.Path), logutil.SanitizeForLog(wsURL))
 
-	upstreamConn, _, err := websocket.Dial(dialCtx, wsURL, &websocket.DialOptions{
+	dialOpts := &websocket.DialOptions{
 		Subprotocols: subprotocols,
-	})
+	}
+	if len(upstreamHeaders) > 0 && upstreamHeaders[0] != nil {
+		dialOpts.HTTPHeader = upstreamHeaders[0]
+	}
+
+	upstreamConn, _, err := websocket.Dial(dialCtx, wsURL, dialOpts)
 	if err != nil {
 		log.Printf("Tunnel WS proxy: local dial error for %s: %v", logutil.SanitizeForLog(wsURL), err)
 		clientConn.Close(4502, "Cannot connect to service via tunnel")

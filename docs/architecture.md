@@ -149,7 +149,7 @@ All communication between the control plane and agent instances flows through SS
 **Key design:**
 
 - **Single global key pair**: One ED25519 key pair stored as `ssh_key` / `ssh_key.pub` in the data directory. Auto-generated on first startup. The public key is uploaded to each instance on-demand.
-- **SSH tunnels replace direct access**: The browser connects to the control plane, which proxies traffic through SSH tunnels (port 3000 for VNC, port 8080 for gateway) — agents are never exposed directly.
+- **SSH tunnels replace direct access**: The browser connects to the control plane, which proxies traffic through SSH tunnels (port 3000 for VNC, port 18789 for gateway) — agents are never exposed directly.
 - **Automatic resilience**: Three-layer health monitoring (SSH keepalive, application health, tunnel health) with automatic reconnection using exponential backoff.
 - **Security**: Key-based auth only, optional per-instance source IP restrictions, connection rate limiting, persistent audit logging, and safe multi-step key rotation.
 
@@ -157,7 +157,7 @@ For full details, see [SSH Connectivity Architecture](ssh-connectivity.md).
 
 ```
 Browser ──▶ Control Plane ──[SSH tunnel]──▶ Agent :3000 (VNC)
-                           ──[SSH tunnel]──▶ Agent :8080 (Gateway)
+                           ──[SSH tunnel]──▶ Agent :18789 (Gateway)
                            ──[SSH exec]────▶ Agent (terminal, files, logs)
 ```
 

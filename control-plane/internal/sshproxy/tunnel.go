@@ -59,7 +59,7 @@ type ActiveTunnel struct {
 	Error     string // last error message, if any
 	LastCheck time.Time
 
-	listener net.Listener    // the local listener (for reverse tunnels)
+	listener net.Listener // the local listener (for reverse tunnels)
 	cancel   context.CancelFunc
 	metrics  *TunnelMetrics // per-tunnel health metrics
 }
@@ -164,7 +164,7 @@ func (tm *TunnelManager) CreateTunnelForVNC(ctx context.Context, instanceID uint
 // identified by instance ID.
 func (tm *TunnelManager) CreateTunnelForGateway(ctx context.Context, instanceID uint, gatewayPort int) (int, error) {
 	if gatewayPort == 0 {
-		gatewayPort = 8080
+		gatewayPort = 18789
 	}
 
 	port, err := tm.CreateReverseTunnel(ctx, instanceID, "Gateway", gatewayPort, 0)

@@ -211,12 +211,12 @@ func TestSecurity_PermitOpenRestrictedToPorts(t *testing.T) {
 		t.Fatal("SECURITY: PermitOpen directive not found")
 	}
 
-	// Should only allow localhost:3000 and localhost:8080
+	// Should only allow localhost:3000 and localhost:18789
 	if !strings.Contains(val, "localhost:3000") {
 		t.Error("SECURITY: PermitOpen should include localhost:3000")
 	}
-	if !strings.Contains(val, "localhost:8080") {
-		t.Error("SECURITY: PermitOpen should include localhost:8080")
+	if !strings.Contains(val, "localhost:18789") {
+		t.Error("SECURITY: PermitOpen should include localhost:18789")
 	}
 
 	// Should not have any wildcard or broad patterns
@@ -392,4 +392,3 @@ func TestSecurity_PrivateKeyFilePermissions(t *testing.T) {
 		t.Errorf("SECURITY: public key permissions = %o, want 0644", pubInfo.Mode().Perm())
 	}
 }
-

@@ -128,7 +128,7 @@ To recover:
 Tunnel errors mean the local TCP listener for a tunnel has failed. The reconciliation loop (every 60 seconds) will automatically attempt to recreate failed tunnels. If errors persist:
 
 1. Check the Connection Events for related error details
-2. Verify the target service (VNC on port 3000, gateway on port 8080) is running inside the agent
+2. Verify the target service (VNC on port 3000, gateway on port 18789) is running inside the agent
 3. Try a manual reconnect from the Troubleshoot dialog
 
 ### SSH key issues after a pod restart

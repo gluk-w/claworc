@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -133,6 +134,11 @@ func (m *SSHManager) reconnectWithBackoff(ctx context.Context, instanceID uint, 
 		if err := orch.ConfigureSSHAccess(ctx, instanceID, m.getPublicKey()); err != nil {
 			lastErr = fmt.Errorf("configure ssh access (attempt %d): %w", attempt, err)
 			log.Printf("SSH key upload failed for instance %d (attempt %d): %v", instanceID, attempt, err)
+			// Abort immediately if the instance no longer exists
+			if strings.Contains(err.Error(), "not found") {
+				log.Printf("SSH reconnect aborted for instance %d: instance no longer exists", instanceID)
+				return fmt.Errorf("instance %d no longer exists, aborting reconnect", instanceID)
+			}
 		} else {
 			m.emitEvent(ConnectionEvent{
 				InstanceID: instanceID,
@@ -224,6 +230,20 @@ func (m *SSHManager) triggerReconnect(instanceID uint, reason string) {
 			log.Printf("SSH async reconnection failed for instance %d: %v", instanceID, err)
 		}
 	}()
+}
+
+// CancelReconnection cancels any in-progress reconnection for a specific instance
+// and closes its SSH connection. Use this when an instance is deleted or stopped
+// to prevent the health checker and reconnection loop from retrying.
+func (m *SSHManager) CancelReconnection(instanceID uint) {
+	m.reconnMu.Lock()
+	if cancel, ok := m.reconnecting[instanceID]; ok {
+		cancel()
+		delete(m.reconnecting, instanceID)
+	}
+	m.reconnMu.Unlock()
+
+	m.Close(instanceID)
 }
 
 // cancelAllReconnections cancels all in-progress reconnection goroutines.

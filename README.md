@@ -54,12 +54,12 @@ Biometric identification is supported for authentication.
 Claworc uses **SSH** as the secure connectivity layer between the control plane and all agent instances.
 A single ED25519 key pair is auto-generated on first startup and used to authenticate with every instance.
 The control plane establishes one multiplexed SSH connection per instance, then creates tunnels for
-Chrome/VNC access (port 3000) and the OpenClaw gateway (port 8080). Terminal sessions, file operations,
+Chrome/VNC access (port 3000) and the OpenClaw gateway (port 18789). Terminal sessions, file operations,
 and log streaming also flow over SSH.
 
 ```
 Browser ──▶ Control Plane ──[SSH tunnel]──▶ Agent :3000 (VNC)
-                           ──[SSH tunnel]──▶ Agent :8080 (Gateway)
+                           ──[SSH tunnel]──▶ Agent :18789 (Gateway)
                            ──[SSH exec]────▶ Agent (terminal, files, logs)
 ```
 

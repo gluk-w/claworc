@@ -1,4 +1,4 @@
-package sshlogs
+package sshproxy
 
 import (
 	"context"
@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
-
-	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 )
 
 // testLogServer is an in-memory filesystem for the test SSH server that
@@ -41,16 +39,16 @@ func newTestLogServer() *testLogServer {
 func startTestSSHServer(t *testing.T, srv *testLogServer) (*ssh.Client, func()) {
 	t.Helper()
 
-	_, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	_, privKeyPEM, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate key pair: %v", err)
 	}
-	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	signer, err := ParsePrivateKey(privKeyPEM)
 	if err != nil {
 		t.Fatalf("parse private key: %v", err)
 	}
 
-	_, hostKeyPEM, err := sshproxy.GenerateKeyPair()
+	_, hostKeyPEM, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate host key: %v", err)
 	}
@@ -657,26 +655,6 @@ func TestStreamLogs_OpenClawLog(t *testing.T) {
 	}
 	if lines[0] != "oc-line1" {
 		t.Errorf("expected 'oc-line1', got %q", lines[0])
-	}
-}
-
-// --- shellQuote tests ---
-
-func TestShellQuote(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"/var/log/syslog", "'/var/log/syslog'"},
-		{"simple", "'simple'"},
-		{"it's", "'it'\\''s'"},
-		{"", "''"},
-	}
-	for _, tt := range tests {
-		got := shellQuote(tt.input)
-		if got != tt.expected {
-			t.Errorf("shellQuote(%q) = %q, want %q", tt.input, got, tt.expected)
-		}
 	}
 }
 

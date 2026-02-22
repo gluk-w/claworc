@@ -20,7 +20,7 @@ const (
 )
 
 // startMockServices starts an HTTP server on port 3000 and a TCP echo server
-// on port 8080 inside the container to simulate VNC and Gateway services.
+// on port 18789 inside the container to simulate VNC and Gateway services.
 func (e *dockerTestEnv) startMockServices(t *testing.T, containerID string) {
 	t.Helper()
 	ctx := context.Background()
@@ -32,12 +32,12 @@ func (e *dockerTestEnv) startMockServices(t *testing.T, containerID string) {
 		t.Fatalf("start HTTP server on 3000: %v", err)
 	}
 
-	// TCP echo server on port 8080 (simulates Gateway service).
+	// TCP echo server on port 18789 (simulates Gateway service).
 	// Write the script to a file first, then run it in the background.
 	echoScript := `import socket
 s = socket.socket()
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(("0.0.0.0", 8080))
+s.bind(("0.0.0.0", 18789))
 s.listen(5)
 while True:
     c, a = s.accept()
@@ -58,12 +58,12 @@ while True:
 	_, err = e.execInContainer(ctx, containerID, []string{"sh", "-c",
 		"nohup python3 /tmp/echo_server.py >/dev/null 2>&1 &"})
 	if err != nil {
-		t.Fatalf("start TCP echo server on 8080: %v", err)
+		t.Fatalf("start TCP echo server on 18789: %v", err)
 	}
 
 	// Allow services time to bind their ports
 	time.Sleep(2 * time.Second)
-	t.Log("Mock services started (HTTP:3000, TCP echo:8080)")
+	t.Log("Mock services started (HTTP:3000, TCP echo:18789)")
 }
 
 // removeAuthorizedKeys deletes the SSH authorized_keys file, simulating
@@ -137,7 +137,7 @@ func tryTCPEcho(port int, msg string) error {
 //   - SSH connection establishment with on-demand key upload
 //   - Automatic VNC and Gateway tunnel creation
 //   - HTTP data flow through VNC tunnel (reaches agent port 3000)
-//   - TCP data flow through Gateway tunnel (reaches agent port 8080)
+//   - TCP data flow through Gateway tunnel (reaches agent port 18789)
 //   - Tunnel cleanup when instance is stopped
 func TestIntegration_TunnelEstablishmentDataFlowAndCleanup(t *testing.T) {
 	env := newDockerTestEnv(t)
@@ -193,7 +193,7 @@ func TestIntegration_TunnelEstablishmentDataFlowAndCleanup(t *testing.T) {
 	if gwPort == 0 {
 		t.Fatal("Gateway tunnel not created")
 	}
-	t.Logf("Gateway tunnel: localhost:%d -> agent:8080", gwPort)
+	t.Logf("Gateway tunnel: localhost:%d -> agent:18789", gwPort)
 
 	for _, tun := range tunnels {
 		if tun.Status != "active" {
@@ -218,7 +218,7 @@ func TestIntegration_TunnelEstablishmentDataFlowAndCleanup(t *testing.T) {
 	// --- Data Flow: TCP echo through Gateway tunnel ---
 	// WebSocket connections use TCP as transport, so validating TCP data
 	// flow proves the tunnel can carry WebSocket traffic to the agent's
-	// gateway service on port 8080.
+	// gateway service on port 18789.
 	tcpEchoTest(t, gwPort, "hello-gateway-tunnel", serviceReadyTimeout)
 	t.Log("Gateway tunnel data flow: TCP echo OK")
 

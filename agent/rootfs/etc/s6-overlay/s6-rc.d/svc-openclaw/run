@@ -2,20 +2,24 @@
 
 export HOME=/config
 
-# Initialize config if missing
+# Initialize config on first run
 if [ ! -f "/config/.openclaw/openclaw.json" ]; then
     echo "Initializing OpenClaw..."
     mkdir -p /config/.openclaw
     chown abc:abc /config/.openclaw
     s6-setuidgid abc openclaw doctor --fix || echo "Doctor finished with exit code $?"
 
-    s6-setuidgid abc openclaw config set gateway.mode local
-    s6-setuidgid abc openclaw config set gateway.bind localhost
-    s6-setuidgid abc openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth true
+    s6-setuidgid abc openclaw config set logging.file /var/log/claworc/openclaw.log
     if [ -f "/defaults/browser.json" ]; then
         s6-setuidgid abc openclaw config set browser "$(cat /defaults/browser.json)" --json
     fi
 fi
+
+# Always ensure gateway settings are correct (config may exist from a persisted volume
+# but be missing required gateway fields)
+s6-setuidgid abc openclaw config set gateway.mode local
+s6-setuidgid abc openclaw config set gateway.bind localhost
+s6-setuidgid abc openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth true
 
 # Set token if provided
 if [ -n "$OPENCLAW_GATEWAY_TOKEN" ]; then

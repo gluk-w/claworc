@@ -1,9 +1,9 @@
-// Package sshfiles provides SSH-based file operations for remote agent instances.
+// SSH-based file operations for remote agent instances.
 //
-// All functions accept an *ssh.Client obtained from sshproxy.SSHManager and
+// All functions accept an *ssh.Client obtained from SSHManager and
 // execute shell commands over SSH sessions. The SSH connection is assumed to
 // already be authenticated (EnsureConnected handles key upload).
-package sshfiles
+package sshproxy
 
 import (
 	"bytes"
@@ -103,10 +103,6 @@ func executeCommandWithStdin(client *ssh.Client, cmd string, input []byte) error
 
 // ListDirectory lists the contents of a remote directory via SSH.
 // It executes `ls -la --color=never` and parses the output into FileEntry structs.
-//
-// Performance: SSH exec typically completes in <50ms for directory listings,
-// compared to ~200-500ms for K8s exec which has API server and kubelet overhead.
-// Docker exec is comparable at ~30-80ms but requires the Docker socket.
 func ListDirectory(client *ssh.Client, path string) ([]orchestrator.FileEntry, error) {
 	start := time.Now()
 	stdout, stderr, exitCode, err := executeCommand(client, fmt.Sprintf("ls -la --color=never %s", shellQuote(path)))
@@ -121,11 +117,6 @@ func ListDirectory(client *ssh.Client, path string) ([]orchestrator.FileEntry, e
 }
 
 // ReadFile reads the contents of a remote file via SSH.
-//
-// Performance: SSH cat is a single round-trip over the multiplexed connection,
-// typically <30ms for small files. K8s exec adds API server + kubelet latency
-// (~150-400ms baseline). For large files, SSH throughput is limited only by
-// the network, whereas K8s exec buffers through the API server.
 func ReadFile(client *ssh.Client, path string) ([]byte, error) {
 	start := time.Now()
 	stdout, stderr, exitCode, err := executeCommand(client, fmt.Sprintf("cat %s", shellQuote(path)))
@@ -142,12 +133,6 @@ func ReadFile(client *ssh.Client, path string) ([]byte, error) {
 // WriteFile writes data to a remote file via SSH.
 // For small files it pipes data directly to cat. For large files it uses
 // base64-encoded chunks to avoid shell argument length limits.
-//
-// Performance: Write operations require one SSH exec per 48KB chunk plus one
-// for truncation. For a 1MB file, that's ~22 round-trips. SSH reuses the
-// multiplexed connection so each chunk takes ~10-30ms, totaling ~200-700ms
-// for 1MB. K8s exec has similar chunking but each chunk goes through the
-// API server (~200ms per chunk), making it 5-10x slower for large files.
 func WriteFile(client *ssh.Client, path string, data []byte) error {
 	start := time.Now()
 	// Use chunked base64 approach for consistency with the existing orchestrator
@@ -184,9 +169,6 @@ func WriteFile(client *ssh.Client, path string, data []byte) error {
 }
 
 // CreateDirectory creates a remote directory (and any parent directories) via SSH.
-//
-// Performance: Single SSH exec, typically <30ms. K8s exec equivalent takes
-// ~150-400ms due to API server overhead.
 func CreateDirectory(client *ssh.Client, path string) error {
 	start := time.Now()
 	_, stderr, exitCode, err := executeCommand(client, fmt.Sprintf("mkdir -p %s", shellQuote(path)))
@@ -198,9 +180,4 @@ func CreateDirectory(client *ssh.Client, path string) error {
 	}
 	log.Printf("[sshfiles] CreateDirectory %s completed in %s", path, time.Since(start))
 	return nil
-}
-
-// shellQuote wraps a string in single quotes, escaping any embedded single quotes.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }

@@ -1,4 +1,4 @@
-// Package sshlogs provides SSH-based log streaming for remote agent instances.
+// SSH-based log streaming for remote agent instances.
 //
 // All functions accept an *ssh.Client obtained from sshproxy.SSHManager and
 // execute shell commands over SSH sessions. The SSH connection is assumed to
@@ -41,7 +41,7 @@
 // the old (renamed) file after rotation and will NOT pick up the new file.
 // This is only useful for files that are never rotated or when you
 // intentionally want to read the pre-rotation content to completion.
-package sshlogs
+package sshproxy
 
 import (
 	"bufio"

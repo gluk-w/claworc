@@ -1,7 +1,7 @@
 replicaCount: 1
 
 config:
-  databasePath: /app/data/claworc.db
+  dataPath: /app/data
   k8sNamespace: claworc
 
 service:

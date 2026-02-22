@@ -365,8 +365,8 @@ func TestCreateTunnelForGateway(t *testing.T) {
 	if tunnels[0].Label != "Gateway" {
 		t.Errorf("expected label 'Gateway', got '%s'", tunnels[0].Label)
 	}
-	if tunnels[0].Config.RemotePort != 8080 {
-		t.Errorf("expected remote port 8080, got %d", tunnels[0].Config.RemotePort)
+	if tunnels[0].Config.RemotePort != 18789 {
+		t.Errorf("expected remote port 18789, got %d", tunnels[0].Config.RemotePort)
 	}
 
 	// Verify GetGatewayLocalPort

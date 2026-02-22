@@ -97,7 +97,7 @@ This document describes manual test scenarios for the SSH proxy system, covering
 **Expected Result:**
 - Response contains a `"tunnels"` array with two entries:
   - VNC tunnel: `"label": "VNC"`, `"remote_port": 3000`, `"status": "active"`, `"type": "reverse"`
-  - Gateway tunnel: `"label": "Gateway"`, `"remote_port": 8080`, `"status": "active"`, `"type": "reverse"`
+  - Gateway tunnel: `"label": "Gateway"`, `"remote_port": 18789`, `"status": "active"`, `"type": "reverse"`
 - Each tunnel has a non-zero `"local_port"` (auto-assigned by OS).
 - `"last_check"` timestamps are recent.
 

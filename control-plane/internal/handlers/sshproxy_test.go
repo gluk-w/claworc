@@ -156,7 +156,9 @@ func TestProxyToLocalPort_Success(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/v1/instances/1/desktop/some/path?foo=bar", nil)
 	w := httptest.NewRecorder()
 
-	proxyToLocalPort(w, req, port, "some/path")
+	if err := proxyToLocalPort(w, req, port, "some/path"); err != nil {
+		t.Fatalf("proxyToLocalPort returned error: %v", err)
+	}
 
 	resp := w.Result()
 	if resp.StatusCode != http.StatusOK {
@@ -199,7 +201,9 @@ func TestProxyToLocalPort_ForwardsHeaders(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	proxyToLocalPort(w, req, port, "test")
+	if err := proxyToLocalPort(w, req, port, "test"); err != nil {
+		t.Fatalf("proxyToLocalPort returned error: %v", err)
+	}
 
 	resp := w.Result()
 	body, _ := io.ReadAll(resp.Body)
@@ -220,10 +224,10 @@ func TestProxyToLocalPort_BackendDown(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test", nil)
 	w := httptest.NewRecorder()
 
-	proxyToLocalPort(w, req, port, "test")
+	err := proxyToLocalPort(w, req, port, "test")
 
-	if w.Code != http.StatusBadGateway {
-		t.Errorf("expected status 502, got %d", w.Code)
+	if err == nil {
+		t.Error("expected non-nil error when backend is down")
 	}
 }
 
@@ -241,7 +245,9 @@ func TestProxyToLocalPort_StatusCodeForwarded(t *testing.T) {
 	req := httptest.NewRequest("GET", "/missing", nil)
 	w := httptest.NewRecorder()
 
-	proxyToLocalPort(w, req, port, "missing")
+	if err := proxyToLocalPort(w, req, port, "missing"); err != nil {
+		t.Fatalf("proxyToLocalPort returned error: %v", err)
+	}
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", w.Code)

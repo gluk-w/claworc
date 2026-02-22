@@ -65,8 +65,14 @@ func TestControlProxy_NoTunnelManager(t *testing.T) {
 
 	ControlProxy(w, req)
 
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("expected status 502, got %d", w.Code)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("expected text/html content type, got %s", ct)
+	}
+	if !strings.Contains(w.Body.String(), "Connecting to OpenClaw") {
+		t.Fatalf("expected connecting page HTML, got: %s", w.Body.String())
 	}
 }
 
@@ -88,8 +94,14 @@ func TestControlProxy_NoActiveTunnel(t *testing.T) {
 
 	ControlProxy(w, req)
 
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("expected status 502, got %d", w.Code)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("expected text/html content type, got %s", ct)
+	}
+	if !strings.Contains(w.Body.String(), "Connecting to OpenClaw") {
+		t.Fatalf("expected connecting page HTML, got: %s", w.Body.String())
 	}
 }
 

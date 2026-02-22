@@ -1,6 +1,6 @@
 //go:build docker_integration
 
-package sshlogs
+package sshproxy
 
 import (
 	"context"
@@ -17,17 +17,10 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
-
-	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
-)
-
-const (
-	integrationSSHTimeout      = 90 * time.Second
-	integrationSSHPollInterval = 1 * time.Second
 )
 
 // getExternalAgentInfo reads container info from environment variables set by
-// the TypeScript test harness (tests/ssh/logs.test.ts).
+// the TypeScript test harness.
 func getExternalAgentInfo(t *testing.T) (containerID, sshHost string, sshPort int) {
 	t.Helper()
 	containerID = os.Getenv("AGENT_CONTAINER_ID")
@@ -41,30 +34,6 @@ func getExternalAgentInfo(t *testing.T) (containerID, sshHost string, sshPort in
 		t.Fatalf("invalid AGENT_SSH_PORT %q: %v", portStr, err)
 	}
 	return containerID, sshHost, port
-}
-
-// waitForSSHD waits until sshd is accepting connections with a valid banner.
-func waitForSSHD(t *testing.T, host string, port int) {
-	t.Helper()
-	deadline := time.Now().Add(integrationSSHTimeout)
-	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
-		if err != nil {
-			time.Sleep(integrationSSHPollInterval)
-			continue
-		}
-		conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-		buf := make([]byte, 256)
-		n, err := conn.Read(buf)
-		conn.Close()
-		if err == nil && n > 0 && strings.HasPrefix(string(buf[:n]), "SSH-") {
-			t.Logf("sshd ready at %s (banner: %s)", addr, strings.TrimSpace(string(buf[:n])))
-			return
-		}
-		time.Sleep(integrationSSHPollInterval)
-	}
-	t.Fatalf("sshd not ready at %s after %v", addr, integrationSSHTimeout)
 }
 
 // uploadPublicKeyViaDocker installs a public key on the container using docker exec.
@@ -105,11 +74,11 @@ func setupExternalSSH(t *testing.T) (*ssh.Client, string) {
 	containerID, sshHost, sshPort := getExternalAgentInfo(t)
 	waitForSSHD(t, sshHost, sshPort)
 
-	_, privKeyPEM, err := sshproxy.GenerateKeyPair()
+	_, privKeyPEM, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate key pair: %v", err)
 	}
-	signer, err := sshproxy.ParsePrivateKey(privKeyPEM)
+	signer, err := ParsePrivateKey(privKeyPEM)
 	if err != nil {
 		t.Fatalf("parse private key: %v", err)
 	}

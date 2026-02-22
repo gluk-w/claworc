@@ -71,7 +71,7 @@ func setupExternalEnv(t *testing.T) (*dockerTestEnv, *agentInstance, *SSHManager
 //   - SSH connection with on-demand key upload via EnsureConnected
 //   - Automatic VNC and Gateway tunnel creation via StartTunnelsForInstance
 //   - HTTP data flow through VNC tunnel (reaches agent port 3000)
-//   - TCP data flow through Gateway tunnel (reaches agent port 8080)
+//   - TCP data flow through Gateway tunnel (reaches agent port 18789)
 //   - Tunnel cleanup: local ports closed and state cleared
 func TestExternalIntegration_TunnelProxyEndToEnd(t *testing.T) {
 	env, inst, sshMgr, tunnelMgr, orch := setupExternalEnv(t)

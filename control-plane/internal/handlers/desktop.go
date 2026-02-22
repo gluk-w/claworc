@@ -37,5 +37,7 @@ func DesktopProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	proxyToLocalPort(w, r, port, path)
+	if err := proxyToLocalPort(w, r, port, path); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+	}
 }

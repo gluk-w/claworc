@@ -11,7 +11,6 @@ RUN mkdir -p /home/linuxbrew/.linuxbrew \
     && chown -R abc:abc /home/linuxbrew/.linuxbrew
 
 COPY autostart /defaults/autostart
-COPY default.conf /defaults/default.conf
 COPY browser.json /defaults/browser.json
 COPY rootfs/ /
 

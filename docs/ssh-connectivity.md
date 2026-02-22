@@ -55,7 +55,7 @@ The same key pair authenticates the control plane with every agent instance. The
 │  └───┬────┘                                                      │
 │      │                                                           │
 │      ├── SSH tunnel → port 3000 (Selkies/VNC)                    │
-│      ├── SSH tunnel → port 8080 (OpenClaw gateway)               │
+│      ├── SSH tunnel → port 18789 (OpenClaw gateway)               │
 │      ├── SSH session → terminal (interactive shell)              │
 │      ├── SSH exec   → file operations (ls, cat, write)           │
 │      └── SSH exec   → log streaming (tail -F)                   │
@@ -69,7 +69,7 @@ SSH tunnels forward traffic from the control plane to services inside the agent 
 | Tunnel | Local Port | Remote Port | Service |
 |--------|-----------|-------------|---------|
 | VNC    | OS-assigned | 3000 | Selkies (Chrome remote desktop) |
-| Gateway | OS-assigned | 8080 | OpenClaw gateway (chat, API) |
+| Gateway | OS-assigned | 18789 | OpenClaw gateway (chat, API) |
 
 The control plane's HTTP handlers proxy browser requests through these tunnels. The browser never connects directly to agent instances — all traffic flows through the control plane's SSH tunnels.
 
@@ -289,7 +289,7 @@ Control Plane                            Orchestrator                Agent
 ```
 Control Plane                                                   Agent
      │                                                            │
-     │  [For each tunnel type: VNC (3000), Gateway (8080)]        │
+     │  [For each tunnel type: VNC (3000), Gateway (18789)]        │
      │                                                            │
      │  Listen on local TCP port (OS-assigned)                    │
      │  ◀── local listener ready                                  │

@@ -9,8 +9,8 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -75,6 +75,7 @@ func main() {
 		log.Fatalf("SSH audit init: %v", err)
 	}
 	handlers.AuditLog = auditor
+	ctx := context.Background()
 	cancelAuditCleanup := auditor.StartRetentionCleanup(ctx)
 	_ = cancelAuditCleanup
 
@@ -123,7 +124,6 @@ func main() {
 		}
 	}()
 
-	ctx := context.Background()
 	if err := orchestrator.InitOrchestrator(ctx); err != nil {
 		log.Printf("WARNING: %v", err)
 	}
