@@ -22,12 +22,37 @@ type ExecFunc func(ctx context.Context, name string, cmd []string) (string, stri
 // Returns the resolved image info (tag + SHA) and whether the instance is ready.
 type WaitFunc func(ctx context.Context, name string, timeout time.Duration) (imageInfo string, ready bool)
 
+func waitForGateway(ctx context.Context, execFn ExecFunc, name string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		_, _, code, err := execFn(ctx, name, []string{
+			"su", "-", "abc", "-c",
+			"curl -sf http://localhost:18789/ > /dev/null 2>&1",
+		})
+		if err == nil && code == 0 {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(3 * time.Second):
+		}
+	}
+	return false
+}
+
 func configureGatewayToken(ctx context.Context, execFn ExecFunc, name, token string, waitFn WaitFunc) {
 	imageInfo, ready := waitFn(ctx, name, 120*time.Second)
 	if !ready {
 		log.Printf("Timed out waiting for %s to start; gateway token not configured", logutil.SanitizeForLog(name))
 		return
 	}
+
+	if !waitForGateway(ctx, execFn, name, 60*time.Second) {
+		log.Printf("Gateway not ready for %s after 60s, skipping token config", logutil.SanitizeForLog(name))
+		return
+	}
+
 	cmd := []string{"su", "-", "abc", "-c", fmt.Sprintf("openclaw config set gateway.auth.token %s", token)}
 	_, stderr, code, err := execFn(ctx, name, cmd)
 	if err != nil {
@@ -47,6 +72,12 @@ func configureGatewayToken(ctx context.Context, execFn ExecFunc, name, token str
 		log.Printf("Failed to restart gateway for %s: %s (image: %s)", logutil.SanitizeForLog(name), logutil.SanitizeForLog(stderr), logutil.SanitizeForLog(imageInfo))
 		return
 	}
+
+	if !waitForGateway(ctx, execFn, name, 30*time.Second) {
+		log.Printf("Gateway did not restart in time for %s (image: %s)", logutil.SanitizeForLog(name), logutil.SanitizeForLog(imageInfo))
+		return
+	}
+
 	log.Printf("Gateway token configured for %s (image: %s)", logutil.SanitizeForLog(name), logutil.SanitizeForLog(imageInfo))
 }
 
