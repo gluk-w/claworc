@@ -12,13 +12,17 @@ metadata:
 spec:
   accessModes:
     - {{ .Values.persistence.accessMode }}
-  storageClassName: {{ .Values.persistence.storageClass | default "" }}
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass }}
+  {{- end }}
+  {{- if .Values.persistence.efs }}
   volumeName: {{ include "claworc.fullname" . }}-data
+  {{- end }}
   resources:
     requests:
       storage: {{ .Values.persistence.size }}
----
 {{- if .Values.persistence.efs }}
+---
 apiVersion: v1
 kind: PersistentVolume
 metadata:
@@ -35,7 +39,9 @@ spec:
   accessModes:
     - {{ .Values.persistence.accessMode }}
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: {{ .Values.persistence.storageClass | default "" }}
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass }}
+  {{- end }}
   csi:
     driver: efs.csi.aws.com
     volumeHandle: {{ .Values.persistence.efs }}
