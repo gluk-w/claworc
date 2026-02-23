@@ -3,7 +3,7 @@ include .env.development
 -include .env
 export
 
-AGENT_IMAGE_NAME := openclaw-vnc-chromium2
+AGENT_IMAGE_NAME := openclaw-vnc-chromium
 AGENT_IMAGE := glukw/$(AGENT_IMAGE_NAME)
 DASHBOARD_IMAGE := glukw/claworc
 TAG := latest
@@ -81,6 +81,7 @@ install-test:
 
 install-dev: install-test
 	@echo "Installing development dependencies..."
+	@cd control-plane/internal &&
 	@echo "Installing frontend dependencies (npm)..."
 	@cd control-plane/frontend && npm install
 	@echo "All dependencies installed successfully!"
