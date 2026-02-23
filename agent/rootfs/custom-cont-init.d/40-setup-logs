@@ -1,0 +1,6 @@
+#!/bin/bash
+# Create log directory for claworc services.
+# Service run scripts redirect stdout/stderr here so that the control plane
+# can stream logs over SSH using tail.
+mkdir -p /var/log/claworc
+chmod 755 /var/log/claworc

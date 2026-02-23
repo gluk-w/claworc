@@ -3,10 +3,12 @@
   "private": true,
   "scripts": {
     "test": "vitest run",
-    "test:agent": "vitest run agent/"
+    "test:agent": "vitest run agent/",
+    "test:ssh": "vitest run ssh/"
   },
   "devDependencies": {
-    "vitest": "^3.0.0",
-    "typescript": "^5.7.0"
+    "@types/node": "^25.3.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
   }
 }

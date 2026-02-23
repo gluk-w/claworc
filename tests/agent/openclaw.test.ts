@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
 
-const IMAGE = process.env.AGENT_TEST_IMAGE ?? "openclaw-vnc-chromium2:test";
+const IMAGE = process.env.AGENT_TEST_IMAGE ?? "openclaw-vnc-chromium:test";
 const CONTAINER = "agent-test-" + process.pid;
 
 interface ExecResult {

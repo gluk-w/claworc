@@ -24,6 +24,7 @@ export interface Instance {
   has_image_override: boolean;
   vnc_resolution: string | null;
   has_resolution_override: boolean;
+  allowed_source_ips: string;
   control_url: string;
   gateway_token: string;
   sort_order: number;
@@ -56,6 +57,7 @@ export interface InstanceUpdatePayload {
   brave_api_key?: string;
   models?: { disabled: string[]; extra: string[] };
   default_model?: string;
+  allowed_source_ips?: string;
 }
 
 export interface InstanceConfig {

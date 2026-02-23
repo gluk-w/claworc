@@ -11,7 +11,7 @@ tmp
 node_modules
 pkg/mod
 dist
-
+dev-dist
 
 test-results/
 playwright-report/
@@ -19,3 +19,5 @@ playwright-report/
 /control-plane/pkg/
 /control-plane/claworc
 /control-plane/control-plane
+
+ssh_key*

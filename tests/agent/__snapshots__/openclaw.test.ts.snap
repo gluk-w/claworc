@@ -21,6 +21,7 @@ exports[`agent image > openclaw.json structure matches snapshot 1`] = `
   "commands": {
     "native": "string",
     "nativeSkills": "string",
+    "ownerDisplay": "string",
     "restart": "boolean",
   },
   "gateway": {
@@ -31,6 +32,9 @@ exports[`agent image > openclaw.json structure matches snapshot 1`] = `
       "dangerouslyDisableDeviceAuth": "boolean",
     },
     "mode": "string",
+  },
+  "logging": {
+    "file": "string",
   },
   "meta": {
     "lastTouchedAt": "string",

@@ -20,7 +20,9 @@ type Instance struct {
 	GatewayToken    string    `json:"-"`
 	ModelsConfig    string    `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
 	DefaultModel    string    `gorm:"default:''" json:"-"`
-	SortOrder       int       `gorm:"not null;default:0" json:"sort_order"`
+	LogPaths         string    `gorm:"type:text;default:''" json:"log_paths"` // JSON: {"openclaw":"/custom/path.log",...}
+	AllowedSourceIPs string    `gorm:"type:text;default:''" json:"allowed_source_ips"` // Comma-separated IPs/CIDRs for SSH connection restrictions
+	SortOrder        int       `gorm:"not null;default:0" json:"sort_order"`
 	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt       time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 

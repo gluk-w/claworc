@@ -14,7 +14,6 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/crypto"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
-	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -52,23 +51,10 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check instance is running
-	orch := orchestrator.Get()
-	if orch == nil {
-		clientConn.Close(4500, "No orchestrator available")
-		return
-	}
-
-	status, _ := orch.GetInstanceStatus(ctx, inst.Name)
-	if status != "running" {
-		clientConn.Close(4003, "Instance not running")
-		return
-	}
-
-	// Get gateway URL
-	gwURL, err := orch.GetGatewayWSURL(ctx, inst.Name)
+	// Get gateway tunnel port
+	port, err := getTunnelPort(uint(id), "gateway")
 	if err != nil {
-		log.Printf("[chat] Failed to get gateway URL for %s: %v", inst.Name, err)
+		log.Printf("[chat] No gateway tunnel for instance %d: %v", id, err)
 		clientConn.Close(4500, truncate(err.Error(), 120))
 		return
 	}
@@ -81,33 +67,18 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Append token to URL (matching controlWSProxy pattern)
+	// Build local WebSocket URL via tunnel
+	gwURL := fmt.Sprintf("ws://127.0.0.1:%d/gateway", port)
 	if gatewayToken != "" {
-		if strings.Contains(gwURL, "?") {
-			gwURL += "&token=" + gatewayToken
-		} else {
-			gwURL += "?token=" + gatewayToken
-		}
+		gwURL += "?token=" + gatewayToken
 	}
 
-	// Connect to gateway
+	// Connect to gateway via tunnel
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	origin, host := gatewayHost(gwURL)
-	dialOpts := &websocket.DialOptions{
-		Host:       host,
-		HTTPHeader: http.Header{},
-	}
-	if origin != "" {
-		dialOpts.HTTPHeader.Set("Origin", origin)
-	}
-	if t := orch.GetHTTPTransport(); t != nil {
-		dialOpts.HTTPClient = &http.Client{Transport: t}
-	}
-
-	log.Printf("[chat] Connecting to gateway: %s", gwURL)
-	gwConn, _, err := websocket.Dial(dialCtx, gwURL, dialOpts)
+	log.Printf("[chat] Connecting to gateway via tunnel: %s", gwURL)
+	gwConn, _, err := websocket.Dial(dialCtx, gwURL, nil)
 	if err != nil {
 		log.Printf("[chat] Failed to connect to gateway at %s: %v", gwURL, err)
 		clientConn.Close(4502, "Cannot connect to gateway")

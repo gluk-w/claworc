@@ -67,7 +67,7 @@ export default function LoginPage() {
     try {
       const options = await webAuthnLoginBegin();
       const result = await startAuthentication(
-        options as PublicKeyCredentialRequestOptionsJSON,
+        { optionsJSON: options as PublicKeyCredentialRequestOptionsJSON },
       );
       await webAuthnLoginFinish(result);
       refetch();

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"strings"
 	"time"
 
@@ -15,8 +14,10 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	dockerclient "github.com/docker/docker/client"
+	"github.com/docker/go-connections/nat"
 	"github.com/docker/go-units"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
+	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 )
 
@@ -193,6 +194,9 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 		Image:  params.ContainerImage,
 		Env:    env,
 		Labels: map[string]string{"managed-by": labelManagedBy, "instance": params.Name},
+		ExposedPorts: nat.PortSet{
+			"22/tcp": struct{}{},
+		},
 		Healthcheck: &container.HealthConfig{
 			Test:          []string{"CMD", "curl", "-sf", "http://localhost:3000/"},
 			Interval:      30_000_000_000,
@@ -209,6 +213,9 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 		Resources: container.Resources{
 			NanoCPUs: nanoCPUs,
 			Memory:   memLimit,
+		},
+		PortBindings: nat.PortMap{
+			"22/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: ""}},
 		},
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 	}
@@ -381,66 +388,44 @@ func (d *DockerOrchestrator) GetInstanceStatus(ctx context.Context, name string)
 	}
 }
 
-func (d *DockerOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {
-	return updateInstanceConfig(ctx, d.ExecInInstance, name, configJSON)
+func (d *DockerOrchestrator) ConfigureSSHAccess(ctx context.Context, instanceID uint, publicKey string) error {
+	var inst database.Instance
+	if err := database.DB.First(&inst, instanceID).Error; err != nil {
+		return fmt.Errorf("instance %d not found: %w", instanceID, err)
+	}
+	return configureSSHAccess(ctx, d.ExecInInstance, inst.Name, publicKey)
 }
 
-func (d *DockerOrchestrator) StreamInstanceLogs(ctx context.Context, name string, tail int, follow bool) (<-chan string, error) {
-	cmd := fmt.Sprintf("openclaw logs --plain --limit %d", tail)
-	if follow {
-		cmd += " --follow"
+func (d *DockerOrchestrator) GetSSHAddress(ctx context.Context, instanceID uint) (string, int, error) {
+	var inst database.Instance
+	if err := database.DB.First(&inst, instanceID).Error; err != nil {
+		return "", 0, fmt.Errorf("instance %d not found: %w", instanceID, err)
 	}
-	cmdSlice := []string{"su", "-", "abc", "-c", cmd}
-
-	execCfg := container.ExecOptions{
-		Cmd:          cmdSlice,
-		AttachStdout: true,
-		AttachStderr: true,
-	}
-
-	execID, err := d.client.ContainerExecCreate(ctx, name, execCfg)
+	inspect, err := d.client.ContainerInspect(ctx, inst.Name)
 	if err != nil {
-		if dockerclient.IsErrNotFound(err) {
-			ch := make(chan string, 1)
-			ch <- "Container not found"
-			close(ch)
-			return ch, nil
-		}
-		return nil, fmt.Errorf("exec create: %w", err)
+		return "", 0, fmt.Errorf("inspect container for instance %d: %w", instanceID, err)
 	}
 
-	resp, err := d.client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("exec attach: %w", err)
+	// Use published host port for SSH (works on macOS where bridge IPs are unreachable)
+	if bindings, ok := inspect.NetworkSettings.Ports["22/tcp"]; ok && len(bindings) > 0 {
+		port := 0
+		fmt.Sscanf(bindings[0].HostPort, "%d", &port)
+		if port > 0 {
+			return "127.0.0.1", port, nil
+		}
 	}
 
-	ch := make(chan string, 100)
-	go func() {
-		defer close(ch)
-		defer resp.Close()
-
-		buf := make([]byte, 8192)
-		for {
-			n, err := resp.Reader.Read(buf)
-			if n > 0 {
-				data := buf[:n]
-				text := stripDockerLogHeaders(data)
-				for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
-					if line != "" {
-						select {
-						case ch <- line:
-						case <-ctx.Done():
-							return
-						}
-					}
-				}
-			}
-			if err != nil {
-				return
-			}
+	// Fallback to container IP (works on Linux)
+	for _, net := range inspect.NetworkSettings.Networks {
+		if net.IPAddress != "" {
+			return net.IPAddress, 22, nil
 		}
-	}()
-	return ch, nil
+	}
+	return "", 0, fmt.Errorf("cannot determine SSH address for instance %d", instanceID)
+}
+
+func (d *DockerOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {
+	return updateInstanceConfig(ctx, d.ExecInInstance, name, configJSON)
 }
 
 func stripDockerLogHeaders(data []byte) string {
@@ -499,97 +484,6 @@ func (d *DockerOrchestrator) ExecInInstance(ctx context.Context, name string, cm
 	// For simplicity, treat all output as stdout
 	cleaned := stripDockerLogHeaders(output)
 	return cleaned, "", inspectResp.ExitCode, nil
-}
-
-func (d *DockerOrchestrator) ExecInteractive(ctx context.Context, name string, cmd []string) (*ExecSession, error) {
-	execCfg := container.ExecOptions{
-		Cmd:          cmd,
-		AttachStdin:  true,
-		AttachStdout: true,
-		AttachStderr: true,
-		Tty:          true,
-		ConsoleSize:  &[2]uint{24, 80},
-	}
-
-	execID, err := d.client.ContainerExecCreate(ctx, name, execCfg)
-	if err != nil {
-		return nil, fmt.Errorf("exec create: %w", err)
-	}
-
-	resp, err := d.client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{Tty: true})
-	if err != nil {
-		return nil, fmt.Errorf("exec attach: %w", err)
-	}
-
-	return &ExecSession{
-		Stdin:  resp.Conn,
-		Stdout: resp.Conn,
-		Resize: func(cols, rows uint16) error {
-			return d.client.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{
-				Width:  uint(cols),
-				Height: uint(rows),
-			})
-		},
-		Close: func() error {
-			resp.Close()
-			return nil
-		},
-	}, nil
-}
-
-func (d *DockerOrchestrator) ListDirectory(ctx context.Context, name string, path string) ([]FileEntry, error) {
-	return listDirectory(ctx, d.ExecInInstance, name, path)
-}
-
-func (d *DockerOrchestrator) ReadFile(ctx context.Context, name string, path string) ([]byte, error) {
-	return readFile(ctx, d.ExecInInstance, name, path)
-}
-
-func (d *DockerOrchestrator) CreateFile(ctx context.Context, name string, path string, content string) error {
-	return createFile(ctx, d.ExecInInstance, name, path, content)
-}
-
-func (d *DockerOrchestrator) CreateDirectory(ctx context.Context, name string, path string) error {
-	return createDirectory(ctx, d.ExecInInstance, name, path)
-}
-
-func (d *DockerOrchestrator) WriteFile(ctx context.Context, name string, path string, data []byte) error {
-	return writeFile(ctx, d.ExecInInstance, name, path, data)
-}
-
-func (d *DockerOrchestrator) GetVNCBaseURL(ctx context.Context, name string, display string) (string, error) {
-	if display != "chrome" {
-		return "", fmt.Errorf("unsupported display type: %s", display)
-	}
-	inspect, err := d.client.ContainerInspect(ctx, name)
-	if err != nil {
-		return "", fmt.Errorf("inspect container: %w", err)
-	}
-
-	for _, net := range inspect.NetworkSettings.Networks {
-		if net.IPAddress != "" {
-			return fmt.Sprintf("http://%s:3000", net.IPAddress), nil
-		}
-	}
-	return "", fmt.Errorf("cannot determine container IP for %s", name)
-}
-
-func (d *DockerOrchestrator) GetGatewayWSURL(ctx context.Context, name string) (string, error) {
-	inspect, err := d.client.ContainerInspect(ctx, name)
-	if err != nil {
-		return "", fmt.Errorf("inspect container: %w", err)
-	}
-
-	for _, net := range inspect.NetworkSettings.Networks {
-		if net.IPAddress != "" {
-			return fmt.Sprintf("ws://%s:3000/gateway", net.IPAddress), nil
-		}
-	}
-	return "", fmt.Errorf("cannot determine container IP for %s", name)
-}
-
-func (d *DockerOrchestrator) GetHTTPTransport() http.RoundTripper {
-	return nil
 }
 
 // Ensure DockerOrchestrator implements ContainerOrchestrator

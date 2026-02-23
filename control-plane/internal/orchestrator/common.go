@@ -50,6 +50,30 @@ func configureGatewayToken(ctx context.Context, execFn ExecFunc, name, token str
 	log.Printf("Gateway token configured for %s (image: %s)", logutil.SanitizeForLog(name), logutil.SanitizeForLog(imageInfo))
 }
 
+func configureSSHAccess(ctx context.Context, execFn ExecFunc, name string, publicKey string) error {
+	// Ensure /root/.ssh directory exists with correct permissions
+	_, stderr, code, err := execFn(ctx, name, []string{"sh", "-c", "mkdir -p /root/.ssh && chmod 700 /root/.ssh"})
+	if err != nil {
+		return fmt.Errorf("create .ssh directory: %w", err)
+	}
+	if code != 0 {
+		return fmt.Errorf("create .ssh directory: %s", stderr)
+	}
+
+	// Write the public key to authorized_keys using base64 to safely pass content through exec
+	b64 := base64.StdEncoding.EncodeToString([]byte(publicKey))
+	cmd := []string{"sh", "-c", fmt.Sprintf("echo '%s' | base64 -d > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys", b64)}
+	_, stderr, code, err = execFn(ctx, name, cmd)
+	if err != nil {
+		return fmt.Errorf("write authorized_keys: %w", err)
+	}
+	if code != 0 {
+		return fmt.Errorf("write authorized_keys: %s", stderr)
+	}
+
+	return nil
+}
+
 func updateInstanceConfig(ctx context.Context, execFn ExecFunc, name string, configJSON string) error {
 	b64 := base64.StdEncoding.EncodeToString([]byte(configJSON))
 	cmd := []string{"sh", "-c", fmt.Sprintf("echo '%s' | base64 -d > %s", b64, PathOpenClawConfig)}
@@ -68,85 +92,6 @@ func updateInstanceConfig(ctx context.Context, execFn ExecFunc, name string, con
 	if code != 0 {
 		return fmt.Errorf("restart gateway: %s", stderr)
 	}
-	return nil
-}
-
-func listDirectory(ctx context.Context, execFn ExecFunc, name string, path string) ([]FileEntry, error) {
-	stdout, stderr, code, err := execFn(ctx, name, []string{"ls", "-la", "--color=never", path})
-	if err != nil {
-		return nil, err
-	}
-	if code != 0 {
-		return nil, fmt.Errorf("list directory: %s", stderr)
-	}
-	return ParseLsOutput(stdout), nil
-}
-
-func readFile(ctx context.Context, execFn ExecFunc, name string, path string) ([]byte, error) {
-	stdout, stderr, code, err := execFn(ctx, name, []string{"cat", path})
-	if err != nil {
-		return nil, err
-	}
-	if code != 0 {
-		return nil, fmt.Errorf("read file: %s", stderr)
-	}
-	return []byte(stdout), nil
-}
-
-func createFile(ctx context.Context, execFn ExecFunc, name string, path string, content string) error {
-	escaped := strings.ReplaceAll(content, "'", "'\\''")
-	cmd := []string{"sh", "-c", fmt.Sprintf("echo -n '%s' > '%s'", escaped, path)}
-	_, stderr, code, err := execFn(ctx, name, cmd)
-	if err != nil {
-		return err
-	}
-	if code != 0 {
-		return fmt.Errorf("create file: %s", stderr)
-	}
-	return nil
-}
-
-func createDirectory(ctx context.Context, execFn ExecFunc, name string, path string) error {
-	_, stderr, code, err := execFn(ctx, name, []string{"mkdir", "-p", path})
-	if err != nil {
-		return err
-	}
-	if code != 0 {
-		return fmt.Errorf("create directory: %s", stderr)
-	}
-	return nil
-}
-
-func writeFile(ctx context.Context, execFn ExecFunc, name string, path string, data []byte) error {
-	// Write in chunks to avoid "argument list too long" for large files.
-	// 48KB raw → ~64KB base64, well under the typical 128KB–2MB arg limit.
-	const chunkSize = 48000
-
-	// Truncate / create the target file
-	_, stderr, code, err := execFn(ctx, name, []string{"sh", "-c", fmt.Sprintf("> '%s'", path)})
-	if err != nil {
-		return err
-	}
-	if code != 0 {
-		return fmt.Errorf("write file: %s", stderr)
-	}
-
-	for i := 0; i < len(data); i += chunkSize {
-		end := i + chunkSize
-		if end > len(data) {
-			end = len(data)
-		}
-		b64 := base64.StdEncoding.EncodeToString(data[i:end])
-		cmd := []string{"sh", "-c", fmt.Sprintf("echo '%s' | base64 -d >> '%s'", b64, path)}
-		_, stderr, code, err = execFn(ctx, name, cmd)
-		if err != nil {
-			return err
-		}
-		if code != 0 {
-			return fmt.Errorf("write file: %s", stderr)
-		}
-	}
-
 	return nil
 }
 

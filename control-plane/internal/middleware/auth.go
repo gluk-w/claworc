@@ -74,6 +74,11 @@ func GetUser(r *http.Request) *database.User {
 	return user
 }
 
+// WithUser returns a new context with the given user set. Useful for testing.
+func WithUser(ctx context.Context, user *database.User) context.Context {
+	return context.WithValue(ctx, userContextKey, user)
+}
+
 func CanAccessInstance(r *http.Request, instanceID uint) bool {
 	user := GetUser(r)
 	if user == nil {

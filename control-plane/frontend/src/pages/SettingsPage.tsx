@@ -1,12 +1,19 @@
 import { useState } from "react";
-import { AlertTriangle, Eye, EyeOff } from "lucide-react";
+import { AlertTriangle, Eye, EyeOff, Key } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import DynamicApiKeyEditor from "@/components/DynamicApiKeyEditor";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
+import { fetchSSHFingerprint } from "@/api/ssh";
 import type { SettingsUpdatePayload } from "@/types/settings";
 
 export default function SettingsPage() {
   const { data: settings, isLoading } = useSettings();
   const updateMutation = useUpdateSettings();
+  const fingerprint = useQuery({
+    queryKey: ["ssh-fingerprint"],
+    queryFn: fetchSSHFingerprint,
+    staleTime: 60_000,
+  });
 
   // Pending changes to send on save
   const [pendingApiKeys, setPendingApiKeys] = useState<Record<string, string>>({});
@@ -231,6 +238,36 @@ export default function SettingsPage() {
               </div>
             ))}
           </div>
+        </div>
+
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="text-sm font-medium text-gray-900 mb-2 flex items-center gap-1.5">
+            <Key size={14} />
+            SSH Public Key Fingerprint
+          </h3>
+          <p className="text-xs text-gray-500 mb-3">
+            Global control plane SSH key used to connect to all instances. Use this fingerprint to verify key authenticity.
+          </p>
+          {fingerprint.isLoading && (
+            <p className="text-xs text-gray-400">Loading...</p>
+          )}
+          {fingerprint.isError && (
+            <p className="text-xs text-red-600">Failed to load fingerprint.</p>
+          )}
+          {fingerprint.data && (
+            <div className="bg-gray-50 border border-gray-200 rounded-md p-3">
+              <div className="mb-2">
+                <dt className="text-xs text-gray-500 mb-0.5">Fingerprint</dt>
+                <dd className="text-xs font-mono text-gray-900 break-all">{fingerprint.data.fingerprint}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-gray-500 mb-0.5">Public Key</dt>
+                <dd className="text-xs font-mono text-gray-700 break-all whitespace-pre-wrap leading-relaxed">
+                  {fingerprint.data.public_key.trim()}
+                </dd>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end">

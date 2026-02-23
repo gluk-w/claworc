@@ -32,7 +32,7 @@ export default function InstanceForm({
   // API key overrides
   const [disabledProviders, setDisabledProviders] = useState<string[]>([]);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
-  const [defaultModel, setDefaultModel] = useState(LLM_API_KEY_OPTIONS[0].value);
+  const [defaultModel, setDefaultModel] = useState(LLM_API_KEY_OPTIONS[0]?.value ?? "");
 
   // Brave key
   const [braveKey, setBraveKey] = useState("");

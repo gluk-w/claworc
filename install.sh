@@ -109,7 +109,7 @@ install_docker() {
         -p "$PORT:8000" \
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v "$DATA_DIR":"$DATA_DIR" \
-        -e CLAWORC_DATABASE_PATH="$DATA_DIR/claworc.db" \
+        -e CLAWORC_DATA_PATH="$DATA_DIR" \
         --restart unless-stopped \
         "$DASHBOARD_IMAGE:$TAG" >/dev/null
 
