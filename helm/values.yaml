@@ -3,6 +3,9 @@ replicaCount: 1
 config:
   dataPath: /app/data
   k8sNamespace: claworc
+  # rpid and rpOrigins must be set to your actual domain in production,
+  # otherwise WebAuthn authentication will silently fail.
+  # Example: rpid: example.com / rpOrigins: https://example.com
   rpid: localhost
   rpOrigins: http://localhost:8000
 
@@ -16,6 +19,10 @@ persistence:
   size: 1Gi
   storageClass: ""
   accessMode: ReadWriteOnce
+  # NOTE: The PVC is created via helm.sh/hook: pre-install and is intentionally
+  # excluded from Helm's normal resource tracking to preserve data across upgrades.
+  # This means `helm uninstall` will NOT delete the PVC — you must remove it manually:
+  #   kubectl delete pvc <release-name>-claworc-data -n <namespace>
 
 resources:
   requests:
@@ -43,13 +50,15 @@ serviceAccount:
   annotations: {}
 
 ingress:
-  enabled: true
+  enabled: false
   ingressClassName: nginx
   annotations:
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
   hosts:
     - host: example.com
-      paths: ["/"]
+      paths:
+        - path: /
+          pathType: Prefix
   tls: []
   #  - secretName: chart-example-tls
   #    hosts:
