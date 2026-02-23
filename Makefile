@@ -92,10 +92,7 @@ dev:
 	@echo "Control plane: http://localhost:8000"
 	@echo "Frontend:      http://localhost:5173"
 	@echo ""
-	@export CLAWORC_AUTH_DISABLED=true; \
-	(cd control-plane && $(shell go env GOPATH)/bin/air) & \
-	(cd control-plane/frontend && npm run dev) & \
-	wait
+	CLAWORC_AUTH_DISABLED=true $(shell go env GOPATH)/bin/goreman start
 
 dev-stop:
 	@echo "Stopping development servers..."
