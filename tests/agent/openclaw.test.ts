@@ -95,6 +95,16 @@ describe("agent image", { timeout: 300_000 }, () => {
       console.error(hostExec(["docker", "logs", "--tail", "200", CONTAINER]));
       console.error("=== Process list ===");
       console.error(exec(["ps", "aux"]).stdout || "(empty)");
+      console.error("=== s6-rc service list (brought up) ===");
+      console.error(exec(["s6-rc", "-a", "list"]).stdout || "(none)");
+      console.error("=== s6-svstat svc-openclaw ===");
+      console.error(exec(["s6-svstat", "/run/service/svc-openclaw"]).stdout || "(no status)");
+      console.error("=== s6 scan dir ===");
+      console.error(exec(["ls", "-la", "/run/service/"]).stdout || "(empty)");
+      console.error("=== s6 logs ===");
+      console.error(exec(["bash", "-c", "find /run -name 'current' 2>/dev/null | head -10 | xargs -I{} sh -c 'echo \"--- {} ---\" && cat \"{}\"'"]).stdout || "(no logs)");
+      console.error("=== init-setup up script permissions ===");
+      console.error(exec(["ls", "-la", "/etc/s6-overlay/s6-rc.d/init-setup/"]).stdout || "(missing)");
       console.error("=== OpenClaw log ===");
       console.error(exec(["cat", "/var/log/claworc/openclaw.log"]).stdout || "(missing)");
       throw new Error("openclaw gateway did not start within 240s");
