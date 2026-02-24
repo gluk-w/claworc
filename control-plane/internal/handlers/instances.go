@@ -35,8 +35,7 @@ type instanceCreateRequest struct {
 	MemoryRequest   string            `json:"memory_request"`
 	MemoryLimit     string            `json:"memory_limit"`
 	StorageHomebrew string            `json:"storage_homebrew"`
-	StorageClawd    string            `json:"storage_clawd"`
-	StorageChrome   string            `json:"storage_chrome"`
+	StorageHome     string            `json:"storage_home"`
 	BraveAPIKey     *string           `json:"brave_api_key"`
 	APIKeys         map[string]string `json:"api_keys"`
 	Models          *modelsConfig     `json:"models"`
@@ -61,8 +60,7 @@ type instanceResponse struct {
 	MemoryRequest         string          `json:"memory_request"`
 	MemoryLimit           string          `json:"memory_limit"`
 	StorageHomebrew       string          `json:"storage_homebrew"`
-	StorageClawd          string          `json:"storage_clawd"`
-	StorageChrome         string          `json:"storage_chrome"`
+	StorageHome           string          `json:"storage_home"`
 	HasBraveOverride      bool            `json:"has_brave_override"`
 	APIKeyOverrides       []string        `json:"api_key_overrides"`
 	Models                *modelsResponse `json:"models"`
@@ -245,8 +243,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		MemoryRequest:         inst.MemoryRequest,
 		MemoryLimit:           inst.MemoryLimit,
 		StorageHomebrew:       inst.StorageHomebrew,
-		StorageClawd:          inst.StorageClawd,
-		StorageChrome:         inst.StorageChrome,
+		StorageHome:           inst.StorageHome,
 		HasBraveOverride:      inst.BraveAPIKey != "",
 		APIKeyOverrides:       apiKeyOverrides,
 		Models:                &modelsResponse{Effective: effective, DisabledDefaults: mc.Disabled, Extra: mc.Extra},
@@ -416,11 +413,8 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	if body.StorageHomebrew == "" {
 		body.StorageHomebrew = "10Gi"
 	}
-	if body.StorageClawd == "" {
-		body.StorageClawd = "5Gi"
-	}
-	if body.StorageChrome == "" {
-		body.StorageChrome = "5Gi"
+	if body.StorageHome == "" {
+		body.StorageHome = "10Gi"
 	}
 
 	name := generateName(body.DisplayName)
@@ -489,8 +483,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		MemoryRequest:   body.MemoryRequest,
 		MemoryLimit:     body.MemoryLimit,
 		StorageHomebrew: body.StorageHomebrew,
-		StorageClawd:    body.StorageClawd,
-		StorageChrome:   body.StorageChrome,
+		StorageHome:     body.StorageHome,
 		BraveAPIKey:     encBraveKey,
 		ContainerImage:  containerImage,
 		VNCResolution:   vncResolution,
@@ -540,8 +533,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			MemoryRequest:   body.MemoryRequest,
 			MemoryLimit:     body.MemoryLimit,
 			StorageHomebrew: body.StorageHomebrew,
-			StorageClawd:    body.StorageClawd,
-			StorageChrome:   body.StorageChrome,
+			StorageHome:     body.StorageHome,
 			ContainerImage:  effectiveImage,
 			VNCResolution:   effectiveResolution,
 			EnvVars:         envVars,
@@ -1003,8 +995,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		MemoryRequest:   src.MemoryRequest,
 		MemoryLimit:     src.MemoryLimit,
 		StorageHomebrew: src.StorageHomebrew,
-		StorageClawd:    src.StorageClawd,
-		StorageChrome:   src.StorageChrome,
+		StorageHome:     src.StorageHome,
 		BraveAPIKey:     src.BraveAPIKey,
 		ContainerImage:  src.ContainerImage,
 		VNCResolution:   src.VNCResolution,
@@ -1055,8 +1046,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			MemoryRequest:   inst.MemoryRequest,
 			MemoryLimit:     inst.MemoryLimit,
 			StorageHomebrew: inst.StorageHomebrew,
-			StorageClawd:    inst.StorageClawd,
-			StorageChrome:   inst.StorageChrome,
+			StorageHome:     inst.StorageHome,
 			ContainerImage:  effectiveImage,
 			VNCResolution:   effectiveResolution,
 			EnvVars:         envVars,

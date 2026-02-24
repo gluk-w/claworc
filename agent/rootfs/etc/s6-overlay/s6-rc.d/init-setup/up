@@ -1,0 +1,15 @@
+#!/bin/bash
+
+# Create log directory
+mkdir -p /var/log/claworc
+chmod 755 /var/log/claworc
+
+# When /home/claworc is a PVC mount, it starts empty on first run.
+# Copy skeleton files so the user has .bashrc, .profile, etc.
+if [ ! -f /home/claworc/.bashrc ]; then
+    cp -a /etc/skel/. /home/claworc/
+fi
+
+# Ensure required subdirectories exist
+mkdir -p /home/claworc/chrome-data /home/claworc/.openclaw
+chown -R claworc:claworc /home/claworc

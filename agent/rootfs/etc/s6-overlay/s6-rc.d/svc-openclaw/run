@@ -1,35 +1,35 @@
 #!/command/with-contenv bash
 
-export HOME=/config
+export HOME=/home/claworc
 
 # Initialize config on first run
-if [ ! -f "/config/.openclaw/openclaw.json" ]; then
+if [ ! -f "/home/claworc/.openclaw/openclaw.json" ]; then
     echo "Initializing OpenClaw..."
-    mkdir -p /config/.openclaw
-    chown abc:abc /config/.openclaw
-    s6-setuidgid abc openclaw doctor --fix || echo "Doctor finished with exit code $?"
+    mkdir -p /home/claworc/.openclaw
+    chown claworc:claworc /home/claworc/.openclaw
+    s6-setuidgid claworc openclaw doctor --fix || echo "Doctor finished with exit code $?"
 
-    s6-setuidgid abc openclaw config set logging.file /var/log/claworc/openclaw.log
+    s6-setuidgid claworc openclaw config set logging.file /var/log/claworc/openclaw.log
     if [ -f "/defaults/browser.json" ]; then
-        s6-setuidgid abc openclaw config set browser "$(cat /defaults/browser.json)" --json
+        s6-setuidgid claworc openclaw config set browser "$(cat /defaults/browser.json)" --json
     fi
 fi
 
 # Always ensure gateway settings are correct (config may exist from a persisted volume
 # but be missing required gateway fields)
-s6-setuidgid abc openclaw config set gateway.mode local
-s6-setuidgid abc openclaw config set gateway.bind localhost
-s6-setuidgid abc openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth true
+s6-setuidgid claworc openclaw config set gateway.mode local
+s6-setuidgid claworc openclaw config set gateway.bind localhost
+s6-setuidgid claworc openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth true
 
 # Set token if provided
 if [ -n "$OPENCLAW_GATEWAY_TOKEN" ]; then
-    s6-setuidgid abc openclaw config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN"
+    s6-setuidgid claworc openclaw config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN"
 fi
 
-# Ensure abc owns the config directory
-chown -R abc:abc /config/.openclaw
+# Ensure claworc owns the config directory
+chown -R claworc:claworc /home/claworc/.openclaw
 
-echo "Starting OpenClaw Gateway (foreground) as abc..."
+echo "Starting OpenClaw Gateway (foreground) as claworc..."
 # OpenClaw requires an open stdin stream or it exits.
 # Redirect stdout/stderr to log file for SSH-based log streaming.
-exec bash -c "tail -f /dev/null | s6-setuidgid abc /usr/bin/openclaw gateway run >> /var/log/claworc/openclaw.log 2>&1"
+exec bash -c "tail -f /dev/null | s6-setuidgid claworc /usr/bin/openclaw gateway run >> /var/log/claworc/openclaw.log 2>&1"

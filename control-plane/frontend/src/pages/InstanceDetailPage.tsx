@@ -366,8 +366,7 @@ export default function InstanceDetailPage() {
                   label: "Storage (Homebrew)",
                   value: instance.storage_homebrew,
                 },
-                { label: "Storage (Clawd)", value: instance.storage_clawd },
-                { label: "Storage (Browser)", value: instance.storage_chrome },
+                { label: "Storage (Home)", value: instance.storage_home },
                 {
                   label: "Agent Image",
                   value: instance.has_image_override

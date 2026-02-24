@@ -1,0 +1,9 @@
+#!/command/with-contenv bash
+
+# Wait for VNC server to be ready
+while ! ss -tln | grep -q ':5900\b'; do sleep 0.5; done
+
+exec python3 /opt/novnc/utils/websockify/run \
+  --web /opt/novnc \
+  3000 \
+  localhost:5900

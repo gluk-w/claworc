@@ -201,13 +201,13 @@ func readUntil(t *testing.T, r io.Reader, target string, timeout time.Duration) 
 
 func TestValidateShell_AllowedShells(t *testing.T) {
 	allowed := []string{
-		"",          // empty defaults to /bin/bash
+		"", // empty defaults to /bin/bash
 		"/bin/bash",
 		"/bin/sh",
 		"/bin/zsh",
-		"su - abc",  // su with user switch
-		"su",        // bare su
-		"su abc",    // su with user
+		"su - claworc", // su with user switch
+		"su",           // bare su
+		"su claworc",   // su with user
 		"su - root",
 	}
 	for _, shell := range allowed {

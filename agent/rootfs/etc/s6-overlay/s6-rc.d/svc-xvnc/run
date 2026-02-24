@@ -1,0 +1,8 @@
+#!/command/with-contenv bash
+
+exec s6-setuidgid claworc Xtigervnc :0 \
+  -geometry ${DISPLAY_WIDTH:-1920}x${DISPLAY_HEIGHT:-1080} \
+  -depth 24 \
+  -rfbport 5900 \
+  -SecurityTypes None \
+  -AlwaysShared

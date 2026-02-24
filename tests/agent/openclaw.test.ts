@@ -30,7 +30,7 @@ function exec(cmd: string[]): ExecResult {
 }
 
 function execAsUser(cmd: string): ExecResult {
-  return exec(["su", "-", "abc", "-c", cmd]);
+  return exec(["su", "-", "claworc", "-c", cmd]);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -47,7 +47,7 @@ function structureOf(obj: any): any {
   return typeof obj;
 }
 
-describe("agent image", () => {
+describe("agent image", { timeout: 300_000 }, () => {
   beforeAll(async () => {
     // Remove leftover container if any
     try {
@@ -62,8 +62,11 @@ describe("agent image", () => {
       { encoding: "utf-8" },
     );
 
-    // Poll for openclaw gateway process (confirms s6-overlay init completed)
-    const deadline = Date.now() + 120_000;
+    // Poll for openclaw gateway process (confirms s6-overlay init completed).
+    // The run script executes several `openclaw config set` commands before
+    // starting the gateway — each spawns a Node.js process that is very slow
+    // under QEMU emulation on Apple Silicon, so allow up to 240s.
+    const deadline = Date.now() + 240_000;
     while (Date.now() < deadline) {
       const result = exec(["pgrep", "-f", "openclaw gateway"]);
       if (result.exitCode === 0 && result.stdout.trim()) break;
@@ -73,14 +76,16 @@ describe("agent image", () => {
     // Final check
     const check = exec(["pgrep", "-f", "openclaw gateway"]);
     if (check.exitCode !== 0) {
-      throw new Error("openclaw gateway did not start within 120s");
+      throw new Error("openclaw gateway did not start within 240s");
     }
 
-    // Wait for gateway WebSocket to be ready (port 18789 listening)
+    // Wait for gateway WebSocket to be ready (port 18789 listening).
+    // Use /proc/net/tcp6 since iproute2 (ss) is not installed in the image.
+    // Port 18789 = 0x4965 in hex.
     const portDeadline = Date.now() + 30_000;
     while (Date.now() < portDeadline) {
-      const result = exec(["ss", "-tln"]);
-      if (result.stdout.includes(":18789")) break;
+      const result = exec(["grep", "-q", ":4965", "/proc/net/tcp6"]);
+      if (result.exitCode === 0) break;
       await sleep(1_000);
     }
   });
@@ -93,27 +98,21 @@ describe("agent image", () => {
     }
   });
 
-  it("openclaw home directory exists and is owned by abc", () => {
-    const result = exec(["stat", "-c", "%U:%G", "/config/.openclaw"]);
+  it("openclaw home directory exists and is owned by claworc", () => {
+    const result = exec(["stat", "-c", "%U:%G", "/home/claworc/.openclaw"]);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout.trim()).toBe("abc:abc");
+    expect(result.stdout.trim()).toBe("claworc:claworc");
   });
 
   it("openclaw.json structure matches snapshot", () => {
     const result = exec([
       "cat",
-      "/config/.openclaw/openclaw.json",
+      "/home/claworc/.openclaw/openclaw.json",
     ]);
     expect(result.exitCode).toBe(0);
 
     const config = JSON.parse(result.stdout);
     expect(structureOf(config)).toMatchSnapshot();
-  });
-
-  it("openclaw gateway process is running", () => {
-    const result = exec(["pgrep", "-f", "openclaw gateway"]);
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout.trim()).not.toBe("");
   });
 
   it("openclaw logs exits without crash", () => {
@@ -131,7 +130,7 @@ describe("agent image", () => {
 
     const configResult = exec([
       "cat",
-      "/config/.openclaw/openclaw.json",
+      "/home/claworc/.openclaw/openclaw.json",
     ]);
     const config = JSON.parse(configResult.stdout);
     expect(config.gateway.auth.token).toBe("test-token-abc123");
@@ -150,7 +149,7 @@ describe("agent image", () => {
 
     const configResult = exec([
       "cat",
-      "/config/.openclaw/openclaw.json",
+      "/home/claworc/.openclaw/openclaw.json",
     ]);
     const config = JSON.parse(configResult.stdout);
     expect(config.agents.defaults.model).toEqual({

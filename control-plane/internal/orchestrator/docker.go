@@ -26,7 +26,7 @@ const (
 	networkName    = "claworc"
 )
 
-var volumeSuffixes = []string{"homebrew", "clawd", "chrome"}
+var volumeSuffixes = []string{"homebrew", "home"}
 
 type DockerOrchestrator struct {
 	client    *dockerclient.Client
@@ -163,9 +163,9 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	}
 
 	// Environment
-	env := []string{"PUID=1000", "PGID=1000", "START_DOCKER=false"}
+	var env []string
 	if parts := strings.SplitN(params.VNCResolution, "x", 2); len(parts) == 2 {
-		env = append(env, "SELKIES_MANUAL_WIDTH="+parts[0], "SELKIES_MANUAL_HEIGHT="+parts[1])
+		env = append(env, "DISPLAY_WIDTH="+parts[0], "DISPLAY_HEIGHT="+parts[1])
 	}
 	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
 		env = append(env, fmt.Sprintf("OPENCLAW_GATEWAY_TOKEN=%s", token))
@@ -174,8 +174,7 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	// Mounts
 	mounts := []mount.Mount{
 		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "homebrew"), Target: "/home/linuxbrew/.linuxbrew"},
-		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "clawd"), Target: "/config/clawd"},
-		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "chrome"), Target: "/config/chrome-data"},
+		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "home"), Target: "/home/claworc"},
 	}
 
 	// Resource limits
