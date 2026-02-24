@@ -10,6 +10,17 @@ interface ExecResult {
   exitCode: number;
 }
 
+function dockerLogs(): string {
+  try {
+    return execFileSync("docker", ["logs", "--tail", "100", CONTAINER], {
+      encoding: "utf-8",
+      timeout: 10_000,
+    });
+  } catch (err: any) {
+    return err.stdout ?? err.stderr ?? "(no logs)";
+  }
+}
+
 function exec(cmd: string[]): ExecResult {
   try {
     const stdout = execFileSync("docker", ["exec", CONTAINER, ...cmd], {
@@ -76,6 +87,13 @@ describe("agent image", { timeout: 300_000 }, () => {
     // Final check
     const check = exec(["pgrep", "-f", "openclaw gateway"]);
     if (check.exitCode !== 0) {
+      // Dump diagnostics before failing
+      console.error("=== Container logs ===");
+      console.error(dockerLogs());
+      console.error("=== Process list ===");
+      exec(["ps", "aux"]);
+      console.error("=== OpenClaw log ===");
+      exec(["cat", "/var/log/claworc/openclaw.log"]);
       throw new Error("openclaw gateway did not start within 240s");
     }
 
