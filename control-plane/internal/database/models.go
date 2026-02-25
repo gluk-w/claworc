@@ -3,28 +3,27 @@ package database
 import "time"
 
 type Instance struct {
-	ID              uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	Name            string    `gorm:"uniqueIndex;not null" json:"name"`
-	DisplayName     string    `gorm:"not null" json:"display_name"`
-	Status          string    `gorm:"not null;default:creating" json:"status"`
-	CPURequest      string    `gorm:"default:500m" json:"cpu_request"`
-	CPULimit        string    `gorm:"default:2000m" json:"cpu_limit"`
-	MemoryRequest   string    `gorm:"default:1Gi" json:"memory_request"`
-	MemoryLimit     string    `gorm:"default:4Gi" json:"memory_limit"`
-	StorageHomebrew string    `gorm:"default:10Gi" json:"storage_homebrew"`
-	StorageClawd    string    `gorm:"default:5Gi" json:"storage_clawd"`
-	StorageChrome   string    `gorm:"default:5Gi" json:"storage_chrome"`
-	BraveAPIKey     string    `json:"-"`
-	ContainerImage  string    `json:"container_image"`
-	VNCResolution   string    `json:"vnc_resolution"`
-	GatewayToken    string    `json:"-"`
-	ModelsConfig    string    `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
-	DefaultModel    string    `gorm:"default:''" json:"-"`
-	LogPaths         string    `gorm:"type:text;default:''" json:"log_paths"` // JSON: {"openclaw":"/custom/path.log",...}
+	ID               uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name             string    `gorm:"uniqueIndex;not null" json:"name"`
+	DisplayName      string    `gorm:"not null" json:"display_name"`
+	Status           string    `gorm:"not null;default:creating" json:"status"`
+	CPURequest       string    `gorm:"default:500m" json:"cpu_request"`
+	CPULimit         string    `gorm:"default:2000m" json:"cpu_limit"`
+	MemoryRequest    string    `gorm:"default:1Gi" json:"memory_request"`
+	MemoryLimit      string    `gorm:"default:4Gi" json:"memory_limit"`
+	StorageHomebrew  string    `gorm:"default:10Gi" json:"storage_homebrew"`
+	StorageHome      string    `gorm:"default:10Gi" json:"storage_home"`
+	BraveAPIKey      string    `json:"-"`
+	ContainerImage   string    `json:"container_image"`
+	VNCResolution    string    `json:"vnc_resolution"`
+	GatewayToken     string    `json:"-"`
+	ModelsConfig     string    `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
+	DefaultModel     string    `gorm:"default:''" json:"-"`
+	LogPaths         string    `gorm:"type:text;default:''" json:"log_paths"`          // JSON: {"openclaw":"/custom/path.log",...}
 	AllowedSourceIPs string    `gorm:"type:text;default:''" json:"allowed_source_ips"` // Comma-separated IPs/CIDRs for SSH connection restrictions
 	SortOrder        int       `gorm:"not null;default:0" json:"sort_order"`
-	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt       time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	CreatedAt        time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt        time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 
 	APIKeys []InstanceAPIKey `gorm:"foreignKey:InstanceID" json:"-"`
 }

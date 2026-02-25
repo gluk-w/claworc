@@ -26,11 +26,10 @@ export default function VncPopupPage() {
       <VncPanel
         instanceId={instanceId}
         connectionState={desktopHook.connectionState}
-        desktopUrl={desktopHook.desktopUrl}
-        setIframe={desktopHook.setIframe}
-        onLoad={desktopHook.onLoad}
-        onError={desktopHook.onError}
+        containerRef={desktopHook.containerRef}
         reconnect={desktopHook.reconnect}
+        copyFromRemote={desktopHook.copyFromRemote}
+        pasteToRemote={desktopHook.pasteToRemote}
       />
     </div>
   );

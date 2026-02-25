@@ -20,7 +20,7 @@ The project consists of the following components:
   - `internal/` - Go packages (config, database, handlers, middleware, orchestrator, sshproxy, sshterminal)
   - `frontend/` - React TypeScript frontend (npm/Vite)
   - `Dockerfile` - Multi-stage build (Node frontend + Go backend)
-- `agent/` - Bot instance Docker image (Ubuntu 24.04, systemd init, dual VNC)
+- `agent/` - Docker image `glukw/openclaw-vnc-chromium`
 - `helm/` - Helm chart for deploying the dashboard to Kubernetes
 - `docs/` - Detailed specs (architecture, API, data model, UI, features)
 

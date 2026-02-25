@@ -9,8 +9,7 @@ export interface Settings {
   default_memory_request: string;
   default_memory_limit: string;
   default_storage_homebrew: string;
-  default_storage_clawd: string;
-  default_storage_chrome: string;
+  default_storage_home: string;
 }
 
 export interface SettingsUpdatePayload {
@@ -25,8 +24,7 @@ export interface SettingsUpdatePayload {
   default_memory_request?: string;
   default_memory_limit?: string;
   default_storage_homebrew?: string;
-  default_storage_clawd?: string;
-  default_storage_chrome?: string;
+  default_storage_home?: string;
 }
 
 // Keep backward compat alias

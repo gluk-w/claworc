@@ -9,6 +9,8 @@ DASHBOARD_IMAGE := glukw/claworc
 TAG := latest
 PLATFORMS := linux/amd64,linux/arm64
 
+CACHE_ARGS ?=
+
 KUBECONFIG := ../kubeconfig
 HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
@@ -21,13 +23,13 @@ HELM_NAMESPACE := claworc
 agent: agent-build agent-test agent-push
 
 agent-build:
-	docker buildx build --platform linux/amd64 --load -t $(AGENT_IMAGE_NAME):test agent/
+	docker buildx build --platform linux/amd64 --load $(CACHE_ARGS) -t $(AGENT_IMAGE_NAME):test agent/
 
 agent-test:
 	cd tests && AGENT_TEST_IMAGE=$(AGENT_IMAGE_NAME):test npm run test:agent
 
 agent-push:
-	docker buildx build --platform $(PLATFORMS) -t $(AGENT_IMAGE):$(TAG) --push agent/
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) --push agent/
 
 AGENT_CONTAINER := claworc-agent-exec
 AGENT_SSH_PORT := 2222
@@ -55,7 +57,7 @@ agent-exec:
 	@echo "  docker exec -it $(AGENT_CONTAINER) bash"
 
 control-plane:
-	docker buildx build --platform $(PLATFORMS) -t $(DASHBOARD_IMAGE):$(TAG) --push control-plane/
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(DASHBOARD_IMAGE):$(TAG) --push control-plane/
 
 release: agent control-plane
 	@echo "Released $(AGENT_IMAGE):$(TAG) and $(DASHBOARD_IMAGE):$(TAG)"

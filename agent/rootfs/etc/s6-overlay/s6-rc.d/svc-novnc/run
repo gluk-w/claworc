@@ -1,0 +1,9 @@
+#!/command/with-contenv bash
+
+# Wait for VNC server to be ready
+while ! bash -c '>/dev/tcp/127.0.0.1/5900' 2>/dev/null; do sleep 0.5; done
+
+exec /opt/novnc/utils/websockify/run \
+  --web /opt/novnc \
+  3000 \
+  localhost:5900

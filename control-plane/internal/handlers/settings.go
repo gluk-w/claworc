@@ -23,8 +23,7 @@ var plainSettings = []string{
 	"default_memory_request",
 	"default_memory_limit",
 	"default_storage_homebrew",
-	"default_storage_clawd",
-	"default_storage_chrome",
+	"default_storage_home",
 	"default_models",
 }
 

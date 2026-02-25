@@ -51,19 +51,18 @@ func Init() error {
 
 func seedDefaults() error {
 	defaults := map[string]string{
-		"default_cpu_request":      "500m",
-		"default_cpu_limit":        "2000m",
-		"default_memory_request":   "1Gi",
-		"default_memory_limit":     "4Gi",
-		"default_storage_homebrew": "10Gi",
-		"default_storage_clawd":    "5Gi",
-		"default_storage_chrome":   "5Gi",
-		"default_container_image":  "glukw/openclaw-vnc-chrome:latest",
-		"default_vnc_resolution":   "1920x1080",
-		"orchestrator_backend":     "auto",
-		"default_models":                "[]",
-		"ssh_key_rotation_policy_days":  "90",
-		"ssh_audit_retention_days":      "90",
+		"default_cpu_request":          "500m",
+		"default_cpu_limit":            "2000m",
+		"default_memory_request":       "1Gi",
+		"default_memory_limit":         "4Gi",
+		"default_storage_homebrew":     "10Gi",
+		"default_storage_home":         "10Gi",
+		"default_container_image":      "glukw/openclaw-vnc-chromium:latest",
+		"default_vnc_resolution":       "1920x1080",
+		"orchestrator_backend":         "auto",
+		"default_models":               "[]",
+		"ssh_key_rotation_policy_days": "90",
+		"ssh_audit_retention_days":     "90",
 	}
 
 	for key, value := range defaults {

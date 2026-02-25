@@ -221,7 +221,7 @@ func main() {
 			r.Get("/instances/{id}/terminal/sessions", handlers.ListTerminalSessions)
 			r.Delete("/instances/{id}/terminal/sessions/{sessionId}", handlers.CloseTerminalSession)
 
-			// Desktop proxy (Selkies streaming UI)
+			// Desktop proxy (noVNC/websockify)
 			r.HandleFunc("/instances/{id}/desktop/*", handlers.DesktopProxy)
 
 			// Control proxy

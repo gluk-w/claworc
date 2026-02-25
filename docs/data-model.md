@@ -120,7 +120,7 @@ spec:
     spec:
       containers:
       - name: moltbot
-        image: glukw/openclaw-vnc-chrome:latest:latest
+        image: glukw/openclaw-vnc-chromium:latest
         imagePullPolicy: Always
         securityContext:
           privileged: true

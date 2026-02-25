@@ -21,27 +21,49 @@ export function useInstanceLogs(id: number, enabled: boolean) {
       return;
     }
 
-    const es = new EventSource(
-      `/api/v1/instances/${id}/logs?tail=100&follow=true`,
-    );
-    eventSourceRef.current = es;
+    let stopped = false;
+    let backoff = 1000;
+    let retryTimer: ReturnType<typeof setTimeout>;
 
-    es.onopen = () => setIsConnected(true);
+    function connect() {
+      if (stopped) return;
 
-    es.onmessage = (event) => {
-      if (!pausedRef.current) {
-        setLogs((prev) => [...prev, event.data as string]);
-      }
-    };
+      const es = new EventSource(
+        `/api/v1/instances/${id}/logs?tail=100&follow=true`,
+      );
+      eventSourceRef.current = es;
 
-    es.onerror = () => {
-      setIsConnected(false);
-      es.close();
-    };
+      es.onopen = () => {
+        setIsConnected(true);
+        backoff = 1000;
+      };
+
+      es.onmessage = (event) => {
+        if (!pausedRef.current) {
+          setLogs((prev) => [...prev, event.data as string]);
+        }
+      };
+
+      es.onerror = () => {
+        setIsConnected(false);
+        es.close();
+        eventSourceRef.current = null;
+        if (!stopped) {
+          retryTimer = setTimeout(connect, backoff);
+          backoff = Math.min(backoff * 2, 16000);
+        }
+      };
+    }
+
+    connect();
 
     return () => {
-      es.close();
-      eventSourceRef.current = null;
+      stopped = true;
+      clearTimeout(retryTimer);
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
       setIsConnected(false);
     };
   }, [id, enabled]);

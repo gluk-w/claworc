@@ -9,7 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// DesktopProxy proxies HTTP and WebSocket requests to the Selkies streaming UI
+// DesktopProxy proxies HTTP and WebSocket requests to the noVNC/websockify server
 // running on port 3000 inside the agent container via SSH tunnel.
 func DesktopProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))

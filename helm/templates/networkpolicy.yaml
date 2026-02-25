@@ -15,5 +15,4 @@ spec:
             matchLabels:
               {{- include "claworc.selectorLabels" . | nindent 14 }}
       ports:
-        - port: 6081
-        - port: 18789
+        - port: 22

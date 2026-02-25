@@ -21,8 +21,7 @@ export default function InstanceForm({
   const [memoryRequest, setMemoryRequest] = useState("1Gi");
   const [memoryLimit, setMemoryLimit] = useState("4Gi");
   const [storageHomebrew, setStorageHomebrew] = useState("10Gi");
-  const [storageClawd, setStorageClawd] = useState("5Gi");
-  const [storageChrome, setStorageChrome] = useState("5Gi");
+  const [storageHome, setStorageHome] = useState("10Gi");
 
   const [containerImage, setContainerImage] = useState("");
   const [vncResolution, setVncResolution] = useState("");
@@ -48,8 +47,7 @@ export default function InstanceForm({
       memory_request: memoryRequest,
       memory_limit: memoryLimit,
       storage_homebrew: storageHomebrew,
-      storage_clawd: storageClawd,
-      storage_chrome: storageChrome,
+      storage_home: storageHome,
       brave_api_key: braveKey || null,
       container_image: containerImage || null,
       vnc_resolution: vncResolution || null,
@@ -114,7 +112,7 @@ export default function InstanceForm({
               type="text"
               value={containerImage}
               onChange={(e) => setContainerImage(e.target.value)}
-              placeholder={settings?.default_container_image ?? "glukw/openclaw-vnc-chrome:latest"}
+              placeholder={settings?.default_container_image ?? "glukw/openclaw-vnc-chromium:latest"}
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -206,8 +204,7 @@ export default function InstanceForm({
           <div className="grid grid-cols-2 gap-4">
             {[
               { label: "Homebrew Storage", value: storageHomebrew, set: setStorageHomebrew },
-              { label: "Clawd Storage", value: storageClawd, set: setStorageClawd },
-              { label: "Browser Storage", value: storageChrome, set: setStorageChrome },
+              { label: "Home Storage", value: storageHome, set: setStorageHome },
             ].map((field) => (
               <div key={field.label}>
                 <label className="block text-xs text-gray-500 mb-1">

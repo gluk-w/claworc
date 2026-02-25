@@ -39,8 +39,7 @@ type CreateParams struct {
 	MemoryRequest   string
 	MemoryLimit     string
 	StorageHomebrew string
-	StorageClawd    string
-	StorageChrome   string
+	StorageHome     string
 	ContainerImage  string
 	VNCResolution   string
 	EnvVars         map[string]string

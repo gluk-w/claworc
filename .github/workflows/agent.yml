@@ -28,3 +28,5 @@ jobs:
 
       - name: Build, test and push the image
         run: make agent
+        env:
+          CACHE_ARGS: --cache-from type=gha,scope=agent --cache-to type=gha,mode=max,scope=agent

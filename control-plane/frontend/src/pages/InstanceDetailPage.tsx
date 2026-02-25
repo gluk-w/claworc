@@ -366,8 +366,7 @@ export default function InstanceDetailPage() {
                   label: "Storage (Homebrew)",
                   value: instance.storage_homebrew,
                 },
-                { label: "Storage (Clawd)", value: instance.storage_clawd },
-                { label: "Storage (Browser)", value: instance.storage_chrome },
+                { label: "Storage (Home)", value: instance.storage_home },
                 {
                   label: "Agent Image",
                   value: instance.has_image_override
@@ -616,11 +615,10 @@ export default function InstanceDetailPage() {
                 <VncPanel
                   instanceId={instanceId}
                   connectionState={desktopHook.connectionState}
-                  desktopUrl={desktopHook.desktopUrl}
-                  setIframe={desktopHook.setIframe}
-                  onLoad={desktopHook.onLoad}
-                  onError={desktopHook.onError}
+                  containerRef={desktopHook.containerRef}
                   reconnect={desktopHook.reconnect}
+                  copyFromRemote={desktopHook.copyFromRemote}
+                  pasteToRemote={desktopHook.pasteToRemote}
                   chatOpen={false}
                   showNewWindow={false}
                 />

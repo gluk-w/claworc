@@ -14,8 +14,7 @@ export interface Instance {
   memory_request: string;
   memory_limit: string;
   storage_homebrew: string;
-  storage_clawd: string;
-  storage_chrome: string;
+  storage_home: string;
   has_brave_override: boolean;
   api_key_overrides: string[];
   models: InstanceModels;
@@ -42,8 +41,7 @@ export interface InstanceCreatePayload {
   memory_request?: string;
   memory_limit?: string;
   storage_homebrew?: string;
-  storage_clawd?: string;
-  storage_chrome?: string;
+  storage_home?: string;
   brave_api_key?: string | null;
   api_keys?: Record<string, string>;
   models?: { disabled: string[]; extra: string[] };

@@ -21,3 +21,5 @@ jobs:
 
       - name: Build and push the image
         run: make control-plane
+        env:
+          CACHE_ARGS: --cache-from type=gha,scope=control-plane --cache-to type=gha,mode=max,scope=control-plane

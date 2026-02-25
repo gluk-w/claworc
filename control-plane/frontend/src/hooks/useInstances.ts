@@ -153,6 +153,8 @@ export function useInstanceConfig(id: number, enabled: boolean = true) {
     queryKey: ["instances", id, "config"],
     queryFn: () => fetchInstanceConfig(id),
     enabled,
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 4000),
   });
 }
 

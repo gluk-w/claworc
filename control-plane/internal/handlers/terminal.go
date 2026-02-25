@@ -159,7 +159,7 @@ func handleManagedTerminal(ctx context.Context, clientConn *websocket.Conn, r *h
 	// Create a new session if needed
 	if ms == nil {
 		var createErr error
-		ms, createErr = TermSessionMgr.CreateSession(sshClient, instanceID, "su - abc")
+		ms, createErr = TermSessionMgr.CreateSession(sshClient, instanceID, "su - claworc")
 		if createErr != nil {
 			log.Printf("Terminal session creation failed for instance %d: %v", instanceID, createErr)
 			clientConn.Close(4500, "Failed to start shell")
@@ -262,7 +262,7 @@ func handleManagedTerminal(ctx context.Context, clientConn *websocket.Conn, r *h
 
 // handleLegacyTerminal creates an ephemeral session destroyed on disconnect.
 func handleLegacyTerminal(ctx context.Context, clientConn *websocket.Conn, sshClient *ssh.Client) {
-	session, err := sshterminal.CreateInteractiveSession(sshClient, "su - abc")
+	session, err := sshterminal.CreateInteractiveSession(sshClient, "su - claworc")
 	if err != nil {
 		log.Printf("Legacy terminal session creation failed: %v", err)
 		clientConn.Close(4500, "Failed to start shell")

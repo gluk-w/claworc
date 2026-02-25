@@ -81,8 +81,7 @@ func (k *KubernetesOrchestrator) CreateInstance(ctx context.Context, params Crea
 		storage string
 	}{
 		{"homebrew", params.StorageHomebrew},
-		{"openclaw", params.StorageClawd},
-		{"chrome", params.StorageChrome},
+		{"home", params.StorageHome},
 	}
 	for _, p := range pvcs {
 		pvc := buildPVC(fmt.Sprintf("%s-%s", params.Name, p.suffix), ns, p.storage)
@@ -94,11 +93,6 @@ func (k *KubernetesOrchestrator) CreateInstance(ctx context.Context, params Crea
 	dep := buildDeployment(params, ns)
 	if _, err := k.clientset.AppsV1().Deployments(ns).Create(ctx, dep, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("create deployment: %w", err)
-	}
-
-	svc := buildService(params.Name, ns)
-	if _, err := k.clientset.CoreV1().Services(ns).Create(ctx, svc, metav1.CreateOptions{}); err != nil {
-		return fmt.Errorf("create service: %w", err)
 	}
 
 	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
@@ -151,7 +145,7 @@ func (k *KubernetesOrchestrator) CloneVolumes(ctx context.Context, srcName, dstN
 	k.waitForPodTermination(ctx, dstName, 60*time.Second)
 
 	// Copy each PVC pair
-	for _, suffix := range []string{"homebrew", "openclaw", "chrome"} {
+	for _, suffix := range []string{"homebrew", "home"} {
 		srcPVC := fmt.Sprintf("%s-%s", srcName, suffix)
 		dstPVC := fmt.Sprintf("%s-%s", dstName, suffix)
 		if err := k.copyPVC(ctx, srcPVC, dstPVC); err != nil {
@@ -249,10 +243,7 @@ func (k *KubernetesOrchestrator) DeleteInstance(ctx context.Context, name string
 	if err := k.clientset.AppsV1().Deployments(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("delete deployment: %w", err)
 	}
-	if err := k.clientset.CoreV1().Services(ns).Delete(ctx, name+"-vnc", metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("delete service: %w", err)
-	}
-	for _, suffix := range []string{"homebrew", "openclaw", "chrome"} {
+	for _, suffix := range []string{"homebrew", "home"} {
 		pvcName := fmt.Sprintf("%s-%s", name, suffix)
 		if err := k.clientset.CoreV1().PersistentVolumeClaims(ns).Delete(ctx, pvcName, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("delete PVC %s: %w", suffix, err)
@@ -435,15 +426,11 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 	replicas := int32(1)
 	privileged := true
 
-	envVars := []corev1.EnvVar{
-		{Name: "PUID", Value: "1000"},
-		{Name: "PGID", Value: "1000"},
-		{Name: "START_DOCKER", Value: "false"},
-	}
+	var envVars []corev1.EnvVar
 	if parts := strings.SplitN(params.VNCResolution, "x", 2); len(parts) == 2 {
 		envVars = append(envVars,
-			corev1.EnvVar{Name: "SELKIES_MANUAL_WIDTH", Value: parts[0]},
-			corev1.EnvVar{Name: "SELKIES_MANUAL_HEIGHT", Value: parts[1]},
+			corev1.EnvVar{Name: "DISPLAY_WIDTH", Value: parts[0]},
+			corev1.EnvVar{Name: "DISPLAY_HEIGHT", Value: parts[1]},
 		)
 	}
 	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
@@ -466,14 +453,11 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": params.Name, "managed-by": "claworc"}},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
-						Name:            "moltbot",
+						Name:            "claworc-instance",
 						Image:           params.ContainerImage,
 						ImagePullPolicy: corev1.PullAlways,
 						SecurityContext: &corev1.SecurityContext{Privileged: &privileged},
-						Ports: []corev1.ContainerPort{
-							{Name: "http", ContainerPort: 3000},
-						},
-						Env: envVars,
+						Env:             envVars,
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{
 								corev1.ResourceCPU:    resource.MustParse(params.CPURequest),
@@ -485,43 +469,28 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 							},
 						},
 						VolumeMounts: []corev1.VolumeMount{
-							{Name: "chrome-data", MountPath: "/config/chrome-data"},
+							{Name: "home-data", MountPath: "/home/claworc"},
 							{Name: "homebrew-data", MountPath: "/home/linuxbrew/.linuxbrew"},
-							{Name: "openclaw-data", MountPath: "/config/.openclaw"},
 							{Name: "dshm", MountPath: "/dev/shm"},
 						},
 						LivenessProbe: &corev1.Probe{
-							ProbeHandler:        corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(3000)}},
+							ProbeHandler:        corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(22)}},
 							InitialDelaySeconds: 60,
 							PeriodSeconds:       30,
 						},
 						ReadinessProbe: &corev1.Probe{
-							ProbeHandler:        corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/", Port: intstr.FromInt32(3000)}},
+							ProbeHandler:        corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(22)}},
 							InitialDelaySeconds: 30,
 							PeriodSeconds:       10,
 						},
 					}},
 					Volumes: []corev1.Volume{
 						{Name: "homebrew-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-homebrew"}}},
-						{Name: "openclaw-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-openclaw"}}},
-						{Name: "chrome-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-chrome"}}},
+						{Name: "home-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-home"}}},
 						{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &shmSize}}},
 					},
 					ImagePullSecrets: []corev1.LocalObjectReference{{Name: "ghcr-secret"}},
 				},
-			},
-		},
-	}
-}
-
-func buildService(name, ns string) *corev1.Service {
-	return &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: name + "-vnc", Namespace: ns},
-		Spec: corev1.ServiceSpec{
-			Type:     corev1.ServiceTypeClusterIP,
-			Selector: map[string]string{"app": name},
-			Ports: []corev1.ServicePort{
-				{Name: "http", Port: 3000, TargetPort: intstr.FromInt32(3000), Protocol: corev1.ProtocolTCP},
 			},
 		},
 	}
