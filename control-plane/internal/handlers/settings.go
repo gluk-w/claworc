@@ -24,6 +24,8 @@ var plainSettings = []string{
 	"default_memory_limit",
 	"default_storage_homebrew",
 	"default_storage_home",
+	"default_timezone",
+	"default_user_agent",
 	"default_models",
 }
 

@@ -1,53 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { execFileSync } from "node:child_process";
+import { describe, it, expect, beforeAll } from "vitest";
+import { exec, execAsUser, sleep, getContainers, dumpDiagnostics } from "./helpers";
 
-const IMAGE = process.env.AGENT_TEST_IMAGE ?? "openclaw-vnc-chromium:test";
-const CONTAINER = "agent-test-" + process.pid;
-
-interface ExecResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
-function hostExec(args: string[]): string {
-  try {
-    return execFileSync(args[0], args.slice(1), {
-      encoding: "utf-8",
-      timeout: 10_000,
-    });
-  } catch (err: any) {
-    // docker logs writes to stderr
-    return (err.stdout ?? "") + (err.stderr ?? "") || `(exit ${err.status})`;
-  }
-}
-
-function exec(cmd: string[]): ExecResult {
-  try {
-    const stdout = execFileSync("docker", ["exec", CONTAINER, ...cmd], {
-      encoding: "utf-8",
-      timeout: 30_000,
-    });
-    if (stdout) console.log(stdout);
-    return { stdout, stderr: "", exitCode: 0 };
-  } catch (err: any) {
-    if (err.stdout) console.log(err.stdout);
-    if (err.stderr) console.error(err.stderr);
-    return {
-      stdout: err.stdout ?? "",
-      stderr: err.stderr ?? "",
-      exitCode: err.status ?? 1,
-    };
-  }
-}
-
-function execAsUser(cmd: string): ExecResult {
-  return exec(["su", "-", "claworc", "-c", cmd]);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
+const containers = getContainers();
+const container = containers.chromium?.name;
 
 function structureOf(obj: any): any {
   if (Array.isArray(obj)) return obj.length > 0 ? [structureOf(obj[0])] : [];
@@ -59,70 +14,49 @@ function structureOf(obj: any): any {
   return typeof obj;
 }
 
-describe("agent image", { timeout: 300_000 }, () => {
+describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
+  // Wait for openclaw gateway to be ready.
+  // The svc-openclaw run script executes `openclaw doctor --fix` followed by
+  // several `openclaw config set` commands before starting the gateway — each
+  // spawns Node.js under QEMU emulation, which is very slow with concurrent
+  // containers. By the time browser.test.ts finishes, the gateway is usually ready.
+  // Wait for openclaw gateway to be ready.
+  // Under QEMU with multiple concurrent containers, `openclaw doctor --fix` +
+  // several `openclaw config set` commands can take 15+ minutes. The gateway
+  // only starts after all of those complete.
   beforeAll(async () => {
-    // Remove leftover container if any
-    try {
-      execFileSync("docker", ["rm", "-f", CONTAINER], { stdio: "ignore" });
-    } catch {
-      // ignore
-    }
-
-    execFileSync(
-      "docker",
-      ["run", "-d", "--privileged", "--platform", "linux/amd64", "-e", "OPENCLAW_GATEWAY_TOKEN=zzzbbb", "--name", CONTAINER, IMAGE],
-      { encoding: "utf-8" },
-    );
-
-    // Poll for openclaw gateway process (confirms s6-overlay init completed).
-    // The run script executes several `openclaw config set` commands before
-    // starting the gateway — each spawns a Node.js process that is very slow
-    // under QEMU emulation on Apple Silicon, so allow up to 240s.
-    const deadline = Date.now() + 240_000;
+    const deadline = Date.now() + 900_000;
     while (Date.now() < deadline) {
-      const result = exec(["pgrep", "-f", "openclaw gateway"]);
+      const result = exec(container!, ["pgrep", "-f", "openclaw gateway"]);
       if (result.exitCode === 0 && result.stdout.trim()) break;
-      await sleep(2_000);
+      await sleep(5_000);
     }
 
     // Final check
-    const check = exec(["pgrep", "-f", "openclaw gateway"]);
+    const check = exec(container!, ["pgrep", "-f", "openclaw gateway"]);
     if (check.exitCode !== 0) {
-      // Dump diagnostics before failing
-      console.error("=== Container logs ===");
-      console.error(hostExec(["docker", "logs", "--tail", "50", CONTAINER]));
-      console.error("=== Process list ===");
-      console.error(exec(["ps", "aux"]).stdout || "(empty)");
-      throw new Error("openclaw gateway did not start within 240s");
+      dumpDiagnostics(container!);
+      throw new Error("openclaw gateway did not start within 900s");
     }
 
     // Wait for gateway WebSocket to be ready (port 18789 listening).
-    // Use /proc/net/tcp6 since iproute2 (ss) is not installed in the image.
     // Port 18789 = 0x4965 in hex.
-    const portDeadline = Date.now() + 30_000;
+    const portDeadline = Date.now() + 60_000;
     while (Date.now() < portDeadline) {
-      const result = exec(["grep", "-q", ":4965", "/proc/net/tcp6"]);
+      const result = exec(container!, ["grep", "-q", ":4965", "/proc/net/tcp6"]);
       if (result.exitCode === 0) break;
-      await sleep(1_000);
+      await sleep(2_000);
     }
-  }, 300_000);
-
-  afterAll(() => {
-    try {
-      execFileSync("docker", ["rm", "-f", CONTAINER], { stdio: "ignore" });
-    } catch {
-      // ignore
-    }
-  });
+  }, 960_000);
 
   it("openclaw home directory exists and is owned by claworc", () => {
-    const result = exec(["stat", "-c", "%U:%G", "/home/claworc/.openclaw"]);
+    const result = exec(container!, ["stat", "-c", "%U:%G", "/home/claworc/.openclaw"]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout.trim()).toBe("claworc:claworc");
   });
 
   it("openclaw.json structure matches snapshot", () => {
-    const result = exec([
+    const result = exec(container!, [
       "cat",
       "/home/claworc/.openclaw/openclaw.json",
     ]);
@@ -133,19 +67,18 @@ describe("agent image", { timeout: 300_000 }, () => {
   });
 
   it("openclaw logs exits without crash", () => {
-    const result = execAsUser("openclaw logs --plain --limit 5");
-    // May return non-zero if gateway WebSocket isn't reachable in emulated
-    // test container, but the command itself should not crash
+    const result = execAsUser(container!, "openclaw logs --plain --limit 5");
     expect(result.exitCode).toBeDefined();
   });
 
   it("can set gateway auth token via config", () => {
     const result = execAsUser(
+      container!,
       "openclaw config set gateway.auth.token test-token-abc123",
     );
     expect(result.exitCode).toBe(0);
 
-    const configResult = exec([
+    const configResult = exec(container!, [
       "cat",
       "/home/claworc/.openclaw/openclaw.json",
     ]);
@@ -160,11 +93,12 @@ describe("agent image", { timeout: 300_000 }, () => {
     });
 
     const result = execAsUser(
+      container!,
       `openclaw config set agents.defaults.model '${modelJson}' --json`,
     );
     expect(result.exitCode).toBe(0);
 
-    const configResult = exec([
+    const configResult = exec(container!, [
       "cat",
       "/home/claworc/.openclaw/openclaw.json",
     ]);
@@ -176,15 +110,13 @@ describe("agent image", { timeout: 300_000 }, () => {
   });
 
   it("openclaw status shows gateway as reachable", () => {
-    const result = execAsUser("openclaw status");
+    const result = execAsUser(container!, "openclaw status");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(" reachable");
   });
 
   it("openclaw gateway stop exits without crash", () => {
-    const result = execAsUser("openclaw gateway stop");
-    // gateway stop may return 0 or non-zero depending on state,
-    // but it should not crash (exitCode should be defined)
+    const result = execAsUser(container!, "openclaw gateway stop");
     expect(result.exitCode).toBeDefined();
   });
 });

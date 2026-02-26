@@ -17,6 +17,7 @@ type ContainerOrchestrator interface {
 	StopInstance(ctx context.Context, name string) error
 	RestartInstance(ctx context.Context, name string) error
 	GetInstanceStatus(ctx context.Context, name string) (string, error)
+	GetInstanceImageInfo(ctx context.Context, name string) (string, error)
 
 	// Config
 	UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error
@@ -42,6 +43,8 @@ type CreateParams struct {
 	StorageHome     string
 	ContainerImage  string
 	VNCResolution   string
+	Timezone        string
+	UserAgent       string
 	EnvVars         map[string]string
 }
 

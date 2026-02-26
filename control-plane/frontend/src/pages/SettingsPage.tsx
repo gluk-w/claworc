@@ -211,6 +211,40 @@ export default function SettingsPage() {
                 className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">
+                Default Timezone
+              </label>
+              <input
+                type="text"
+                defaultValue={settings.default_timezone ?? ""}
+                onChange={(e) =>
+                  setResources((r) => ({
+                    ...r,
+                    default_timezone: e.target.value,
+                  }))
+                }
+                placeholder="e.g., America/New_York"
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">
+                Default User-Agent
+              </label>
+              <input
+                type="text"
+                defaultValue={settings.default_user_agent ?? ""}
+                onChange={(e) =>
+                  setResources((r) => ({
+                    ...r,
+                    default_user_agent: e.target.value,
+                  }))
+                }
+                placeholder="Leave empty to use browser default"
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
           </div>
         </div>
 

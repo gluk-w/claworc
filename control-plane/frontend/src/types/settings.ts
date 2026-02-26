@@ -10,6 +10,8 @@ export interface Settings {
   default_memory_limit: string;
   default_storage_homebrew: string;
   default_storage_home: string;
+  default_timezone: string;
+  default_user_agent: string;
 }
 
 export interface SettingsUpdatePayload {
@@ -25,6 +27,8 @@ export interface SettingsUpdatePayload {
   default_memory_limit?: string;
   default_storage_homebrew?: string;
   default_storage_home?: string;
+  default_timezone?: string;
+  default_user_agent?: string;
 }
 
 // Keep backward compat alias

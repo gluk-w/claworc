@@ -174,8 +174,11 @@ func (m *mockOrchestrator) RestartInstance(_ context.Context, _ string) error { 
 func (m *mockOrchestrator) GetInstanceStatus(_ context.Context, _ string) (string, error) {
 	return "running", nil
 }
+func (m *mockOrchestrator) GetInstanceImageInfo(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
 func (m *mockOrchestrator) UpdateInstanceConfig(_ context.Context, _, _ string) error { return nil }
-func (m *mockOrchestrator) CloneVolumes(_ context.Context, _, _ string) error { return nil }
+func (m *mockOrchestrator) CloneVolumes(_ context.Context, _, _ string) error         { return nil }
 func (m *mockOrchestrator) ConfigureSSHAccess(_ context.Context, _ uint, _ string) error {
 	return m.configureErr
 }

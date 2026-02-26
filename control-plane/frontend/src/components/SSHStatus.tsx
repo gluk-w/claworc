@@ -1,4 +1,4 @@
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Wrench, ListCollapse } from "lucide-react";
 import type { SSHStatusResponse } from "@/types/ssh";
 
 const stateStyles: Record<string, { dot: string; text: string; label: string }> = {
@@ -16,14 +16,21 @@ function formatTime(ts: string): string {
   return d.toLocaleTimeString();
 }
 
+const tunnelLabelMap: Record<string, string> = {
+  VNC: "Browser",
+  Gateway: "OpenClaw",
+};
+
 interface SSHStatusProps {
   status: SSHStatusResponse | undefined;
   isLoading: boolean;
   isError: boolean;
   onRefresh: () => void;
+  onTroubleshoot?: () => void;
+  onEvents?: () => void;
 }
 
-export default function SSHStatus({ status, isLoading, isError, onRefresh }: SSHStatusProps) {
+export default function SSHStatus({ status, isLoading, isError, onRefresh, onTroubleshoot, onEvents }: SSHStatusProps) {
   if (isLoading && !status) {
     return (
       <div className="bg-white rounded-lg border border-gray-200 p-6">
@@ -64,7 +71,7 @@ export default function SSHStatus({ status, isLoading, isError, onRefresh }: SSH
             }`}
           >
             <span className={`w-1.5 h-1.5 rounded-full ${healthy ? "bg-green-500" : "bg-red-500"}`} />
-            {t.label}
+            {tunnelLabelMap[t.label] ?? t.label}
           </span>
         );
       })
@@ -74,14 +81,36 @@ export default function SSHStatus({ status, isLoading, isError, onRefresh }: SSH
     <div className="bg-white rounded-lg border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-medium text-gray-900">SSH Connection</h3>
-        <button
-          onClick={onRefresh}
-          disabled={isLoading}
-          className="p-1 text-gray-400 hover:text-gray-600 rounded disabled:opacity-50"
-          title="Refresh"
-        >
-          <RefreshCw size={14} className={isLoading ? "animate-spin" : ""} />
-        </button>
+        <div className="flex items-center gap-2">
+          {onEvents && (
+            <button
+              onClick={onEvents}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded"
+              title="Connection Events"
+            >
+              <ListCollapse size={12} />
+              Events
+            </button>
+          )}
+          {onTroubleshoot && (
+            <button
+              onClick={onTroubleshoot}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded"
+              title="Troubleshoot SSH"
+            >
+              <Wrench size={12} />
+              Troubleshoot
+            </button>
+          )}
+          <button
+            onClick={onRefresh}
+            disabled={isLoading}
+            className="p-1 text-gray-400 hover:text-gray-600 rounded disabled:opacity-50"
+            title="Refresh"
+          >
+            <RefreshCw size={14} className={isLoading ? "animate-spin" : ""} />
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-y-3 gap-x-8">

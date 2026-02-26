@@ -23,6 +23,11 @@ export interface Instance {
   has_image_override: boolean;
   vnc_resolution: string | null;
   has_resolution_override: boolean;
+  timezone: string | null;
+  has_timezone_override: boolean;
+  user_agent: string | null;
+  has_user_agent_override: boolean;
+  live_image_info?: string;
   allowed_source_ips: string;
   control_url: string;
   gateway_token: string;
@@ -48,6 +53,8 @@ export interface InstanceCreatePayload {
   default_model?: string;
   container_image?: string | null;
   vnc_resolution?: string | null;
+  timezone?: string | null;
+  user_agent?: string | null;
 }
 
 export interface InstanceUpdatePayload {
@@ -55,6 +62,8 @@ export interface InstanceUpdatePayload {
   brave_api_key?: string;
   models?: { disabled: string[]; extra: string[] };
   default_model?: string;
+  timezone?: string;
+  user_agent?: string;
   allowed_source_ips?: string;
 }
 

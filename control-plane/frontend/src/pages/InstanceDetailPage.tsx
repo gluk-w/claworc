@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { AlertTriangle, ChevronDown, ChevronRight, Shield, Wrench } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import StatusBadge from "@/components/StatusBadge";
 import ActionButtons from "@/components/ActionButtons";
@@ -12,7 +12,6 @@ import VncPanel from "@/components/VncPanel";
 import ChatPanel from "@/components/ChatPanel";
 import FileBrowser from "@/components/FileBrowser";
 import SSHStatus from "@/components/SSHStatus";
-import SSHTunnelList from "@/components/SSHTunnelList";
 import SSHEventLog from "@/components/SSHEventLog";
 import SSHTroubleshoot from "@/components/SSHTroubleshoot";
 import {
@@ -34,6 +33,7 @@ import { useTerminal } from "@/hooks/useTerminal";
 import { useDesktop } from "@/hooks/useDesktop";
 import { useChat } from "@/hooks/useChat";
 import type { InstanceUpdatePayload } from "@/types/instance";
+import { buildSSHTooltip } from "@/utils/sshTooltip";
 
 type Tab = "overview" | "chrome" | "terminal" | "files" | "config" | "logs";
 
@@ -84,21 +84,22 @@ export default function InstanceDetailPage() {
   const [terminalActivated, setTerminalActivated] = useState(getTabFromHash() === "terminal");
   const [chromeActivated, setChromeActivated] = useState(getTabFromHash() === "chrome");
 
-  // SSH tunnel detail toggle
-  const [tunnelsExpanded, setTunnelsExpanded] = useState(false);
-  // SSH event log toggle
-  const [eventsExpanded, setEventsExpanded] = useState(false);
   // SSH troubleshoot dialog
   const [troubleshootOpen, setTroubleshootOpen] = useState(false);
+  // SSH events modal
+  const [eventsOpen, setEventsOpen] = useState(false);
 
   // API key editing state
   const [editingKeys, setEditingKeys] = useState(false);
   const [pendingKeyUpdates, setPendingKeyUpdates] = useState<Record<string, string | null>>({});
 
-  // Source IP restriction editing state (admin only)
-  const [editingSourceIPs, setEditingSourceIPs] = useState(false);
-  const [pendingSourceIPs, setPendingSourceIPs] = useState<string | null>(null);
-  const [sourceIPError, setSourceIPError] = useState<string | null>(null);
+  // Timezone override editing state
+  const [editingTimezone, setEditingTimezone] = useState(false);
+  const [pendingTimezone, setPendingTimezone] = useState<string | null>(null);
+
+  // User-Agent override editing state
+  const [editingUserAgent, setEditingUserAgent] = useState(false);
+  const [pendingUserAgent, setPendingUserAgent] = useState<string | null>(null);
 
   // Update tab when hash changes
   useEffect(() => {
@@ -219,19 +220,27 @@ export default function InstanceDetailPage() {
     );
   };
 
-  const handleSaveSourceIPs = () => {
-    if (pendingSourceIPs === null) return;
-    setSourceIPError(null);
+  const handleSaveTimezone = () => {
+    if (pendingTimezone === null) return;
     updateMutation.mutate(
-      { id: instanceId, payload: { allowed_source_ips: pendingSourceIPs } },
+      { id: instanceId, payload: { timezone: pendingTimezone } },
       {
         onSuccess: () => {
-          setEditingSourceIPs(false);
-          setPendingSourceIPs(null);
-          setSourceIPError(null);
+          setEditingTimezone(false);
+          setPendingTimezone(null);
         },
-        onError: (error: any) => {
-          setSourceIPError(error.response?.data?.detail || "Invalid IP configuration");
+      },
+    );
+  };
+
+  const handleSaveUserAgent = () => {
+    if (pendingUserAgent === null) return;
+    updateMutation.mutate(
+      { id: instanceId, payload: { user_agent: pendingUserAgent } },
+      {
+        onSuccess: () => {
+          setEditingUserAgent(false);
+          setPendingUserAgent(null);
         },
       },
     );
@@ -309,7 +318,7 @@ export default function InstanceDetailPage() {
           <h1 className="text-xl font-semibold text-gray-900">
             {instance.display_name}
           </h1>
-          <StatusBadge status={instance.status} />
+          <StatusBadge status={instance.status} tooltip={buildSSHTooltip(sshStatus.data)} />
         </div>
         <ActionButtons
           instance={instance}
@@ -351,8 +360,16 @@ export default function InstanceDetailPage() {
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <div className="grid grid-cols-2 gap-y-4 gap-x-8">
               {[
-                { label: "Instance Name", value: instance.name },
                 { label: "Display Name", value: instance.display_name },
+                {
+                  label: "Agent Image",
+                  value: instance.live_image_info
+                    ? instance.live_image_info
+                    : instance.has_image_override
+                      ? instance.container_image ?? ""
+                      : "Default",
+                },
+                { label: "Instance Name", value: instance.name },
                 { label: "Status", value: instance.status },
                 {
                   label: "CPU",
@@ -368,15 +385,21 @@ export default function InstanceDetailPage() {
                 },
                 { label: "Storage (Home)", value: instance.storage_home },
                 {
-                  label: "Agent Image",
-                  value: instance.has_image_override
-                    ? instance.container_image ?? ""
-                    : "Default",
-                },
-                {
                   label: "VNC Resolution",
                   value: instance.has_resolution_override
                     ? instance.vnc_resolution ?? ""
+                    : "Default",
+                },
+                {
+                  label: "Timezone",
+                  value: instance.has_timezone_override
+                    ? instance.timezone ?? ""
+                    : "Default",
+                },
+                {
+                  label: "User-Agent",
+                  value: instance.has_user_agent_override
+                    ? instance.user_agent ?? ""
                     : "Default",
                 },
                 { label: "Created", value: instance.created_at },
@@ -393,67 +416,40 @@ export default function InstanceDetailPage() {
           </div>
 
           {/* SSH Connection Status */}
-          <div className="relative">
-            <SSHStatus
-              status={sshStatus.data}
-              isLoading={sshStatus.isLoading}
-              isError={sshStatus.isError}
-              onRefresh={() => sshStatus.refetch()}
-            />
-            {instance.status === "running" && sshStatus.data && (
-              <button
-                onClick={() => setTroubleshootOpen(true)}
-                className="absolute top-4 right-12 inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded"
-                title="Troubleshoot SSH"
-              >
-                <Wrench size={12} />
-                Troubleshoot
-              </button>
-            )}
-          </div>
+          <SSHStatus
+            status={sshStatus.data}
+            isLoading={sshStatus.isLoading}
+            isError={sshStatus.isError}
+            onRefresh={() => sshStatus.refetch()}
+            onTroubleshoot={instance.status === "running" && sshStatus.data ? () => setTroubleshootOpen(true) : undefined}
+            onEvents={instance.status === "running" ? () => setEventsOpen(true) : undefined}
+          />
           {troubleshootOpen && (
             <SSHTroubleshoot
               instanceId={instanceId}
               onClose={() => setTroubleshootOpen(false)}
             />
           )}
-
-          {/* SSH Tunnel Details (expand/collapse) */}
-          {sshStatus.data && sshStatus.data.tunnels.length > 0 && (
-            <div>
-              <button
-                onClick={() => setTunnelsExpanded((prev) => !prev)}
-                className="flex items-center gap-1 text-sm font-medium text-gray-700 hover:text-gray-900 mb-2"
-              >
-                {tunnelsExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                Tunnel Details
-              </button>
-              {tunnelsExpanded && (
-                <SSHTunnelList
-                  tunnels={sshStatus.data.tunnels}
-                  isLoading={sshStatus.isLoading}
-                />
-              )}
-            </div>
-          )}
-
-          {/* SSH Connection Events (expand/collapse) */}
-          {instance.status === "running" && (
-            <div>
-              <button
-                onClick={() => setEventsExpanded((prev) => !prev)}
-                className="flex items-center gap-1 text-sm font-medium text-gray-700 hover:text-gray-900 mb-2"
-              >
-                {eventsExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                Connection Events
-              </button>
-              {eventsExpanded && (
-                <SSHEventLog
-                  events={sshEvents.data?.events}
-                  isLoading={sshEvents.isLoading}
-                  isError={sshEvents.isError}
-                />
-              )}
+          {eventsOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+              <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                  <h3 className="text-sm font-medium text-gray-900">Connection Events</h3>
+                  <button
+                    onClick={() => setEventsOpen(false)}
+                    className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+                  >
+                    &times;
+                  </button>
+                </div>
+                <div className="overflow-y-auto p-6">
+                  <SSHEventLog
+                    events={sshEvents.data?.events}
+                    isLoading={sshEvents.isLoading}
+                    isError={sshEvents.isError}
+                  />
+                </div>
+              </div>
             </div>
           )}
 
@@ -513,83 +509,112 @@ export default function InstanceDetailPage() {
             )}
           </div>
 
-          {/* Source IP Restrictions (admin only) */}
-          {isAdmin && (
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <Shield size={16} className="text-gray-500" />
-                  <h3 className="text-sm font-medium text-gray-900">
-                    SSH Source IP Restrictions
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (editingSourceIPs) {
-                      setPendingSourceIPs(null);
-                      setSourceIPError(null);
-                    } else {
-                      setPendingSourceIPs(instance.allowed_source_ips || "");
-                    }
-                    setEditingSourceIPs(!editingSourceIPs);
-                  }}
-                  className="text-xs text-blue-600 hover:text-blue-800"
-                >
-                  {editingSourceIPs ? "Cancel" : "Edit"}
-                </button>
-              </div>
-
-              {editingSourceIPs ? (
-                <div className="space-y-3">
-                  <textarea
-                    value={pendingSourceIPs ?? ""}
-                    onChange={(e) => {
-                      setPendingSourceIPs(e.target.value);
-                      setSourceIPError(null);
-                    }}
-                    placeholder="e.g., 10.0.0.0/8, 192.168.1.0/24, 172.16.0.1"
-                    rows={3}
-                    className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono"
-                  />
-                  <p className="text-xs text-gray-500">
-                    Comma-separated list of IP addresses and CIDR ranges. Only SSH connections originating from these IPs will be allowed. Leave empty to allow all.
-                  </p>
-                  {sourceIPError && (
-                    <p className="text-xs text-red-600">{sourceIPError}</p>
-                  )}
-                  <div className="flex justify-end">
-                    <button
-                      onClick={handleSaveSourceIPs}
-                      disabled={updateMutation.isPending || pendingSourceIPs === null}
-                      className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      {updateMutation.isPending ? "Saving..." : "Save"}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  {instance.allowed_source_ips ? (
-                    <div className="space-y-1">
-                      {instance.allowed_source_ips.split(",").map((ip, i) => (
-                        <span
-                          key={i}
-                          className="inline-block bg-gray-100 text-gray-700 text-xs font-mono px-2 py-1 rounded mr-2 mb-1"
-                        >
-                          {ip.trim()}
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-gray-500">
-                      No restrictions configured. All source IPs are allowed.
-                    </p>
-                  )}
-                </div>
-              )}
+          {/* Timezone Override */}
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-gray-900">
+                Timezone Override
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  if (editingTimezone) {
+                    setPendingTimezone(null);
+                  } else {
+                    setPendingTimezone(instance.timezone ?? "");
+                  }
+                  setEditingTimezone(!editingTimezone);
+                }}
+                className="text-xs text-blue-600 hover:text-blue-800"
+              >
+                {editingTimezone ? "Cancel" : "Edit"}
+              </button>
             </div>
-          )}
+
+            {editingTimezone ? (
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  value={pendingTimezone ?? ""}
+                  onChange={(e) => setPendingTimezone(e.target.value)}
+                  placeholder="e.g., America/New_York (empty = use global default)"
+                  className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <p className="text-xs text-gray-500">
+                  Leave empty to use the global default timezone. Changing timezone requires a container restart to take effect.
+                </p>
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleSaveTimezone}
+                    disabled={updateMutation.isPending || pendingTimezone === null}
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {updateMutation.isPending ? "Saving..." : "Save"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">
+                {instance.has_timezone_override
+                  ? instance.timezone
+                  : "Using global default"}
+              </p>
+            )}
+          </div>
+
+          {/* User-Agent Override */}
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-gray-900">
+                User-Agent Override
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  if (editingUserAgent) {
+                    setPendingUserAgent(null);
+                  } else {
+                    setPendingUserAgent(instance.user_agent ?? "");
+                  }
+                  setEditingUserAgent(!editingUserAgent);
+                }}
+                className="text-xs text-blue-600 hover:text-blue-800"
+              >
+                {editingUserAgent ? "Cancel" : "Edit"}
+              </button>
+            </div>
+
+            {editingUserAgent ? (
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  value={pendingUserAgent ?? ""}
+                  onChange={(e) => setPendingUserAgent(e.target.value)}
+                  placeholder="Leave empty to use global default or browser built-in"
+                  className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <p className="text-xs text-gray-500">
+                  Custom User-Agent string for Chromium. Leave empty to use the global default (or browser built-in if no global default is set). Changing requires a container restart to take effect.
+                </p>
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleSaveUserAgent}
+                    disabled={updateMutation.isPending || pendingUserAgent === null}
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {updateMutation.isPending ? "Saving..." : "Save"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">
+                {instance.has_user_agent_override
+                  ? instance.user_agent
+                  : "Using global default"}
+              </p>
+            )}
+          </div>
+
         </div>
       )}
 

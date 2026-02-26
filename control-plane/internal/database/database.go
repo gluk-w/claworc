@@ -63,6 +63,8 @@ func seedDefaults() error {
 		"default_models":               "[]",
 		"ssh_key_rotation_policy_days": "90",
 		"ssh_audit_retention_days":     "90",
+		"default_timezone":             "America/New_York",
+		"default_user_agent":           "",
 	}
 
 	for key, value := range defaults {

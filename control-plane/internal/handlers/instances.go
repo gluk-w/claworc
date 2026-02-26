@@ -42,6 +42,8 @@ type instanceCreateRequest struct {
 	DefaultModel    string            `json:"default_model"`
 	ContainerImage  *string           `json:"container_image"`
 	VNCResolution   *string           `json:"vnc_resolution"`
+	Timezone        *string           `json:"timezone"`
+	UserAgent       *string           `json:"user_agent"`
 }
 
 type modelsResponse struct {
@@ -69,6 +71,11 @@ type instanceResponse struct {
 	HasImageOverride      bool            `json:"has_image_override"`
 	VNCResolution         *string         `json:"vnc_resolution"`
 	HasResolutionOverride bool            `json:"has_resolution_override"`
+	Timezone              *string         `json:"timezone"`
+	HasTimezoneOverride   bool            `json:"has_timezone_override"`
+	UserAgent             *string         `json:"user_agent"`
+	HasUserAgentOverride  bool            `json:"has_user_agent_override"`
+	LiveImageInfo         *string         `json:"live_image_info,omitempty"`
 	AllowedSourceIPs      string          `json:"allowed_source_ips"`
 	ControlURL            string          `json:"control_url"`
 	GatewayToken          string          `json:"gateway_token"`
@@ -223,6 +230,14 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 	if inst.VNCResolution != "" {
 		vncResolution = &inst.VNCResolution
 	}
+	var timezone *string
+	if inst.Timezone != "" {
+		timezone = &inst.Timezone
+	}
+	var userAgent *string
+	if inst.UserAgent != "" {
+		userAgent = &inst.UserAgent
+	}
 	var gatewayToken string
 	if inst.GatewayToken != "" {
 		gatewayToken, _ = crypto.Decrypt(inst.GatewayToken)
@@ -252,6 +267,10 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		HasImageOverride:      inst.ContainerImage != "",
 		VNCResolution:         vncResolution,
 		HasResolutionOverride: inst.VNCResolution != "",
+		Timezone:              timezone,
+		HasTimezoneOverride:   inst.Timezone != "",
+		UserAgent:             userAgent,
+		HasUserAgentOverride:  inst.UserAgent != "",
 		AllowedSourceIPs:      inst.AllowedSourceIPs,
 		ControlURL:            fmt.Sprintf("/api/v1/instances/%d/control/", inst.ID),
 		GatewayToken:          gatewayToken,
@@ -275,6 +294,12 @@ func resolveStatus(inst *database.Instance, orchStatus string) string {
 
 	if inst.Status == "error" && orchStatus == "stopped" {
 		return "failed"
+	}
+
+	// Suppress "stopped" for recently created instances — the container
+	// may not have started yet.
+	if orchStatus == "stopped" && time.Since(inst.CreatedAt) < 30*time.Second {
+		return "creating"
 	}
 
 	if inst.Status != "restarting" {
@@ -318,6 +343,28 @@ func getEffectiveResolution(inst database.Instance) string {
 		return val
 	}
 	return "1920x1080"
+}
+
+func getEffectiveTimezone(inst database.Instance) string {
+	if inst.Timezone != "" {
+		return inst.Timezone
+	}
+	val, err := database.GetSetting("default_timezone")
+	if err == nil && val != "" {
+		return val
+	}
+	return "America/New_York"
+}
+
+func getEffectiveUserAgent(inst database.Instance) string {
+	if inst.UserAgent != "" {
+		return inst.UserAgent
+	}
+	val, err := database.GetSetting("default_user_agent")
+	if err == nil && val != "" {
+		return val
+	}
+	return ""
 }
 
 func ListInstances(w http.ResponseWriter, r *http.Request) {
@@ -454,6 +501,14 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	if body.VNCResolution != nil {
 		vncResolution = *body.VNCResolution
 	}
+	var timezone string
+	if body.Timezone != nil {
+		timezone = *body.Timezone
+	}
+	var userAgent string
+	if body.UserAgent != nil {
+		userAgent = *body.UserAgent
+	}
 
 	// Serialize models config
 	var modelsConfigJSON string
@@ -487,6 +542,8 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		BraveAPIKey:     encBraveKey,
 		ContainerImage:  containerImage,
 		VNCResolution:   vncResolution,
+		Timezone:        timezone,
+		UserAgent:       userAgent,
 		GatewayToken:    encGatewayToken,
 		ModelsConfig:    modelsConfigJSON,
 		DefaultModel:    body.DefaultModel,
@@ -511,6 +568,8 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 
 	effectiveImage := getEffectiveImage(inst)
 	effectiveResolution := getEffectiveResolution(inst)
+	effectiveTimezone := getEffectiveTimezone(inst)
+	effectiveUserAgent := getEffectiveUserAgent(inst)
 
 	// Launch container creation asynchronously (image pull can take minutes)
 	go func() {
@@ -536,6 +595,8 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			StorageHome:     body.StorageHome,
 			ContainerImage:  effectiveImage,
 			VNCResolution:   effectiveResolution,
+			Timezone:        effectiveTimezone,
+			UserAgent:       effectiveUserAgent,
 			EnvVars:         envVars,
 		})
 		if err != nil {
@@ -575,12 +636,19 @@ func GetInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	orch := orchestrator.Get()
 	orchStatus := "stopped"
-	if orch := orchestrator.Get(); orch != nil {
+	if orch != nil {
 		orchStatus, _ = orch.GetInstanceStatus(r.Context(), inst.Name)
 	}
 	status := resolveStatus(&inst, orchStatus)
-	writeJSON(w, http.StatusOK, instanceToResponse(inst, status))
+	resp := instanceToResponse(inst, status)
+	if orch != nil {
+		if info, err := orch.GetInstanceImageInfo(r.Context(), inst.Name); err == nil && info != "" {
+			resp.LiveImageInfo = &info
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type instanceUpdateRequest struct {
@@ -588,6 +656,8 @@ type instanceUpdateRequest struct {
 	BraveAPIKey      *string            `json:"brave_api_key"`
 	Models           *modelsConfig      `json:"models"`
 	DefaultModel     *string            `json:"default_model"`
+	Timezone         *string            `json:"timezone"`
+	UserAgent        *string            `json:"user_agent"`
 	AllowedSourceIPs *string            `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
 }
 
@@ -661,6 +731,16 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		database.DB.Model(&inst).Update("default_model", *body.DefaultModel)
 	}
 
+	// Update timezone
+	if body.Timezone != nil {
+		database.DB.Model(&inst).Update("timezone", *body.Timezone)
+	}
+
+	// Update user agent
+	if body.UserAgent != nil {
+		database.DB.Model(&inst).Update("user_agent", *body.UserAgent)
+	}
+
 	// Update allowed source IPs (admin only)
 	if body.AllowedSourceIPs != nil {
 		user := middleware.GetUser(r)
@@ -705,7 +785,13 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := resolveStatus(&inst, orchStatus)
-	writeJSON(w, http.StatusOK, instanceToResponse(inst, status))
+	resp := instanceToResponse(inst, status)
+	if orch != nil {
+		if info, err := orch.GetInstanceImageInfo(r.Context(), inst.Name); err == nil && info != "" {
+			resp.LiveImageInfo = &info
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func DeleteInstance(w http.ResponseWriter, r *http.Request) {
@@ -1006,6 +1092,8 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		BraveAPIKey:     src.BraveAPIKey,
 		ContainerImage:  src.ContainerImage,
 		VNCResolution:   src.VNCResolution,
+		Timezone:        src.Timezone,
+		UserAgent:       src.UserAgent,
 		GatewayToken:    encGatewayToken,
 		ModelsConfig:    src.ModelsConfig,
 		DefaultModel:    src.DefaultModel,
@@ -1039,6 +1127,8 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 
 		effectiveImage := getEffectiveImage(inst)
 		effectiveResolution := getEffectiveResolution(inst)
+		effectiveTimezone := getEffectiveTimezone(inst)
+		effectiveUserAgent := getEffectiveUserAgent(inst)
 
 		envVars := map[string]string{}
 		if gatewayTokenPlain != "" {
@@ -1056,6 +1146,8 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			StorageHome:     inst.StorageHome,
 			ContainerImage:  effectiveImage,
 			VNCResolution:   effectiveResolution,
+			Timezone:        effectiveTimezone,
+			UserAgent:       effectiveUserAgent,
 			EnvVars:         envVars,
 		})
 		if err != nil {

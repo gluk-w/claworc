@@ -25,6 +25,8 @@ export default function InstanceForm({
 
   const [containerImage, setContainerImage] = useState("");
   const [vncResolution, setVncResolution] = useState("");
+  const [timezone, setTimezone] = useState("");
+  const [userAgent, setUserAgent] = useState("");
 
   const { data: settings } = useSettings();
 
@@ -51,6 +53,8 @@ export default function InstanceForm({
       brave_api_key: braveKey || null,
       container_image: containerImage || null,
       vnc_resolution: vncResolution || null,
+      timezone: timezone || null,
+      user_agent: userAgent || null,
     };
 
     // Add dynamic API keys
@@ -125,6 +129,30 @@ export default function InstanceForm({
               value={vncResolution}
               onChange={(e) => setVncResolution(e.target.value)}
               placeholder={settings?.default_vnc_resolution ?? "1920x1080"}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Timezone Override
+            </label>
+            <input
+              type="text"
+              value={timezone}
+              onChange={(e) => setTimezone(e.target.value)}
+              placeholder={settings?.default_timezone ?? "America/New_York"}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              User-Agent Override
+            </label>
+            <input
+              type="text"
+              value={userAgent}
+              onChange={(e) => setUserAgent(e.target.value)}
+              placeholder={settings?.default_user_agent || "Browser default"}
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>

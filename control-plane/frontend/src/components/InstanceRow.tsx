@@ -3,6 +3,8 @@ import { formatDistanceToNow } from "date-fns";
 import { GripVertical } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import ActionButtons from "./ActionButtons";
+import { useSSHStatus } from "@/hooks/useSSHStatus";
+import { buildSSHTooltip } from "@/utils/sshTooltip";
 import type { Instance } from "@/types/instance";
 import type { SyntheticListenerMap } from "@dnd-kit/core/dist/hooks/utilities";
 
@@ -29,6 +31,8 @@ export default function InstanceRow({
   dragHandleListeners,
   dragHandleAttributes,
 }: InstanceRowProps) {
+  const sshStatus = useSSHStatus(instance.id, instance.status === "running");
+
   const createdAt = instance.created_at
     ? formatDistanceToNow(new Date(instance.created_at), { addSuffix: true })
     : "";
@@ -54,7 +58,7 @@ export default function InstanceRow({
         </Link>
       </td>
       <td className="px-4 py-3">
-        <StatusBadge status={instance.status} />
+        <StatusBadge status={instance.status} tooltip={buildSSHTooltip(sshStatus.data)} />
       </td>
       <td className="px-4 py-3 text-sm text-gray-500">{createdAt}</td>
       <td className="px-4 py-3">

@@ -301,6 +301,34 @@ func (k *KubernetesOrchestrator) GetInstanceStatus(ctx context.Context, name str
 	}
 }
 
+func (k *KubernetesOrchestrator) GetInstanceImageInfo(ctx context.Context, name string) (string, error) {
+	pods, err := k.clientset.CoreV1().Pods(k.ns()).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("app=%s", name),
+	})
+	if err != nil {
+		return "", fmt.Errorf("list pods: %w", err)
+	}
+	if len(pods.Items) == 0 {
+		return "", nil
+	}
+	pod := pods.Items[0]
+	if len(pod.Spec.Containers) == 0 {
+		return "", nil
+	}
+	tag := pod.Spec.Containers[0].Image
+	for _, cs := range pod.Status.ContainerStatuses {
+		sha := cs.ImageID
+		if idx := strings.Index(sha, "sha256:"); idx >= 0 {
+			sha = sha[idx:]
+			if len(sha) > 19 { // "sha256:" (7) + 12 chars
+				sha = sha[:19]
+			}
+			return fmt.Sprintf("%s (%s)", tag, sha), nil
+		}
+	}
+	return tag, nil
+}
+
 func (k *KubernetesOrchestrator) ConfigureSSHAccess(ctx context.Context, instanceID uint, publicKey string) error {
 	var inst database.Instance
 	if err := database.DB.First(&inst, instanceID).Error; err != nil {
@@ -435,6 +463,12 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 	}
 	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "OPENCLAW_GATEWAY_TOKEN", Value: token})
+	}
+	if params.Timezone != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "TZ", Value: params.Timezone})
+	}
+	if params.UserAgent != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "CHROMIUM_USER_AGENT", Value: params.UserAgent})
 	}
 
 	shmSize := resource.MustParse("2Gi")

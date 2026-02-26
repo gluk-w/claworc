@@ -2,6 +2,7 @@
 
 export DISPLAY=:0
 export HOME=/home/claworc
+export LANG=en_US.UTF-8
 
 # Wait for X server to be ready
 while ! xdpyinfo -display :0 >/dev/null 2>&1; do sleep 0.5; done
@@ -9,11 +10,27 @@ while ! xdpyinfo -display :0 >/dev/null 2>&1; do sleep 0.5; done
 # Start openbox window manager in background
 s6-setuidgid claworc openbox &
 
-# Run chromium in a restart loop
+# Build optional extra flags (array preserves spaces in values)
+EXTRA_ARGS=()
+if [ -n "$CHROMIUM_USER_AGENT" ]; then
+  EXTRA_ARGS+=("--user-agent=$CHROMIUM_USER_AGENT")
+fi
+
+# Auto-detect browser
+if command -v google-chrome-stable >/dev/null 2>&1; then
+  BROWSER=google-chrome-stable
+  EXTRA_ARGS+=(--no-sandbox)
+elif command -v brave-browser >/dev/null 2>&1; then
+  BROWSER=brave-browser
+  EXTRA_ARGS+=(--no-sandbox)
+else
+  BROWSER=/usr/bin/chromium
+fi
+
+# Run browser in a restart loop
 while true; do
-  s6-setuidgid claworc /usr/bin/chromium \
+  s6-setuidgid claworc $BROWSER \
     --no-first-run \
-    --no-sandbox \
     --password-store=basic \
     --simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT' \
     --start-maximized \
@@ -21,6 +38,11 @@ while true; do
     --remote-debugging-port=9222 \
     --remote-debugging-address=127.0.0.1 \
     --disable-default-apps \
-    --disable-features=CloseWindowWithLastTab > /dev/null 2>&1
+    --disable-features=CloseWindowWithLastTab \
+    --disable-blink-features=AutomationControlled \
+    --disable-infobars \
+    --disable-component-update \
+    --load-extension=/opt/stealth-extension \
+    "${EXTRA_ARGS[@]}" > /dev/null 2>&1
   sleep 1
 done

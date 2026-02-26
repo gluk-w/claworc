@@ -1,4 +1,4 @@
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim AS base
 
 ARG S6_OVERLAY_VERSION=3.2.0.2
 ARG TARGETARCH
@@ -8,13 +8,17 @@ RUN useradd -m -u 1000 -s /bin/bash claworc && \
     mkdir -p /defaults
 
 # Install all system packages + Node.js in one apt transaction
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates xz-utils && \
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates xz-utils gnupg && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-    apt-get install -y --no-install-recommends \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       tigervnc-standalone-server tigervnc-common \
-      chromium openbox xfonts-base fonts-liberation x11-utils dbus-x11 \
+      openbox xfonts-base fonts-liberation x11-utils dbus-x11 \
+      fonts-noto-color-emoji fonts-noto-cjk fonts-dejavu-core fonts-freefont-ttf \
+      tzdata locales \
       openssh-server git python3 python3-pip python3-venv python3-numpy \
       build-essential procps nodejs && \
+    echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen && \
     npm install -g openclaw@latest && \
     curl -sSL https://install.python-poetry.org | POETRY_HOME=/usr/local python3 - && \
     rm -rf /var/lib/apt/lists/*
@@ -36,6 +40,7 @@ RUN mkdir -p /home/linuxbrew/.linuxbrew && \
     chown -R claworc:claworc /home/linuxbrew/.linuxbrew
 
 COPY browser.json /defaults/browser.json
+COPY stealth-extension/ /opt/stealth-extension/
 COPY rootfs/ /
 
 RUN chmod +x /etc/s6-overlay/s6-rc.d/init-setup/up \
