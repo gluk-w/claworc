@@ -46,6 +46,7 @@ type CreateParams struct {
 	Timezone        string
 	UserAgent       string
 	EnvVars         map[string]string
+	OnProgress      func(string)
 }
 
 type FileEntry struct {

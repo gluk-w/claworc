@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, createElement } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import CreationToast from "@/components/CreationToast";
 import {
   fetchInstances,
   fetchInstance,
@@ -144,6 +145,48 @@ export function useRestartedToast(instances: Instance[] | undefined) {
         toast.success(`Stopped ${inst.display_name}`);
       }
       prev.set(inst.id, inst.status);
+    }
+  }, [instances]);
+}
+
+/** Show a persistent toast tracking creation progress for instances in "creating" status. */
+export function useCreationToast(instances: Instance[] | undefined) {
+  const activeRef = useRef<Map<number, string>>(new Map());
+
+  useEffect(() => {
+    if (!instances) return;
+    const active = activeRef.current;
+    const currentIds = new Set<number>();
+
+    for (const inst of instances) {
+      if (inst.status === "creating") {
+        currentIds.add(inst.id);
+        const toastId = `creation-${inst.id}`;
+        active.set(inst.id, toastId);
+        toast.custom(
+          createElement(CreationToast, {
+            displayName: inst.display_name,
+            statusMessage: inst.status_message,
+            status: "creating",
+            toastId,
+          }),
+          { id: toastId, duration: Infinity },
+        );
+      } else if (active.has(inst.id)) {
+        // Transitioned away from "creating" — show final state briefly
+        const toastId = active.get(inst.id)!;
+        const finalStatus = inst.status === "running" ? "running" as const : "error" as const;
+        toast.custom(
+          createElement(CreationToast, {
+            displayName: inst.display_name,
+            statusMessage: inst.status_message,
+            status: finalStatus,
+            toastId,
+          }),
+          { id: toastId, duration: finalStatus === "error" ? 8000 : 4000 },
+        );
+        active.delete(inst.id);
+      }
     }
   }, [instances]);
 }

@@ -58,7 +58,14 @@ export default function InstanceRow({
         </Link>
       </td>
       <td className="px-4 py-3">
-        <StatusBadge status={instance.status} tooltip={buildSSHTooltip(sshStatus.data)} />
+        <StatusBadge
+          status={instance.status}
+          tooltip={
+            instance.status === "creating" && instance.status_message
+              ? instance.status_message
+              : buildSSHTooltip(sshStatus.data)
+          }
+        />
       </td>
       <td className="px-4 py-3 text-sm text-gray-500">{createdAt}</td>
       <td className="px-4 py-3">

@@ -74,8 +74,14 @@ func (k *KubernetesOrchestrator) ns() string {
 }
 
 func (k *KubernetesOrchestrator) CreateInstance(ctx context.Context, params CreateParams) error {
+	progress := params.OnProgress
+	if progress == nil {
+		progress = func(string) {}
+	}
+
 	ns := k.ns()
 
+	progress("Creating storage...")
 	pvcs := []struct {
 		suffix  string
 		storage string
@@ -90,6 +96,7 @@ func (k *KubernetesOrchestrator) CreateInstance(ctx context.Context, params Crea
 		}
 	}
 
+	progress("Creating deployment...")
 	dep := buildDeployment(params, ns)
 	if _, err := k.clientset.AppsV1().Deployments(ns).Create(ctx, dep, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("create deployment: %w", err)

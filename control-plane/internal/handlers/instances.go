@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/config"
@@ -22,6 +23,18 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/go-chi/chi/v5"
 )
+
+// In-memory status messages for instance creation progress.
+var statusMessages sync.Map
+
+func setStatusMessage(id uint, msg string) { statusMessages.Store(id, msg) }
+func clearStatusMessage(id uint)           { statusMessages.Delete(id) }
+func getStatusMessage(id uint) string {
+	if v, ok := statusMessages.Load(id); ok {
+		return v.(string)
+	}
+	return ""
+}
 
 type modelsConfig struct {
 	Disabled []string `json:"disabled"`
@@ -76,6 +89,7 @@ type instanceResponse struct {
 	UserAgent             *string         `json:"user_agent"`
 	HasUserAgentOverride  bool            `json:"has_user_agent_override"`
 	LiveImageInfo         *string         `json:"live_image_info,omitempty"`
+	StatusMessage         string          `json:"status_message,omitempty"`
 	AllowedSourceIPs      string          `json:"allowed_source_ips"`
 	ControlURL            string          `json:"control_url"`
 	GatewayToken          string          `json:"gateway_token"`
@@ -253,6 +267,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		Name:                  inst.Name,
 		DisplayName:           inst.DisplayName,
 		Status:                status,
+		StatusMessage:         getStatusMessage(inst.ID),
 		CPURequest:            inst.CPURequest,
 		CPULimit:              inst.CPULimit,
 		MemoryRequest:         inst.MemoryRequest,
@@ -296,9 +311,7 @@ func resolveStatus(inst *database.Instance, orchStatus string) string {
 		return "failed"
 	}
 
-	// Suppress "stopped" for recently created instances — the container
-	// may not have started yet.
-	if orchStatus == "stopped" && time.Since(inst.CreatedAt) < 30*time.Second {
+	if inst.Status == "creating" {
 		return "creating"
 	}
 
@@ -576,6 +589,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		ctx := context.Background()
 		orch := orchestrator.Get()
 		if orch == nil {
+			setStatusMessage(inst.ID, "Failed: no orchestrator available")
 			database.DB.Model(&inst).Update("status", "error")
 			return
 		}
@@ -598,12 +612,15 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			Timezone:        effectiveTimezone,
 			UserAgent:       effectiveUserAgent,
 			EnvVars:         envVars,
+			OnProgress:      func(msg string) { setStatusMessage(inst.ID, msg) },
 		})
 		if err != nil {
 			log.Printf("Failed to create container resources for %s: %v", logutil.SanitizeForLog(name), err)
+			setStatusMessage(inst.ID, fmt.Sprintf("Failed: %v", err))
 			database.DB.Model(&inst).Update("status", "error")
 			return
 		}
+		clearStatusMessage(inst.ID)
 		database.DB.Model(&inst).Updates(map[string]interface{}{
 			"status":     "running",
 			"updated_at": time.Now().UTC(),
@@ -1121,6 +1138,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		ctx := context.Background()
 		orch := orchestrator.Get()
 		if orch == nil {
+			setStatusMessage(inst.ID, "Failed: no orchestrator available")
 			database.DB.Model(&inst).Update("status", "error")
 			return
 		}
@@ -1149,19 +1167,23 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			Timezone:        effectiveTimezone,
 			UserAgent:       effectiveUserAgent,
 			EnvVars:         envVars,
+			OnProgress:      func(msg string) { setStatusMessage(inst.ID, msg) },
 		})
 		if err != nil {
 			log.Printf("Failed to create container for clone %s: %v", cloneName, err)
+			setStatusMessage(inst.ID, fmt.Sprintf("Failed: %v", err))
 			database.DB.Model(&inst).Update("status", "error")
 			return
 		}
 
 		// Clone volume data from source
+		setStatusMessage(inst.ID, "Cloning volumes...")
 		if err := orch.CloneVolumes(ctx, src.Name, cloneName); err != nil {
 			log.Printf("Failed to clone volumes from %s to %s: %v", src.Name, cloneName, err)
 			// Continue anyway – instance is created, just without cloned data
 		}
 
+		clearStatusMessage(inst.ID)
 		database.DB.Model(&inst).Updates(map[string]interface{}{
 			"status":     "running",
 			"updated_at": time.Now().UTC(),

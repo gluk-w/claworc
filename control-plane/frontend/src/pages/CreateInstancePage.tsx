@@ -4,6 +4,7 @@ import toast from "react-hot-toast";
 import InstanceForm from "@/components/InstanceForm";
 import { useCreateInstance } from "@/hooks/useInstances";
 
+
 export default function CreateInstancePage() {
   const navigate = useNavigate();
   const createMutation = useCreateInstance();
@@ -27,9 +28,6 @@ export default function CreateInstancePage() {
           onSubmit={(payload) =>
             createMutation.mutate(payload, {
               onSuccess: () => {
-                toast.success("Initializing", {
-                  duration: 3000,
-                });
                 navigate("/");
               },
               onError: (error: any) => {

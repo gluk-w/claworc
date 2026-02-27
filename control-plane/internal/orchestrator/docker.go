@@ -146,11 +146,18 @@ func (d *DockerOrchestrator) ensureImage(ctx context.Context, img string) error 
 }
 
 func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreateParams) error {
+	progress := params.OnProgress
+	if progress == nil {
+		progress = func(string) {}
+	}
+
+	progress("Pulling image...")
 	if err := d.ensureImage(ctx, params.ContainerImage); err != nil {
 		return err
 	}
 
 	// Create volumes
+	progress("Creating volumes...")
 	for _, suffix := range volumeSuffixes {
 		volName := d.volumeName(params.Name, suffix)
 		_, err := d.client.VolumeCreate(ctx, volume.CreateOptions{
@@ -192,6 +199,8 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	if params.MemoryLimit != "" {
 		memLimit = parseMemoryToBytes(params.MemoryLimit)
 	}
+
+	progress("Creating container...")
 
 	shmSize, _ := units.RAMInBytes("2g")
 
