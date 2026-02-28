@@ -7,6 +7,7 @@ data/
 *.db-wal
 ssh_key*
 kube.txt
+/.claude/agent-memory-local
 
 tmp
 *.log

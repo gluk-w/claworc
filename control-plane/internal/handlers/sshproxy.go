@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -70,9 +71,13 @@ var tunnelProxyClient = &http.Client{
 // proxyToLocalPort proxies an HTTP request to localhost:port/path.
 // It forwards relevant headers and streams the response back.
 //
+// If rewriteBase is provided and the response Content-Type is text/html,
+// a <base href="{rewriteBase}"> tag is injected after <head> so that
+// relative paths in the HTML resolve correctly under the proxy path.
+//
 // Performance: ~67µs direct to localhost, ~124µs via SSH tunnel (~57µs tunnel overhead).
 // Supports 20+ concurrent requests through a single SSH tunnel without errors.
-func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path string) error {
+func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path string, rewriteBase ...string) error {
 	targetURL := fmt.Sprintf("http://127.0.0.1:%d/%s", port, path)
 	if r.URL.RawQuery != "" {
 		targetURL += "?" + r.URL.RawQuery
@@ -112,6 +117,22 @@ func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path str
 		if v := resp.Header.Get(h); v != "" {
 			w.Header().Set(h, v)
 		}
+	}
+
+	// Inject <base> tag into HTML responses when rewriteBase is supplied.
+	if len(rewriteBase) > 0 && rewriteBase[0] != "" &&
+		strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			log.Printf("Tunnel proxy: error reading HTML body: %v", readErr)
+			return fmt.Errorf("error reading response body: %w", readErr)
+		}
+		baseTag := `<base href="` + rewriteBase[0] + `">`
+		body = bytes.Replace(body, []byte("<head>"), []byte("<head>"+baseTag), 1)
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
+		return nil
 	}
 
 	w.WriteHeader(resp.StatusCode)

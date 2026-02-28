@@ -225,7 +225,7 @@ func main() {
 			r.HandleFunc("/instances/{id}/desktop/*", handlers.DesktopProxy)
 
 			// Control proxy
-			r.Get("/instances/{id}/control/*", handlers.ControlProxy)
+			r.HandleFunc("/instances/{id}/control/*", handlers.ControlProxy)
 
 			// Admin-only routes
 			r.Group(func(r chi.Router) {

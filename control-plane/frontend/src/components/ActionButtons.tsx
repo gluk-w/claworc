@@ -43,6 +43,7 @@ export default function ActionButtons({
     const params = new URLSearchParams({
       gatewayUrl: gwUrl,
       token: instance.gateway_token,
+      session: "agent:main:main",
     });
     return `/api/v1/instances/${instance.id}/control/?${params}`;
   })();

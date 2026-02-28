@@ -92,7 +92,8 @@ func ControlProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := proxyToLocalPort(w, r, info.localPort, path); err != nil {
+	basePath := fmt.Sprintf("/api/v1/instances/%d/control/", id)
+	if err := proxyToLocalPort(w, r, info.localPort, path, basePath); err != nil {
 		writeConnectingPage(w, id)
 	}
 }
