@@ -1,17 +1,23 @@
+# Local development files
 .env
 !.env.development
 data/
 *.db
 *.db-shm
 *.db-wal
+ssh_key*
+kube.txt
 
 tmp
 *.log
 
+# Dependencies and artifacts
 node_modules
 pkg/mod
 dist
 dev-dist
+goreman
+air
 
 test-results/
 playwright-report/
@@ -20,5 +26,3 @@ playwright-report/
 /control-plane/claworc
 /control-plane/control-plane
 
-ssh_key*
-/Auto Run Docs/

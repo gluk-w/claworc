@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"gorm.io/driver/sqlite"
@@ -34,8 +35,13 @@ func Init() error {
 	if err != nil {
 		return fmt.Errorf("get sql.DB: %w", err)
 	}
-	if _, err := sqlDB.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		return fmt.Errorf("set WAL mode: %w", err)
+	// Use busy_timeout instead of WAL journal mode. WAL uses mmap() for the
+	// shared-memory file (.db-shm), which macOS Docker Desktop bind mounts
+	// (VirtioFS/gRPC FUSE) do not support properly, causing SQLITE_IOERR on
+	// every query. The default DELETE journal mode avoids mmap entirely.
+	// busy_timeout handles write contention that WAL would otherwise reduce.
+	if _, err := sqlDB.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		return fmt.Errorf("set busy timeout: %w", err)
 	}
 
 	if err := DB.AutoMigrate(&Instance{}, &Setting{}, &InstanceAPIKey{}, &User{}, &UserInstance{}, &WebAuthnCredential{}); err != nil {
@@ -100,7 +106,11 @@ func GetSetting(key string) (string, error) {
 }
 
 func SetSetting(key, value string) error {
-	return DB.Where("key = ?", key).Assign(Setting{Value: value}).FirstOrCreate(&Setting{Key: key}).Error
+	return DB.Exec(
+		"INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "+
+			"ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+		key, value, time.Now().UTC(),
+	).Error
 }
 
 func DeleteSetting(key string) error {

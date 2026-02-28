@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -436,20 +437,35 @@ func (d *DockerOrchestrator) GetSSHAddress(ctx context.Context, instanceID uint)
 		return "", 0, fmt.Errorf("inspect container for instance %d: %w", instanceID, err)
 	}
 
-	// Prefer direct container IP on the claworc network (works when control-plane
-	// runs in Docker on the same network — standard docker-compose deployment).
-	if ep, ok := inspect.NetworkSettings.Networks[networkName]; ok && ep.IPAddress != "" {
-		return ep.IPAddress, 22, nil
+	// Detect whether the control-plane itself is running inside a Docker container.
+	// /.dockerenv is created by the Docker runtime in every container.
+	runningInDocker := false
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		runningInDocker = true
 	}
 
-	// Fallback: published host port (works when control-plane runs natively on macOS
-	// where Docker bridge IPs are unreachable from the host).
+	// Inside Docker: use the container IP on the claworc bridge network for
+	// direct container-to-container communication (no port mapping needed).
+	if runningInDocker {
+		if ep, ok := inspect.NetworkSettings.Networks[networkName]; ok && ep.IPAddress != "" {
+			return ep.IPAddress, 22, nil
+		}
+	}
+
+	// On the host (e.g. macOS / Windows): Docker bridge IPs are not routable
+	// from the host OS, so use the published host port on the loopback instead.
 	if bindings, ok := inspect.NetworkSettings.Ports["22/tcp"]; ok && len(bindings) > 0 {
 		port := 0
 		fmt.Sscanf(bindings[0].HostPort, "%d", &port)
 		if port > 0 {
 			return "127.0.0.1", port, nil
 		}
+	}
+
+	// Fallback: on Linux hosts bridge IPs are routable from the host, so the
+	// container IP still works even when we're not inside Docker ourselves.
+	if ep, ok := inspect.NetworkSettings.Networks[networkName]; ok && ep.IPAddress != "" {
+		return ep.IPAddress, 22, nil
 	}
 
 	return "", 0, fmt.Errorf("cannot determine SSH address for instance %d", instanceID)
