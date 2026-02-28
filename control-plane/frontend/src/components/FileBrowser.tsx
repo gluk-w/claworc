@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Filemanager, Willow, type IApi } from "@svar-ui/react-filemanager";
 import "@svar-ui/react-filemanager/all.css";
 import { useQueryClient } from "@tanstack/react-query";
-import toast from "react-hot-toast";
+import { successToast, errorToast } from "@/utils/toast";
 import { useBrowseFiles, useReadFile } from "@/hooks/useFiles";
 import { createFile, uploadFile } from "@/api/files";
 import type { FileEntry } from "@/types/files";
@@ -172,12 +172,12 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
         const filePath = `${ev.parent === "/" ? ROOT_PATH : ROOT_PATH + ev.parent}/${ev.file.name}`;
 
         await createFile(instanceId, filePath, "");
-        toast.success("File created successfully");
+        successToast("File created");
 
         refreshCurrentPath();
         return false;
       } catch (error: any) {
-        toast.error(`Failed to create file: ${error.response?.data?.detail || error.message || "Unknown error"}`);
+        errorToast("Failed to create file", error);
         return false;
       }
     });
@@ -192,12 +192,12 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
         const parentRealPath = ev.parent === "/" ? ROOT_PATH : ROOT_PATH + ev.parent;
 
         await uploadFile(instanceId, parentRealPath, ev.file);
-        toast.success("File uploaded successfully");
+        successToast("File uploaded");
 
         refreshCurrentPath();
         return false;
       } catch (error: any) {
-        toast.error(`Failed to upload file: ${error.response?.data?.detail || error.message || "Unknown error"}`);
+        errorToast("Failed to upload file", error);
         return false;
       }
     });
@@ -209,14 +209,14 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
     try {
       const filePath = selectedFile === "/" ? ROOT_PATH : ROOT_PATH + selectedFile;
       await createFile(instanceId, filePath, editedContent);
-      toast.success("File saved");
+      successToast("File saved");
       setEditedContent(null);
       // Invalidate the read cache so re-opening shows fresh content
       queryClient.invalidateQueries({
         queryKey: ["instances", instanceId, "files", "read"],
       });
     } catch (error: any) {
-      toast.error(`Failed to save: ${error.response?.data?.detail || error.message || "Unknown error"}`);
+      errorToast("Failed to save file", error);
     } finally {
       setIsSaving(false);
     }

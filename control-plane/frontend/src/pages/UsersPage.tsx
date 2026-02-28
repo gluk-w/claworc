@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Trash2, ShieldCheck, Shield, Key } from "lucide-react";
-import toast from "react-hot-toast";
+import { successToast, errorToast } from "@/utils/toast";
 import {
   fetchUsers,
   createUser,
@@ -99,9 +99,9 @@ function UserRow({
     mutationFn: () => deleteUser(user.id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      toast.success("User deleted");
+      successToast("User deleted");
     },
-    onError: () => toast.error("Failed to delete user"),
+    onError: (error) => errorToast("Failed to delete user", error),
   });
 
   const toggleRole = useMutation({
@@ -109,9 +109,9 @@ function UserRow({
       updateUserRole(user.id, user.role === "admin" ? "user" : "admin"),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      toast.success("Role updated");
+      successToast("Role updated");
     },
-    onError: (e: Error) => toast.error(e.message || "Failed to update role"),
+    onError: (error) => errorToast("Failed to update role", error),
   });
 
   return (
@@ -192,10 +192,10 @@ function CreateUserDialog({
     mutationFn: () => createUser({ username, password, role }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      toast.success("User created");
+      successToast("User created");
       onClose();
     },
-    onError: () => toast.error("Failed to create user"),
+    onError: (error) => errorToast("Failed to create user", error),
   });
 
   const handleSubmit = (e: FormEvent) => {
@@ -284,16 +284,16 @@ function ResetPasswordDialog({
     mutationFn: () => resetUserPassword(user.id, password),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      toast.success("Password reset");
+      successToast("Password reset");
       onClose();
     },
-    onError: () => toast.error("Failed to reset password"),
+    onError: (error) => errorToast("Failed to reset password", error),
   });
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (password !== confirm) {
-      toast.error("Passwords do not match");
+      errorToast("Passwords do not match");
       return;
     }
     mutation.mutate();

@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Trash2, ShieldCheck, Shield, Fingerprint } from "lucide-react";
 import { startRegistration } from "@simplewebauthn/browser";
-import toast from "react-hot-toast";
+import { successToast, errorToast, infoToast } from "@/utils/toast";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   listWebAuthnCredentials,
@@ -25,9 +25,9 @@ export default function AccountPage() {
     mutationFn: (id: string) => deleteWebAuthnCredential(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["webauthn-credentials"] });
-      toast.success("Passkey deleted");
+      successToast("Passkey deleted");
     },
-    onError: () => toast.error("Failed to delete passkey"),
+    onError: (error) => errorToast("Failed to delete passkey", error),
   });
 
   return (
@@ -164,16 +164,16 @@ function RegisterPasskeyDialog({
       });
       await webAuthnRegisterFinish(credential, name.trim());
       queryClient.invalidateQueries({ queryKey: ["webauthn-credentials"] });
-      toast.success("Passkey registered");
+      successToast("Passkey registered");
       onClose();
     } catch (err) {
       if (
         err instanceof Error &&
         err.name === "NotAllowedError"
       ) {
-        toast.error("Registration cancelled");
+        infoToast("Registration cancelled");
       } else {
-        toast.error("Failed to register passkey");
+        errorToast("Failed to register passkey", err);
       }
     } finally {
       setRegistering(false);
