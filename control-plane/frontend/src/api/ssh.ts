@@ -25,3 +25,8 @@ export async function fetchSSHFingerprint(): Promise<SSHFingerprintResponse> {
   const { data } = await client.get<SSHFingerprintResponse>(`/ssh-fingerprint`);
   return data;
 }
+
+export async function rotateSSHKey(): Promise<any> {
+  const { data } = await client.post("/settings/rotate-ssh-key");
+  return data;
+}

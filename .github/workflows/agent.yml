@@ -3,6 +3,9 @@ name: Build and Push Agent Image
 on:
   push:
     branches: [main]
+    paths:
+      - 'agent'
+      - '.github/workflows/agent.yml'
 
 jobs:
   agent:

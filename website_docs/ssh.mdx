@@ -1,0 +1,66 @@
+---
+title: "SSH connectivity"
+description: "How Claworc connects to agent instances and keeps connections healthy"
+---
+
+## Overview
+
+Claworc establishes a secure connection to each agent instance using SSH. This connection
+carries all traffic to the instance — browser access, terminal sessions,
+file operations — without requiring any ports to be opened or configured on the instance side.
+
+From a user's perspective, the connection is automatic and invisible: click **Browser** or **Terminal** and you're in.
+Under the hood, Claworc authenticates using a single global ED25519 key pair, monitors connection health continuously,
+and reconnects automatically if anything drops.
+
+---
+
+## SSH key management
+
+### Global key pair
+
+Claworc generates one ED25519 key pair on first run, stored in the `data`
+directory (`/app/data/ssh_key` and `/app/data/ssh_key.pub`). The same public key is uploaded to every
+agent's `authorized_keys` when a connection is established.
+
+### Key upload on connect
+
+Before establishing an SSH connection, Claworc uses the orchestrator (via `kubectl exec` or `docker exec`)
+to write the public key to the agent's `/root/.ssh/authorized_keys`. This ensures connectivity even after a
+container restart that clears the filesystem.
+
+---
+
+## Connection States
+
+On the instance details tab you can check the SSH connection status:
+
+| State | Meaning |
+|-------|---------|
+| **Disconnected** | No active connection; not attempting to connect |
+| **Connecting** | Initial connection attempt in progress |
+| **Connected** | SSH tunnel is active |
+| **Reconnecting** | Connection lost; retrying automatically |
+| **Failed** | All retry attempts exhausted |
+
+---
+
+## Health monitoring
+
+Claworc monitors connections at three layers:
+
+| Layer | Interval | Method |
+|-------|----------|--------|
+| SSH keepalive | 30 s | SSH protocol-level ping |
+| App health check | 30 s | `echo ping` command over SSH |
+| Tunnel health | 60 s | TCP probe to local tunnel port |
+
+If any layer detects a failure, automatic reconnection is triggered.
+
+---
+
+## SSH key rotation
+
+Rotate the global key pair from **Settings** → **SSH Keys** → **Rotate key**.
+The rotation process maintains live connectivity throughout — both old and new keys work temporarily
+while the switch is made.

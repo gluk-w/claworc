@@ -3,6 +3,9 @@ name: Build and Push Control Plane Image
 on:
   push:
     branches: [main]
+    paths:
+      - 'control-plane'
+      - '.github/workflows/control-plane.yml'
 
 jobs:
   control-plane:

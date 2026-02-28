@@ -1,0 +1,118 @@
+---
+title: "Authentication"
+description: "Set up users, roles, and passkeys for the Claworc dashboard"
+---
+
+## First-time setup
+
+On first run with an empty database, Claworc shows a **Create admin account** form before the login page.
+Enter a username and password to create the initial admin account.
+
+Alternatively, create the admin account from the CLI:
+
+```bash
+# Docker Compose
+docker compose exec claworc ./claworc --create-admin
+
+# Kubernetes
+kubectl exec -n claworc deploy/claworc -- ./claworc --create-admin
+```
+
+---
+
+## Roles
+
+Claworc has two roles:
+
+### Admin
+
+- Full access to all instances
+- Create, edit, and delete users
+- Assign instances to users
+- Access the **Settings** page (global API keys, SSH keys, audit logs)
+- View and configure SSH source IP restrictions per instance
+
+### User
+
+- Read and write access to assigned instances only
+- No access to the Settings page
+- Cannot view or manage other users
+- Cannot see instances not assigned to them
+
+---
+
+## User management
+
+Admins manage users from **Settings** → **Users**:
+
+| Action | How |
+|--------|-----|
+| Create user | Click **Add user**, enter username and password |
+| Change role | Edit user → change Role dropdown |
+| Assign instances | Edit user → select instances from the list |
+| Reset password | Edit user → click **Reset password** |
+| Delete user | Edit user → click **Delete** |
+
+---
+
+## Passkeys (WebAuthn)
+
+Claworc supports passkeys for passwordless login using biometrics or hardware security keys.
+
+### Registering a passkey
+
+1. Log in with your username and password.
+2. Go to **Profile** → **Security**.
+3. Click **Register passkey** and follow your browser's prompt.
+
+### Logging in with a passkey
+
+On the login page, click **Sign in with passkey** instead of entering a password.
+
+### Production configuration
+
+For passkeys to work, configure the Relying Party settings to match your domain:
+
+```bash
+CLAWORC_RP_ORIGINS=https://claworc.example.com
+CLAWORC_RP_ID=claworc.example.com
+```
+
+<Warning>
+  Passkey registration will fail if `CLAWORC_RP_ID` does not match the domain the user is accessing. Set this correctly before registering passkeys in production.
+</Warning>
+
+---
+
+## Sessions
+
+Sessions use HTTP-only cookies and expire after 1 hour of inactivity.
+Sessions are stored in memory — restarting the Claworc process logs all users out.
+
+---
+
+## Disabling authentication
+
+For local development only, you can disable authentication entirely:
+
+```bash
+CLAWORC_AUTH_DISABLED=true
+```
+
+<Warning>
+  Never disable authentication on a publicly accessible instance. All API endpoints and dashboard features become unauthenticated.
+</Warning>
+
+---
+
+## Password reset (CLI)
+
+If the admin password is lost:
+
+```bash
+# Docker Compose
+docker compose exec claworc ./claworc --reset-password --username admin
+
+# Kubernetes
+kubectl exec -n claworc deploy/claworc -- ./claworc --reset-password --username admin
+```

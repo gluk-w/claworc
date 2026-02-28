@@ -1,18 +1,30 @@
 import { useState } from "react";
-import { AlertTriangle, Eye, EyeOff, Key } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { AlertTriangle, Eye, EyeOff, Key, RefreshCw } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import DynamicApiKeyEditor from "@/components/DynamicApiKeyEditor";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
-import { fetchSSHFingerprint } from "@/api/ssh";
+import { fetchSSHFingerprint, rotateSSHKey } from "@/api/ssh";
+import { successToast, errorToast } from "@/utils/toast";
 import type { SettingsUpdatePayload } from "@/types/settings";
 
 export default function SettingsPage() {
+  const queryClient = useQueryClient();
   const { data: settings, isLoading } = useSettings();
   const updateMutation = useUpdateSettings();
   const fingerprint = useQuery({
     queryKey: ["ssh-fingerprint"],
     queryFn: fetchSSHFingerprint,
     staleTime: 60_000,
+  });
+  const rotateMutation = useMutation({
+    mutationFn: rotateSSHKey,
+    onSuccess: () => {
+      successToast("SSH key rotated successfully");
+      queryClient.invalidateQueries({ queryKey: ["ssh-fingerprint"] });
+    },
+    onError: (err) => {
+      errorToast("Failed to rotate SSH key", err);
+    },
   });
 
   // Pending changes to send on save
@@ -274,10 +286,20 @@ export default function SettingsPage() {
         </div>
 
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-sm font-medium text-gray-900 mb-2 flex items-center gap-1.5">
-            <Key size={14} />
-            SSH Public Key Fingerprint
-          </h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-medium text-gray-900 flex items-center gap-1.5">
+              <Key size={14} />
+              SSH Tunnel
+            </h3>
+            <button
+              onClick={() => rotateMutation.mutate()}
+              disabled={rotateMutation.isPending}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RefreshCw size={12} className={rotateMutation.isPending ? "animate-spin" : ""} />
+              {rotateMutation.isPending ? "Rotating..." : "Rotate Key"}
+            </button>
+          </div>
           <p className="text-xs text-gray-500 mb-3">
             Global control plane SSH key used to connect to all instances. Use this fingerprint to verify key authenticity.
           </p>

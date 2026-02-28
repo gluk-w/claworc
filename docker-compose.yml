@@ -1,3 +1,4 @@
+# This is an example. It is recommended to use install.sh or install.ps1 depending on your operating system
 services:
   control-plane:
     image: glukw/claworc:latest

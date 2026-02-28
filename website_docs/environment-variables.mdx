@@ -1,0 +1,90 @@
+---
+title: "Environment variables"
+description: "All CLAWORC_ environment variables and their defaults"
+---
+
+All Claworc configuration is done via environment variables with the `CLAWORC_` prefix.
+
+## Core settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLAWORC_DATA_PATH` | `/app/data` | Directory to store the Claworc's data like SQLite database, SSH key pair, and etc. Mount a persistent volume here. |
+| `CLAWORC_K8S_NAMESPACE` | `claworc` | Kubernetes namespace where agent instances are created. Must exist before starting. |
+| `CLAWORC_DOCKER_HOST` | *(empty)* | Docker socket or TCP address. Example: `unix:///var/run/docker.sock`. Leave empty to auto-detect orchestrator (Kubernetes takes priority). |
+
+## Authentication
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLAWORC_AUTH_DISABLED` | `false` | Set to `true` to disable all authentication. **Never use in production.** |
+| `CLAWORC_RP_ORIGINS` | `http://localhost:8000` | Allowed origins for WebAuthn passkey registration. Set to your dashboard URL in production. Comma-separated for multiple values. |
+| `CLAWORC_RP_ID` | `localhost` | Relying Party ID for WebAuthn. Must match the domain of your dashboard. Example: `claworc.example.com`. |
+
+<Warning>
+  `CLAWORC_RP_ID` must match the domain users access the dashboard from. Passkey registration will fail if this is wrong.
+</Warning>
+
+## Terminal sessions
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLAWORC_TERMINAL_HISTORY_LINES` | `1000` | Number of output lines retained in the scrollback buffer for SSH terminal sessions. Set to `0` to disable scrollback. |
+| `CLAWORC_TERMINAL_RECORDING_DIR` | *(empty)* | Directory to write terminal session recordings. Leave empty to disable. Recordings are timestamped files named by session ID. |
+| `CLAWORC_TERMINAL_SESSION_TIMEOUT` | `30m` | How long an idle detached terminal session is kept before being reaped. Accepts Go duration strings: `30m`, `1h`, `2h30m`. |
+
+## Example configurations
+
+### Minimal Docker Compose
+
+```yaml
+services:
+  claworc:
+    image: glukw/claworc:latest
+    environment:
+      - CLAWORC_DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - claworc-data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8000:8000"
+```
+
+### Production Kubernetes (via Helm values)
+
+```yaml
+# values.yaml
+config:
+  dataPath: /app/data
+  k8sNamespace: claworc
+
+# Pass additional env vars via extraEnv
+extraEnv:
+  - name: CLAWORC_RP_ORIGINS
+    value: "https://claworc.example.com"
+  - name: CLAWORC_RP_ID
+    value: "claworc.example.com"
+  - name: CLAWORC_TERMINAL_HISTORY_LINES
+    value: "2000"
+  - name: CLAWORC_TERMINAL_SESSION_TIMEOUT
+    value: "1h"
+```
+
+### Development (authentication disabled)
+
+```bash
+CLAWORC_DATA_PATH=./data \
+CLAWORC_AUTH_DISABLED=true \
+CLAWORC_DOCKER_HOST=unix:///var/run/docker.sock \
+./claworc
+```
+
+## Orchestrator selection
+
+Claworc selects an orchestrator backend automatically:
+
+1. **Kubernetes** — if a valid kubeconfig or in-cluster config is detected
+2. **Docker** — if `CLAWORC_DOCKER_HOST` is set or the Docker socket is accessible
+3. **None** — the control plane starts but cannot provision instances
+
+Set `CLAWORC_DOCKER_HOST` explicitly to force Docker mode even when `kubectl` is available.

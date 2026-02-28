@@ -1,0 +1,137 @@
+---
+title: "Managing instances"
+description: "Create, configure, and control your fleet of OpenClaw agents"
+---
+
+## Overview
+
+Each **instance** is an isolated, secured OpenClaw agent running in its own container.
+You can run many instances concurrently — each gets its own browser, terminal, storage, and configuration.
+
+## Agent images
+
+Each instance runs one of three official agent images, differing only in which browser is bundled:
+| Image | Browser | Docker Hub |
+|-------|---------|------------|
+| `glukw/openclaw-vnc-chrome` | Chrome | [hub.docker.com/r/glukw/openclaw-vnc-chrome](https://hub.docker.com/r/glukw/openclaw-vnc-chrome) |
+| `glukw/openclaw-vnc-chromium` | Chromium | [hub.docker.com/r/glukw/openclaw-vnc-chromium](https://hub.docker.com/r/glukw/openclaw-vnc-chromium) |
+| `glukw/openclaw-vnc-brave` | Brave | [hub.docker.com/r/glukw/openclaw-vnc-brave](https://hub.docker.com/r/glukw/openclaw-vnc-brave) |
+
+All images except `glukw/openclaw-vnc-chrome` support **AMD64** and **ARM64** architectures.
+Use `latest` to always pull the most recent build.
+
+## Creating an instance
+
+Click **New instance** on the dashboard and fill in the form:
+
+| Field | Description |
+|-------|-------------|
+| **Display name** | Human-readable name shown in the dashboard |
+| **Image** | Agent image to use — choose the browser variant for this instance |
+| **CPU limit** | Maximum CPU cores allocated (e.g., `1.0`) |
+| **Memory limit** | Maximum RAM allocated (e.g., `2Gi`) |
+| **API key override** | Instance-specific API key; overrides the global key if set |
+
+<Note>
+  The display name is converted to a Kubernetes-safe name automatically: lowercased, spaces replaced with hyphens,
+    prefixed with `bot-`, truncated to 63 characters. Renaming an instance does not affect its underlying resources.
+</Note>
+
+### Resource sizing
+
+A rough guide based on typical workloads:
+
+| Workload | CPU | Memory |
+|----------|-----|--------|
+| Light (simple tasks, browser will be slow) | 500m | 1Gi |
+| Moderate (collaboration with the browser) | 1.0 | 2Gi |
+| Heavy (multiple tabs, data analysis) | 2.0 | 4Gi |
+
+## Instance status
+
+Each instance shows a status from the orchestrator (Kubernetes or Docker), alongside a live connection indicator:
+
+| Status | Meaning |
+|--------|---------|
+| **Creating** | Container is being provisioned or starting up |
+| **Running** | Container is running |
+| **Restarting** | Restart in progress |
+| **Stopping** | Stop in progress |
+| **Stopped** | Container is stopped |
+| **Error** | Container exited unexpectedly |
+| **Failed** | Container stopped after an error |
+
+The colored dot next to each instance reflects live connection health independently of the container status.
+
+## Starting, stopping, and restarting
+
+From the dashboard, click the **⋮** menu next to any instance:
+
+- **Start** — starts a stopped container
+- **Stop** — stops a running container gracefully
+- **Restart** — stops then starts the container; useful when the agent is stuck
+- **Clone** — copies all settings and files into a new instance
+- **Delete** — permanently removes the instance and all its data (PVCs in Kubernetes, volumes in Docker)
+
+<Warning>
+  **Delete** is irreversible. All persistent data — Chrome profile, Homebrew packages, OpenClaw configuration, and clawdbot data — is permanently deleted.
+</Warning>
+
+## Kubernetes resources per instance
+
+In Kubernetes mode, each instance creates and manages these resources in the `claworc` namespace:
+
+| Resource | Name | Purpose |
+|----------|------|---------|
+| `Deployment` | `bot-{name}` | Runs the agent container |
+| `PVC` | `bot-{name}-homebrew` | Homebrew packages |
+| `PVC` | `bot-{name}-home` | Home directory — OpenClaw config, browser profile, personal files |
+
+## Docker resources per instance
+
+In Docker mode, each instance creates:
+
+- One container (named `bot-{name}`)
+- Two named volumes: `claworc-{name}-homebrew` (Homebrew) and `claworc-{name}-home` (home directory)
+- One published SSH port on `127.0.0.1` with a randomly assigned host port
+
+## Connection status
+
+Each instance row shows a small colored dot indicating whether Claworc can reach the instance:
+
+| Dot color | State |
+|-----------|-------|
+| Green | Connected |
+| Yellow | Connecting or Reconnecting |
+| Gray | Disconnected |
+| Red | Failed |
+
+Open an instance to view full connection health and event history on the **Overview** tab.
+
+## Configuration
+
+Claworc separates configuration into two levels: **global defaults** that apply to every instance, and **per-instance overrides** that apply to one instance only. Anything not overridden at the instance level is inherited from the global defaults automatically.
+
+| Level | Where to set it | Scope |
+|-------|----------------|-------|
+| Global default | **Settings** | All instances with no override |
+| Per-instance override | Instance detail page | That instance only |
+
+This model lets you configure once globally and selectively customize where needed — change an API key in Settings and it propagates to every instance that isn't overriding it.
+
+Each instance also has its own `clawdbot.json` for agent behavior (model selection, tools, integrations). API keys are injected into it via placeholder variables at runtime rather than stored in the file directly.
+
+See [Configuration](/configuration) for the full reference, including per-instance override options, API key substitution syntax, and examples.
+
+## Troubleshooting an instance
+
+On the instance **Overview** tab, the troubleshoot panel lets you:
+
+- Run a **connectivity test**
+- **Manually reconnect**
+- View the SSH key fingerprint used for this instance
+
+If an instance is stuck in **Reconnecting**, check:
+1. Whether the container is actually running (`kubectl get pods -n claworc`)
+2. Whether network policies allow egress from the control plane to agent pods on port 22
+3. The connection event log for the specific failure reason

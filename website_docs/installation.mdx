@@ -1,0 +1,338 @@
+---
+title: "Manual installation"
+description: "Set up Claworc manually with Docker Compose or Helm without the installer script"
+---
+
+<Note>
+  For most users, the [installer script](/quickstart) is the recommended approach — it handles environment detection and configuration automatically. Use this guide if you need full control over the deployment.
+</Note>
+
+---
+
+## Manual Docker Compose installation
+
+Runs the Claworc control plane as a Docker container on a single machine. Agent instances are created as sibling containers via the Docker socket.
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) Engine 20.10+ or Docker Desktop
+- Docker Compose v2
+
+### Steps
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/gluk-w/claworc.git
+    cd claworc
+    ```
+  </Step>
+
+  <Step title="Create the data directory">
+    Claworc stores its SQLite database and SSH keys here. Use a path that persists across system restarts.
+
+    ```bash
+    mkdir -p ~/.claworc/data
+    ```
+  </Step>
+
+  <Step title="Start the services">
+    ```bash
+    CLAWORC_DATA_DIR=~/.claworc/data docker compose up -d
+    ```
+
+    Or create a `.env` file in the repo root so you don't need to pass the variable every time:
+
+    ```bash
+    echo "CLAWORC_DATA_DIR=$HOME/.claworc/data" > .env
+    docker compose up -d
+    ```
+  </Step>
+
+  <Step title="Verify it's running">
+    ```bash
+    docker compose logs -f
+    curl http://localhost:8000/health
+    ```
+
+    The dashboard is available at **http://localhost:8000**.
+  </Step>
+</Steps>
+
+### Docker Compose configuration
+
+The `docker-compose.yml` reads these variables from the environment or `.env`:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CLAWORC_DATA_DIR` | Host path for the database and SSH keys | *(required)* |
+
+Additional Claworc settings (e.g., `CLAWORC_AUTH_DISABLED`, `CLAWORC_RP_ID`) can be passed as environment variables inside the `docker-compose.yml` `environment:` block. See [Environment variables](/environment-variables) for the full list.
+
+### Docker socket access
+
+Claworc needs access to the Docker socket to create and manage agent containers. The `docker-compose.yml` mounts it automatically:
+
+```yaml
+volumes:
+  - /var/run/docker.sock:/var/run/docker.sock
+```
+
+Verify the mount is present if agent creation fails:
+
+```bash
+docker inspect claworc-dashboard --format \
+  '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'
+```
+
+You should see `/var/run/docker.sock -> /var/run/docker.sock`.
+
+### Useful commands
+
+```bash
+docker compose logs -f           # Stream logs
+docker compose down              # Stop
+docker compose up -d             # Start
+docker compose pull && docker compose up -d   # Upgrade to latest image
+docker compose down -v           # Stop and delete volumes (destructive)
+```
+
+### Uninstall
+
+```bash
+docker compose down
+# Remove agent containers
+docker ps -a --filter "name=bot-" --format '{{.Names}}' | xargs -r docker rm -f
+# Remove data (optional)
+rm -rf ~/.claworc/data
+```
+
+---
+
+## Manual Helm installation (Kubernetes)
+
+Deploys Claworc to a Kubernetes cluster using the Helm chart included in the repository.
+
+### Prerequisites
+
+- Kubernetes 1.24+
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) configured with cluster access
+- [Helm](https://helm.sh/docs/intro/install/) v3+
+- A `StorageClass` that supports `ReadWriteOnce`
+
+### Steps
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/gluk-w/claworc.git
+    cd claworc
+    ```
+  </Step>
+
+  <Step title="Install the chart">
+    ```bash
+    helm install claworc helm/ \
+      --namespace claworc \
+      --create-namespace
+    ```
+
+    If your kubeconfig is not at the default path:
+
+    ```bash
+    helm install claworc helm/ \
+      --namespace claworc \
+      --create-namespace \
+      --kubeconfig /path/to/kubeconfig
+    ```
+  </Step>
+
+  <Step title="Verify the deployment">
+    ```bash
+    kubectl get pods -n claworc
+    kubectl logs -f deploy/claworc -n claworc
+    ```
+
+    Wait for the pod to reach `Running` state.
+  </Step>
+
+  <Step title="Access the dashboard">
+    The chart exposes a **NodePort** service on port `30000` by default.
+
+    ```bash
+    # Get a node IP
+    kubectl get nodes -o wide
+
+    # Open http://<node-ip>:30000
+    ```
+
+    For local access without exposing a port:
+
+    ```bash
+    kubectl port-forward -n claworc svc/claworc 8000:8001
+    # Open http://localhost:8000
+    ```
+  </Step>
+</Steps>
+
+### Helm values
+
+Create a `custom-values.yaml` to override defaults:
+
+```yaml
+config:
+  dataPath: /app/data        # Path inside the pod for DB and SSH keys
+  k8sNamespace: claworc      # Namespace where agent instances are created
+
+service:
+  type: NodePort
+  port: 8001
+  nodePort: 30000            # External port for the dashboard
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""           # Empty = use the cluster default StorageClass
+  accessMode: ReadWriteOnce
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+rbac:
+  create: true               # Creates ServiceAccount, Role, RoleBinding
+```
+
+Apply your values:
+
+```bash
+helm install claworc helm/ \
+  --namespace claworc \
+  --create-namespace \
+  -f custom-values.yaml
+```
+
+### RBAC
+
+The chart creates a `ServiceAccount`, `Role`, and `RoleBinding` scoped to the `claworc` namespace. These grant only the permissions needed to manage agent pods, services, PVCs, secrets, and configmaps.
+
+Set `rbac.create: false` if you manage RBAC externally.
+
+Verify RBAC resources exist:
+
+```bash
+kubectl get serviceaccount,role,rolebinding -n claworc
+```
+
+### Upgrade
+
+```bash
+# Pull latest chart changes
+git pull
+
+helm upgrade claworc helm/ \
+  --namespace claworc \
+  -f custom-values.yaml
+```
+
+### Uninstall
+
+```bash
+helm uninstall claworc -n claworc
+kubectl delete namespace claworc
+```
+
+<Warning>
+  Deleting the namespace removes all agent instances and their persistent volumes. Back up any important data first.
+</Warning>
+
+---
+
+## Troubleshooting
+
+### Dashboard not reachable
+
+**Docker:** Check that the container is running:
+
+```bash
+docker ps --filter "name=claworc-dashboard"
+```
+
+**Kubernetes:** Check pod status and the service:
+
+```bash
+kubectl get pods -n claworc
+kubectl get svc -n claworc
+```
+
+### Agent containers not starting
+
+Check the control plane logs first:
+
+```bash
+# Docker Compose
+docker compose logs -f
+
+# Kubernetes
+kubectl logs -f deploy/claworc -n claworc
+```
+
+**Docker:** Verify the Docker socket mount (see [Docker socket access](#docker-socket-access) above).
+
+**Kubernetes:** Verify RBAC:
+
+```bash
+kubectl get rolebinding -n claworc
+```
+
+### Viewing instance logs
+
+```bash
+# Docker
+docker logs -f bot-<instance-name>
+
+# Kubernetes
+kubectl logs -f deploy/bot-<instance-name> -n claworc
+```
+
+### Health check
+
+```bash
+curl http://localhost:8000/health
+```
+
+### Resetting the database
+
+**Docker Compose:**
+
+```bash
+docker compose down
+rm -f ~/.claworc/data/claworc.db
+docker compose up -d
+```
+
+**Kubernetes:**
+
+```bash
+kubectl delete pvc claworc-data -n claworc
+kubectl rollout restart deploy/claworc -n claworc
+```
+
+### Windows: script fails with "invalid option" error
+
+If you run `install.sh` on Windows directly (not via WSL), you may see:
+
+```
+: invalid option nameet: pipefail
+```
+
+This is caused by Windows line endings. Use `install.ps1` instead, or convert line endings first:
+
+```bash
+dos2unix install.sh
+bash install.sh
+```

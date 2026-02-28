@@ -1,0 +1,84 @@
+---
+title: "Introduction"
+description: "Claworc — manage multiple OpenClaw instances from a single dashboard"
+---
+
+## What is Claworc?
+
+Claworc (OpenClaw Orchestrator) is a self-hosted dashboard for running and managing multiple [OpenClaw](https://github.com/openclaw/openclaw) AI agent instances. Each instance runs in its own isolated container with a browser and terminal, accessible remotely through a web interface.
+
+Use Claworc to:
+- Give each team member their own AI agent
+- Run shared agents for data analysis or IT automation
+- Deploy and monitor a fleet of agents from one place
+
+## How it works
+
+Claworc runs as a control plane alongside your agent containers. It provisions instances in Docker or Kubernetes, establishes secure SSH tunnels to each one, and serves a web dashboard for access and management.
+
+Each agent container runs:
+- **Browser** (Chrome, Chromium, or Brave — with VNC access) — the agent's browser environment
+- **Terminal** (with VNC access) — a full interactive shell
+- **OpenClaw gateway** — the AI agent process
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Instance management" icon="server">
+    Create, start, stop, restart, and delete agent instances. Set CPU and memory limits per instance.
+  </Card>
+  <Card title="Remote access" icon="display">
+    Access each instance's browser and terminal directly from your browser via VNC over WebSocket. Choose Chrome, Chromium, or Brave.
+  </Card>
+  <Card title="Configuration editor" icon="file-code">
+    Edit each instance's `clawdbot.json` config with a Monaco editor. API keys are injected securely and never written to disk in plaintext.
+  </Card>
+  <Card title="Live logs" icon="terminal">
+    Stream real-time container logs with auto-scroll via Server-Sent Events.
+  </Card>
+  <Card title="SSH terminal" icon="square-terminal">
+    Open a persistent interactive SSH session to any instance. Sessions survive browser disconnects.
+  </Card>
+  <Card title="Audit logging" icon="shield-check">
+    Every SSH connection, command, file operation, and key rotation is recorded with a configurable retention period.
+  </Card>
+</CardGroup>
+
+## Security
+
+Security is built into every layer of Claworc:
+
+<CardGroup cols={2}>
+  <Card title="Role-based access control" icon="users">
+    Two roles — **admin** and **user**. Admins manage all instances and users. Regular users see only the instances explicitly assigned to them.
+  </Card>
+  <Card title="Encrypted connections" icon="lock">
+    All access to instances is secured through encrypted connections authenticated with SSH keys. No agent ports need to be exposed or configured.
+  </Card>
+  <Card title="Encrypted key storage" icon="key">
+    API keys are encrypted at rest using Fernet symmetric encryption. Keys are never returned in full by the API or written to config files in plaintext.
+  </Card>
+  <Card title="Passkey authentication" icon="fingerprint">
+    In addition to passwords, Claworc supports WebAuthn passkeys for biometric or hardware key login.
+  </Card>
+  <Card title="SSH key rotation" icon="rotate">
+    Rotate the global SSH key pair without downtime. Claworc temporarily holds both old and new keys during rotation to maintain connectivity.
+  </Card>
+  <Card title="Per-instance IP restrictions" icon="shield">
+    Restrict which source IPs the control plane can use when connecting to each instance's SSH server.
+  </Card>
+</CardGroup>
+
+## Deployment options
+
+| Option | Best for |
+|--------|----------|
+| **Installer script** | Fastest way to get started on Linux, macOS, or Windows |
+| **Docker Compose** | Manual single-machine deployments |
+| **Kubernetes + Helm** | Production multi-node clusters |
+
+## Get started
+
+<Card title="Quickstart" icon="rocket" href="/quickstart" horizontal>
+  Run your first Claworc instance in under five minutes.
+</Card>
