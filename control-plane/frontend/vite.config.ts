@@ -22,33 +22,37 @@ export default defineConfig({
         background_color: "#111827",
         theme_color: "#111827",
         icons: [
-          {
-            src: "/pwa_images/launchericon-72-72.png",
+            {
+                src: "/pwa_images/launchericon-48x48.png",
+                sizes: "48x48",
+                type: "image/png",
+            },          {
+            src: "/pwa_images/launchericon-72x72.png",
             sizes: "72x72",
             type: "image/png",
           },
           {
-            src: "/pwa_images/launchericon-96-96.png",
+            src: "/pwa_images/launchericon-96x96.png",
             sizes: "96x96",
             type: "image/png",
           },
           {
-            src: "/pwa_images/launchericon-144-144.png",
+            src: "/pwa_images/launchericon-144x144.png",
             sizes: "144x144",
             type: "image/png",
           },
           {
-            src: "/pwa_images/launchericon-192-192.png",
+            src: "/pwa_images/launchericon-192x192.png",
             sizes: "192x192",
             type: "image/png",
           },
           {
-            src: "/pwa_images/launchericon-512-512.png",
+            src: "/pwa_images/launchericon-512x512.png",
             sizes: "512x512",
             type: "image/png",
           },
           {
-            src: "/pwa_images/launchericon-512-512.png",
+            src: "/pwa_images/launchericon-512x512.png",
             sizes: "512x512",
             type: "image/png",
             purpose: "maskable",

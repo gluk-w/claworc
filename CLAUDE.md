@@ -20,7 +20,9 @@ The project consists of the following components:
   - `Dockerfile` - Multi-stage build (Node frontend + Go backend)
 - `agent/` - Docker image `glukw/openclaw-vnc-chromium`
 - `helm/` - Helm chart for deploying the dashboard to Kubernetes
-- `docs/` - Detailed specs (architecture, API, data model, UI, features)
+- `website/` - Landing page for claworc.com
+- `website_docs/` - End-user documentation powered by Mintlify. It is automatically deployed to claworc.com/docs
+- `docs/` - Detailed internal specs (architecture, API, data model, UI, features)
 
 ## Architecture
 

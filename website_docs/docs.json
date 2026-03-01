@@ -38,52 +38,27 @@
             ]
           }
         ]
-      },
-      {
-        "tab": "API reference",
-        "groups": [
-          {
-            "group": "API documentation",
-            "pages": [
-              "api-reference/introduction"
-            ]
-          },
-          {
-            "group": "Instances",
-            "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete"
-            ]
-          },
-          {
-            "group": "Webhooks",
-            "pages": [
-              "api-reference/endpoint/webhook"
-            ]
-          }
-        ]
       }
     ],
     "global": {
       "anchors": [
         {
           "anchor": "GitHub",
-          "href": "https://github.com/glukw/claworc",
+          "href": "https://github.com/gluk-w/claworc",
           "icon": "github"
         }
       ]
     }
   },
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "/images/logo.svg",
+    "dark": "/images/logo.svg"
   },
   "navbar": {
     "links": [
       {
         "label": "GitHub",
-        "href": "https://github.com/glukw/claworc"
+        "href": "https://github.com/gluk-w/claworc"
       }
     ]
   },
@@ -97,7 +72,7 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/glukw/claworc"
+      "github": "https://github.com/gluk-w/claworc"
     }
   },
   "integrations": {
