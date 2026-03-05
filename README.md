@@ -88,11 +88,6 @@ for instance access. [Read more](docs/install.md)
 
 - [Getting Started](docs/getting-started.md) - First-time setup and orientation
 - [Installation](docs/install.md) - Runs on Docker or Kubernetes
-- [Features](docs/features.md) - Feature specifications and user workflows
-- [Architecture](docs/architecture.md) - System architecture and design decisions
-- [SSH Connectivity](docs/ssh-connectivity.md) - SSH architecture, tunnels, health monitoring, and key rotation
-- [API](docs/api.md) - REST API endpoints and request/response formats
-- [Data Model](docs/data-model.md) - Database schema and Kubernetes resource model
 - [UI](docs/ui.md) - Frontend pages, components, and interaction patterns
 
 ## Coming Soon

@@ -21,6 +21,7 @@ type Instance struct {
 	DefaultModel     string    `gorm:"default:''" json:"-"`
 	LogPaths         string    `gorm:"type:text;default:''" json:"log_paths"`          // JSON: {"openclaw":"/custom/path.log",...}
 	AllowedSourceIPs string    `gorm:"type:text;default:''" json:"allowed_source_ips"` // Comma-separated IPs/CIDRs for SSH connection restrictions
+	EnabledProviders string    `gorm:"type:text;default:'[]'" json:"-"`                // JSON array of LLMProvider IDs enabled for this instance
 	Timezone         string    `gorm:"default:''" json:"timezone"`
 	UserAgent        string    `gorm:"default:''" json:"user_agent"`
 	SortOrder        int       `gorm:"not null;default:0" json:"sort_order"`
@@ -28,6 +29,42 @@ type Instance struct {
 	UpdatedAt        time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 
 	APIKeys []InstanceAPIKey `gorm:"foreignKey:InstanceID" json:"-"`
+}
+
+// LLMProvider is admin-defined LLM provider config.
+// All providers are accessed via OpenAI-compat base URLs through the internal LLM gateway.
+type LLMProvider struct {
+	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Key       string    `gorm:"uniqueIndex;not null;size:100" json:"key"` // URL-safe key: "anthropic", "anthropic-2"
+	Provider  string    `gorm:"size:100" json:"provider"`                 // catalog provider key, empty for custom
+	Name      string    `gorm:"not null" json:"name"`                     // display name
+	BaseURL   string    `gorm:"not null" json:"base_url"`                 // OpenAI-compat base URL for this provider
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// LLMGatewayKey is a per-instance per-provider auth key issued to OpenClaw instances.
+// OpenClaw uses this as the Bearer token when calling the internal LLM gateway.
+type LLMGatewayKey struct {
+	ID         uint        `gorm:"primaryKey;autoIncrement"`
+	InstanceID uint        `gorm:"not null;uniqueIndex:idx_lgk_inst_prov"`
+	ProviderID uint        `gorm:"not null;uniqueIndex:idx_lgk_inst_prov"` // FK → LLMProvider.ID
+	GatewayKey string      `gorm:"not null;uniqueIndex"`                   // "sk-gw-<random>"
+	Provider   LLMProvider `gorm:"foreignKey:ProviderID"`
+}
+
+// LLMRequestLog records each proxied LLM request for auditing and usage tracking.
+type LLMRequestLog struct {
+	ID           uint      `gorm:"primaryKey;autoIncrement"`
+	InstanceID   uint      `gorm:"not null;index"`
+	ProviderID   uint      `gorm:"not null"`
+	ModelID      string    `gorm:"not null"`
+	InputTokens  int       `gorm:"not null;default:0"`
+	OutputTokens int       `gorm:"not null;default:0"`
+	StatusCode   int       `gorm:"not null"`
+	LatencyMs    int64     `gorm:"not null"`
+	ErrorMessage string    `gorm:"type:text"`
+	RequestedAt  time.Time `gorm:"not null;index"`
 }
 
 type InstanceAPIKey struct {

@@ -98,36 +98,6 @@ tunnelMgr := sshproxy.NewTunnelManager(sshMgr)
 tunnelMgr.StartBackgroundManager(ctx, listRunningInstances, orch)
 ```
 
-### Common Operations
-
-**Establish tunnels for an instance** (connection is created on-demand):
-```go
-err := tunnelMgr.StartTunnelsForInstance(ctx, instanceID, orch)
-```
-
-**Get the local port for a VNC or Gateway tunnel:**
-```go
-vncPort := tunnelMgr.GetVNCLocalPort(instanceID)       // 0 if not found
-gwPort  := tunnelMgr.GetGatewayLocalPort(instanceID)   // 0 if not found
-```
-
-**Check if an SSH connection is alive:**
-```go
-alive := sshMgr.IsConnected(instanceID)
-```
-
-**Stop tunnels and close connections for an instance:**
-```go
-tunnelMgr.StopTunnelsForInstance(instanceID)
-sshMgr.Close(instanceID)
-```
-
-**Shutdown (close everything):**
-```go
-tunnelMgr.StopAll()
-sshMgr.CloseAll()
-```
-
 ## Production Deployment
 
 ```bash

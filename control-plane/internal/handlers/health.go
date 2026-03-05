@@ -1,11 +1,17 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 )
+
+var BuildDate string
+
+var startTime = time.Now()
 
 func HealthCheck(w http.ResponseWriter, r *http.Request) {
 	dbStatus := "disconnected"
@@ -30,10 +36,16 @@ func HealthCheck(w http.ResponseWriter, r *http.Request) {
 		status = "unhealthy"
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{
+	uptime := time.Since(startTime)
+	resp := map[string]string{
 		"status":               status,
 		"orchestrator":         orchStatus,
 		"orchestrator_backend": orchBackend,
 		"database":             dbStatus,
-	})
+		"uptime":               fmt.Sprintf("%.0fs", uptime.Seconds()),
+	}
+	if BuildDate != "" {
+		resp["build_date"] = BuildDate
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

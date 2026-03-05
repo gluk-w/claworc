@@ -25,6 +25,7 @@ elif command -v brave-browser >/dev/null 2>&1; then
   EXTRA_ARGS+=(--no-sandbox)
 else
   BROWSER=/usr/bin/chromium
+  EXTRA_ARGS+=(--no-sandbox)
 fi
 
 # Run browser in a restart loop

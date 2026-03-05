@@ -107,6 +107,17 @@ export default function Sidebar() {
       {/* Spacer */}
       <div className="flex-grow" />
 
+      {/* Build info */}
+      {health && (
+        <div className="px-4 pb-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+          <span className="text-xs text-gray-400 whitespace-nowrap">
+            {health.build_date
+              ? `Built ${new Date(health.build_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+              : "Build: DEV"}
+          </span>
+        </div>
+      )}
+
       {/* User section */}
       <div className="px-3 pb-4 border-t border-gray-200 pt-3 shrink-0">
         <Link

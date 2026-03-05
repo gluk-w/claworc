@@ -57,6 +57,11 @@ func executeCommand(client *ssh.Client, cmd string) (stdout, stderr string, exit
 	return outBuf.String(), errBuf.String(), 0, nil
 }
 
+// RunCommand is the exported equivalent of executeCommand for use outside this package.
+func RunCommand(client *ssh.Client, cmd string) (stdout, stderr string, exitCode int, err error) {
+	return executeCommand(client, cmd)
+}
+
 // executeCommandWithStdin creates a new SSH session, pipes input to the
 // command's stdin, and waits for completion.
 // Logs execution time and input size for performance monitoring.

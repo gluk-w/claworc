@@ -1,7 +1,8 @@
 import { useState } from "react";
-import ProviderTable from "@/components/ProviderTable";
-import { LLM_API_KEY_OPTIONS } from "@/components/DynamicApiKeyEditor";
 import { useSettings } from "@/hooks/useSettings";
+import { useProviders } from "@/hooks/useProviders";
+import ProviderIcon from "@/components/ProviderIcon";
+import { MODEL_CATALOG } from "@/data/model-catalog";
 import type { InstanceCreatePayload } from "@/types/instance";
 
 interface InstanceFormProps {
@@ -29,11 +30,11 @@ export default function InstanceForm({
   const [userAgent, setUserAgent] = useState("");
 
   const { data: settings } = useSettings();
+  const { data: allProviders = [] } = useProviders();
 
-  // API key overrides
-  const [disabledProviders, setDisabledProviders] = useState<string[]>([]);
-  const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
-  const [defaultModel, setDefaultModel] = useState(LLM_API_KEY_OPTIONS[0]?.value ?? "");
+  // Gateway providers + model selection
+  const [enabledProviders, setEnabledProviders] = useState<number[]>([]);
+  const [providerModels, setProviderModels] = useState<Record<number, string[]>>({});
 
   // Brave key
   const [braveKey, setBraveKey] = useState("");
@@ -41,6 +42,14 @@ export default function InstanceForm({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!displayName.trim()) return;
+
+    // Build provider-prefixed extra models
+    const extraModels: string[] = [];
+    for (const p of allProviders) {
+      for (const m of providerModels[p.id] ?? []) {
+        extraModels.push(`${p.key}/${m}`);
+      }
+    }
 
     const payload: InstanceCreatePayload = {
       display_name: displayName.trim(),
@@ -57,34 +66,14 @@ export default function InstanceForm({
       user_agent: userAgent || null,
     };
 
-    // Add dynamic API keys
-    if (Object.keys(apiKeys).length > 0) {
-      payload.api_keys = apiKeys;
+    if (enabledProviders.length > 0) {
+      payload.enabled_providers = enabledProviders;
     }
-
-    // Add model config if any providers were disabled
-    if (disabledProviders.length > 0) {
-      payload.models = { disabled: disabledProviders, extra: [] };
-    }
-
-    // Add default model
-    if (defaultModel) {
-      payload.default_model = defaultModel;
+    if (extraModels.length > 0) {
+      payload.models = { disabled: [], extra: extraModels };
     }
 
     onSubmit(payload);
-  };
-
-  const handleToggleEnabled = (key: string) => {
-    setDisabledProviders((prev) =>
-      prev.includes(key)
-        ? prev.filter((p) => p !== key)
-        : [...prev, key],
-    );
-    // If disabling the current default, clear it
-    if (!disabledProviders.includes(key) && defaultModel === key) {
-      setDefaultModel("");
-    }
   };
 
   return (
@@ -159,39 +148,88 @@ export default function InstanceForm({
         </div>
       </div>
 
-      {/* API Key Overrides */}
+      {/* Model Providers */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h3 className="text-sm font-medium text-gray-900 mb-4">API Key Overrides</h3>
-        <p className="text-xs text-gray-500 mb-3">
-          Leave empty to use global keys from Settings.
+        <h3 className="text-sm font-medium text-gray-900 mb-1">Model Providers</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Select providers and models to configure via the LLM gateway. Providers are set up in{" "}
+          <span className="font-medium">Settings → Model API Keys</span>.
         </p>
 
-        <ProviderTable
-          globalApiKeys={settings?.api_keys ?? {}}
-          instanceOverrides={[]}
-          disabledProviders={disabledProviders}
-          defaultModel={defaultModel}
-          pendingNewKeys={apiKeys}
-          pendingRemovals={{}}
-          onToggleEnabled={handleToggleEnabled}
-          onDefaultModelChange={setDefaultModel}
-          onAddKey={(key, value) =>
-            setApiKeys((prev) => ({ ...prev, [key]: value }))
-          }
-          onRemoveKey={() => { }}
-          onUndoRemove={() => { }}
-          onUndoAdd={(key) =>
-            setApiKeys((prev) => {
-              const next = { ...prev };
-              delete next[key];
-              return next;
-            })
-          }
-          editable={true}
-        />
+        {allProviders.length === 0 ? (
+          <p className="text-sm text-gray-400 italic">
+            No providers configured. Add providers in Settings → Model API Keys first.
+          </p>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {allProviders.map((p) => {
+              const enabled = enabledProviders.includes(p.id);
+              const selectedModels = providerModels[p.id] ?? [];
+              const catalog = MODEL_CATALOG.find((c) => c.key === p.provider);
+              const iconKey = catalog?.lobeIconKey;
+              return (
+                <div key={p.id} className="py-3 first:pt-0 last:pb-0">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      onChange={() => {
+                        setEnabledProviders((prev) =>
+                          enabled ? prev.filter((id) => id !== p.id) : [...prev, p.id],
+                        );
+                        if (enabled) {
+                          setProviderModels((prev) => {
+                            const next = { ...prev };
+                            delete next[p.id];
+                            return next;
+                          });
+                        }
+                      }}
+                      className="rounded border-gray-300"
+                    />
+                    {iconKey ? (
+                      <ProviderIcon provider={iconKey} size={18} />
+                    ) : (
+                      <span className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-xs font-medium text-gray-500 shrink-0">
+                        {p.name[0].toUpperCase()}
+                      </span>
+                    )}
+                    <span className="text-sm text-gray-900">{p.name}</span>
+                  </label>
+                  {enabled && catalog && !catalog.dynamic && catalog.models.length > 0 && (
+                    <div className="ml-7 mt-2 grid grid-cols-2 gap-x-6 gap-y-1">
+                      {catalog.models.map((m) => (
+                        <label key={m.id} className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedModels.includes(m.id)}
+                            onChange={() => {
+                              setProviderModels((prev) => {
+                                const current = prev[p.id] ?? [];
+                                const next = current.includes(m.id)
+                                  ? current.filter((x) => x !== m.id)
+                                  : [...current, m.id];
+                                return { ...prev, [p.id]: next };
+                              });
+                            }}
+                            className="rounded border-gray-300"
+                          />
+                          <span className="text-xs font-mono text-gray-700 truncate">{m.id}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  {enabled && (!catalog || catalog.dynamic) && (
+                    <p className="ml-7 mt-1 text-xs text-gray-400 italic">Models determined dynamically.</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
-        {/* Brave key (fixed field) */}
-        <div className="pt-3 mt-3 border-t border-gray-200">
+        {/* Brave key */}
+        <div className="pt-4 mt-4 border-t border-gray-200">
           <label className="block text-xs text-gray-500 mb-1">
             Brave API Key (web search)
           </label>
@@ -267,6 +305,7 @@ export default function InstanceForm({
           {loading ? "Creating..." : "Create"}
         </button>
       </div>
+
     </form>
   );
 }

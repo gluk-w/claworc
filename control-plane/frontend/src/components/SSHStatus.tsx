@@ -19,6 +19,7 @@ function formatTime(ts: string): string {
 const tunnelLabelMap: Record<string, string> = {
   VNC: "Browser",
   Gateway: "OpenClaw",
+  LLMProxy: "API Gateway",
 };
 
 interface SSHStatusProps {
@@ -62,7 +63,7 @@ export default function SSHStatus({ status, isLoading, isError, onRefresh, onTro
   const style = stateStyles[status.state] ?? defaultStyle;
   const tunnelSummary = status.tunnels.length > 0
     ? status.tunnels.map((t) => {
-        const healthy = t.status === "healthy";
+        const healthy = t.status === "active";
         return (
           <span
             key={t.label}

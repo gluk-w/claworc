@@ -20,6 +20,12 @@ type InstanceOps interface {
 	GetInstanceStatus(ctx context.Context, name string) (string, error)
 }
 
+// GatewayProvider holds the virtual auth key and bare model IDs for a gateway provider.
+type GatewayProvider struct {
+	Key    string
+	Models []string // bare model IDs, without provider prefix
+}
+
 const pathClaworcKeys = "/etc/default/claworc-keys"
 
 // ConfigureInstance writes API keys as environment variables and sets the
@@ -29,8 +35,12 @@ const pathClaworcKeys = "/etc/default/claworc-keys"
 // which the gateway service picks up via EnvironmentFile=.
 //
 // Models are set via `openclaw config set agents.defaults.model ... --json`.
-func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models []string, apiKeys map[string]string) {
-	if len(models) == 0 && len(apiKeys) == 0 {
+//
+// gatewayProviders (optional) maps provider key → gateway auth key for configuring
+// models.providers in OpenClaw to route through the internal LLM gateway.
+// gatewayPort is the port the LLM gateway listens on (typically 40001).
+func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models []string, apiKeys map[string]string, gatewayProviders map[string]GatewayProvider, gatewayPort int) {
+	if len(models) == 0 && len(apiKeys) == 0 && len(gatewayProviders) == 0 {
 		return
 	}
 
@@ -87,6 +97,47 @@ func ConfigureInstance(ctx context.Context, ops InstanceOps, name string, models
 		if code != 0 {
 			log.Printf("Failed to set model config for %s: %s", logutil.SanitizeForLog(name), logutil.SanitizeForLog(stderr))
 			return
+		}
+	}
+
+	// Set gateway providers config (models.providers) if any are enabled
+	if len(gatewayProviders) > 0 && gatewayPort > 0 {
+		type modelEntry struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		type providerCfg struct {
+			BaseURL string       `json:"baseUrl"`
+			API     string       `json:"api"`
+			APIKey  string       `json:"apiKey"`
+			Models  []modelEntry `json:"models,omitempty"`
+		}
+		providers := make(map[string]providerCfg, len(gatewayProviders))
+		for providerKey, gp := range gatewayProviders {
+			entries := make([]modelEntry, 0, len(gp.Models))
+			for _, m := range gp.Models {
+				entries = append(entries, modelEntry{ID: m, Name: m})
+			}
+			providers[providerKey] = providerCfg{
+				BaseURL: fmt.Sprintf("http://127.0.0.1:%d", gatewayPort),
+				API:     "openai-completions",
+				APIKey:  gp.Key,
+				Models:  entries,
+			}
+		}
+		providersJSON, err := json.Marshal(providers)
+		if err != nil {
+			log.Printf("Error marshaling gateway providers for %s: %v", logutil.SanitizeForLog(name), err)
+		} else {
+			b64 := base64.StdEncoding.EncodeToString(providersJSON)
+			cmd := []string{"su", "-", "claworc", "-c",
+				fmt.Sprintf(`openclaw config set models.providers "$(echo '%s' | base64 -d)" --json`, b64)}
+			_, stderr, code, err := ops.ExecInInstance(ctx, name, cmd)
+			if err != nil {
+				log.Printf("Error setting gateway providers for %s: %v", logutil.SanitizeForLog(name), err)
+			} else if code != 0 {
+				log.Printf("Failed to set gateway providers for %s: %s", logutil.SanitizeForLog(name), logutil.SanitizeForLog(stderr))
+			}
 		}
 	}
 

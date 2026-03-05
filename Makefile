@@ -24,7 +24,7 @@ HELM_NAMESPACE := claworc
 .PHONY: agent agent-base agent-build agent-test agent-push agent-exec dashboard docker-prune release \
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
-	ssh-integration-test ssh-file-integration-test
+	ssh-integration-test ssh-file-integration-test extract-models scrape-models
 
 agent: agent-base agent-build agent-test agent-push
 
@@ -158,4 +158,9 @@ ssh-file-integration-test:
 
 e2e-docker-tests:
 	./scripts/run_tests.sh
-	
+
+extract-models:
+	python3 scripts/extract_models.py
+
+scrape-models:
+	python3 scripts/scrape_provider_docs.py

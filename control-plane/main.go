@@ -18,6 +18,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
+	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
@@ -29,6 +30,8 @@ import (
 
 //go:embed frontend/dist
 var frontendFS embed.FS
+
+var BuildDate string
 
 func main() {
 	// Handle CLI commands before starting the server
@@ -124,9 +127,17 @@ func main() {
 		}
 	}()
 
+	handlers.BuildDate = BuildDate
+
 	if err := orchestrator.InitOrchestrator(ctx); err != nil {
 		log.Printf("WARNING: %v", err)
 	}
+
+	// Start LLM gateway (internal only, reachable via SSH agent-listener tunnel)
+	if err := llmgateway.Start(ctx, "127.0.0.1", config.Cfg.LLMGatewayPort); err != nil {
+		log.Printf("WARNING: LLM gateway failed to start: %v", err)
+	}
+	tunnelMgr.SetLLMGatewayAddr(fmt.Sprintf("127.0.0.1:%d", config.Cfg.LLMGatewayPort))
 
 	// Configure SSH manager with orchestrator for automatic reconnection
 	if orch := orchestrator.Get(); orch != nil {
@@ -240,6 +251,13 @@ func main() {
 				r.Put("/settings", handlers.UpdateSettings)
 				r.Post("/settings/rotate-ssh-key", handlers.RotateSSHKey)
 				r.Get("/audit-logs", handlers.GetAuditLogs)
+
+				// LLM gateway providers and usage
+				r.Get("/llm/providers", handlers.ListProviders)
+				r.Post("/llm/providers", handlers.CreateProvider)
+				r.Put("/llm/providers/{id}", handlers.UpdateProvider)
+				r.Delete("/llm/providers/{id}", handlers.DeleteProvider)
+				r.Get("/llm/usage", handlers.GetUsageLogs)
 
 				// User management
 				r.Get("/users", handlers.ListUsers)

@@ -17,6 +17,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/crypto"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
 	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
@@ -42,21 +43,22 @@ type modelsConfig struct {
 }
 
 type instanceCreateRequest struct {
-	DisplayName     string            `json:"display_name"`
-	CPURequest      string            `json:"cpu_request"`
-	CPULimit        string            `json:"cpu_limit"`
-	MemoryRequest   string            `json:"memory_request"`
-	MemoryLimit     string            `json:"memory_limit"`
-	StorageHomebrew string            `json:"storage_homebrew"`
-	StorageHome     string            `json:"storage_home"`
-	BraveAPIKey     *string           `json:"brave_api_key"`
-	APIKeys         map[string]string `json:"api_keys"`
-	Models          *modelsConfig     `json:"models"`
-	DefaultModel    string            `json:"default_model"`
-	ContainerImage  *string           `json:"container_image"`
-	VNCResolution   *string           `json:"vnc_resolution"`
-	Timezone        *string           `json:"timezone"`
-	UserAgent       *string           `json:"user_agent"`
+	DisplayName      string            `json:"display_name"`
+	CPURequest       string            `json:"cpu_request"`
+	CPULimit         string            `json:"cpu_limit"`
+	MemoryRequest    string            `json:"memory_request"`
+	MemoryLimit      string            `json:"memory_limit"`
+	StorageHomebrew  string            `json:"storage_homebrew"`
+	StorageHome      string            `json:"storage_home"`
+	BraveAPIKey      *string           `json:"brave_api_key"`
+	APIKeys          map[string]string `json:"api_keys"`
+	Models           *modelsConfig     `json:"models"`
+	DefaultModel     string            `json:"default_model"`
+	ContainerImage   *string           `json:"container_image"`
+	VNCResolution    *string           `json:"vnc_resolution"`
+	Timezone         *string           `json:"timezone"`
+	UserAgent        *string           `json:"user_agent"`
+	EnabledProviders []uint            `json:"enabled_providers"`
 }
 
 type modelsResponse struct {
@@ -91,6 +93,7 @@ type instanceResponse struct {
 	LiveImageInfo         *string         `json:"live_image_info,omitempty"`
 	StatusMessage         string          `json:"status_message,omitempty"`
 	AllowedSourceIPs      string          `json:"allowed_source_ips"`
+	EnabledProviders      []uint          `json:"enabled_providers"`
 	ControlURL            string          `json:"control_url"`
 	GatewayToken          string          `json:"gateway_token"`
 	SortOrder             int             `json:"sort_order"`
@@ -173,6 +176,37 @@ func computeEffectiveModels(mc modelsConfig) []string {
 	return effective
 }
 
+// resolveGatewayProviders builds the providerKey→GatewayProvider map for an instance's enabled
+// providers. Each entry includes the virtual auth key and the bare model IDs extracted from
+// the instance's models.extra (those prefixed with "<providerKey>/").
+func resolveGatewayProviders(inst database.Instance) map[string]config.GatewayProvider {
+	enabledIDs := parseEnabledProviders(inst.EnabledProviders)
+	if len(enabledIDs) == 0 {
+		return nil
+	}
+	gatewayKeys := llmgateway.GetInstanceGatewayKeys(inst.ID)
+	var providers []database.LLMProvider
+	database.DB.Where("id IN ?", enabledIDs).Find(&providers)
+
+	mc := parseModelsConfig(inst.ModelsConfig)
+	result := make(map[string]config.GatewayProvider, len(providers))
+	for _, p := range providers {
+		gk, ok := gatewayKeys[p.ID]
+		if !ok {
+			continue
+		}
+		prefix := p.Key + "/"
+		var models []string
+		for _, m := range mc.Extra {
+			if strings.HasPrefix(m, prefix) {
+				models = append(models, strings.TrimPrefix(m, prefix))
+			}
+		}
+		result[p.Key] = config.GatewayProvider{Key: gk, Models: models}
+	}
+	return result
+}
+
 // resolveInstanceModelsAndKeys builds the effective model list and collects all
 // decrypted API keys (global + instance overrides) for pushing to the running instance.
 func resolveInstanceModelsAndKeys(inst database.Instance) ([]string, map[string]string) {
@@ -235,6 +269,18 @@ func resolveInstanceModelsAndKeys(inst database.Instance) ([]string, map[string]
 	return effective, apiKeys
 }
 
+func parseEnabledProviders(raw string) []uint {
+	if raw == "" || raw == "[]" {
+		return []uint{}
+	}
+	var ids []uint
+	json.Unmarshal([]byte(raw), &ids)
+	if ids == nil {
+		return []uint{}
+	}
+	return ids
+}
+
 func instanceToResponse(inst database.Instance, status string) instanceResponse {
 	var containerImage *string
 	if inst.ContainerImage != "" {
@@ -258,6 +304,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 	}
 
 	apiKeyOverrides := getInstanceAPIKeyNames(inst.ID)
+	enabledProviders := parseEnabledProviders(inst.EnabledProviders)
 
 	mc := parseModelsConfig(inst.ModelsConfig)
 	effective := computeEffectiveModels(mc)
@@ -287,6 +334,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		UserAgent:             userAgent,
 		HasUserAgentOverride:  inst.UserAgent != "",
 		AllowedSourceIPs:      inst.AllowedSourceIPs,
+		EnabledProviders:      enabledProviders,
 		ControlURL:            fmt.Sprintf("/api/v1/instances/%d/control/", inst.ID),
 		GatewayToken:          gatewayToken,
 		SortOrder:             inst.SortOrder,
@@ -538,29 +586,37 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		modelsConfigJSON = "{}"
 	}
 
+	// Serialize enabled providers
+	enabledProviders := body.EnabledProviders
+	if enabledProviders == nil {
+		enabledProviders = []uint{}
+	}
+	enabledProvidersJSON, _ := json.Marshal(enabledProviders)
+
 	// Compute next sort_order
 	var maxSortOrder int
 	database.DB.Model(&database.Instance{}).Select("COALESCE(MAX(sort_order), 0)").Scan(&maxSortOrder)
 
 	inst := database.Instance{
-		Name:            name,
-		DisplayName:     body.DisplayName,
-		Status:          "creating",
-		CPURequest:      body.CPURequest,
-		CPULimit:        body.CPULimit,
-		MemoryRequest:   body.MemoryRequest,
-		MemoryLimit:     body.MemoryLimit,
-		StorageHomebrew: body.StorageHomebrew,
-		StorageHome:     body.StorageHome,
-		BraveAPIKey:     encBraveKey,
-		ContainerImage:  containerImage,
-		VNCResolution:   vncResolution,
-		Timezone:        timezone,
-		UserAgent:       userAgent,
-		GatewayToken:    encGatewayToken,
-		ModelsConfig:    modelsConfigJSON,
-		DefaultModel:    body.DefaultModel,
-		SortOrder:       maxSortOrder + 1,
+		Name:             name,
+		DisplayName:      body.DisplayName,
+		Status:           "creating",
+		CPURequest:       body.CPURequest,
+		CPULimit:         body.CPULimit,
+		MemoryRequest:    body.MemoryRequest,
+		MemoryLimit:      body.MemoryLimit,
+		StorageHomebrew:  body.StorageHomebrew,
+		StorageHome:      body.StorageHome,
+		BraveAPIKey:      encBraveKey,
+		ContainerImage:   containerImage,
+		VNCResolution:    vncResolution,
+		Timezone:         timezone,
+		UserAgent:        userAgent,
+		GatewayToken:     encGatewayToken,
+		ModelsConfig:     modelsConfigJSON,
+		DefaultModel:     body.DefaultModel,
+		EnabledProviders: string(enabledProvidersJSON),
+		SortOrder:        maxSortOrder + 1,
 	}
 
 	if err := database.DB.Create(&inst).Error; err != nil {
@@ -626,10 +682,14 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			"updated_at": time.Now().UTC(),
 		})
 
-		// Push models and API keys to the instance (waits for container ready)
+		// Push models, API keys, and gateway providers to the instance (waits for container ready)
 		database.DB.First(&inst, inst.ID)
+		if err := llmgateway.EnsureKeysForInstance(inst.ID, enabledProviders); err != nil {
+			log.Printf("Failed to ensure LLM gateway keys for instance %d: %v", inst.ID, err)
+		}
 		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
-		config.ConfigureInstance(ctx, orch, name, models, resolvedKeys)
+		gatewayProviders := resolveGatewayProviders(inst)
+		config.ConfigureInstance(ctx, orch, name, models, resolvedKeys, gatewayProviders, config.Cfg.LLMGatewayPort)
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -676,6 +736,7 @@ type instanceUpdateRequest struct {
 	Timezone         *string            `json:"timezone"`
 	UserAgent        *string            `json:"user_agent"`
 	AllowedSourceIPs *string            `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
+	EnabledProviders *[]uint            `json:"enabled_providers"`  // admin only: LLM gateway provider IDs
 }
 
 func UpdateInstance(w http.ResponseWriter, r *http.Request) {
@@ -787,6 +848,20 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		database.DB.Model(&inst).Update("models_config", string(b))
 	}
 
+	// Update enabled providers (admin only)
+	if body.EnabledProviders != nil {
+		user := middleware.GetUser(r)
+		if user == nil || user.Role != "admin" {
+			writeError(w, http.StatusForbidden, "Only admins can configure LLM gateway providers")
+			return
+		}
+		b, _ := json.Marshal(*body.EnabledProviders)
+		database.DB.Model(&inst).Update("enabled_providers", string(b))
+		if err := llmgateway.EnsureKeysForInstance(inst.ID, *body.EnabledProviders); err != nil {
+			log.Printf("Failed to ensure LLM gateway keys for instance %d: %v", inst.ID, err)
+		}
+	}
+
 	// Re-fetch
 	database.DB.First(&inst, inst.ID)
 
@@ -798,7 +873,8 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	if orch != nil && orchStatus == "running" {
 		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
-		go config.ConfigureInstance(context.Background(), orch, inst.Name, models, resolvedKeys)
+		gatewayProviders := resolveGatewayProviders(inst)
+		go config.ConfigureInstance(context.Background(), orch, inst.Name, models, resolvedKeys, gatewayProviders, config.Cfg.LLMGatewayPort)
 	}
 
 	status := resolveStatus(&inst, orchStatus)
@@ -840,8 +916,9 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Delete associated API keys
+	// Delete associated API keys and gateway keys
 	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.InstanceAPIKey{})
+	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.LLMGatewayKey{})
 	database.DB.Delete(&inst)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1039,15 +1116,31 @@ func UpdateInstanceConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
 	orch := orchestrator.Get()
 	if orch == nil {
 		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
 		return
 	}
 
-	if err := orch.UpdateInstanceConfig(r.Context(), inst.Name, body.Config); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to update config: %v", err))
+	client, err := SSHMgr.EnsureConnectedWithIPCheck(r.Context(), inst.ID, orch, inst.AllowedSourceIPs)
+	if err != nil {
+		log.Printf("Failed to get SSH connection for instance %d: %v", inst.ID, err)
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("SSH connection failed: %v", err))
 		return
+	}
+
+	if err := sshproxy.WriteFile(client, orchestrator.PathOpenClawConfig, []byte(body.Config)); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to write config: %v", err))
+		return
+	}
+
+	if _, stderr, code, err := sshproxy.RunCommand(client, "su - claworc -c 'openclaw gateway stop'"); err != nil || code != 0 {
+		log.Printf("Failed to restart gateway for instance %d: %v %s", inst.ID, err, stderr)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -1192,8 +1285,9 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		// Push models and API keys to the running instance
 		// Re-fetch to get latest state
 		database.DB.First(&inst, inst.ID)
+		// Don't carry over gateway keys from source — the clone gets its own instance ID
 		models, resolvedKeys := resolveInstanceModelsAndKeys(inst)
-		config.ConfigureInstance(ctx, orch, cloneName, models, resolvedKeys)
+		config.ConfigureInstance(ctx, orch, cloneName, models, resolvedKeys, nil, config.Cfg.LLMGatewayPort)
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
