@@ -24,6 +24,10 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
 
+// safeLog sanitizes a user-provided string before including it in a log line
+// to prevent log injection attacks.
+func safeLog(s string) string { return utils.SanitizeForLog(s) }
+
 var gatewayServer *http.Server
 
 // Start creates the LLM gateway HTTP server and starts it in a goroutine.
@@ -239,8 +243,15 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	instanceID, providerID, providerKey, baseURL, apiKey, apiType, providerModels, err := authAndResolve(r)
 	if err != nil {
-		log.Printf("[gateway] auth failed: %s path=%s", err, r.URL.Path)
-		http.Error(w, `{"error":{"message":"`+err.Error()+`","type":"authentication_error"}}`, http.StatusUnauthorized)
+		log.Printf("[gateway] auth failed: %s path=%s", err, safeLog(r.URL.Path))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{
+				"message": err.Error(),
+				"type":    "authentication_error",
+			},
+		})
 		return
 	}
 
@@ -336,10 +347,10 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 func logLine(instanceID uint, providerKey, model, path string, statusCode int, latencyMs int64, errMsg string) {
 	if errMsg != "" {
 		log.Printf("[gateway] instance=%d provider=%s model=%s path=%s status=%d latency=%dms error=%s",
-			instanceID, providerKey, model, path, statusCode, latencyMs, errMsg)
+			instanceID, safeLog(providerKey), safeLog(model), safeLog(path), statusCode, latencyMs, safeLog(errMsg))
 	} else {
 		log.Printf("[gateway] instance=%d provider=%s model=%s path=%s status=%d latency=%dms",
-			instanceID, providerKey, model, path, statusCode, latencyMs)
+			instanceID, safeLog(providerKey), safeLog(model), safeLog(path), statusCode, latencyMs)
 	}
 }
 

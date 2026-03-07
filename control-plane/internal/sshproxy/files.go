@@ -36,13 +36,10 @@ func executeCommand(client *ssh.Client, cmd string) (stdout, stderr string, exit
 	runErr := session.Run(cmd)
 	elapsed := time.Since(start)
 
-	// Log command execution time. Truncate long commands to keep logs readable.
-	cmdLabel := cmd
-	if len(cmdLabel) > 80 {
-		cmdLabel = cmdLabel[:80] + "..."
-	}
+	// Log execution time for slow commands. Command content is intentionally omitted
+	// from the log to prevent leaking sensitive data (e.g. base64-encoded file content).
 	if elapsed > 500*time.Millisecond {
-		log.Printf("[sshfiles] SLOW command (%s): %s", elapsed, cmdLabel)
+		log.Printf("[sshfiles] SLOW command (%s)", elapsed)
 	}
 
 	if runErr != nil {
@@ -98,7 +95,8 @@ func executeCommandWithStdin(client *ssh.Client, cmd string, input []byte) error
 
 	elapsed := time.Since(start)
 	if elapsed > 500*time.Millisecond {
-		log.Printf("[sshfiles] SLOW stdin command (%s, %d bytes): %s", elapsed, len(input), cmd)
+		// Command content is intentionally omitted to prevent leaking sensitive data.
+		log.Printf("[sshfiles] SLOW stdin command (%s, %d bytes)", elapsed, len(input))
 	}
 
 	return nil

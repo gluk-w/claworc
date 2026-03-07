@@ -16,6 +16,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
+	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -44,7 +45,7 @@ func proxyCatalog(w http.ResponseWriter, path string) {
 	if entry == nil || time.Now().After(entry.expiresAt) {
 		resp, err := catalogHTTPClient.Get(catalogBaseURL + path)
 		if err != nil {
-			log.Printf("catalog proxy: fetch %s: %v", path, err)
+			log.Printf("catalog proxy: fetch %s: %v", utils.SanitizeForLog(path), err)
 			http.Error(w, `{"error":"catalog unavailable"}`, http.StatusBadGateway)
 			return
 		}

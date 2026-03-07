@@ -2,6 +2,7 @@ package sshproxy
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -34,6 +35,11 @@ func NewSSHInstance(client *gossh.Client) *SSHInstance {
 // ExecOpenclaw runs `su - claworc -c 'openclaw <args...>'` over SSH.
 // Each argument is shell-quoted to safely handle JSON and special characters.
 func (i *SSHInstance) ExecOpenclaw(ctx context.Context, args ...string) (string, string, int, error) {
+	// Guard against pathological input sizes that would overflow the slice length.
+	const maxArgs = 1<<16 - 1
+	if len(args) > maxArgs {
+		return "", "", -1, fmt.Errorf("too many arguments: %d (max %d)", len(args), maxArgs)
+	}
 	parts := make([]string, len(args)+1)
 	parts[0] = "openclaw"
 	for j, a := range args {
