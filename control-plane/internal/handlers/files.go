@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
-	"github.com/gluk-w/claworc/control-plane/internal/logutil"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
+	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -56,11 +56,11 @@ func BrowseFiles(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	entries, err := sshproxy.ListDirectory(client, dirPath)
 	if err != nil {
-		log.Printf("Failed to list directory %s for instance %s: %v", logutil.SanitizeForLog(dirPath), logutil.SanitizeForLog(inst.Name), err)
+		log.Printf("Failed to list directory %s for instance %s: %v", utils.SanitizeForLog(dirPath), utils.SanitizeForLog(inst.Name), err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to list directory: %v", err))
 		return
 	}
-	log.Printf("[files] BrowseFiles instance=%d path=%s entries=%d duration=%s", inst.ID, logutil.SanitizeForLog(dirPath), len(entries), time.Since(start))
+	log.Printf("[files] BrowseFiles instance=%d path=%s entries=%d duration=%s", inst.ID, utils.SanitizeForLog(dirPath), len(entries), time.Since(start))
 	auditFileOp(r, inst.ID, fmt.Sprintf("op=browse, path=%s, entries=%d", dirPath, len(entries)))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -107,11 +107,11 @@ func ReadFileContent(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	content, err := sshproxy.ReadFile(client, filePath)
 	if err != nil {
-		log.Printf("Failed to read file %s for instance %s: %v", logutil.SanitizeForLog(filePath), logutil.SanitizeForLog(inst.Name), err)
+		log.Printf("Failed to read file %s for instance %s: %v", utils.SanitizeForLog(filePath), utils.SanitizeForLog(inst.Name), err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to read file: %v", err))
 		return
 	}
-	log.Printf("[files] ReadFileContent instance=%d path=%s size=%d duration=%s", inst.ID, logutil.SanitizeForLog(filePath), len(content), time.Since(start))
+	log.Printf("[files] ReadFileContent instance=%d path=%s size=%d duration=%s", inst.ID, utils.SanitizeForLog(filePath), len(content), time.Since(start))
 	auditFileOp(r, inst.ID, fmt.Sprintf("op=read, path=%s, size=%d", filePath, len(content)))
 
 	writeJSON(w, http.StatusOK, map[string]string{
@@ -161,7 +161,7 @@ func DownloadFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to download file: %v", err))
 		return
 	}
-	log.Printf("[files] DownloadFile instance=%d path=%s size=%d duration=%s", inst.ID, logutil.SanitizeForLog(filePath), len(content), time.Since(start))
+	log.Printf("[files] DownloadFile instance=%d path=%s size=%d duration=%s", inst.ID, utils.SanitizeForLog(filePath), len(content), time.Since(start))
 	auditFileOp(r, inst.ID, fmt.Sprintf("op=download, path=%s, size=%d", filePath, len(content)))
 
 	parts := strings.Split(filePath, "/")
@@ -215,7 +215,7 @@ func CreateNewFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create file: %v", err))
 		return
 	}
-	log.Printf("[files] CreateNewFile instance=%d path=%s size=%d duration=%s", inst.ID, logutil.SanitizeForLog(body.Path), len(body.Content), time.Since(start))
+	log.Printf("[files] CreateNewFile instance=%d path=%s size=%d duration=%s", inst.ID, utils.SanitizeForLog(body.Path), len(body.Content), time.Since(start))
 	auditFileOp(r, inst.ID, fmt.Sprintf("op=create, path=%s, size=%d", body.Path, len(body.Content)))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -266,7 +266,7 @@ func CreateDirectory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create directory: %v", err))
 		return
 	}
-	log.Printf("[files] CreateDirectory instance=%d path=%s duration=%s", inst.ID, logutil.SanitizeForLog(body.Path), time.Since(start))
+	log.Printf("[files] CreateDirectory instance=%d path=%s duration=%s", inst.ID, utils.SanitizeForLog(body.Path), time.Since(start))
 	auditFileOp(r, inst.ID, fmt.Sprintf("op=mkdir, path=%s", body.Path))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -333,7 +333,7 @@ func UploadFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to upload file: %v", err))
 		return
 	}
-	log.Printf("[files] UploadFile instance=%d path=%s size=%d duration=%s", inst.ID, logutil.SanitizeForLog(fullPath), len(content), time.Since(start))
+	log.Printf("[files] UploadFile instance=%d path=%s size=%d duration=%s", inst.ID, utils.SanitizeForLog(fullPath), len(content), time.Since(start))
 	auditFileOp(r, inst.ID, fmt.Sprintf("op=upload, path=%s, size=%d", fullPath, len(content)))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{

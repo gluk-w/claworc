@@ -44,7 +44,7 @@ func Init() error {
 		return fmt.Errorf("set busy timeout: %w", err)
 	}
 
-	if err := DB.AutoMigrate(&Instance{}, &Setting{}, &InstanceAPIKey{}, &User{}, &UserInstance{}, &WebAuthnCredential{}); err != nil {
+	if err := DB.AutoMigrate(&Instance{}, &Setting{}, &InstanceAPIKey{}, &User{}, &UserInstance{}, &WebAuthnCredential{}, &LLMProvider{}, &LLMGatewayKey{}); err != nil {
 		return fmt.Errorf("auto-migrate: %w", err)
 	}
 

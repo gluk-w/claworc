@@ -1,7 +1,10 @@
 import { useState } from "react";
-import ProviderTable from "@/components/ProviderTable";
-import { LLM_API_KEY_OPTIONS } from "@/components/DynamicApiKeyEditor";
+import { useQueries } from "@tanstack/react-query";
 import { useSettings } from "@/hooks/useSettings";
+import { useProviders } from "@/hooks/useProviders";
+import { fetchCatalogProviderDetail } from "@/api/llm";
+import type { CatalogProviderDetail } from "@/api/llm";
+import ProviderModelSelector from "@/components/ProviderModelSelector";
 import type { InstanceCreatePayload } from "@/types/instance";
 
 interface InstanceFormProps {
@@ -29,11 +32,26 @@ export default function InstanceForm({
   const [userAgent, setUserAgent] = useState("");
 
   const { data: settings } = useSettings();
+  const { data: allProviders = [] } = useProviders();
 
-  // API key overrides
-  const [disabledProviders, setDisabledProviders] = useState<string[]>([]);
-  const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
-  const [defaultModel, setDefaultModel] = useState(LLM_API_KEY_OPTIONS[0]?.value ?? "");
+  // Fetch catalog model lists for all catalog providers
+  const catalogKeys = [...new Set(allProviders.filter((p) => p.provider).map((p) => p.provider))];
+  const catalogDetailResults = useQueries({
+    queries: catalogKeys.map((key) => ({
+      queryKey: ["catalog-provider", key],
+      queryFn: () => fetchCatalogProviderDetail(key),
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+  const catalogDetailMap: Record<string, CatalogProviderDetail> = {};
+  catalogKeys.forEach((key, i) => {
+    if (catalogDetailResults[i]?.data) catalogDetailMap[key] = catalogDetailResults[i].data!;
+  });
+
+  // Gateway providers + model selection
+  const [enabledProviders, setEnabledProviders] = useState<number[]>([]);
+  const [providerModels, setProviderModels] = useState<Record<number, string[]>>({});
+  const [defaultModel, setDefaultModel] = useState<string>("");
 
   // Brave key
   const [braveKey, setBraveKey] = useState("");
@@ -41,6 +59,16 @@ export default function InstanceForm({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!displayName.trim()) return;
+
+    // Build provider-prefixed extra models.
+    // Skip providers with stored models (custom providers) — their models are
+    // pushed to the container directly from the provider definition.
+    const extraModels: string[] = [];
+    for (const p of allProviders) {
+      for (const m of providerModels[p.id] ?? []) {
+        extraModels.push(`${p.key}/${m}`);
+      }
+    }
 
     const payload: InstanceCreatePayload = {
       display_name: displayName.trim(),
@@ -57,34 +85,17 @@ export default function InstanceForm({
       user_agent: userAgent || null,
     };
 
-    // Add dynamic API keys
-    if (Object.keys(apiKeys).length > 0) {
-      payload.api_keys = apiKeys;
+    if (enabledProviders.length > 0) {
+      payload.enabled_providers = enabledProviders;
     }
-
-    // Add model config if any providers were disabled
-    if (disabledProviders.length > 0) {
-      payload.models = { disabled: disabledProviders, extra: [] };
+    if (extraModels.length > 0) {
+      payload.models = { disabled: [], extra: extraModels };
     }
-
-    // Add default model
     if (defaultModel) {
       payload.default_model = defaultModel;
     }
 
     onSubmit(payload);
-  };
-
-  const handleToggleEnabled = (key: string) => {
-    setDisabledProviders((prev) =>
-      prev.includes(key)
-        ? prev.filter((p) => p !== key)
-        : [...prev, key],
-    );
-    // If disabling the current default, clear it
-    if (!disabledProviders.includes(key) && defaultModel === key) {
-      setDefaultModel("");
-    }
   };
 
   return (
@@ -159,39 +170,34 @@ export default function InstanceForm({
         </div>
       </div>
 
-      {/* API Key Overrides */}
+      {/* Enabled Models */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h3 className="text-sm font-medium text-gray-900 mb-4">API Key Overrides</h3>
-        <p className="text-xs text-gray-500 mb-3">
-          Leave empty to use global keys from Settings.
+        <h3 className="text-sm font-medium text-gray-900 mb-1">Enabled Models</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Pick among available model(s) for the agent.
         </p>
 
-        <ProviderTable
-          globalApiKeys={settings?.api_keys ?? {}}
-          instanceOverrides={[]}
-          disabledProviders={disabledProviders}
-          defaultModel={defaultModel}
-          pendingNewKeys={apiKeys}
-          pendingRemovals={{}}
-          onToggleEnabled={handleToggleEnabled}
-          onDefaultModelChange={setDefaultModel}
-          onAddKey={(key, value) =>
-            setApiKeys((prev) => ({ ...prev, [key]: value }))
-          }
-          onRemoveKey={() => { }}
-          onUndoRemove={() => { }}
-          onUndoAdd={(key) =>
-            setApiKeys((prev) => {
-              const next = { ...prev };
-              delete next[key];
-              return next;
-            })
-          }
-          editable={true}
-        />
+        {allProviders.length === 0 ? (
+          <p className="text-sm text-gray-400 italic">
+            No providers configured. Add providers in Settings → Model API Keys first.
+          </p>
+        ) : (
+          <ProviderModelSelector
+            providers={allProviders}
+            catalogDetailMap={catalogDetailMap}
+            enabledProviders={enabledProviders}
+            providerModels={providerModels}
+            defaultModel={defaultModel}
+            onUpdate={(newEnabled, newModels, newDefault) => {
+              setEnabledProviders(newEnabled);
+              setProviderModels(newModels);
+              setDefaultModel(newDefault);
+            }}
+          />
+        )}
 
-        {/* Brave key (fixed field) */}
-        <div className="pt-3 mt-3 border-t border-gray-200">
+        {/* Brave key */}
+        <div className="pt-4 mt-4 border-t border-gray-200">
           <label className="block text-xs text-gray-500 mb-1">
             Brave API Key (web search)
           </label>
@@ -267,6 +273,7 @@ export default function InstanceForm({
           {loading ? "Creating..." : "Create"}
         </button>
       </div>
+
     </form>
   );
 }

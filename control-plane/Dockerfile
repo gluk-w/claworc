@@ -18,7 +18,7 @@ RUN go mod download
 COPY . .
 COPY --from=frontend /build/frontend/dist /build/frontend/dist
 
-RUN CGO_ENABLED=1 go build -o claworc .
+RUN CGO_ENABLED=1 go build -ldflags "-X main.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o claworc .
 
 FROM alpine:3.20
 

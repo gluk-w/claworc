@@ -112,6 +112,17 @@ func (tm *TunnelManager) CheckTunnelHealth(instanceID uint, label string) error 
 		return fmt.Errorf("tunnel %q for instance %d has status %q", label, instanceID, target.Status)
 	}
 
+	// Agent-listener tunnels bind a port on the remote (agent) SSH server side, not on
+	// the control plane. Their LocalPort refers to the remote port, so a TCP probe to
+	// 127.0.0.1:LocalPort would hit an unrelated local service (the LLM gateway).
+	// Health is tracked by agentListenerLoop setting status to "error" on Accept failure.
+	if target.Config.Type == TunnelTypeAgentListener {
+		if target.metrics != nil {
+			target.metrics.recordSuccess()
+		}
+		return nil
+	}
+
 	// Attempt TCP connection to verify the local listener is alive
 	addr := fmt.Sprintf("127.0.0.1:%d", target.LocalPort)
 	conn, err := net.DialTimeout("tcp", addr, tunnelHealthCheckTimeout)

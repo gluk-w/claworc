@@ -323,6 +323,22 @@ func (m *SSHManager) EnsureConnectedWithIPCheck(ctx context.Context, instanceID 
 	return client, nil
 }
 
+// WaitForSSH blocks until the instance has an active SSH connection or ctx/timeout expires.
+func (m *SSHManager) WaitForSSH(ctx context.Context, instanceID uint, timeout time.Duration) (*ssh.Client, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if client, ok := m.GetConnection(instanceID); ok {
+			return client, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	return nil, fmt.Errorf("SSH not ready for instance %d after %v", instanceID, timeout)
+}
+
 // GetPublicKeyFingerprint returns the SHA256 fingerprint of the global SSH public key.
 func (m *SSHManager) GetPublicKeyFingerprint() string {
 	return ssh.FingerprintSHA256(m.getSigner().PublicKey())

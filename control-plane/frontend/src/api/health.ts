@@ -5,6 +5,7 @@ interface HealthResponse {
   orchestrator: "connected" | "disconnected";
   orchestrator_backend: "kubernetes" | "docker" | "none";
   database: string;
+  build_date?: string;
 }
 
 export async function fetchHealth(): Promise<HealthResponse> {

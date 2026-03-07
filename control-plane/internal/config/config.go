@@ -18,6 +18,9 @@ type Settings struct {
 	TerminalHistoryLines   int    `envconfig:"TERMINAL_HISTORY_LINES" default:"1000"`
 	TerminalRecordingDir   string `envconfig:"TERMINAL_RECORDING_DIR" default:""`
 	TerminalSessionTimeout string `envconfig:"TERMINAL_SESSION_TIMEOUT" default:"30m"`
+
+	// LLM gateway settings
+	LLMGatewayPort int `envconfig:"LLM_GATEWAY_PORT" default:"40001"`
 }
 
 var Cfg Settings

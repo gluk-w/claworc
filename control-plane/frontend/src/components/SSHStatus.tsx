@@ -19,6 +19,7 @@ function formatTime(ts: string): string {
 const tunnelLabelMap: Record<string, string> = {
   VNC: "Browser",
   Gateway: "OpenClaw",
+  LLMProxy: "API Gateway",
 };
 
 interface SSHStatusProps {
@@ -62,7 +63,7 @@ export default function SSHStatus({ status, isLoading, isError, onRefresh, onTro
   const style = stateStyles[status.state] ?? defaultStyle;
   const tunnelSummary = status.tunnels.length > 0
     ? status.tunnels.map((t) => {
-        const healthy = t.status === "healthy";
+        const healthy = t.status === "active";
         return (
           <span
             key={t.label}
@@ -85,7 +86,7 @@ export default function SSHStatus({ status, isLoading, isError, onRefresh, onTro
           {onEvents && (
             <button
               onClick={onEvents}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
               title="Connection Events"
             >
               <ListCollapse size={12} />
@@ -95,7 +96,7 @@ export default function SSHStatus({ status, isLoading, isError, onRefresh, onTro
           {onTroubleshoot && (
             <button
               onClick={onTroubleshoot}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
               title="Troubleshoot SSH"
             >
               <Wrench size={12} />

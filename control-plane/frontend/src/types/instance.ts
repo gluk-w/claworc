@@ -30,6 +30,7 @@ export interface Instance {
   has_user_agent_override: boolean;
   live_image_info?: string;
   allowed_source_ips: string;
+  enabled_providers: number[];
   control_url: string;
   gateway_token: string;
   sort_order: number;
@@ -56,6 +57,7 @@ export interface InstanceCreatePayload {
   vnc_resolution?: string | null;
   timezone?: string | null;
   user_agent?: string | null;
+  enabled_providers?: number[];
 }
 
 export interface InstanceUpdatePayload {
@@ -66,6 +68,36 @@ export interface InstanceUpdatePayload {
   timezone?: string;
   user_agent?: string;
   allowed_source_ips?: string;
+  enabled_providers?: number[];
+}
+
+export interface ProviderModelCost {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export interface ProviderModel {
+  id: string;
+  name: string;
+  reasoning?: boolean;
+  input?: string[];
+  contextWindow?: number;
+  maxTokens?: number;
+  cost?: ProviderModelCost;
+}
+
+export interface LLMProvider {
+  id: number;
+  key: string;
+  provider: string; // catalog provider key, empty for custom
+  name: string;
+  base_url: string;
+  api_type: string;
+  models: ProviderModel[] | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface InstanceConfig {

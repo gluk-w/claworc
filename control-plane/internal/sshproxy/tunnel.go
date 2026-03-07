@@ -41,6 +41,11 @@ const (
 
 	// TunnelTypeReverse is a remote-to-local tunnel (ssh -R equivalent).
 	TunnelTypeReverse TunnelType = "reverse"
+
+	// TunnelTypeAgentListener makes the SSH server (agent) listen on a port and
+	// forward connections back to a local address on the control plane.
+	// Uses ssh.Client.Listen — different from reverse tunnels.
+	TunnelTypeAgentListener TunnelType = "agent-listener"
 )
 
 // TunnelConfig describes a tunnel to be established.
@@ -91,6 +96,8 @@ type TunnelManager struct {
 
 	cancel       context.CancelFunc
 	healthCancel context.CancelFunc
+
+	llmGatewayAddr string // local address of the LLM gateway (set by SetLLMGatewayAddr)
 }
 
 // NewTunnelManager creates a new TunnelManager that uses the given SSHManager
@@ -101,6 +108,72 @@ func NewTunnelManager(sshMgr *SSHManager) *TunnelManager {
 		tunnels:         make(map[uint][]*ActiveTunnel),
 		backoff:         make(map[uint]*reconnectState),
 		reconnectCounts: make(map[uint]int64),
+	}
+}
+
+// SetLLMGatewayAddr sets the local address of the LLM gateway for agent-listener tunnels.
+// Call this before the background tunnel manager starts reconciling.
+func (tm *TunnelManager) SetLLMGatewayAddr(addr string) {
+	tm.mu.Lock()
+	tm.llmGatewayAddr = addr
+	tm.mu.Unlock()
+}
+
+// CreateAgentListenerTunnel makes the SSH server (agent) listen on agentPort.
+// Connections from inside the agent to that port are forwarded to localAddr on the control plane.
+// Uses ssh.Client.Listen() — different from reverse tunnels which use local listeners.
+func (tm *TunnelManager) CreateAgentListenerTunnel(ctx context.Context, instanceID uint, label string, agentPort int, localAddr string) error {
+	client, ok := tm.sshMgr.GetConnection(instanceID)
+	if !ok {
+		return fmt.Errorf("no SSH connection for instance %d", instanceID)
+	}
+
+	// client.Listen binds a port on the SSH SERVER (agent container side)
+	listener, err := client.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", agentPort))
+	if err != nil {
+		return fmt.Errorf("agent listen port %d: %w", agentPort, err)
+	}
+
+	tunnelCtx, tunnelCancel := context.WithCancel(ctx)
+	tunnel := &ActiveTunnel{
+		Config:    TunnelConfig{LocalPort: agentPort, Type: TunnelTypeAgentListener},
+		Label:     label,
+		LocalPort: agentPort,
+		Status:    "active",
+		LastCheck: time.Now(),
+		listener:  listener,
+		cancel:    tunnelCancel,
+		metrics:   &TunnelMetrics{CreatedAt: time.Now()},
+	}
+	tm.addTunnel(instanceID, tunnel)
+	go tm.agentListenerLoop(tunnelCtx, tunnel, listener, localAddr, instanceID)
+	log.Printf("LLM proxy tunnel for instance %d: agent:%d → %s", instanceID, agentPort, localAddr)
+	return nil
+}
+
+func (tm *TunnelManager) agentListenerLoop(ctx context.Context, tunnel *ActiveTunnel, listener net.Listener, localAddr string, instanceID uint) {
+	defer listener.Close()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			tm.setTunnelStatus(instanceID, tunnel, "error", err.Error())
+			return
+		}
+		go func(remote net.Conn) {
+			defer remote.Close()
+			local, err := net.DialTimeout("tcp", localAddr, 5*time.Second)
+			if err != nil {
+				return
+			}
+			defer local.Close()
+			done := make(chan struct{}, 2)
+			go func() { io.Copy(local, remote); done <- struct{}{} }()
+			go func() { io.Copy(remote, local); done <- struct{}{} }()
+			<-done
+		}(conn)
 	}
 }
 
@@ -199,6 +272,28 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID
 	}
 
 	if !needsRecreation {
+		// Even when other tunnels are healthy, ensure the LLMProxy tunnel exists.
+		// It may be missing if the gateway feature was enabled after initial tunnel creation.
+		tm.mu.RLock()
+		llmAddr := tm.llmGatewayAddr
+		hasLLMProxy := false
+		for _, t := range tm.tunnels[instanceID] {
+			if t.Label == "LLMProxy" && t.Status == "active" {
+				hasLLMProxy = true
+				break
+			}
+		}
+		tm.mu.RUnlock()
+		if llmAddr != "" && !hasLLMProxy {
+			var agentPort int
+			fmt.Sscanf(llmAddr, "127.0.0.1:%d", &agentPort)
+			if agentPort == 0 {
+				agentPort = 40001
+			}
+			if err := tm.CreateAgentListenerTunnel(ctx, instanceID, "LLMProxy", agentPort, llmAddr); err != nil {
+				log.Printf("Failed to create LLM proxy tunnel for instance %d: %v", instanceID, err)
+			}
+		}
 		return nil
 	}
 
@@ -223,6 +318,22 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID
 	_, err = tm.CreateTunnelForGateway(ctx, instanceID, 0)
 	if err != nil {
 		log.Printf("Failed to create Gateway tunnel for instance %d: %v", instanceID, err)
+	}
+
+	// Create LLM proxy agent-listener tunnel if gateway is configured
+	tm.mu.RLock()
+	llmAddr := tm.llmGatewayAddr
+	tm.mu.RUnlock()
+	if llmAddr != "" {
+		// Extract port from the LLM gateway address for use as the agent-side port
+		var agentPort int
+		fmt.Sscanf(llmAddr, "127.0.0.1:%d", &agentPort)
+		if agentPort == 0 {
+			agentPort = 40001
+		}
+		if err := tm.CreateAgentListenerTunnel(ctx, instanceID, "LLMProxy", agentPort, llmAddr); err != nil {
+			log.Printf("Failed to create LLM proxy tunnel for instance %d: %v", instanceID, err)
+		}
 	}
 
 	return nil

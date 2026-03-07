@@ -11,6 +11,7 @@ kube.txt
 
 tmp
 *.log
+.wrangler
 
 # Dependencies and artifacts
 node_modules

@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gluk-w/claworc/control-plane/internal/crypto"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
 
 // fixedEncryptedSettings are non-LLM keys stored as fixed setting entries.
@@ -59,11 +59,11 @@ func settingsToResponse(raw map[string]string) map[string]interface{} {
 	for key := range fixedEncryptedSettings {
 		val := raw[key]
 		if val != "" {
-			decrypted, err := crypto.Decrypt(val)
+			decrypted, err := utils.Decrypt(val)
 			if err != nil {
 				result[key] = ""
 			} else {
-				result[key] = crypto.Mask(decrypted)
+				result[key] = utils.Mask(decrypted)
 			}
 		} else {
 			result[key] = ""
@@ -76,11 +76,11 @@ func settingsToResponse(raw map[string]string) map[string]interface{} {
 		if strings.HasPrefix(k, "api_key:") {
 			keyName := strings.TrimPrefix(k, "api_key:")
 			if v != "" {
-				decrypted, err := crypto.Decrypt(v)
+				decrypted, err := utils.Decrypt(v)
 				if err != nil {
 					apiKeys[keyName] = ""
 				} else {
-					apiKeys[keyName] = crypto.Mask(decrypted)
+					apiKeys[keyName] = utils.Mask(decrypted)
 				}
 			}
 		}
@@ -134,7 +134,7 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			settingKey := "api_key:" + keyName
 			if strVal != "" {
-				encrypted, err := crypto.Encrypt(strVal)
+				encrypted, err := utils.Encrypt(strVal)
 				if err != nil {
 					writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
 					return
@@ -162,7 +162,7 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if v, ok := raw["brave_api_key"]; ok {
 		if strVal, ok := v.(string); ok {
 			if strVal != "" {
-				encrypted, err := crypto.Encrypt(strVal)
+				encrypted, err := utils.Encrypt(strVal)
 				if err != nil {
 					writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
 					return

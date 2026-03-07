@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/gluk-w/claworc/control-plane/internal/logutil"
+	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
 
 // tunnelPortInfo holds local and remote port information for an active tunnel.
@@ -83,7 +83,7 @@ func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path str
 		targetURL += "?" + r.URL.RawQuery
 	}
 
-	log.Printf("Tunnel proxy: %s → %s", logutil.SanitizeForLog(r.URL.Path), logutil.SanitizeForLog(targetURL))
+	log.Printf("Tunnel proxy: %s → %s", utils.SanitizeForLog(r.URL.Path), utils.SanitizeForLog(targetURL))
 
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
 	if err != nil {
@@ -175,7 +175,7 @@ func websocketProxyToLocalPort(w http.ResponseWriter, r *http.Request, port int,
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	log.Printf("Tunnel WS proxy: %s → %s", logutil.SanitizeForLog(r.URL.Path), logutil.SanitizeForLog(wsURL))
+	log.Printf("Tunnel WS proxy: %s → %s", utils.SanitizeForLog(r.URL.Path), utils.SanitizeForLog(wsURL))
 
 	dialOpts := &websocket.DialOptions{
 		Subprotocols: subprotocols,
@@ -186,7 +186,7 @@ func websocketProxyToLocalPort(w http.ResponseWriter, r *http.Request, port int,
 
 	upstreamConn, _, err := websocket.Dial(dialCtx, wsURL, dialOpts)
 	if err != nil {
-		log.Printf("Tunnel WS proxy: local dial error for %s: %v", logutil.SanitizeForLog(wsURL), err)
+		log.Printf("Tunnel WS proxy: local dial error for %s: %v", utils.SanitizeForLog(wsURL), err)
 		clientConn.Close(4502, "Cannot connect to service via tunnel")
 		return
 	}

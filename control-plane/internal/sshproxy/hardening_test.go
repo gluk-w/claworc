@@ -187,17 +187,33 @@ func TestSecurity_AgentForwardingDisabled(t *testing.T) {
 	}
 }
 
-// TestSecurity_TCPForwardingRestrictedToLocal verifies that TCP forwarding
-// is restricted to local connections only.
-func TestSecurity_TCPForwardingRestrictedToLocal(t *testing.T) {
+// TestSecurity_TCPForwardingEnabled verifies that TCP forwarding is enabled
+// (required for direct-tcpip channels used by VNC and gateway tunnels).
+// Port access is restricted via PermitOpen, not by forwarding mode.
+func TestSecurity_TCPForwardingEnabled(t *testing.T) {
 	config := loadSSHDConfig(t)
 
 	val, ok := getConfigDirective(config, "AllowTcpForwarding")
 	if !ok {
 		t.Fatal("SECURITY: AllowTcpForwarding directive not found")
 	}
-	if val != "local" {
-		t.Errorf("SECURITY: AllowTcpForwarding = %q, want 'local'", val)
+	if val != "yes" {
+		t.Errorf("SECURITY: AllowTcpForwarding = %q, want 'yes'", val)
+	}
+}
+
+// TestSecurity_PermitListenRestrictedToLoopback verifies that the PermitListen
+// directive restricts the LLM proxy listener to loopback only, exactly matching
+// the address the Go SSH client requests (127.0.0.1:40001).
+func TestSecurity_PermitListenRestrictedToLoopback(t *testing.T) {
+	config := loadSSHDConfig(t)
+
+	val, ok := getConfigDirective(config, "PermitListen")
+	if !ok {
+		t.Fatal("SECURITY: PermitListen directive not found")
+	}
+	if val != "127.0.0.1:40001" {
+		t.Errorf("SECURITY: PermitListen = %q, want '127.0.0.1:40001'", val)
 	}
 }
 

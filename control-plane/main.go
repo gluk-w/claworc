@@ -18,6 +18,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
+	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
@@ -29,6 +30,8 @@ import (
 
 //go:embed frontend/dist
 var frontendFS embed.FS
+
+var BuildDate string
 
 func main() {
 	// Handle CLI commands before starting the server
@@ -49,6 +52,10 @@ func main() {
 		log.Fatalf("Database init: %v", err)
 	}
 	defer database.Close()
+
+	if err := database.InitLogsDB(config.Cfg.DataPath); err != nil {
+		log.Fatalf("Logs DB init: %v", err)
+	}
 
 	log.Printf("Config: AuthDisabled=%v, RPID=%s, RPOrigins=%v", config.Cfg.AuthDisabled, config.Cfg.RPID, config.Cfg.RPOrigins)
 
@@ -124,15 +131,37 @@ func main() {
 		}
 	}()
 
+	handlers.BuildDate = BuildDate
+
 	if err := orchestrator.InitOrchestrator(ctx); err != nil {
 		log.Printf("WARNING: %v", err)
 	}
+
+	// Start LLM gateway (internal only, reachable via SSH agent-listener tunnel)
+	if err := llmgateway.Start(ctx, "127.0.0.1", config.Cfg.LLMGatewayPort); err != nil {
+		log.Printf("WARNING: LLM gateway failed to start: %v", err)
+	}
+	tunnelMgr.SetLLMGatewayAddr(fmt.Sprintf("127.0.0.1:%d", config.Cfg.LLMGatewayPort))
 
 	// Configure SSH manager with orchestrator for automatic reconnection
 	if orch := orchestrator.Get(); orch != nil {
 		sshMgr.SetOrchestrator(orch)
 	}
 	sshMgr.StartHealthChecker(ctx)
+
+	// Build InstanceFactory: resolves an active SSH connection by instance name.
+	instanceFactory := func(fctx context.Context, name string) (sshproxy.Instance, error) {
+		var inst database.Instance
+		if err := database.DB.Where("name = ?", name).First(&inst).Error; err != nil {
+			return nil, fmt.Errorf("instance not found: %s", name)
+		}
+		client, err := sshMgr.WaitForSSH(fctx, inst.ID, 120*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		return sshproxy.NewSSHInstance(client), nil
+	}
+	orchestrator.SetInstanceFactory(instanceFactory)
 
 	// Start background tunnel manager to maintain SSH tunnels for running instances
 	if orch := orchestrator.Get(); orch != nil {
@@ -240,6 +269,19 @@ func main() {
 				r.Put("/settings", handlers.UpdateSettings)
 				r.Post("/settings/rotate-ssh-key", handlers.RotateSSHKey)
 				r.Get("/audit-logs", handlers.GetAuditLogs)
+
+				// LLM gateway providers and usage
+				r.Post("/llm/providers/sync", handlers.SyncAllProviderModels)
+				r.Get("/llm/providers", handlers.ListProviders)
+				r.Post("/llm/providers", handlers.CreateProvider)
+				r.Put("/llm/providers/{id}", handlers.UpdateProvider)
+				r.Delete("/llm/providers/{id}", handlers.DeleteProvider)
+				r.Post("/llm/providers/{id}/sync", handlers.SyncProviderModels)
+				r.Get("/llm/usage", handlers.GetUsageLogs)
+
+				// Provider catalog proxy (claworc.com/providers, cached 1h)
+				r.Get("/llm/catalog", handlers.GetCatalogProviders)
+				r.Get("/llm/catalog/{key}", handlers.GetCatalogProviderDetail)
 
 				// User management
 				r.Get("/users", handlers.ListUsers)

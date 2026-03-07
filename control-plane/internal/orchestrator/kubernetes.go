@@ -10,6 +10,7 @@ import (
 
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -25,10 +26,11 @@ import (
 )
 
 type KubernetesOrchestrator struct {
-	clientset  *kubernetes.Clientset
-	restConfig *rest.Config
-	available  bool
-	inCluster  bool
+	clientset       *kubernetes.Clientset
+	restConfig      *rest.Config
+	available       bool
+	inCluster       bool
+	InstanceFactory sshproxy.InstanceFactory
 }
 
 func (k *KubernetesOrchestrator) Initialize(ctx context.Context) error {
@@ -102,46 +104,7 @@ func (k *KubernetesOrchestrator) CreateInstance(ctx context.Context, params Crea
 		return fmt.Errorf("create deployment: %w", err)
 	}
 
-	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
-		go k.configureGatewayToken(context.Background(), params.Name, token)
-	}
-
 	return nil
-}
-
-func (k *KubernetesOrchestrator) waitForPodRunning(ctx context.Context, name string, timeout time.Duration) (string, bool) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		pods, err := k.clientset.CoreV1().Pods(k.ns()).List(ctx, metav1.ListOptions{
-			LabelSelector: fmt.Sprintf("app=%s", name),
-		})
-		if err == nil && len(pods.Items) > 0 {
-			pod := pods.Items[0]
-			for _, cs := range pod.Status.ContainerStatuses {
-				if cs.State.Running != nil {
-					tag := pod.Spec.Containers[0].Image
-					sha := cs.ImageID
-					if idx := strings.Index(sha, "sha256:"); idx >= 0 {
-						sha = sha[idx:]
-						if len(sha) > 19 { // "sha256:" (7) + 12 chars
-							sha = sha[:19]
-						}
-					}
-					return fmt.Sprintf("%s (%s)", tag, sha), true
-				}
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return "", false
-		case <-time.After(2 * time.Second):
-		}
-	}
-	return "", false
-}
-
-func (k *KubernetesOrchestrator) configureGatewayToken(ctx context.Context, name, token string) {
-	configureGatewayToken(ctx, k.ExecInInstance, name, token, k.waitForPodRunning)
 }
 
 func (k *KubernetesOrchestrator) CloneVolumes(ctx context.Context, srcName, dstName string) error {
@@ -366,7 +329,7 @@ func (k *KubernetesOrchestrator) GetSSHAddress(ctx context.Context, instanceID u
 }
 
 func (k *KubernetesOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {
-	return updateInstanceConfig(ctx, k.ExecInInstance, name, configJSON)
+	return updateInstanceConfig(ctx, k.ExecInInstance, k.InstanceFactory, name, configJSON)
 }
 
 func (k *KubernetesOrchestrator) ExecInInstance(ctx context.Context, name string, cmd []string) (string, string, int, error) {

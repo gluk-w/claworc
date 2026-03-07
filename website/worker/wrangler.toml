@@ -1,0 +1,14 @@
+name = "claworc-providers"
+main = "index.ts"
+compatibility_date = "2024-01-01"
+
+[build]
+command = "cp ../../models.csv ./models.csv"
+
+[[rules]]
+type = "Text"
+globs = ["*.csv"]
+
+[[routes]]
+pattern = "claworc.com/providers/*"
+zone_name = "claworc.com"

@@ -1,18 +1,28 @@
 import { useState } from "react";
-import { X, Plus } from "lucide-react";
+import { X, Plus, BookOpen } from "lucide-react";
+import ModelCatalogPicker from "@/components/ModelCatalogPicker";
+import type { LLMProvider } from "@/types/instance";
+import type { CatalogProviderDetail } from "@/api/llm";
 
 interface ModelListEditorProps {
   models: string[];
   onChange: (models: string[]) => void;
   placeholder?: string;
+  showCatalog?: boolean;
+  providers?: LLMProvider[];
+  catalogDetailMap?: Record<string, CatalogProviderDetail>;
 }
 
 export default function ModelListEditor({
   models,
   onChange,
   placeholder = "provider/model-name",
+  showCatalog = false,
+  providers = [],
+  catalogDetailMap = {},
 }: ModelListEditorProps) {
   const [input, setInput] = useState("");
+  const [catalogOpen, setCatalogOpen] = useState(false);
 
   const handleAdd = () => {
     const trimmed = input.trim();
@@ -32,6 +42,11 @@ export default function ModelListEditor({
       e.preventDefault();
       handleAdd();
     }
+  };
+
+  const handleCatalogSelect = (id: string) => {
+    if (models.includes(id)) return;
+    onChange([...models, id]);
   };
 
   return (
@@ -73,7 +88,26 @@ export default function ModelListEditor({
           <Plus size={14} />
           Add
         </button>
+        {showCatalog && (
+          <button
+            type="button"
+            onClick={() => setCatalogOpen(true)}
+            className="inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+          >
+            <BookOpen size={14} />
+            Browse
+          </button>
+        )}
       </div>
+      {catalogOpen && (
+        <ModelCatalogPicker
+          selectedModels={models}
+          onSelect={handleCatalogSelect}
+          onClose={() => setCatalogOpen(false)}
+          providers={providers}
+          catalogDetailMap={catalogDetailMap}
+        />
+      )}
     </div>
   );
 }

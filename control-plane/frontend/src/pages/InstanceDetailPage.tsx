@@ -1,10 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, createElement } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import StatusBadge from "@/components/StatusBadge";
 import ActionButtons from "@/components/ActionButtons";
-import ProviderTable from "@/components/ProviderTable";
 import MonacoConfigEditor from "@/components/MonacoConfigEditor";
 import LogViewer from "@/components/LogViewer";
 import TerminalPanel from "@/components/TerminalPanel";
@@ -26,7 +25,14 @@ import {
   useUpdateInstanceConfig,
   useRestartedToast,
 } from "@/hooks/useInstances";
-import { useSettings } from "@/hooks/useSettings";
+import { useProviders } from "@/hooks/useProviders";
+import { useQueries } from "@tanstack/react-query";
+import { fetchCatalogProviderDetail } from "@/api/llm";
+import type { CatalogProviderDetail } from "@/api/llm";
+import ProviderIcon from "@/components/ProviderIcon";
+import ProviderModelSelector from "@/components/ProviderModelSelector";
+import AppToast from "@/components/AppToast";
+import toast from "react-hot-toast";
 import { useSSHStatus, useSSHEvents } from "@/hooks/useSSHStatus";
 import { useInstanceLogs } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
@@ -45,7 +51,22 @@ export default function InstanceDetailPage() {
 
   const { isAdmin } = useAuth();
   const { data: instance, isLoading } = useInstance(instanceId);
-  const { data: settings } = useSettings();
+  const { data: allProviders = [] } = useProviders();
+
+  // Fetch catalog model lists for all catalog providers (used in edit mode)
+  const catalogKeys = [...new Set(allProviders.filter((p) => p.provider).map((p) => p.provider))];
+  const catalogDetailResults = useQueries({
+    queries: catalogKeys.map((key) => ({
+      queryKey: ["catalog-provider", key],
+      queryFn: () => fetchCatalogProviderDetail(key),
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+  const catalogDetailMap: Record<string, CatalogProviderDetail> = {};
+  catalogKeys.forEach((key, i) => {
+    if (catalogDetailResults[i]?.data) catalogDetailMap[key] = catalogDetailResults[i].data!;
+  });
+
   useRestartedToast(instance ? [instance] : undefined);
   const { data: configData } = useInstanceConfig(instanceId, instance?.status === "running");
   const sshStatus = useSSHStatus(instanceId, instance?.status === "running");
@@ -89,10 +110,6 @@ export default function InstanceDetailPage() {
   // SSH events modal
   const [eventsOpen, setEventsOpen] = useState(false);
 
-  // API key editing state
-  const [editingKeys, setEditingKeys] = useState(false);
-  const [pendingKeyUpdates, setPendingKeyUpdates] = useState<Record<string, string | null>>({});
-
   // Timezone override editing state
   const [editingTimezone, setEditingTimezone] = useState(false);
   const [pendingTimezone, setPendingTimezone] = useState<string | null>(null);
@@ -101,6 +118,12 @@ export default function InstanceDetailPage() {
   const [editingUserAgent, setEditingUserAgent] = useState(false);
   const [pendingUserAgent, setPendingUserAgent] = useState<string | null>(null);
 
+  // Gateway providers editing state
+  const [editingGatewayProviders, setEditingGatewayProviders] = useState(false);
+  const [pendingProviders, setPendingProviders] = useState<number[] | null>(null);
+  const [pendingProviderModels, setPendingProviderModels] = useState<Record<number, string[]> | null>(null);
+  const [pendingDefaultModel, setPendingDefaultModel] = useState<string>("");
+
   // Update tab when hash changes
   useEffect(() => {
     const tab = getTabFromHash();
@@ -108,22 +131,6 @@ export default function InstanceDetailPage() {
     if (tab === "terminal") setTerminalActivated(true);
     if (tab === "chrome") setChromeActivated(true);
   }, [location.hash]);
-
-  // Provider enable/disable state
-  const [pendingDisabled, setPendingDisabled] = useState<string[] | null>(null);
-
-  // Default model state
-  const [pendingDefaultModel, setPendingDefaultModel] = useState<string | null>(null);
-
-  // Reset provider state when instance data changes
-  useEffect(() => {
-    setPendingDisabled(null);
-  }, [instance?.models?.disabled_defaults?.join(",")]);
-
-  // Reset default model state when instance data changes
-  useEffect(() => {
-    setPendingDefaultModel(null);
-  }, [instance?.default_model]);
 
   const handleFilesPathChange = (path: string) => {
     const hash = path === "/" ? "files" : `files://${path}`;
@@ -178,46 +185,36 @@ export default function InstanceDetailPage() {
   }
 
   const currentConfig = editedConfig ?? configData?.config ?? "{}";
-  const currentDefaultModel = pendingDefaultModel ?? instance?.default_model ?? "";
-  const currentDisabled = pendingDisabled ?? instance?.models?.disabled_defaults ?? [];
 
   const handleSaveConfig = () => {
+    const toastId = "config-save";
+    toast.custom(
+      createElement(AppToast, { title: "Saving...", status: "loading", toastId }),
+      { id: toastId, duration: Infinity },
+    );
     updateConfigMutation.mutate(
       { id: instanceId, config: currentConfig },
-      { onSuccess: () => setEditedConfig(null) },
+      {
+        onSuccess: () => {
+          setEditedConfig(null);
+          toast.custom(
+            createElement(AppToast, { title: "OpenClaw settings saved", status: "success", toastId }),
+            { id: toastId, duration: 3000 },
+          );
+        },
+        onError: (err: unknown) => {
+          const message = err instanceof Error ? err.message : "Unknown error";
+          toast.custom(
+            createElement(AppToast, { title: "Failed to save settings", description: message, status: "error", toastId }),
+            { id: toastId, duration: 5000 },
+          );
+        },
+      },
     );
   };
 
   const handleResetConfig = () => {
     setEditedConfig(null);
-  };
-
-  const handleSaveKeys = () => {
-    const hasKeyChanges = Object.keys(pendingKeyUpdates).length > 0;
-    const hasProviderChanges = pendingDisabled !== null;
-    const hasDefaultModelChange = pendingDefaultModel !== null;
-    if (!hasKeyChanges && !hasProviderChanges && !hasDefaultModelChange) return;
-    const payload: InstanceUpdatePayload = {};
-    if (hasKeyChanges) {
-      payload.api_keys = pendingKeyUpdates;
-    }
-    if (hasProviderChanges) {
-      payload.models = { disabled: pendingDisabled!, extra: instance!.models.extra ?? [] };
-    }
-    if (hasDefaultModelChange) {
-      payload.default_model = pendingDefaultModel!;
-    }
-    updateMutation.mutate(
-      { id: instanceId, payload },
-      {
-        onSuccess: () => {
-          setEditingKeys(false);
-          setPendingKeyUpdates({});
-          setPendingDisabled(null);
-          setPendingDefaultModel(null);
-        },
-      },
-    );
   };
 
   const handleSaveTimezone = () => {
@@ -246,61 +243,77 @@ export default function InstanceDetailPage() {
     );
   };
 
-  // Compute pending new keys (keys being added that aren't existing overrides)
-  const pendingNewKeys: Record<string, string> = {};
-  for (const [k, v] of Object.entries(pendingKeyUpdates)) {
-    if (v !== null && !instance.api_key_overrides.includes(k)) {
-      pendingNewKeys[k] = v;
+  const handleSaveGatewayProviders = () => {
+    if (pendingProviders === null) return;
+
+    // Collect models from pendingProviderModels with provider prefix.
+    // Skip providers that define their own models via the API — those are pushed
+    // to the container directly from the provider definition, not via models.extra.
+    const providerModels: string[] = [];
+    for (const p of allProviders) {
+      const bareModels = pendingProviderModels?.[p.id] ?? [];
+      for (const m of bareModels) {
+        providerModels.push(`${p.key}/${m}`);
+      }
     }
-  }
 
-  // Compute pending removals
-  const pendingRemovals: Record<string, true> = {};
-  for (const [k, v] of Object.entries(pendingKeyUpdates)) {
-    if (v === null) {
-      pendingRemovals[k] = true;
-    }
-  }
+    // Keep existing extra_models that don't start with any known provider prefix
+    const providerPrefixes = allProviders.map((p) => `${p.key}/`);
+    const nonProviderExtras = (instance!.models.extra ?? []).filter(
+      (m) => !providerPrefixes.some((prefix) => m.startsWith(prefix)),
+    );
 
-  const handleToggleEnabled = (key: string) => {
-    setPendingDisabled((prev) => {
-      const list = prev ?? instance.models.disabled_defaults ?? [];
-      return list.includes(key)
-        ? list.filter((p) => p !== key)
-        : [...list, key];
-    });
-    // If disabling the current default, clear it
-    if (!currentDisabled.includes(key) && currentDefaultModel === key) {
-      setPendingDefaultModel("");
-    }
-  };
+    const mergedModels = [...nonProviderExtras, ...providerModels];
 
-  const handleDefaultModelChange = (key: string) => {
-    setPendingDefaultModel(key);
-  };
+    const toastId = "gw-providers-save";
+    toast.custom(
+      createElement(AppToast, { title: "Saving...", status: "loading", toastId }),
+      { id: toastId, duration: Infinity },
+    );
 
-  const handleAddKey = (key: string, value: string) => {
-    setPendingKeyUpdates((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const handleRemoveKey = (key: string) => {
-    setPendingKeyUpdates((prev) => ({ ...prev, [key]: null }));
-  };
-
-  const handleUndoRemove = (key: string) => {
-    setPendingKeyUpdates((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
-  };
-
-  const handleUndoAdd = (key: string) => {
-    setPendingKeyUpdates((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
+    updateMutation.mutate(
+      {
+        id: instanceId,
+        payload: {
+          enabled_providers: pendingProviders,
+          default_model: pendingDefaultModel,
+          models: {
+            disabled: instance!.models.disabled_defaults ?? [],
+            extra: mergedModels,
+          },
+        },
+      },
+      {
+        onSuccess: () => {
+          setEditingGatewayProviders(false);
+          setPendingProviders(null);
+          setPendingProviderModels(null);
+          setPendingDefaultModel("");
+          toast.custom(
+            createElement(AppToast, {
+              title: "Gateway providers saved",
+              description: "Instance is being configured in the background.",
+              status: "success",
+              toastId,
+            }),
+            { id: toastId, duration: 4000 },
+          );
+        },
+        onError: (err: unknown) => {
+          const message =
+            err instanceof Error ? err.message : "Unknown error";
+          toast.custom(
+            createElement(AppToast, {
+              title: "Failed to save providers",
+              description: message,
+              status: "error",
+              toastId,
+            }),
+            { id: toastId, duration: 5000 },
+          );
+        },
+      },
+    );
   };
 
   const tabs: { key: Tab; label: string }[] = [
@@ -356,8 +369,9 @@ export default function InstanceDetailPage() {
       </div>
 
       {activeTab === "overview" && (
-        <div className="space-y-6">
+        <div className="space-y-8">
           <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <h3 className="text-sm font-medium text-gray-900 mb-4">Instance Details</h3>
             <div className="grid grid-cols-2 gap-y-4 gap-x-8">
               {[
                 { label: "Display Name", value: instance.display_name },
@@ -415,6 +429,126 @@ export default function InstanceDetailPage() {
             </div>
           </div>
 
+          {/* LLM Gateway Providers (admin only) */}
+          {isAdmin && (
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-sm font-medium text-gray-900">Enabled Models</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Pick among available model(s) for the agent.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (editingGatewayProviders) {
+                      setPendingProviders(null);
+                      setPendingProviderModels(null);
+                      setPendingDefaultModel("");
+                    } else {
+                      setPendingProviders(instance.enabled_providers ?? []);
+                      const initialModels: Record<number, string[]> = {};
+                      for (const p of allProviders) {
+                        const prefix = `${p.key}/`;
+                        initialModels[p.id] = (instance.models.extra ?? [])
+                          .filter((m) => m.startsWith(prefix))
+                          .map((m) => m.slice(prefix.length));
+                      }
+                      setPendingProviderModels(initialModels);
+                      setPendingDefaultModel(instance.default_model ?? "");
+                    }
+                    setEditingGatewayProviders(!editingGatewayProviders);
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  {editingGatewayProviders ? "Cancel" : "Edit"}
+                </button>
+              </div>
+
+              {editingGatewayProviders ? (
+                <div className="space-y-4">
+                  {allProviders.length === 0 ? (
+                    <p className="text-sm text-gray-400 italic">No providers defined. Add providers in Settings first.</p>
+                  ) : (
+                    <ProviderModelSelector
+                      providers={allProviders}
+                      catalogDetailMap={catalogDetailMap}
+                      enabledProviders={pendingProviders ?? []}
+                      providerModels={pendingProviderModels ?? {}}
+                      defaultModel={pendingDefaultModel}
+                      onUpdate={(newEnabled, newModels, newDefault) => {
+                        setPendingProviders(newEnabled);
+                        setPendingProviderModels(newModels);
+                        setPendingDefaultModel(newDefault);
+                      }}
+                    />
+                  )}
+                  <div className="flex justify-end pt-2">
+                    <button
+                      onClick={handleSaveGatewayProviders}
+                      disabled={updateMutation.isPending || pendingProviders === null}
+                      className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {updateMutation.isPending ? "Saving..." : "Save"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  {(instance.enabled_providers ?? []).length === 0 ? (
+                    <p className="text-sm text-gray-400 italic">No providers enabled.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {(instance.enabled_providers ?? []).map((pid) => {
+                        const p = allProviders.find((x) => x.id === pid);
+                        if (!p) return null;
+                        const iconKey = p.provider ? catalogDetailMap[p.provider]?.icon_key ?? undefined : undefined;
+                        const displayModels: string[] = p.models.length > 0
+                          ? p.models.map((m) => m.id)
+                          : (instance.models.extra ?? [])
+                              .filter((m) => m.startsWith(`${p.key}/`))
+                              .map((m) => m.slice(`${p.key}/`.length));
+                        return (
+                          <div key={pid} className="bg-white rounded-lg border border-gray-200 px-4 py-3">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
+                                {iconKey ? (
+                                  <ProviderIcon provider={iconKey} size={18} />
+                                ) : (
+                                  <span className="text-xs font-semibold text-gray-500">{p.name[0].toUpperCase()}</span>
+                                )}
+                              </div>
+                              <span className="text-sm font-semibold text-gray-900">{p.name}</span>
+                              {p.api_type && p.api_type !== "openai-completions" && (
+                                <span className="px-1.5 py-0.5 text-xs font-mono text-gray-400 bg-gray-100 rounded">{p.api_type}</span>
+                              )}
+                            </div>
+                            {displayModels.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {displayModels.map((m) => {
+                                  const isPrimary = instance.default_model === `${p.key}/${m}`;
+                                  return (
+                                    <span
+                                      key={m}
+                                      className={`px-2 py-0.5 text-xs rounded font-mono ${isPrimary ? "bg-blue-100 text-blue-700 ring-1 ring-blue-300" : "bg-gray-100 text-gray-600"}`}
+                                    >
+                                      {m}{isPrimary && <span className="ml-1 font-sans not-italic">★</span>}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* SSH Connection Status */}
           <SSHStatus
             status={sshStatus.data}
@@ -437,9 +571,9 @@ export default function InstanceDetailPage() {
                   <h3 className="text-sm font-medium text-gray-900">Connection Events</h3>
                   <button
                     onClick={() => setEventsOpen(false)}
-                    className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+                    className="text-gray-400 hover:text-gray-600"
                   >
-                    &times;
+                    <X size={16} />
                   </button>
                 </div>
                 <div className="overflow-y-auto p-6">
@@ -453,82 +587,24 @@ export default function InstanceDetailPage() {
             </div>
           )}
 
-          {/* API Key Overrides Section */}
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium text-gray-900">
-                API Key Overrides
-              </h3>
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingKeys(!editingKeys);
-                  if (editingKeys) {
-                    setPendingKeyUpdates({});
-                    setPendingDisabled(null);
-                    setPendingDefaultModel(null);
-                  }
-                }}
-                className="text-xs text-blue-600 hover:text-blue-800"
-              >
-                {editingKeys ? "Cancel" : "Edit"}
-              </button>
-            </div>
-
-            <ProviderTable
-              globalApiKeys={settings?.api_keys ?? {}}
-              instanceOverrides={instance.api_key_overrides}
-              disabledProviders={currentDisabled}
-              defaultModel={currentDefaultModel}
-              pendingNewKeys={pendingNewKeys}
-              pendingRemovals={pendingRemovals}
-              onToggleEnabled={handleToggleEnabled}
-              onDefaultModelChange={handleDefaultModelChange}
-              onAddKey={handleAddKey}
-              onRemoveKey={handleRemoveKey}
-              onUndoRemove={handleUndoRemove}
-              onUndoAdd={handleUndoAdd}
-              editable={editingKeys}
-            />
-
-            {editingKeys && (
-              <div className="flex justify-end pt-4">
-                <button
-                  onClick={handleSaveKeys}
-                  disabled={
-                    updateMutation.isPending ||
-                    (Object.keys(pendingKeyUpdates).length === 0 &&
-                      pendingDisabled === null &&
-                      pendingDefaultModel === null)
-                  }
-                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {updateMutation.isPending ? "Saving..." : "Save"}
-                </button>
-              </div>
-            )}
-          </div>
-
           {/* Timezone Override */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-medium text-gray-900">
                 Timezone Override
               </h3>
-              <button
-                type="button"
-                onClick={() => {
-                  if (editingTimezone) {
-                    setPendingTimezone(null);
-                  } else {
+              {!editingTimezone && (
+                <button
+                  type="button"
+                  onClick={() => {
                     setPendingTimezone(instance.timezone ?? "");
-                  }
-                  setEditingTimezone(!editingTimezone);
-                }}
-                className="text-xs text-blue-600 hover:text-blue-800"
-              >
-                {editingTimezone ? "Cancel" : "Edit"}
-              </button>
+                    setEditingTimezone(true);
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  Edit
+                </button>
+              )}
             </div>
 
             {editingTimezone ? (
@@ -538,16 +614,23 @@ export default function InstanceDetailPage() {
                   value={pendingTimezone ?? ""}
                   onChange={(e) => setPendingTimezone(e.target.value)}
                   placeholder="e.g., America/New_York (empty = use global default)"
-                  className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <p className="text-xs text-gray-500">
                   Leave empty to use the global default timezone. Changing timezone requires a container restart to take effect.
                 </p>
-                <div className="flex justify-end">
+                <div className="flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { setEditingTimezone(false); setPendingTimezone(null); }}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
                   <button
                     onClick={handleSaveTimezone}
                     disabled={updateMutation.isPending || pendingTimezone === null}
-                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {updateMutation.isPending ? "Saving..." : "Save"}
                   </button>
@@ -568,20 +651,18 @@ export default function InstanceDetailPage() {
               <h3 className="text-sm font-medium text-gray-900">
                 User-Agent Override
               </h3>
-              <button
-                type="button"
-                onClick={() => {
-                  if (editingUserAgent) {
-                    setPendingUserAgent(null);
-                  } else {
+              {!editingUserAgent && (
+                <button
+                  type="button"
+                  onClick={() => {
                     setPendingUserAgent(instance.user_agent ?? "");
-                  }
-                  setEditingUserAgent(!editingUserAgent);
-                }}
-                className="text-xs text-blue-600 hover:text-blue-800"
-              >
-                {editingUserAgent ? "Cancel" : "Edit"}
-              </button>
+                    setEditingUserAgent(true);
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  Edit
+                </button>
+              )}
             </div>
 
             {editingUserAgent ? (
@@ -591,16 +672,23 @@ export default function InstanceDetailPage() {
                   value={pendingUserAgent ?? ""}
                   onChange={(e) => setPendingUserAgent(e.target.value)}
                   placeholder="Leave empty to use global default or browser built-in"
-                  className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <p className="text-xs text-gray-500">
                   Custom User-Agent string for Chromium. Leave empty to use the global default (or browser built-in if no global default is set). Changing requires a container restart to take effect.
                 </p>
-                <div className="flex justify-end">
+                <div className="flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { setEditingUserAgent(false); setPendingUserAgent(null); }}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
                   <button
                     onClick={handleSaveUserAgent}
                     disabled={updateMutation.isPending || pendingUserAgent === null}
-                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {updateMutation.isPending ? "Saving..." : "Save"}
                   </button>

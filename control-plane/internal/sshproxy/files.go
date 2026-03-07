@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
-
-	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 )
 
 // executeCommand creates a new SSH session, runs cmd, and returns stdout,
@@ -38,13 +36,10 @@ func executeCommand(client *ssh.Client, cmd string) (stdout, stderr string, exit
 	runErr := session.Run(cmd)
 	elapsed := time.Since(start)
 
-	// Log command execution time. Truncate long commands to keep logs readable.
-	cmdLabel := cmd
-	if len(cmdLabel) > 80 {
-		cmdLabel = cmdLabel[:80] + "..."
-	}
+	// Log execution time for slow commands. Command content is intentionally omitted
+	// from the log to prevent leaking sensitive data (e.g. base64-encoded file content).
 	if elapsed > 500*time.Millisecond {
-		log.Printf("[sshfiles] SLOW command (%s): %s", elapsed, cmdLabel)
+		log.Printf("[sshfiles] SLOW command (%s)", elapsed)
 	}
 
 	if runErr != nil {
@@ -55,6 +50,11 @@ func executeCommand(client *ssh.Client, cmd string) (stdout, stderr string, exit
 	}
 
 	return outBuf.String(), errBuf.String(), 0, nil
+}
+
+// RunCommand is the exported equivalent of executeCommand for use outside this package.
+func RunCommand(client *ssh.Client, cmd string) (stdout, stderr string, exitCode int, err error) {
+	return executeCommand(client, cmd)
 }
 
 // executeCommandWithStdin creates a new SSH session, pipes input to the
@@ -95,15 +95,73 @@ func executeCommandWithStdin(client *ssh.Client, cmd string, input []byte) error
 
 	elapsed := time.Since(start)
 	if elapsed > 500*time.Millisecond {
-		log.Printf("[sshfiles] SLOW stdin command (%s, %d bytes): %s", elapsed, len(input), cmd)
+		// Command content is intentionally omitted to prevent leaking sensitive data.
+		log.Printf("[sshfiles] SLOW stdin command (%s, %d bytes)", elapsed, len(input))
 	}
 
 	return nil
 }
 
+// FileEntry represents a single entry returned by ListDirectory.
+type FileEntry struct {
+	Name        string  `json:"name"`
+	Type        string  `json:"type"`
+	Size        *string `json:"size"`
+	Permissions string  `json:"permissions"`
+}
+
+// ParseLsOutput parses the output of `ls -la` into FileEntry slices.
+func ParseLsOutput(output string) []FileEntry {
+	var entries []FileEntry
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) <= 1 {
+		return entries
+	}
+	for _, line := range lines[1:] {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 9 {
+			continue
+		}
+		permissions := parts[0]
+		size := parts[4]
+		entryName := strings.Join(parts[8:], " ")
+
+		if entryName == "." || entryName == ".." {
+			continue
+		}
+
+		isDir := strings.HasPrefix(permissions, "d")
+		isLink := strings.HasPrefix(permissions, "l")
+
+		entryType := "file"
+		if isDir {
+			entryType = "directory"
+		} else if isLink {
+			entryType = "symlink"
+		}
+
+		var sizePtr *string
+		if !isDir {
+			sizePtr = &size
+		}
+
+		entries = append(entries, FileEntry{
+			Name:        entryName,
+			Type:        entryType,
+			Size:        sizePtr,
+			Permissions: permissions,
+		})
+	}
+	return entries
+}
+
 // ListDirectory lists the contents of a remote directory via SSH.
 // It executes `ls -la --color=never` and parses the output into FileEntry structs.
-func ListDirectory(client *ssh.Client, path string) ([]orchestrator.FileEntry, error) {
+func ListDirectory(client *ssh.Client, path string) ([]FileEntry, error) {
 	start := time.Now()
 	stdout, stderr, exitCode, err := executeCommand(client, fmt.Sprintf("ls -la --color=never %s", shellQuote(path)))
 	if err != nil {
@@ -113,7 +171,7 @@ func ListDirectory(client *ssh.Client, path string) ([]orchestrator.FileEntry, e
 		return nil, fmt.Errorf("list directory: %s", strings.TrimSpace(stderr))
 	}
 	log.Printf("[sshfiles] ListDirectory %s completed in %s", path, time.Since(start))
-	return orchestrator.ParseLsOutput(stdout), nil
+	return ParseLsOutput(stdout), nil
 }
 
 // ReadFile reads the contents of a remote file via SSH.
