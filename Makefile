@@ -158,9 +158,7 @@ ssh-file-integration-test:
 	cd tests && npm run test:ssh -- --testPathPattern file.test
 
 test-integration-backend:
-	@# Free port 40001 so TestIntegration_LLMGateway can bind it (e.g. kill the local dev server).
-	@-lsof -ti tcp:40001 | xargs kill -9 2>/dev/null || true
-	cd control-plane && go test -tags docker_integration -v -timeout 600s -count=1 \
+	cd control-plane && CLAWORC_LLM_GATEWAY_PORT=40001 go test -tags docker_integration -v -timeout 600s -count=1 \
 		./internal/handlers/ -run TestIntegration
 
 e2e-docker-tests:

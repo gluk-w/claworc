@@ -76,7 +76,7 @@ func extractGatewayToken(r *http.Request) string {
 }
 
 // authAndResolve validates the gateway token and returns provider info, real API key, and API type.
-func authAndResolve(r *http.Request) (instanceID, providerID uint, baseURL, apiKey, apiType string, err error) {
+func authAndResolve(r *http.Request) (instanceID, providerID uint, providerKey, baseURL, apiKey, apiType string, err error) {
 	token := extractGatewayToken(r)
 	if token == "" {
 		err = fmt.Errorf("missing or invalid gateway auth token")
@@ -91,6 +91,7 @@ func authAndResolve(r *http.Request) (instanceID, providerID uint, baseURL, apiK
 
 	instanceID = key.InstanceID
 	providerID = key.ProviderID
+	providerKey = key.Provider.Key
 	baseURL = strings.TrimRight(key.Provider.BaseURL, "/")
 	apiKey = resolveRealAPIKey(instanceID, key.Provider.Key)
 	apiType = key.Provider.APIType
@@ -128,8 +129,9 @@ func resolveRealAPIKey(instanceID uint, providerKey string) string {
 func handleProxy(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	instanceID, providerID, baseURL, apiKey, apiType, err := authAndResolve(r)
+	instanceID, providerID, providerKey, baseURL, apiKey, apiType, err := authAndResolve(r)
 	if err != nil {
+		log.Printf("[gateway] auth failed: %s path=%s", err, r.URL.Path)
 		http.Error(w, `{"error":{"message":"`+err.Error()+`","type":"authentication_error"}}`, http.StatusUnauthorized)
 		return
 	}
@@ -203,8 +205,10 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{Timeout: 300 * time.Second}
 	resp, err := client.Do(upstreamReq)
 	if err != nil {
+		latencyMs := time.Since(start).Milliseconds()
 		http.Error(w, `{"error":{"message":"upstream request failed"}}`, http.StatusBadGateway)
-		logRequest(instanceID, providerID, reqBody.Model, 0, 0, http.StatusBadGateway, time.Since(start).Milliseconds(), err.Error())
+		logRequest(instanceID, providerID, reqBody.Model, 0, 0, http.StatusBadGateway, latencyMs, err.Error())
+		logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, http.StatusBadGateway, latencyMs, err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -221,7 +225,9 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	if isStreaming {
 		// Stream response directly — no buffering
 		io.Copy(w, resp.Body)
-		logRequest(instanceID, providerID, reqBody.Model, 0, 0, resp.StatusCode, time.Since(start).Milliseconds(), "")
+		latencyMs := time.Since(start).Milliseconds()
+		logRequest(instanceID, providerID, reqBody.Model, 0, 0, resp.StatusCode, latencyMs, "")
+		logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, resp.StatusCode, latencyMs, "")
 	} else {
 		// Buffer response to extract token counts
 		respBody, readErr := io.ReadAll(resp.Body)
@@ -258,7 +264,20 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		logRequest(instanceID, providerID, reqBody.Model, inputTokens, outputTokens, resp.StatusCode, time.Since(start).Milliseconds(), errMsg)
+		latencyMs := time.Since(start).Milliseconds()
+		logRequest(instanceID, providerID, reqBody.Model, inputTokens, outputTokens, resp.StatusCode, latencyMs, errMsg)
+		logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, resp.StatusCode, latencyMs, errMsg)
+	}
+}
+
+// logLine emits a structured access log line to stdout for each proxied request.
+func logLine(instanceID uint, providerKey, model, path string, statusCode int, latencyMs int64, errMsg string) {
+	if errMsg != "" {
+		log.Printf("[gateway] instance=%d provider=%s model=%s path=%s status=%d latency=%dms error=%s",
+			instanceID, providerKey, model, path, statusCode, latencyMs, errMsg)
+	} else {
+		log.Printf("[gateway] instance=%d provider=%s model=%s path=%s status=%d latency=%dms",
+			instanceID, providerKey, model, path, statusCode, latencyMs)
 	}
 }
 

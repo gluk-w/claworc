@@ -51,6 +51,7 @@ export default function InstanceForm({
   // Gateway providers + model selection
   const [enabledProviders, setEnabledProviders] = useState<number[]>([]);
   const [providerModels, setProviderModels] = useState<Record<number, string[]>>({});
+  const [defaultModel, setDefaultModel] = useState<string>("");
 
   // Brave key
   const [braveKey, setBraveKey] = useState("");
@@ -89,6 +90,9 @@ export default function InstanceForm({
     }
     if (extraModels.length > 0) {
       payload.models = { disabled: [], extra: extraModels };
+    }
+    if (defaultModel) {
+      payload.default_model = defaultModel;
     }
 
     onSubmit(payload);
@@ -183,9 +187,11 @@ export default function InstanceForm({
             catalogDetailMap={catalogDetailMap}
             enabledProviders={enabledProviders}
             providerModels={providerModels}
-            onUpdate={(newEnabled, newModels) => {
+            defaultModel={defaultModel}
+            onUpdate={(newEnabled, newModels, newDefault) => {
               setEnabledProviders(newEnabled);
               setProviderModels(newModels);
+              setDefaultModel(newDefault);
             }}
           />
         )}

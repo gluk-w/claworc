@@ -122,6 +122,7 @@ export default function InstanceDetailPage() {
   const [editingGatewayProviders, setEditingGatewayProviders] = useState(false);
   const [pendingProviders, setPendingProviders] = useState<number[] | null>(null);
   const [pendingProviderModels, setPendingProviderModels] = useState<Record<number, string[]> | null>(null);
+  const [pendingDefaultModel, setPendingDefaultModel] = useState<string>("");
 
   // Update tab when hash changes
   useEffect(() => {
@@ -275,6 +276,7 @@ export default function InstanceDetailPage() {
         id: instanceId,
         payload: {
           enabled_providers: pendingProviders,
+          default_model: pendingDefaultModel,
           models: {
             disabled: instance!.models.disabled_defaults ?? [],
             extra: mergedModels,
@@ -286,6 +288,7 @@ export default function InstanceDetailPage() {
           setEditingGatewayProviders(false);
           setPendingProviders(null);
           setPendingProviderModels(null);
+          setPendingDefaultModel("");
           toast.custom(
             createElement(AppToast, {
               title: "Gateway providers saved",
@@ -442,6 +445,7 @@ export default function InstanceDetailPage() {
                     if (editingGatewayProviders) {
                       setPendingProviders(null);
                       setPendingProviderModels(null);
+                      setPendingDefaultModel("");
                     } else {
                       setPendingProviders(instance.enabled_providers ?? []);
                       const initialModels: Record<number, string[]> = {};
@@ -452,6 +456,7 @@ export default function InstanceDetailPage() {
                           .map((m) => m.slice(prefix.length));
                       }
                       setPendingProviderModels(initialModels);
+                      setPendingDefaultModel(instance.default_model ?? "");
                     }
                     setEditingGatewayProviders(!editingGatewayProviders);
                   }}
@@ -471,9 +476,11 @@ export default function InstanceDetailPage() {
                       catalogDetailMap={catalogDetailMap}
                       enabledProviders={pendingProviders ?? []}
                       providerModels={pendingProviderModels ?? {}}
-                      onUpdate={(newEnabled, newModels) => {
+                      defaultModel={pendingDefaultModel}
+                      onUpdate={(newEnabled, newModels, newDefault) => {
                         setPendingProviders(newEnabled);
                         setPendingProviderModels(newModels);
+                        setPendingDefaultModel(newDefault);
                       }}
                     />
                   )}

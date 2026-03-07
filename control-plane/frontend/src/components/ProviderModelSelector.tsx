@@ -9,7 +9,8 @@ interface Props {
   catalogDetailMap: Record<string, CatalogProviderDetail>;
   enabledProviders: number[];
   providerModels: Record<number, string[]>;
-  onUpdate: (enabledProviders: number[], providerModels: Record<number, string[]>) => void;
+  defaultModel: string;
+  onUpdate: (enabledProviders: number[], providerModels: Record<number, string[]>, defaultModel: string) => void;
 }
 
 interface ModelEntry {
@@ -30,6 +31,7 @@ export default function ProviderModelSelector({
   catalogDetailMap,
   enabledProviders,
   providerModels,
+  defaultModel,
   onUpdate,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -56,7 +58,8 @@ export default function ProviderModelSelector({
     } else if (next.length === 0 && newEnabled.includes(p.id)) {
       newEnabled = newEnabled.filter((id) => id !== p.id);
     }
-    onUpdate(newEnabled, newProviderModels);
+    const newDefault = defaultModel === `${p.key}/${modelId}` && !next.includes(modelId) ? "" : defaultModel;
+    onUpdate(newEnabled, newProviderModels, newDefault);
   };
 
   const handleSelectAll = (p: LLMProvider, availableModels: ModelEntry[]) => {
@@ -65,21 +68,29 @@ export default function ProviderModelSelector({
     const newEnabled = enabledProviders.includes(p.id)
       ? enabledProviders
       : [...enabledProviders, p.id];
-    onUpdate(newEnabled, newProviderModels);
+    onUpdate(newEnabled, newProviderModels, defaultModel);
   };
 
   const handleDeselectAll = (p: LLMProvider) => {
     const newProviderModels = { ...providerModels, [p.id]: [] };
     const newEnabled = enabledProviders.filter((id) => id !== p.id);
-    onUpdate(newEnabled, newProviderModels);
+    const newDefault = defaultModel.startsWith(`${p.key}/`) ? "" : defaultModel;
+    onUpdate(newEnabled, newProviderModels, newDefault);
   };
 
   const handleDynamicToggle = (p: LLMProvider) => {
     const newEnabled = enabledProviders.includes(p.id)
       ? enabledProviders.filter((id) => id !== p.id)
       : [...enabledProviders, p.id];
-    onUpdate(newEnabled, providerModels);
+    onUpdate(newEnabled, providerModels, defaultModel);
   };
+
+  const allSelectedModels = providers.flatMap((p) =>
+    (providerModels[p.id] ?? []).map((mid) => ({
+      value: `${p.key}/${mid}`,
+      label: `${p.key}/${mid}`,
+    }))
+  );
 
   return (
     <div className="space-y-2">
@@ -228,6 +239,22 @@ export default function ProviderModelSelector({
           </div>
         );
       })}
+
+      {allSelectedModels.length > 0 && (
+        <div className="pt-3 mt-1 border-t border-gray-200">
+          <label className="block text-xs font-medium text-gray-700 mb-1.5">Default model</label>
+          <select
+            value={defaultModel}
+            onChange={(e) => onUpdate(enabledProviders, providerModels, e.target.value)}
+            className="w-full text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+          >
+            <option value="">No default (use system order)</option>
+            {allSelectedModels.map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+        </div>
+      )}
     </div>
   );
 }

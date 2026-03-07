@@ -76,19 +76,20 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 		log.Fatalf("create admin user: %v", err)
 	}
 
-	// Try 40001 first: agent sshd has PermitListen 127.0.0.1:40001.
-	// A random port causes the LLMProxy tunnel to fail with "tcpip-forward request denied".
-	ln, err := net.Listen("tcp", "127.0.0.1:40001")
-	if err != nil {
-		log.Printf("Warning: port 40001 unavailable (%v); using random port — LLMProxy tunnel and gateway test will be skipped", err)
-		ln, err = net.Listen("tcp", "127.0.0.1:0")
+	// If CLAWORC_LLM_GATEWAY_PORT is explicitly set (e.g. 40001 from Makefile), use it as-is.
+	// Otherwise pick a random free port so tests don't conflict with the local dev server.
+	var gatewayPort int
+	if os.Getenv("CLAWORC_LLM_GATEWAY_PORT") != "" {
+		gatewayPort = config.Cfg.LLMGatewayPort
+	} else {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			log.Fatalf("find free gateway port: %v", err)
 		}
+		gatewayPort = ln.Addr().(*net.TCPAddr).Port
+		ln.Close()
+		config.Cfg.LLMGatewayPort = gatewayPort
 	}
-	gatewayPort := ln.Addr().(*net.TCPAddr).Port
-	ln.Close()
-	config.Cfg.LLMGatewayPort = gatewayPort
 
 	sshSigner, sshPublicKey, err := sshproxy.EnsureKeyPair(dataDir)
 	if err != nil {
