@@ -198,34 +198,6 @@ func buildUpstreamRequest(ctx context.Context, method, targetURL string, body []
 	return req, nil
 }
 
-// parseUsage extracts token counts from a provider response body.
-// Supports OpenAI, Anthropic, and Google formats — only one set of fields will be non-zero.
-func parseUsage(respBody []byte) (inputTokens, outputTokens, cachedInputTokens int) {
-	var u struct {
-		Usage struct {
-			PromptTokens        int `json:"prompt_tokens"`
-			CompletionTokens    int `json:"completion_tokens"`
-			PromptTokensDetails struct {
-				CachedTokens int `json:"cached_tokens"`
-			} `json:"prompt_tokens_details"`
-			InputTokens          int `json:"input_tokens"`
-			OutputTokens         int `json:"output_tokens"`
-			CacheReadInputTokens int `json:"cache_read_input_tokens"`
-		} `json:"usage"`
-		UsageMetadata struct {
-			PromptTokenCount        int `json:"promptTokenCount"`
-			CandidatesTokenCount    int `json:"candidatesTokenCount"`
-			CachedContentTokenCount int `json:"cachedContentTokenCount"`
-		} `json:"usageMetadata"`
-	}
-	if json.Unmarshal(respBody, &u) == nil {
-		inputTokens = u.Usage.PromptTokens + u.Usage.InputTokens + u.UsageMetadata.PromptTokenCount
-		outputTokens = u.Usage.CompletionTokens + u.Usage.OutputTokens + u.UsageMetadata.CandidatesTokenCount
-		cachedInputTokens = u.Usage.PromptTokensDetails.CachedTokens + u.Usage.CacheReadInputTokens + u.UsageMetadata.CachedContentTokenCount
-	}
-	return
-}
-
 // calculateCost computes the USD cost of a request given token counts and the provider model config.
 // Returns 0 if no cost config is found for the model.
 func calculateCost(models []database.ProviderModel, modelID string, inputTokens, outputTokens, cachedInputTokens int) float64 {
@@ -299,14 +271,27 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 
+	inputTokens, outputTokens, cachedInputTokens, costUSD, errMsg := processResponse(w, resp.Body, isStreaming, apiType, resp.StatusCode, providerModels, reqBody.Model)
+	latencyMs := time.Since(start).Milliseconds()
+	logRequest(instanceID, providerID, reqBody.Model, inputTokens, outputTokens, cachedInputTokens, costUSD, resp.StatusCode, latencyMs, errMsg)
+	logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, resp.StatusCode, latencyMs, errMsg)
+}
+
+// processResponse streams or buffers the upstream response body to w, parses token usage,
+// and returns metrics for logging. For streaming responses each chunk is forwarded immediately
+// while also being captured for post-stream token parsing. For non-streaming responses the
+// body is buffered, written to w, then parsed.
+func processResponse(w http.ResponseWriter, body io.Reader, isStreaming bool, apiType string, statusCode int, providerModels []database.ProviderModel, model string) (inputTokens, outputTokens, cachedInputTokens int, costUSD float64, errMsg string) {
+	var captured []byte
 	if isStreaming {
-		// Flush each chunk immediately so the client receives SSE events in real time.
 		flusher, canFlush := w.(http.Flusher)
 		buf := make([]byte, 4096)
+		var capBuf bytes.Buffer
 		for {
-			n, err := resp.Body.Read(buf)
+			n, err := body.Read(buf)
 			if n > 0 {
 				w.Write(buf[:n])
+				capBuf.Write(buf[:n])
 				if canFlush {
 					flusher.Flush()
 				}
@@ -315,32 +300,24 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		latencyMs := time.Since(start).Milliseconds()
-		logRequest(instanceID, providerID, reqBody.Model, 0, 0, 0, 0, resp.StatusCode, latencyMs, "")
-		logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, resp.StatusCode, latencyMs, "")
+		captured = capBuf.Bytes()
 	} else {
-		// Buffer response to extract token counts
-		respBody, readErr := io.ReadAll(resp.Body)
-		if readErr == nil {
-			w.Write(respBody)
+		var readErr error
+		captured, readErr = io.ReadAll(body)
+		if readErr != nil {
+			return
 		}
-		var inputTokens, outputTokens, cachedInputTokens int
-		var costUSD float64
-		var errMsg string
-		if readErr == nil {
-			inputTokens, outputTokens, cachedInputTokens = parseUsage(respBody)
-			costUSD = calculateCost(providerModels, reqBody.Model, inputTokens, outputTokens, cachedInputTokens)
-			if resp.StatusCode >= 400 {
-				errMsg = string(respBody)
-				if len(errMsg) > 500 {
-					errMsg = errMsg[:500]
-				}
-			}
-		}
-		latencyMs := time.Since(start).Milliseconds()
-		logRequest(instanceID, providerID, reqBody.Model, inputTokens, outputTokens, cachedInputTokens, costUSD, resp.StatusCode, latencyMs, errMsg)
-		logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, resp.StatusCode, latencyMs, errMsg)
+		w.Write(captured)
 	}
+	inputTokens, outputTokens, cachedInputTokens = parseProxyUsage(captured, apiType, isStreaming)
+	costUSD = calculateCost(providerModels, model, inputTokens, outputTokens, cachedInputTokens)
+	if statusCode >= 400 {
+		errMsg = string(captured)
+		if len(errMsg) > 500 {
+			errMsg = errMsg[:500]
+		}
+	}
+	return
 }
 
 // logLine emits a structured access log line to stdout for each proxied request.

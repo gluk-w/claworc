@@ -403,6 +403,286 @@ func DeleteProvider(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ---------------------------------------------------------------------------
+// Usage stats aggregation
+// ---------------------------------------------------------------------------
+
+type InstanceUsageStat struct {
+	InstanceID          uint    `json:"instance_id"`
+	InstanceName        string  `json:"instance_name"`
+	InstanceDisplayName string  `json:"instance_display_name"`
+	TotalRequests       int     `json:"total_requests"`
+	InputTokens         int64   `json:"input_tokens"`
+	CachedInputTokens   int64   `json:"cached_input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CostUSD             float64 `json:"cost_usd"`
+}
+
+type ProviderUsageStat struct {
+	ProviderID        uint    `json:"provider_id"`
+	ProviderKey       string  `json:"provider_key"`
+	ProviderName      string  `json:"provider_name"`
+	TotalRequests     int     `json:"total_requests"`
+	InputTokens       int64   `json:"input_tokens"`
+	CachedInputTokens int64   `json:"cached_input_tokens"`
+	OutputTokens      int64   `json:"output_tokens"`
+	CostUSD           float64 `json:"cost_usd"`
+}
+
+type ModelUsageStat struct {
+	ModelID           string  `json:"model_id"`
+	ProviderID        uint    `json:"provider_id"`
+	ProviderKey       string  `json:"provider_key"`
+	TotalRequests     int     `json:"total_requests"`
+	InputTokens       int64   `json:"input_tokens"`
+	CachedInputTokens int64   `json:"cached_input_tokens"`
+	OutputTokens      int64   `json:"output_tokens"`
+	CostUSD           float64 `json:"cost_usd"`
+}
+
+type UsageTimePoint struct {
+	Date              string  `json:"date"`
+	TotalRequests     int     `json:"total_requests"`
+	InputTokens       int64   `json:"input_tokens"`
+	CachedInputTokens int64   `json:"cached_input_tokens"`
+	OutputTokens      int64   `json:"output_tokens"`
+	CostUSD           float64 `json:"cost_usd"`
+}
+
+type UsageTotals struct {
+	TotalRequests     int     `json:"total_requests"`
+	InputTokens       int64   `json:"input_tokens"`
+	CachedInputTokens int64   `json:"cached_input_tokens"`
+	OutputTokens      int64   `json:"output_tokens"`
+	CostUSD           float64 `json:"cost_usd"`
+}
+
+type UsageInstanceInfo struct {
+	ID          uint   `json:"id"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+}
+
+type UsageProviderInfo struct {
+	ID   uint   `json:"id"`
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
+
+type UsageStatsResponse struct {
+	ByInstance []InstanceUsageStat `json:"by_instance"`
+	ByProvider []ProviderUsageStat `json:"by_provider"`
+	ByModel    []ModelUsageStat    `json:"by_model"`
+	TimeSeries []UsageTimePoint    `json:"time_series"`
+	Total      UsageTotals         `json:"total"`
+	Instances  []UsageInstanceInfo `json:"instances"`
+	Providers  []UsageProviderInfo `json:"providers"`
+}
+
+func GetUsageStats(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	now := time.Now().UTC()
+	startDate := now.AddDate(0, 0, -30).Format("2006-01-02")
+	endDate := now.Format("2006-01-02")
+	if v := q.Get("start_date"); v != "" {
+		startDate = v
+	}
+	if v := q.Get("end_date"); v != "" {
+		endDate = v
+	}
+	// Make end inclusive by appending end of day
+	startTime := startDate + " 00:00:00"
+	endTime := endDate + " 23:59:59"
+
+	// Build optional filters
+	var instanceFilter *uint
+	var providerFilter *uint
+	if v := q.Get("instance_id"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 64); err == nil {
+			uid := uint(id)
+			instanceFilter = &uid
+		}
+	}
+	if v := q.Get("provider_id"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 64); err == nil {
+			uid := uint(id)
+			providerFilter = &uid
+		}
+	}
+
+	// Build base WHERE clause
+	baseWhere := "requested_at >= ? AND requested_at <= ?"
+	baseArgs := []interface{}{startTime, endTime}
+	if instanceFilter != nil {
+		baseWhere += " AND instance_id = ?"
+		baseArgs = append(baseArgs, *instanceFilter)
+	}
+	if providerFilter != nil {
+		baseWhere += " AND provider_id = ?"
+		baseArgs = append(baseArgs, *providerFilter)
+	}
+
+	// by_instance
+	type instRow struct {
+		InstanceID        uint
+		TotalRequests     int
+		InputTokens       int64
+		CachedInputTokens int64
+		OutputTokens      int64
+		CostUSD           float64
+	}
+	var instRows []instRow
+	database.LogsDB.Raw(
+		"SELECT instance_id, COUNT(*) total_requests, SUM(input_tokens) input_tokens, SUM(cached_input_tokens) cached_input_tokens, SUM(output_tokens) output_tokens, SUM(cost_usd) cost_usd FROM llm_request_logs WHERE "+baseWhere+" GROUP BY instance_id ORDER BY cost_usd DESC",
+		baseArgs...,
+	).Scan(&instRows)
+
+	// by_provider
+	type provRow struct {
+		ProviderID        uint
+		TotalRequests     int
+		InputTokens       int64
+		CachedInputTokens int64
+		OutputTokens      int64
+		CostUSD           float64
+	}
+	var provRows []provRow
+	database.LogsDB.Raw(
+		"SELECT provider_id, COUNT(*) total_requests, SUM(input_tokens) input_tokens, SUM(cached_input_tokens) cached_input_tokens, SUM(output_tokens) output_tokens, SUM(cost_usd) cost_usd FROM llm_request_logs WHERE "+baseWhere+" GROUP BY provider_id ORDER BY cost_usd DESC",
+		baseArgs...,
+	).Scan(&provRows)
+
+	// by_model
+	type modelRow struct {
+		ModelID           string
+		ProviderID        uint
+		TotalRequests     int
+		InputTokens       int64
+		CachedInputTokens int64
+		OutputTokens      int64
+		CostUSD           float64
+	}
+	var modelRows []modelRow
+	database.LogsDB.Raw(
+		"SELECT model_id, provider_id, COUNT(*) total_requests, SUM(input_tokens) input_tokens, SUM(cached_input_tokens) cached_input_tokens, SUM(output_tokens) output_tokens, SUM(cost_usd) cost_usd FROM llm_request_logs WHERE "+baseWhere+" GROUP BY model_id, provider_id ORDER BY cost_usd DESC",
+		baseArgs...,
+	).Scan(&modelRows)
+
+	// time_series
+	type tsRow struct {
+		Date              string
+		TotalRequests     int
+		InputTokens       int64
+		CachedInputTokens int64
+		OutputTokens      int64
+		CostUSD           float64
+	}
+	var tsRows []tsRow
+	database.LogsDB.Raw(
+		"SELECT strftime('%Y-%m-%d', requested_at) date, COUNT(*) total_requests, SUM(input_tokens) input_tokens, SUM(cached_input_tokens) cached_input_tokens, SUM(output_tokens) output_tokens, SUM(cost_usd) cost_usd FROM llm_request_logs WHERE "+baseWhere+" GROUP BY strftime('%Y-%m-%d', requested_at) ORDER BY date ASC",
+		baseArgs...,
+	).Scan(&tsRows)
+
+	// Load instance name map from main DB
+	var instances []database.Instance
+	database.DB.Select("id, name, display_name").Find(&instances)
+	type instInfo struct{ Name, DisplayName string }
+	instInfoMap := map[uint]instInfo{}
+	for _, inst := range instances {
+		instInfoMap[inst.ID] = instInfo{Name: inst.Name, DisplayName: inst.DisplayName}
+	}
+
+	// Load provider key/name map from main DB
+	var providers []database.LLMProvider
+	database.DB.Select("id, key, name").Find(&providers)
+	provInfoMap := map[uint]struct{ Key, Name string }{}
+	for _, p := range providers {
+		provInfoMap[p.ID] = struct{ Key, Name string }{p.Key, p.Name}
+	}
+
+	// Build response
+	resp := UsageStatsResponse{
+		ByInstance: make([]InstanceUsageStat, len(instRows)),
+		ByProvider: make([]ProviderUsageStat, len(provRows)),
+		ByModel:    make([]ModelUsageStat, len(modelRows)),
+		TimeSeries: make([]UsageTimePoint, len(tsRows)),
+		Instances:  make([]UsageInstanceInfo, len(instances)),
+		Providers:  make([]UsageProviderInfo, len(providers)),
+	}
+
+	for i, row := range instRows {
+		ii := instInfoMap[row.InstanceID]
+		resp.ByInstance[i] = InstanceUsageStat{
+			InstanceID:          row.InstanceID,
+			InstanceName:        ii.Name,
+			InstanceDisplayName: ii.DisplayName,
+			TotalRequests:       row.TotalRequests,
+			InputTokens:         row.InputTokens,
+			CachedInputTokens:   row.CachedInputTokens,
+			OutputTokens:        row.OutputTokens,
+			CostUSD:             row.CostUSD,
+		}
+		resp.Total.TotalRequests += row.TotalRequests
+		resp.Total.InputTokens += row.InputTokens
+		resp.Total.CachedInputTokens += row.CachedInputTokens
+		resp.Total.OutputTokens += row.OutputTokens
+		resp.Total.CostUSD += row.CostUSD
+	}
+
+	for i, row := range provRows {
+		info := provInfoMap[row.ProviderID]
+		resp.ByProvider[i] = ProviderUsageStat{
+			ProviderID:        row.ProviderID,
+			ProviderKey:       info.Key,
+			ProviderName:      info.Name,
+			TotalRequests:     row.TotalRequests,
+			InputTokens:       row.InputTokens,
+			CachedInputTokens: row.CachedInputTokens,
+			OutputTokens:      row.OutputTokens,
+			CostUSD:           row.CostUSD,
+		}
+	}
+
+	for i, row := range modelRows {
+		info := provInfoMap[row.ProviderID]
+		resp.ByModel[i] = ModelUsageStat{
+			ModelID:           row.ModelID,
+			ProviderID:        row.ProviderID,
+			ProviderKey:       info.Key,
+			TotalRequests:     row.TotalRequests,
+			InputTokens:       row.InputTokens,
+			CachedInputTokens: row.CachedInputTokens,
+			OutputTokens:      row.OutputTokens,
+			CostUSD:           row.CostUSD,
+		}
+	}
+
+	for i, row := range tsRows {
+		resp.TimeSeries[i] = UsageTimePoint{
+			Date:              row.Date,
+			TotalRequests:     row.TotalRequests,
+			InputTokens:       row.InputTokens,
+			CachedInputTokens: row.CachedInputTokens,
+			OutputTokens:      row.OutputTokens,
+			CostUSD:           row.CostUSD,
+		}
+	}
+
+	for i, inst := range instances {
+		resp.Instances[i] = UsageInstanceInfo{ID: inst.ID, Name: inst.Name, DisplayName: inst.DisplayName}
+	}
+	for i, p := range providers {
+		resp.Providers[i] = UsageProviderInfo{ID: p.ID, Key: p.Key, Name: p.Name}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func ResetUsageLogs(w http.ResponseWriter, r *http.Request) {
+	database.LogsDB.Exec("DELETE FROM llm_request_logs")
+	w.WriteHeader(http.StatusNoContent)
+}
+
 type usageLogResponse struct {
 	ID                uint    `json:"id"`
 	InstanceID        uint    `json:"instance_id"`

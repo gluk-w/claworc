@@ -1,6 +1,18 @@
 The dev server `http://localhost:5173` proxies `/api` and `/health` to `http://127.0.0.1:8000` (the Go backend).
 
-## Toasts
+## User Interface
+
+Follow `Style Guide` (`../../docs/style-guide.md`) guidelines.
+
+## User Experience rules
+
+### Popups
+
+Ensure standard keyboard keys are always enabled for popup windows:
+- **Enter** acts like a default CTA like Save or Send
+- **Esc** closes a popup without saving anything similarly to Cancel button
+
+### Toasts
 
 All toasts use `AppToast` (`src/components/AppToast.tsx`) as the single toast component. It accepts `title`, optional `description`, `status` (`"success" | "error" | "info" | "loading"`), and `toastId`.
 

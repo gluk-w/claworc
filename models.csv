@@ -2,7 +2,7 @@ provider_key,provider_label,icon_key,api_format,base_url,model_id,model_name,rea
 bedrock,Amazon Bedrock,bedrock,bedrock-converse-stream,https://bedrock-runtime.us-east-1.amazonaws.com,us.anthropic.claude-opus-4-6-v1:0,Claude Opus 4.6 (Bedrock),TRUE,TRUE,200000,128000,,,,,,
 anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-opus-4-6,Claude Opus 4.6,TRUE,TRUE,200000,128000,5,25,,,flagship,Most capable — deep reasoning, complex tasks
 anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-sonnet-4-6,Claude Sonnet 4.6,TRUE,TRUE,200000,64000,3,15,,,balanced,Fast & capable — ideal default
-anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-haiku-4-6,Claude Haiku 4.5,TRUE,TRUE,200000,64000,1,5,,,speed,Fastest responses — high-volume, low-latency
+anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-haiku-4-5,Claude Haiku 4.5,TRUE,TRUE,200000,64000,1,5,,,speed,Fastest responses — high-volume, low-latency
 openai,OpenAI,openai,openai-responses,https://api.openai.com/,gpt-5.2,GPT-5.2,TRUE,TRUE,400000,128000,1.75,14,0.175,
 openai,OpenAI,openai,openai-responses,https://api.openai.com/,gpt-5-mini,GPT-5 mini,TRUE,TRUE,400000,128000,0.25,2,0.025,
 openai,OpenAI,openai,openai-responses,https://api.openai.com/,gpt-5-nano,GPT-5 nano,TRUE,TRUE,400000,128000,0.05,0.4,0.005,
