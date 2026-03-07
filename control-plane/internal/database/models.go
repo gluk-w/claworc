@@ -1,6 +1,9 @@
 package database
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type Instance struct {
 	ID               uint      `gorm:"primaryKey;autoIncrement" json:"id"`
@@ -31,6 +34,25 @@ type Instance struct {
 	APIKeys []InstanceAPIKey `gorm:"foreignKey:InstanceID" json:"-"`
 }
 
+// ProviderModel represents a model entry in the OpenClaw provider config.
+type ProviderModel struct {
+	ID            string             `json:"id"`
+	Name          string             `json:"name"`
+	Reasoning     bool               `json:"reasoning,omitempty"`
+	Input         []string           `json:"input,omitempty"`
+	ContextWindow *int               `json:"contextWindow,omitempty"`
+	MaxTokens     *int               `json:"maxTokens,omitempty"`
+	Cost          *ProviderModelCost `json:"cost,omitempty"`
+}
+
+// ProviderModelCost holds per-token cost information.
+type ProviderModelCost struct {
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cacheRead"`
+	CacheWrite float64 `json:"cacheWrite"`
+}
+
 // LLMProvider is admin-defined LLM provider config.
 // All providers are accessed via OpenAI-compat base URLs through the internal LLM gateway.
 type LLMProvider struct {
@@ -39,17 +61,32 @@ type LLMProvider struct {
 	Provider  string    `gorm:"size:100" json:"provider"`                 // catalog provider key, empty for custom
 	Name      string    `gorm:"not null" json:"name"`                     // display name
 	BaseURL   string    `gorm:"not null" json:"base_url"`                 // OpenAI-compat base URL for this provider
+	APIType   string    `gorm:"size:100;default:'openai-completions'" json:"api_type"`
+	Models    string    `gorm:"type:text;default:'[]'" json:"-"` // JSON []ProviderModel
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
+// ParseProviderModels deserializes the raw JSON models field.
+func ParseProviderModels(raw string) []ProviderModel {
+	if raw == "" || raw == "[]" {
+		return []ProviderModel{}
+	}
+	var models []ProviderModel
+	json.Unmarshal([]byte(raw), &models)
+	if models == nil {
+		return []ProviderModel{}
+	}
+	return models
+}
+
 // LLMGatewayKey is a per-instance per-provider auth key issued to OpenClaw instances.
-// OpenClaw uses this as the Bearer token when calling the internal LLM gateway.
+// OpenClaw uses this as the gateway auth token when calling the internal LLM gateway.
 type LLMGatewayKey struct {
 	ID         uint        `gorm:"primaryKey;autoIncrement"`
 	InstanceID uint        `gorm:"not null;uniqueIndex:idx_lgk_inst_prov"`
 	ProviderID uint        `gorm:"not null;uniqueIndex:idx_lgk_inst_prov"` // FK → LLMProvider.ID
-	GatewayKey string      `gorm:"not null;uniqueIndex"`                   // "sk-gw-<random>"
+	GatewayKey string      `gorm:"not null;uniqueIndex"`                   // "claworc-vk-<random>"
 	Provider   LLMProvider `gorm:"foreignKey:ProviderID"`
 }
 

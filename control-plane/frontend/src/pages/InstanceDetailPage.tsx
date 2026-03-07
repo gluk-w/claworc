@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, createElement } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import StatusBadge from "@/components/StatusBadge";
-import ModelListEditor from "@/components/ModelListEditor";
 import ActionButtons from "@/components/ActionButtons";
 import MonacoConfigEditor from "@/components/MonacoConfigEditor";
 import LogViewer from "@/components/LogViewer";
@@ -27,10 +26,13 @@ import {
   useRestartedToast,
 } from "@/hooks/useInstances";
 import { useProviders } from "@/hooks/useProviders";
+import { useQueries } from "@tanstack/react-query";
+import { fetchCatalogProviderDetail } from "@/api/llm";
+import type { CatalogProviderDetail } from "@/api/llm";
 import ProviderIcon from "@/components/ProviderIcon";
+import ProviderModelSelector from "@/components/ProviderModelSelector";
 import AppToast from "@/components/AppToast";
 import toast from "react-hot-toast";
-import { MODEL_CATALOG } from "@/data/model-catalog";
 import { useSSHStatus, useSSHEvents } from "@/hooks/useSSHStatus";
 import { useInstanceLogs } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
@@ -50,6 +52,21 @@ export default function InstanceDetailPage() {
   const { isAdmin } = useAuth();
   const { data: instance, isLoading } = useInstance(instanceId);
   const { data: allProviders = [] } = useProviders();
+
+  // Fetch catalog model lists for all catalog providers (used in edit mode)
+  const catalogKeys = [...new Set(allProviders.filter((p) => p.provider).map((p) => p.provider))];
+  const catalogDetailResults = useQueries({
+    queries: catalogKeys.map((key) => ({
+      queryKey: ["catalog-provider", key],
+      queryFn: () => fetchCatalogProviderDetail(key),
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+  const catalogDetailMap: Record<string, CatalogProviderDetail> = {};
+  catalogKeys.forEach((key, i) => {
+    if (catalogDetailResults[i]?.data) catalogDetailMap[key] = catalogDetailResults[i].data!;
+  });
+
   useRestartedToast(instance ? [instance] : undefined);
   const { data: configData } = useInstanceConfig(instanceId, instance?.status === "running");
   const sshStatus = useSSHStatus(instanceId, instance?.status === "running");
@@ -93,10 +110,6 @@ export default function InstanceDetailPage() {
   // SSH events modal
   const [eventsOpen, setEventsOpen] = useState(false);
 
-  // Extra models editing state
-  const [editingExtraModels, setEditingExtraModels] = useState(false);
-  const [pendingExtraModels, setPendingExtraModels] = useState<string[] | null>(null);
-
   // Timezone override editing state
   const [editingTimezone, setEditingTimezone] = useState(false);
   const [pendingTimezone, setPendingTimezone] = useState<string | null>(null);
@@ -109,6 +122,7 @@ export default function InstanceDetailPage() {
   const [editingGatewayProviders, setEditingGatewayProviders] = useState(false);
   const [pendingProviders, setPendingProviders] = useState<number[] | null>(null);
   const [pendingProviderModels, setPendingProviderModels] = useState<Record<number, string[]> | null>(null);
+  const [pendingDefaultModel, setPendingDefaultModel] = useState<string | null>(null);
 
   // Update tab when hash changes
   useEffect(() => {
@@ -203,25 +217,6 @@ export default function InstanceDetailPage() {
     setEditedConfig(null);
   };
 
-  const handleSaveExtraModels = () => {
-    if (pendingExtraModels === null) return;
-    const payload: InstanceUpdatePayload = {
-      models: {
-        disabled: instance!.models.disabled_defaults ?? [],
-        extra: pendingExtraModels,
-      },
-    };
-    updateMutation.mutate(
-      { id: instanceId, payload },
-      {
-        onSuccess: () => {
-          setEditingExtraModels(false);
-          setPendingExtraModels(null);
-        },
-      },
-    );
-  };
-
   const handleSaveTimezone = () => {
     if (pendingTimezone === null) return;
     updateMutation.mutate(
@@ -251,9 +246,12 @@ export default function InstanceDetailPage() {
   const handleSaveGatewayProviders = () => {
     if (pendingProviders === null) return;
 
-    // Collect models from pendingProviderModels with provider prefix
+    // Collect models from pendingProviderModels with provider prefix.
+    // Skip providers that define their own models via the API — those are pushed
+    // to the container directly from the provider definition, not via models.extra.
     const providerModels: string[] = [];
     for (const p of allProviders) {
+      if (p.models.length > 0) continue;
       const bareModels = pendingProviderModels?.[p.id] ?? [];
       for (const m of bareModels) {
         providerModels.push(`${p.key}/${m}`);
@@ -283,6 +281,7 @@ export default function InstanceDetailPage() {
             disabled: instance!.models.disabled_defaults ?? [],
             extra: mergedModels,
           },
+          default_model: pendingDefaultModel ?? undefined,
         },
       },
       {
@@ -290,6 +289,7 @@ export default function InstanceDetailPage() {
           setEditingGatewayProviders(false);
           setPendingProviders(null);
           setPendingProviderModels(null);
+          setPendingDefaultModel(null);
           toast.custom(
             createElement(AppToast, {
               title: "Gateway providers saved",
@@ -370,8 +370,9 @@ export default function InstanceDetailPage() {
       </div>
 
       {activeTab === "overview" && (
-        <div className="space-y-6">
+        <div className="space-y-8">
           <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <h3 className="text-sm font-medium text-gray-900 mb-4">Instance Details</h3>
             <div className="grid grid-cols-2 gap-y-4 gap-x-8">
               {[
                 { label: "Display Name", value: instance.display_name },
@@ -434,9 +435,9 @@ export default function InstanceDetailPage() {
             <div className="bg-white rounded-lg border border-gray-200 p-6">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="text-sm font-medium text-gray-900">Model Providers</h3>
+                  <h3 className="text-sm font-medium text-gray-900">Enabled Models</h3>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Providers routed through the internal LLM gateway. Configured automatically in the container via SSH.
+                    Pick among available model(s) for the agent.
                   </p>
                 </div>
                 <button
@@ -445,6 +446,7 @@ export default function InstanceDetailPage() {
                     if (editingGatewayProviders) {
                       setPendingProviders(null);
                       setPendingProviderModels(null);
+                      setPendingDefaultModel(null);
                     } else {
                       setPendingProviders(instance.enabled_providers ?? []);
                       const initialModels: Record<number, string[]> = {};
@@ -455,6 +457,7 @@ export default function InstanceDetailPage() {
                           .map((m) => m.slice(prefix.length));
                       }
                       setPendingProviderModels(initialModels);
+                      setPendingDefaultModel(instance.default_model ?? "");
                     }
                     setEditingGatewayProviders(!editingGatewayProviders);
                   }}
@@ -469,72 +472,18 @@ export default function InstanceDetailPage() {
                   {allProviders.length === 0 ? (
                     <p className="text-sm text-gray-400 italic">No providers defined. Add providers in Settings first.</p>
                   ) : (
-                    <div className="divide-y divide-gray-100">
-                      {allProviders.map((p) => {
-                        const enabled = (pendingProviders ?? []).includes(p.id);
-                        const selectedModels = pendingProviderModels?.[p.id] ?? [];
-                        const catalog = MODEL_CATALOG.find((c) => c.key === p.provider);
-                        const iconKey = catalog?.lobeIconKey;
-                        return (
-                          <div key={p.id} className="py-3 first:pt-0 last:pb-0">
-                            <label className="flex items-center gap-3 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={enabled}
-                                onChange={() => {
-                                  setPendingProviders((prev) => {
-                                    const current = prev ?? [];
-                                    return enabled ? current.filter((id) => id !== p.id) : [...current, p.id];
-                                  });
-                                  if (enabled) {
-                                    setPendingProviderModels((prev) => {
-                                      const next = { ...(prev ?? {}) };
-                                      delete next[p.id];
-                                      return next;
-                                    });
-                                  }
-                                }}
-                                className="rounded border-gray-300"
-                              />
-                              {iconKey ? (
-                                <ProviderIcon provider={iconKey} size={18} />
-                              ) : (
-                                <span className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-xs font-medium text-gray-500 shrink-0">
-                                  {p.name[0].toUpperCase()}
-                                </span>
-                              )}
-                              <span className="text-sm text-gray-900">{p.name}</span>
-                            </label>
-                            {enabled && catalog && !catalog.dynamic && catalog.models.length > 0 && (
-                              <div className="ml-7 mt-2 grid grid-cols-2 gap-x-6 gap-y-1">
-                                {catalog.models.map((m) => (
-                                  <label key={m.id} className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                      type="checkbox"
-                                      checked={selectedModels.includes(m.id)}
-                                      onChange={() => {
-                                        setPendingProviderModels((prev) => {
-                                          const current = prev?.[p.id] ?? [];
-                                          const next = current.includes(m.id)
-                                            ? current.filter((x) => x !== m.id)
-                                            : [...current, m.id];
-                                          return { ...(prev ?? {}), [p.id]: next };
-                                        });
-                                      }}
-                                      className="rounded border-gray-300"
-                                    />
-                                    <span className="text-xs font-mono text-gray-700 truncate">{m.id}</span>
-                                  </label>
-                                ))}
-                              </div>
-                            )}
-                            {enabled && (!catalog || catalog.dynamic) && (
-                              <p className="ml-7 mt-1 text-xs text-gray-400 italic">Models determined dynamically.</p>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+                    <ProviderModelSelector
+                      providers={allProviders}
+                      catalogDetailMap={catalogDetailMap}
+                      enabledProviders={pendingProviders ?? []}
+                      providerModels={pendingProviderModels ?? {}}
+                      onUpdate={(newEnabled, newModels) => {
+                        setPendingProviders(newEnabled);
+                        setPendingProviderModels(newModels);
+                      }}
+                      defaultModel={pendingDefaultModel ?? ""}
+                      onDefaultModelChange={setPendingDefaultModel}
+                    />
                   )}
                   <div className="flex justify-end pt-2">
                     <button
@@ -551,35 +500,44 @@ export default function InstanceDetailPage() {
                   {(instance.enabled_providers ?? []).length === 0 ? (
                     <p className="text-sm text-gray-400 italic">No providers enabled.</p>
                   ) : (
-                    <div className="divide-y divide-gray-100">
+                    <div className="space-y-2">
                       {(instance.enabled_providers ?? []).map((pid) => {
                         const p = allProviders.find((x) => x.id === pid);
                         if (!p) return null;
-                        const catalog = MODEL_CATALOG.find((c) => c.key === p.provider);
-                        const iconKey = catalog?.lobeIconKey;
-                        const prefix = `${p.key}/`;
-                        const enabledModels = (instance.models.extra ?? [])
-                          .filter((m) => m.startsWith(prefix))
-                          .map((m) => m.slice(prefix.length));
+                        const iconKey = p.provider ? catalogDetailMap[p.provider]?.icon_key ?? undefined : undefined;
+                        const displayModels: string[] = p.models.length > 0
+                          ? p.models.map((m) => m.id)
+                          : (instance.models.extra ?? [])
+                              .filter((m) => m.startsWith(`${p.key}/`))
+                              .map((m) => m.slice(`${p.key}/`.length));
                         return (
-                          <div key={pid} className="py-3 first:pt-0 last:pb-0">
-                            <div className="flex items-center gap-2">
-                              {iconKey ? (
-                                <ProviderIcon provider={iconKey} size={18} />
-                              ) : (
-                                <span className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-xs font-medium text-gray-500 shrink-0">
-                                  {p.name[0].toUpperCase()}
-                                </span>
+                          <div key={pid} className="bg-white rounded-lg border border-gray-200 px-4 py-3">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
+                                {iconKey ? (
+                                  <ProviderIcon provider={iconKey} size={18} />
+                                ) : (
+                                  <span className="text-xs font-semibold text-gray-500">{p.name[0].toUpperCase()}</span>
+                                )}
+                              </div>
+                              <span className="text-sm font-semibold text-gray-900">{p.name}</span>
+                              {p.api_type && p.api_type !== "openai-completions" && (
+                                <span className="px-1.5 py-0.5 text-xs font-mono text-gray-400 bg-gray-100 rounded">{p.api_type}</span>
                               )}
-                              <span className="text-sm font-medium text-gray-900">{p.name}</span>
                             </div>
-                            {enabledModels.length > 0 && (
-                              <div className="ml-6 mt-1 flex flex-wrap gap-1">
-                                {enabledModels.map((m) => (
-                                  <span key={m} className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded font-mono">
-                                    {m}
-                                  </span>
-                                ))}
+                            {displayModels.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {displayModels.map((m) => {
+                                  const isPrimary = instance.default_model === `${p.key}/${m}`;
+                                  return (
+                                    <span
+                                      key={m}
+                                      className={`px-2 py-0.5 text-xs rounded font-mono ${isPrimary ? "bg-blue-100 text-blue-700 ring-1 ring-blue-300" : "bg-gray-100 text-gray-600"}`}
+                                    >
+                                      {m}{isPrimary && <span className="ml-1 font-sans not-italic">★</span>}
+                                    </span>
+                                  );
+                                })}
                               </div>
                             )}
                           </div>
@@ -614,9 +572,9 @@ export default function InstanceDetailPage() {
                   <h3 className="text-sm font-medium text-gray-900">Connection Events</h3>
                   <button
                     onClick={() => setEventsOpen(false)}
-                    className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+                    className="text-gray-400 hover:text-gray-600"
                   >
-                    &times;
+                    <X size={16} />
                   </button>
                 </div>
                 <div className="overflow-y-auto p-6">
@@ -636,20 +594,18 @@ export default function InstanceDetailPage() {
               <h3 className="text-sm font-medium text-gray-900">
                 Timezone Override
               </h3>
-              <button
-                type="button"
-                onClick={() => {
-                  if (editingTimezone) {
-                    setPendingTimezone(null);
-                  } else {
+              {!editingTimezone && (
+                <button
+                  type="button"
+                  onClick={() => {
                     setPendingTimezone(instance.timezone ?? "");
-                  }
-                  setEditingTimezone(!editingTimezone);
-                }}
-                className="text-xs text-blue-600 hover:text-blue-800"
-              >
-                {editingTimezone ? "Cancel" : "Edit"}
-              </button>
+                    setEditingTimezone(true);
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  Edit
+                </button>
+              )}
             </div>
 
             {editingTimezone ? (
@@ -659,16 +615,23 @@ export default function InstanceDetailPage() {
                   value={pendingTimezone ?? ""}
                   onChange={(e) => setPendingTimezone(e.target.value)}
                   placeholder="e.g., America/New_York (empty = use global default)"
-                  className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <p className="text-xs text-gray-500">
                   Leave empty to use the global default timezone. Changing timezone requires a container restart to take effect.
                 </p>
-                <div className="flex justify-end">
+                <div className="flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { setEditingTimezone(false); setPendingTimezone(null); }}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
                   <button
                     onClick={handleSaveTimezone}
                     disabled={updateMutation.isPending || pendingTimezone === null}
-                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {updateMutation.isPending ? "Saving..." : "Save"}
                   </button>
@@ -689,20 +652,18 @@ export default function InstanceDetailPage() {
               <h3 className="text-sm font-medium text-gray-900">
                 User-Agent Override
               </h3>
-              <button
-                type="button"
-                onClick={() => {
-                  if (editingUserAgent) {
-                    setPendingUserAgent(null);
-                  } else {
+              {!editingUserAgent && (
+                <button
+                  type="button"
+                  onClick={() => {
                     setPendingUserAgent(instance.user_agent ?? "");
-                  }
-                  setEditingUserAgent(!editingUserAgent);
-                }}
-                className="text-xs text-blue-600 hover:text-blue-800"
-              >
-                {editingUserAgent ? "Cancel" : "Edit"}
-              </button>
+                    setEditingUserAgent(true);
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  Edit
+                </button>
+              )}
             </div>
 
             {editingUserAgent ? (
@@ -712,16 +673,23 @@ export default function InstanceDetailPage() {
                   value={pendingUserAgent ?? ""}
                   onChange={(e) => setPendingUserAgent(e.target.value)}
                   placeholder="Leave empty to use global default or browser built-in"
-                  className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <p className="text-xs text-gray-500">
                   Custom User-Agent string for Chromium. Leave empty to use the global default (or browser built-in if no global default is set). Changing requires a container restart to take effect.
                 </p>
-                <div className="flex justify-end">
+                <div className="flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { setEditingUserAgent(false); setPendingUserAgent(null); }}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
                   <button
                     onClick={handleSaveUserAgent}
                     disabled={updateMutation.isPending || pendingUserAgent === null}
-                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {updateMutation.isPending ? "Saving..." : "Save"}
                   </button>
@@ -733,69 +701,6 @@ export default function InstanceDetailPage() {
                   ? instance.user_agent
                   : "Using global default"}
               </p>
-            )}
-          </div>
-
-          {/* Extra Models */}
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-medium text-gray-900">Extra Models</h3>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Additional models added on top of the global defaults for this instance.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (editingExtraModels) {
-                    setEditingExtraModels(false);
-                    setPendingExtraModels(null);
-                  } else {
-                    setEditingExtraModels(true);
-                    setPendingExtraModels(instance.models.extra ?? []);
-                  }
-                }}
-                className="text-xs text-blue-600 hover:text-blue-800"
-              >
-                {editingExtraModels ? "Cancel" : "Edit"}
-              </button>
-            </div>
-
-            {editingExtraModels ? (
-              <div className="space-y-3">
-                <ModelListEditor
-                  models={pendingExtraModels ?? []}
-                  onChange={setPendingExtraModels}
-                  showCatalog={true}
-                />
-                <div className="flex justify-end">
-                  <button
-                    onClick={handleSaveExtraModels}
-                    disabled={updateMutation.isPending || pendingExtraModels === null}
-                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    {updateMutation.isPending ? "Saving..." : "Save"}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div>
-                {(instance.models.extra ?? []).length === 0 ? (
-                  <p className="text-sm text-gray-400 italic">No extra models configured.</p>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {(instance.models.extra ?? []).map((m) => (
-                      <span
-                        key={m}
-                        className="inline-flex items-center px-2.5 py-1 bg-blue-50 text-blue-700 text-sm rounded-md border border-blue-200 font-mono"
-                      >
-                        {m}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
             )}
           </div>
 

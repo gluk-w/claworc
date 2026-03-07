@@ -1,5 +1,5 @@
 // keys.go manages per-instance per-provider gateway auth keys.
-// Gateway keys use the "sk-gw-<random>" prefix.
+// Gateway keys use the "claworc-vk-<random>" prefix.
 
 package llmgateway
 
@@ -12,13 +12,13 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 )
 
-// generateGatewayKey generates a unique gateway auth key with "sk-gw-" prefix.
+// generateGatewayKey generates a unique gateway auth key with "claworc-vk-" prefix.
 func generateGatewayKey() string {
 	b := make([]byte, 24)
 	if _, err := rand.Read(b); err != nil {
 		panic(fmt.Sprintf("failed to generate gateway key: %v", err))
 	}
-	return "sk-gw-" + hex.EncodeToString(b)
+	return "claworc-vk-" + hex.EncodeToString(b)
 }
 
 // EnsureKeysForInstance creates gateway keys for each enabled provider (if not already present)

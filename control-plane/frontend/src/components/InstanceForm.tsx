@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { useQueries } from "@tanstack/react-query";
 import { useSettings } from "@/hooks/useSettings";
 import { useProviders } from "@/hooks/useProviders";
-import ProviderIcon from "@/components/ProviderIcon";
-import { MODEL_CATALOG } from "@/data/model-catalog";
+import { fetchCatalogProviderDetail } from "@/api/llm";
+import type { CatalogProviderDetail } from "@/api/llm";
+import ProviderModelSelector from "@/components/ProviderModelSelector";
 import type { InstanceCreatePayload } from "@/types/instance";
 
 interface InstanceFormProps {
@@ -32,9 +34,24 @@ export default function InstanceForm({
   const { data: settings } = useSettings();
   const { data: allProviders = [] } = useProviders();
 
+  // Fetch catalog model lists for all catalog providers
+  const catalogKeys = [...new Set(allProviders.filter((p) => p.provider).map((p) => p.provider))];
+  const catalogDetailResults = useQueries({
+    queries: catalogKeys.map((key) => ({
+      queryKey: ["catalog-provider", key],
+      queryFn: () => fetchCatalogProviderDetail(key),
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+  const catalogDetailMap: Record<string, CatalogProviderDetail> = {};
+  catalogKeys.forEach((key, i) => {
+    if (catalogDetailResults[i]?.data) catalogDetailMap[key] = catalogDetailResults[i].data!;
+  });
+
   // Gateway providers + model selection
   const [enabledProviders, setEnabledProviders] = useState<number[]>([]);
   const [providerModels, setProviderModels] = useState<Record<number, string[]>>({});
+  const [defaultModel, setDefaultModel] = useState("");
 
   // Brave key
   const [braveKey, setBraveKey] = useState("");
@@ -43,9 +60,12 @@ export default function InstanceForm({
     e.preventDefault();
     if (!displayName.trim()) return;
 
-    // Build provider-prefixed extra models
+    // Build provider-prefixed extra models.
+    // Skip providers with stored models (custom providers) — their models are
+    // pushed to the container directly from the provider definition.
     const extraModels: string[] = [];
     for (const p of allProviders) {
+      if ((p.models?.length ?? 0) > 0) continue;
       for (const m of providerModels[p.id] ?? []) {
         extraModels.push(`${p.key}/${m}`);
       }
@@ -71,6 +91,9 @@ export default function InstanceForm({
     }
     if (extraModels.length > 0) {
       payload.models = { disabled: [], extra: extraModels };
+    }
+    if (defaultModel) {
+      payload.default_model = defaultModel;
     }
 
     onSubmit(payload);
@@ -148,12 +171,11 @@ export default function InstanceForm({
         </div>
       </div>
 
-      {/* Model Providers */}
+      {/* Enabled Models */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h3 className="text-sm font-medium text-gray-900 mb-1">Model Providers</h3>
+        <h3 className="text-sm font-medium text-gray-900 mb-1">Enabled Models</h3>
         <p className="text-xs text-gray-500 mb-4">
-          Select providers and models to configure via the LLM gateway. Providers are set up in{" "}
-          <span className="font-medium">Settings → Model API Keys</span>.
+          Pick among available model(s) for the agent.
         </p>
 
         {allProviders.length === 0 ? (
@@ -161,71 +183,18 @@ export default function InstanceForm({
             No providers configured. Add providers in Settings → Model API Keys first.
           </p>
         ) : (
-          <div className="divide-y divide-gray-100">
-            {allProviders.map((p) => {
-              const enabled = enabledProviders.includes(p.id);
-              const selectedModels = providerModels[p.id] ?? [];
-              const catalog = MODEL_CATALOG.find((c) => c.key === p.provider);
-              const iconKey = catalog?.lobeIconKey;
-              return (
-                <div key={p.id} className="py-3 first:pt-0 last:pb-0">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={enabled}
-                      onChange={() => {
-                        setEnabledProviders((prev) =>
-                          enabled ? prev.filter((id) => id !== p.id) : [...prev, p.id],
-                        );
-                        if (enabled) {
-                          setProviderModels((prev) => {
-                            const next = { ...prev };
-                            delete next[p.id];
-                            return next;
-                          });
-                        }
-                      }}
-                      className="rounded border-gray-300"
-                    />
-                    {iconKey ? (
-                      <ProviderIcon provider={iconKey} size={18} />
-                    ) : (
-                      <span className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-xs font-medium text-gray-500 shrink-0">
-                        {p.name[0].toUpperCase()}
-                      </span>
-                    )}
-                    <span className="text-sm text-gray-900">{p.name}</span>
-                  </label>
-                  {enabled && catalog && !catalog.dynamic && catalog.models.length > 0 && (
-                    <div className="ml-7 mt-2 grid grid-cols-2 gap-x-6 gap-y-1">
-                      {catalog.models.map((m) => (
-                        <label key={m.id} className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={selectedModels.includes(m.id)}
-                            onChange={() => {
-                              setProviderModels((prev) => {
-                                const current = prev[p.id] ?? [];
-                                const next = current.includes(m.id)
-                                  ? current.filter((x) => x !== m.id)
-                                  : [...current, m.id];
-                                return { ...prev, [p.id]: next };
-                              });
-                            }}
-                            className="rounded border-gray-300"
-                          />
-                          <span className="text-xs font-mono text-gray-700 truncate">{m.id}</span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                  {enabled && (!catalog || catalog.dynamic) && (
-                    <p className="ml-7 mt-1 text-xs text-gray-400 italic">Models determined dynamically.</p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          <ProviderModelSelector
+            providers={allProviders}
+            catalogDetailMap={catalogDetailMap}
+            enabledProviders={enabledProviders}
+            providerModels={providerModels}
+            onUpdate={(newEnabled, newModels) => {
+              setEnabledProviders(newEnabled);
+              setProviderModels(newModels);
+            }}
+            defaultModel={defaultModel}
+            onDefaultModelChange={setDefaultModel}
+          />
         )}
 
         {/* Brave key */}

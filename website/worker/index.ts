@@ -94,9 +94,6 @@ function serializeModel(m: ModelRow) {
   return {
     model_id: m.model_id,
     model_name: m.model_name,
-    slug: modelSlug(m.provider_key, m.model_id),
-    api_format: m.api_format,
-    base_url: m.base_url || null,
     reasoning: m.reasoning === "true",
     vision: m.vision === "true",
     context_window: m.context_window ? parseInt(m.context_window, 10) : null,
@@ -126,11 +123,13 @@ function handleProviderList(): Response {
 function handleProviderDetail(providerKey: string): Response {
   const prov = providers[providerKey];
   if (!prov) return notFound(`Provider "${providerKey}" not found`);
+  const base_url = prov.models[0]?.base_url || null;
   return jsonResponse({
     key: providerKey,
     label: prov.label,
     icon_key: prov.icon_key || null,
     api_format: prov.api_format,
+    base_url,
     models: prov.models.map(serializeModel),
   });
 }

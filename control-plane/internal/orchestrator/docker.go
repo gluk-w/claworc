@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -19,7 +18,8 @@ import (
 	"github.com/docker/go-units"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
-	"github.com/gluk-w/claworc/control-plane/internal/logutil"
+	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
+	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
 
 const (
@@ -30,8 +30,9 @@ const (
 var volumeSuffixes = []string{"homebrew", "home"}
 
 type DockerOrchestrator struct {
-	client    *dockerclient.Client
-	available bool
+	client          *dockerclient.Client
+	available       bool
+	InstanceFactory sshproxy.InstanceFactory
 }
 
 func (d *DockerOrchestrator) Initialize(ctx context.Context) error {
@@ -166,7 +167,7 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 			Labels: map[string]string{"managed-by": labelManagedBy, "instance": params.Name},
 		})
 		if err != nil {
-			log.Printf("Volume %s may already exist: %v", logutil.SanitizeForLog(volName), err)
+			log.Printf("Volume %s may already exist: %v", utils.SanitizeForLog(volName), err)
 		}
 	}
 
@@ -250,36 +251,7 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 		return err
 	}
 
-	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
-		go d.configureGatewayToken(context.Background(), params.Name, token)
-	}
-
 	return nil
-}
-
-func (d *DockerOrchestrator) waitForContainerRunning(ctx context.Context, name string, timeout time.Duration) (string, bool) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		inspect, err := d.client.ContainerInspect(ctx, name)
-		if err == nil && inspect.State.Status == "running" {
-			tag := inspect.Config.Image
-			sha := inspect.Image
-			if len(sha) > 19 { // "sha256:" (7) + 12 chars
-				sha = sha[:19]
-			}
-			return fmt.Sprintf("%s (%s)", tag, sha), true
-		}
-		select {
-		case <-ctx.Done():
-			return "", false
-		case <-time.After(2 * time.Second):
-		}
-	}
-	return "", false
-}
-
-func (d *DockerOrchestrator) configureGatewayToken(ctx context.Context, name, token string) {
-	configureGatewayToken(ctx, d.ExecInInstance, name, token, d.waitForContainerRunning)
 }
 
 func (d *DockerOrchestrator) CloneVolumes(ctx context.Context, srcName, dstName string) error {
@@ -342,14 +314,14 @@ func (d *DockerOrchestrator) DeleteInstance(ctx context.Context, name string) er
 	// Remove container
 	err := d.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
 	if err != nil && !dockerclient.IsErrNotFound(err) {
-		log.Printf("Remove container %s: %v", logutil.SanitizeForLog(name), err)
+		log.Printf("Remove container %s: %v", utils.SanitizeForLog(name), err)
 	}
 
 	// Remove volumes
 	for _, suffix := range volumeSuffixes {
 		volName := d.volumeName(name, suffix)
 		if err := d.client.VolumeRemove(ctx, volName, true); err != nil && !dockerclient.IsErrNotFound(err) {
-			log.Printf("Remove volume %s: %v", logutil.SanitizeForLog(volName), err)
+			log.Printf("Remove volume %s: %v", utils.SanitizeForLog(volName), err)
 		}
 	}
 	return nil
@@ -472,7 +444,7 @@ func (d *DockerOrchestrator) GetSSHAddress(ctx context.Context, instanceID uint)
 }
 
 func (d *DockerOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {
-	return updateInstanceConfig(ctx, d.ExecInInstance, name, configJSON)
+	return updateInstanceConfig(ctx, d.ExecInInstance, d.InstanceFactory, name, configJSON)
 }
 
 func stripDockerLogHeaders(data []byte) string {

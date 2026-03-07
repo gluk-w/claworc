@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/gluk-w/claworc/control-plane/internal/crypto"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
+	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -62,7 +62,7 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 	// Decrypt gateway token
 	var gatewayToken string
 	if inst.GatewayToken != "" {
-		if tok, err := crypto.Decrypt(inst.GatewayToken); err == nil && tok != "" {
+		if tok, err := utils.Decrypt(inst.GatewayToken); err == nil && tok != "" {
 			gatewayToken = tok
 		}
 	}

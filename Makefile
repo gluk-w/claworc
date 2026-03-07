@@ -24,7 +24,8 @@ HELM_NAMESPACE := claworc
 .PHONY: agent agent-base agent-build agent-test agent-push agent-exec dashboard docker-prune release \
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
-	ssh-integration-test ssh-file-integration-test extract-models scrape-models
+	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models scrape-models test \
+	worker-deploy
 
 agent: agent-base agent-build agent-test agent-push
 
@@ -156,11 +157,21 @@ ssh-file-integration-test:
 	docker build --build-arg BASE_IMAGE=$(AGENT_BASE_IMAGE):local -f agent/Dockerfile.chromium -t claworc-agent:local agent/
 	cd tests && npm run test:ssh -- --testPathPattern file.test
 
+test-integration-backend:
+	cd control-plane && go test -tags docker_integration -v -timeout 600s \
+		./internal/handlers/ -run TestIntegration
+
 e2e-docker-tests:
 	./scripts/run_tests.sh
+
+test:
+	cd control-plane && go test ./internal/...
 
 extract-models:
 	python3 scripts/extract_models.py
 
 scrape-models:
 	python3 scripts/scrape_provider_docs.py
+
+worker-deploy:
+	cd website/worker && npx wrangler deploy

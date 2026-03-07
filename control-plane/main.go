@@ -145,6 +145,20 @@ func main() {
 	}
 	sshMgr.StartHealthChecker(ctx)
 
+	// Build InstanceFactory: resolves an active SSH connection by instance name.
+	instanceFactory := func(fctx context.Context, name string) (sshproxy.Instance, error) {
+		var inst database.Instance
+		if err := database.DB.Where("name = ?", name).First(&inst).Error; err != nil {
+			return nil, fmt.Errorf("instance not found: %s", name)
+		}
+		client, err := sshMgr.WaitForSSH(fctx, inst.ID, 120*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		return sshproxy.NewSSHInstance(client), nil
+	}
+	orchestrator.SetInstanceFactory(instanceFactory)
+
 	// Start background tunnel manager to maintain SSH tunnels for running instances
 	if orch := orchestrator.Get(); orch != nil {
 		tunnelMgr.StartBackgroundManager(ctx, func(ctx context.Context) ([]uint, error) {
@@ -253,11 +267,17 @@ func main() {
 				r.Get("/audit-logs", handlers.GetAuditLogs)
 
 				// LLM gateway providers and usage
+				r.Post("/llm/providers/sync", handlers.SyncAllProviderModels)
 				r.Get("/llm/providers", handlers.ListProviders)
 				r.Post("/llm/providers", handlers.CreateProvider)
 				r.Put("/llm/providers/{id}", handlers.UpdateProvider)
 				r.Delete("/llm/providers/{id}", handlers.DeleteProvider)
+				r.Post("/llm/providers/{id}/sync", handlers.SyncProviderModels)
 				r.Get("/llm/usage", handlers.GetUsageLogs)
+
+				// Provider catalog proxy (claworc.com/providers, cached 1h)
+				r.Get("/llm/catalog", handlers.GetCatalogProviders)
+				r.Get("/llm/catalog/{key}", handlers.GetCatalogProviderDetail)
 
 				// User management
 				r.Get("/users", handlers.ListUsers)

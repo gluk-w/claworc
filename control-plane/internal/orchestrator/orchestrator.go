@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+
+	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 )
 
 // ContainerOrchestrator thin abstraction providing generic primitives (exec, read/write files)
@@ -49,9 +51,5 @@ type CreateParams struct {
 	OnProgress      func(string)
 }
 
-type FileEntry struct {
-	Name        string  `json:"name"`
-	Type        string  `json:"type"`
-	Size        *string `json:"size"`
-	Permissions string  `json:"permissions"`
-}
+// FileEntry is a type alias for sshproxy.FileEntry, kept for backward compatibility.
+type FileEntry = sshproxy.FileEntry

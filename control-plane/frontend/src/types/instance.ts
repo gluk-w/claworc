@@ -71,12 +71,31 @@ export interface InstanceUpdatePayload {
   enabled_providers?: number[];
 }
 
+export interface ProviderModelCost {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export interface ProviderModel {
+  id: string;
+  name: string;
+  reasoning?: boolean;
+  input?: string[];
+  contextWindow?: number;
+  maxTokens?: number;
+  cost?: ProviderModelCost;
+}
+
 export interface LLMProvider {
   id: number;
   key: string;
   provider: string; // catalog provider key, empty for custom
   name: string;
   base_url: string;
+  api_type: string;
+  models: ProviderModel[] | null;
   created_at: string;
   updated_at: string;
 }

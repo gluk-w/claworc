@@ -1,5 +1,5 @@
 import client from "./client";
-import type { LLMProvider } from "@/types/instance";
+import type { LLMProvider, ProviderModel } from "@/types/instance";
 
 // ---------------------------------------------------------------------------
 // External provider catalog (https://claworc.com/providers/)
@@ -34,15 +34,13 @@ export interface CatalogProviderDetail {
 }
 
 export async function fetchCatalogProviders(): Promise<CatalogProviderSummary[]> {
-  const resp = await fetch("https://claworc.com/providers/");
-  if (!resp.ok) throw new Error("Failed to fetch provider catalog");
-  return resp.json();
+  const { data } = await client.get<CatalogProviderSummary[]>("/llm/catalog");
+  return data;
 }
 
 export async function fetchCatalogProviderDetail(key: string): Promise<CatalogProviderDetail> {
-  const resp = await fetch(`https://claworc.com/providers/${encodeURIComponent(key)}/`);
-  if (!resp.ok) throw new Error(`Failed to fetch provider "${key}"`);
-  return resp.json();
+  const { data } = await client.get<CatalogProviderDetail>(`/llm/catalog/${encodeURIComponent(key)}`);
+  return data;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +57,8 @@ export async function createProvider(payload: {
   provider: string;
   name: string;
   base_url: string;
+  api_type?: string;
+  models?: ProviderModel[];
 }): Promise<LLMProvider> {
   const { data } = await client.post<LLMProvider>("/llm/providers", payload);
   return data;
@@ -66,7 +66,7 @@ export async function createProvider(payload: {
 
 export async function updateProvider(
   id: number,
-  payload: { name?: string; base_url?: string },
+  payload: { name?: string; base_url?: string; api_type?: string; models?: ProviderModel[] },
 ): Promise<LLMProvider> {
   const { data } = await client.put<LLMProvider>(`/llm/providers/${id}`, payload);
   return data;
@@ -74,4 +74,9 @@ export async function updateProvider(
 
 export async function deleteProvider(id: number): Promise<void> {
   await client.delete(`/llm/providers/${id}`);
+}
+
+export async function syncAllProviders(): Promise<LLMProvider[]> {
+  const { data } = await client.post<LLMProvider[]>("/llm/providers/sync");
+  return data;
 }

@@ -1,13 +1,14 @@
 import { useState, useEffect } from "react";
-import { AlertTriangle, ChevronRight, Eye, EyeOff, Key, Plus, RefreshCw } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Key, Plus, RefreshCw } from "lucide-react";
 import ProviderIcon from "@/components/ProviderIcon";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import { useProviders, useCreateProvider, useUpdateProvider, useDeleteProvider, useCatalogProviders, useCatalogProviderDetail } from "@/hooks/useProviders";
 import { fetchSSHFingerprint, rotateSSHKey } from "@/api/ssh";
+import { fetchCatalogProviderDetail, syncAllProviders } from "@/api/llm";
 import { successToast, errorToast } from "@/utils/toast";
-import { MODEL_CATALOG } from "@/data/model-catalog";
-import type { LLMProvider } from "@/types/instance";
+import type { LLMProvider, ProviderModel } from "@/types/instance";
+import type { CatalogProviderDetail } from "@/api/llm";
 import type { SettingsUpdatePayload } from "@/types/settings";
 
 const slugify = (s: string) =>
@@ -42,10 +43,58 @@ export default function SettingsPage() {
   const [mBaseURL, setMBaseURL] = useState("");
   const [mApiKey, setMApiKey] = useState("");
   const [mShowApiKey, setMShowApiKey] = useState(false);
+  const [mApiType, setMApiType] = useState("openai-completions");
+  const [mModels, setMModels] = useState<ProviderModel[]>([]);
+  const [mModelDraft, setMModelDraft] = useState({
+    id: "",
+    name: "",
+    reasoning: false,
+    contextWindow: "",
+    maxTokens: "",
+    costInput: "",
+    costOutput: "",
+  });
+  const [mShowOptionalFields, setMShowOptionalFields] = useState(false);
 
   const { data: catalogDetail } = useCatalogProviderDetail(
     modalOpen && modalMode === "create" && mCatalogKey && mCatalogKey !== "__custom__" ? mCatalogKey : null
   );
+
+  // Sync all catalog providers
+  const syncMutation = useMutation({
+    mutationFn: syncAllProviders,
+    onSuccess: () => {
+      successToast("Models synced");
+      queryClient.invalidateQueries({ queryKey: ["llm-providers"] });
+    },
+    onError: (err) => errorToast("Sync failed", err),
+  });
+  const hasCatalogProviders = providers.some((p) => p.provider !== "");
+
+  // Expandable rows
+  const [expandedProviders, setExpandedProviders] = useState<Set<number>>(new Set());
+  const toggleExpanded = (id: number) =>
+    setExpandedProviders((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  // Fetch catalog detail for each catalog provider (for model display in rows)
+  const catalogKeys = [...new Set(providers.filter((p) => p.provider).map((p) => p.provider))];
+  const catalogDetailResults = useQueries({
+    queries: catalogKeys.map((key) => ({
+      queryKey: ["catalog-provider", key],
+      queryFn: () => fetchCatalogProviderDetail(key),
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+  const catalogDetailMap: Record<string, CatalogProviderDetail> = {};
+  catalogKeys.forEach((key, i) => {
+    const result = catalogDetailResults[i];
+    if (result?.data) catalogDetailMap[key] = result.data;
+  });
 
   const fingerprint = useQuery({
     queryKey: ["ssh-fingerprint"],
@@ -83,13 +132,6 @@ export default function SettingsPage() {
   const settingsKeyName = (key: string) =>
     key.toUpperCase().replace(/-/g, "_") + "_API_KEY";
 
-  // Icon lookup: catalog API first, then MODEL_CATALOG fallback
-  const getProviderIconKey = (providerKey: string): string | undefined => {
-    const catalogEntry = catalogProviders.find((c) => c.key === providerKey);
-    if (catalogEntry?.icon_key) return catalogEntry.icon_key;
-    return MODEL_CATALOG.find((c) => c.key === providerKey)?.lobeIconKey;
-  };
-
   // The effective provider key: always derived from name in create mode
   const effectiveKey =
     modalMode === "edit"
@@ -112,8 +154,7 @@ export default function SettingsPage() {
       if (cat) {
         setMProvider(cat.key);
         setMName(cat.label);
-        // Pre-fill from static catalog while async detail loads
-        setMBaseURL(MODEL_CATALOG.find((c) => c.key === val)?.defaultBaseUrl ?? "");
+        setMBaseURL("");
       }
     }
   };
@@ -127,6 +168,10 @@ export default function SettingsPage() {
     setMBaseURL("");
     setMApiKey("");
     setMShowApiKey(false);
+    setMApiType("openai-completions");
+    setMModels([]);
+    setMModelDraft({ id: "", name: "", reasoning: false, contextWindow: "", maxTokens: "", costInput: "", costOutput: "" });
+    setMShowOptionalFields(false);
     setModalOpen(true);
   };
 
@@ -138,6 +183,10 @@ export default function SettingsPage() {
     setMBaseURL(p.base_url);
     setMApiKey("");
     setMShowApiKey(false);
+    setMApiType(p.api_type || "openai-completions");
+    setMModels(p.models || []);
+    setMModelDraft({ id: "", name: "", reasoning: false, contextWindow: "", maxTokens: "", costInput: "", costOutput: "" });
+    setMShowOptionalFields(false);
     setModalOpen(true);
   };
 
@@ -145,12 +194,17 @@ export default function SettingsPage() {
     const key = effectiveKey;
     try {
       if (modalMode === "create") {
-        await createProviderMutation.mutateAsync({ key, provider: mProvider, name: mName, base_url: mBaseURL });
+        const catalogEntry = catalogProviders.find((c) => c.key === mCatalogKey);
+        const apiType = isCustomProvider ? mApiType : (catalogEntry?.api_format ?? "openai-completions");
+        const models = isCustomProvider ? mModels : [];
+        await createProviderMutation.mutateAsync({ key, provider: mProvider, name: mName, base_url: mBaseURL, api_type: apiType, models });
       } else {
-        await updateProviderMutation.mutateAsync({
-          id: modalProvider!.id,
-          payload: { name: mName, base_url: mBaseURL },
-        });
+        const payload: { name: string; base_url: string; api_type?: string; models?: ProviderModel[] } = { name: mName, base_url: mBaseURL };
+        if (isCustomProvider) {
+          payload.api_type = mApiType;
+          payload.models = mModels;
+        }
+        await updateProviderMutation.mutateAsync({ id: modalProvider!.id, payload });
       }
       if (mApiKey.trim()) {
         updateMutation.mutate({ api_keys: { [settingsKeyName(key)]: mApiKey.trim() } });
@@ -195,6 +249,27 @@ export default function SettingsPage() {
     { key: "default_storage_home", label: "Default Home Storage" },
   ];
 
+  const addModelFromDraft = () => {
+    if (!mModelDraft.id.trim() || !mModelDraft.name.trim()) return;
+    const model: ProviderModel = { id: mModelDraft.id.trim(), name: mModelDraft.name.trim() };
+    if (mModelDraft.reasoning) model.reasoning = true;
+    if (mModelDraft.contextWindow) model.contextWindow = parseInt(mModelDraft.contextWindow, 10);
+    if (mModelDraft.maxTokens) model.maxTokens = parseInt(mModelDraft.maxTokens, 10);
+    const hasInputCost = !!mModelDraft.costInput;
+    const hasOutputCost = !!mModelDraft.costOutput;
+    if (hasInputCost || hasOutputCost) {
+      model.cost = {
+        input: hasInputCost ? parseFloat(mModelDraft.costInput) : 0,
+        output: hasOutputCost ? parseFloat(mModelDraft.costOutput) : 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      };
+    }
+    setMModels((prev) => [...prev, model]);
+    setMModelDraft({ id: "", name: "", reasoning: false, contextWindow: "", maxTokens: "", costInput: "", costOutput: "" });
+    setMShowOptionalFields(false);
+  };
+
   const hasChanges =
     pendingBraveKey !== null ||
     Object.keys(resources).length > 0;
@@ -206,6 +281,7 @@ export default function SettingsPage() {
     !!effectiveKey &&
     !!mName &&
     !!mBaseURL &&
+    (!isCustomProvider || mModels.length > 0) &&
     !createProviderMutation.isPending &&
     !updateProviderMutation.isPending;
 
@@ -223,14 +299,25 @@ export default function SettingsPage() {
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-gray-900">Model API Keys</h3>
-            <button
-              type="button"
-              onClick={openCreateModal}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-            >
-              <Plus size={12} />
-              Add Provider
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => syncMutation.mutate()}
+                disabled={syncMutation.isPending || !hasCatalogProviders}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RefreshCw size={12} className={syncMutation.isPending ? "animate-spin" : ""} />
+                {syncMutation.isPending ? "Syncing..." : "Sync Models"}
+              </button>
+              <button
+                type="button"
+                onClick={openCreateModal}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                <Plus size={12} />
+                Add Provider
+              </button>
+            </div>
           </div>
 
           {providers.length === 0 ? (
@@ -241,36 +328,70 @@ export default function SettingsPage() {
                 const skn = settingsKeyName(p.key);
                 const apiKeyValue = settings.api_keys?.[skn];
                 const apiKeyDisplay = apiKeyValue ? `****${apiKeyValue.slice(-4)}` : "not set";
+                const isExpanded = expandedProviders.has(p.id);
+                const catalogModels = p.provider ? catalogDetailMap[p.provider]?.models : undefined;
+                const displayModels = catalogModels
+                  ? catalogModels.map((m) => m.model_id)
+                  : (p.models || []).map((m) => m.id);
                 return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => openEditModal(p)}
-                    className="w-full flex items-center justify-between py-3 text-left hover:bg-gray-50 -mx-2 px-2 rounded transition-colors"
-                  >
-                    <div className="min-w-0 flex-1 flex items-center gap-3">
-                      <div className="shrink-0 w-6 h-6 flex items-center justify-center">
-                        {getProviderIconKey(p.provider) ? (
-                          <ProviderIcon provider={getProviderIconKey(p.provider)!} size={22} />
+                  <div key={p.id}>
+                    <div className="flex items-center py-3 -mx-2 px-2 rounded hover:bg-gray-50 transition-colors">
+                      <button
+                        type="button"
+                        onClick={() => toggleExpanded(p.id)}
+                        className="min-w-0 flex-1 flex items-center gap-3 text-left"
+                      >
+                        <div className="shrink-0 w-6 h-6 flex items-center justify-center">
+                          {p.provider ? (
+                            <ProviderIcon provider={p.provider} size={22} />
+                          ) : (
+                            <span className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-xs font-medium text-gray-500">
+                              {p.name[0].toUpperCase()}
+                            </span>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-gray-900">{p.name}</span>
+                            <span className="text-xs font-mono text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{p.key}</span>
+                          </div>
+                          <p className="text-xs font-mono text-gray-500 mt-0.5 truncate">{p.base_url}</p>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            API key: <span className="font-mono">{apiKeyDisplay}</span>
+                            {displayModels.length > 0 && (
+                              <span className="ml-2 text-gray-300">· {displayModels.length} models</span>
+                            )}
+                          </p>
+                        </div>
+                        <span className="text-gray-400 shrink-0 ml-2">
+                          {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(p)}
+                        className="shrink-0 ml-2 p-1 text-gray-400 hover:text-gray-600 rounded"
+                        title="Edit provider"
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                    {isExpanded && (
+                      <div className="pb-3 px-2">
+                        {displayModels.length === 0 ? (
+                          <p className="text-xs text-gray-400 italic">No models available.</p>
                         ) : (
-                          <span className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-xs font-medium text-gray-500">
-                            {p.name[0].toUpperCase()}
-                          </span>
+                          <div className="flex flex-wrap gap-1">
+                            {displayModels.map((id) => (
+                              <span key={id} className="font-mono text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
+                                {id}
+                              </span>
+                            ))}
+                          </div>
                         )}
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-gray-900">{p.name}</span>
-                          <span className="text-xs font-mono text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{p.key}</span>
-                        </div>
-                        <p className="text-xs font-mono text-gray-500 mt-0.5 truncate">{p.base_url}</p>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          API key: <span className="font-mono">{apiKeyDisplay}</span>
-                        </p>
-                      </div>
-                    </div>
-                    <ChevronRight size={16} className="text-gray-400 shrink-0 ml-2" />
-                  </button>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -435,13 +556,13 @@ export default function SettingsPage() {
       {/* Provider Modal */}
       {modalOpen && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
+          <div className={`bg-white rounded-lg shadow-xl p-6 w-full mx-4 ${isCustomProvider ? "max-w-xl" : "max-w-md"}`}>
             <h2 className="text-base font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              {modalMode === "edit" && getProviderIconKey(modalProvider!.provider) && (
-                <ProviderIcon provider={getProviderIconKey(modalProvider!.provider)!} size={22} />
+              {modalMode === "edit" && modalProvider!.provider && (
+                <ProviderIcon provider={modalProvider!.provider} size={22} />
               )}
-              {modalMode === "create" && getProviderIconKey(mCatalogKey) && (
-                <ProviderIcon provider={getProviderIconKey(mCatalogKey)!} size={22} />
+              {modalMode === "create" && mCatalogKey && mCatalogKey !== "__custom__" && (
+                <ProviderIcon provider={mCatalogKey} size={22} />
               )}
               {modalMode === "create" ? "Add Provider" : "Edit Provider"}
             </h2>
@@ -493,16 +614,151 @@ export default function SettingsPage() {
               )}
 
               {isCustomProvider && (
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Base URL</label>
-                  <input
-                    type="text"
-                    value={mBaseURL}
-                    onChange={(e) => setMBaseURL(e.target.value)}
-                    placeholder="https://api.example.com/v1"
-                    className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
+                <>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Base URL</label>
+                    <input
+                      type="text"
+                      value={mBaseURL}
+                      onChange={(e) => setMBaseURL(e.target.value)}
+                      placeholder="https://api.example.com/v1"
+                      className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">API Type</label>
+                    <select
+                      value={mApiType}
+                      onChange={(e) => setMApiType(e.target.value)}
+                      className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    >
+                      <option value="openai-completions">openai-completions</option>
+                      <option value="anthropic-messages">anthropic-messages</option>
+                      <option value="openai-responses">openai-responses</option>
+                      <option value="ollama">ollama</option>
+                      <option value="bedrock-converse-stream">bedrock-converse-stream</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">
+                      Models <span className="text-red-500">*</span>
+                    </label>
+                    {mModels.length > 0 && (
+                      <div className="mb-2 space-y-1">
+                        {mModels.map((m, i) => (
+                          <div key={i} className="flex items-center justify-between px-2 py-1.5 bg-gray-50 border border-gray-200 rounded text-xs">
+                            <span className="font-mono text-gray-700">{m.id}</span>
+                            <span className="text-gray-500 mx-2 truncate">{m.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => setMModels((prev) => prev.filter((_, idx) => idx !== i))}
+                              className="text-red-400 hover:text-red-600 shrink-0"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="border border-gray-200 rounded-md p-3 space-y-2 bg-gray-50">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-0.5">Model ID</label>
+                          <input
+                            type="text"
+                            value={mModelDraft.id}
+                            onChange={(e) => setMModelDraft((d) => ({ ...d, id: e.target.value }))}
+                            placeholder="claude-3-5-sonnet-20241022"
+                            className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-0.5">Model Name</label>
+                          <input
+                            type="text"
+                            value={mModelDraft.name}
+                            onChange={(e) => setMModelDraft((d) => ({ ...d, name: e.target.value }))}
+                            placeholder="Claude 3.5 Sonnet"
+                            className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setMShowOptionalFields((v) => !v)}
+                        className="text-xs text-gray-400 hover:text-gray-600"
+                      >
+                        {mShowOptionalFields ? "▾ Hide optional fields" : "▸ Optional fields (reasoning, context window, cost...)"}
+                      </button>
+                      {mShowOptionalFields && (
+                        <div className="space-y-2 pt-1">
+                          <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={mModelDraft.reasoning}
+                              onChange={(e) => setMModelDraft((d) => ({ ...d, reasoning: e.target.checked }))}
+                            />
+                            Reasoning model
+                          </label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-0.5">Context Window</label>
+                              <input
+                                type="number"
+                                value={mModelDraft.contextWindow}
+                                onChange={(e) => setMModelDraft((d) => ({ ...d, contextWindow: e.target.value }))}
+                                placeholder="200000"
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-0.5">Max Tokens</label>
+                              <input
+                                type="number"
+                                value={mModelDraft.maxTokens}
+                                onChange={(e) => setMModelDraft((d) => ({ ...d, maxTokens: e.target.value }))}
+                                placeholder="8096"
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-0.5">Input cost ($/M tokens)</label>
+                              <input
+                                type="number"
+                                value={mModelDraft.costInput}
+                                onChange={(e) => setMModelDraft((d) => ({ ...d, costInput: e.target.value }))}
+                                placeholder="3.0"
+                                step="0.01"
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-0.5">Output cost ($/M tokens)</label>
+                              <input
+                                type="number"
+                                value={mModelDraft.costOutput}
+                                onChange={(e) => setMModelDraft((d) => ({ ...d, costOutput: e.target.value }))}
+                                placeholder="15.0"
+                                step="0.01"
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={addModelFromDraft}
+                        disabled={!mModelDraft.id.trim() || !mModelDraft.name.trim()}
+                        className="w-full py-1 text-xs font-medium text-blue-600 border border-blue-200 rounded hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        + Add Model
+                      </button>
+                    </div>
+                  </div>
+                </>
               )}
 
               {/* API Key */}

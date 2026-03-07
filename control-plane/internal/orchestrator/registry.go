@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 )
 
 var (
@@ -67,4 +68,16 @@ func Set(o ContainerOrchestrator) {
 	mu.Lock()
 	defer mu.Unlock()
 	current = o
+}
+
+// SetInstanceFactory configures the InstanceFactory on the active orchestrator.
+func SetInstanceFactory(factory sshproxy.InstanceFactory) {
+	mu.RLock()
+	defer mu.RUnlock()
+	switch o := current.(type) {
+	case *DockerOrchestrator:
+		o.InstanceFactory = factory
+	case *KubernetesOrchestrator:
+		o.InstanceFactory = factory
+	}
 }

@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
-
-	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 )
 
 // executeCommand creates a new SSH session, runs cmd, and returns stdout,
@@ -106,9 +104,66 @@ func executeCommandWithStdin(client *ssh.Client, cmd string, input []byte) error
 	return nil
 }
 
+// FileEntry represents a single entry returned by ListDirectory.
+type FileEntry struct {
+	Name        string  `json:"name"`
+	Type        string  `json:"type"`
+	Size        *string `json:"size"`
+	Permissions string  `json:"permissions"`
+}
+
+// ParseLsOutput parses the output of `ls -la` into FileEntry slices.
+func ParseLsOutput(output string) []FileEntry {
+	var entries []FileEntry
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) <= 1 {
+		return entries
+	}
+	for _, line := range lines[1:] {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 9 {
+			continue
+		}
+		permissions := parts[0]
+		size := parts[4]
+		entryName := strings.Join(parts[8:], " ")
+
+		if entryName == "." || entryName == ".." {
+			continue
+		}
+
+		isDir := strings.HasPrefix(permissions, "d")
+		isLink := strings.HasPrefix(permissions, "l")
+
+		entryType := "file"
+		if isDir {
+			entryType = "directory"
+		} else if isLink {
+			entryType = "symlink"
+		}
+
+		var sizePtr *string
+		if !isDir {
+			sizePtr = &size
+		}
+
+		entries = append(entries, FileEntry{
+			Name:        entryName,
+			Type:        entryType,
+			Size:        sizePtr,
+			Permissions: permissions,
+		})
+	}
+	return entries
+}
+
 // ListDirectory lists the contents of a remote directory via SSH.
 // It executes `ls -la --color=never` and parses the output into FileEntry structs.
-func ListDirectory(client *ssh.Client, path string) ([]orchestrator.FileEntry, error) {
+func ListDirectory(client *ssh.Client, path string) ([]FileEntry, error) {
 	start := time.Now()
 	stdout, stderr, exitCode, err := executeCommand(client, fmt.Sprintf("ls -la --color=never %s", shellQuote(path)))
 	if err != nil {
@@ -118,7 +173,7 @@ func ListDirectory(client *ssh.Client, path string) ([]orchestrator.FileEntry, e
 		return nil, fmt.Errorf("list directory: %s", strings.TrimSpace(stderr))
 	}
 	log.Printf("[sshfiles] ListDirectory %s completed in %s", path, time.Since(start))
-	return orchestrator.ParseLsOutput(stdout), nil
+	return ParseLsOutput(stdout), nil
 }
 
 // ReadFile reads the contents of a remote file via SSH.
