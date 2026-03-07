@@ -403,17 +403,19 @@ func DeleteProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 type usageLogResponse struct {
-	ID           uint   `json:"id"`
-	InstanceID   uint   `json:"instance_id"`
-	ProviderID   uint   `json:"provider_id"`
-	ProviderKey  string `json:"provider_key"`
-	ModelID      string `json:"model_id"`
-	InputTokens  int    `json:"input_tokens"`
-	OutputTokens int    `json:"output_tokens"`
-	StatusCode   int    `json:"status_code"`
-	LatencyMs    int64  `json:"latency_ms"`
-	ErrorMessage string `json:"error_message,omitempty"`
-	RequestedAt  string `json:"requested_at"`
+	ID                uint    `json:"id"`
+	InstanceID        uint    `json:"instance_id"`
+	ProviderID        uint    `json:"provider_id"`
+	ProviderKey       string  `json:"provider_key"`
+	ModelID           string  `json:"model_id"`
+	InputTokens       int     `json:"input_tokens"`
+	OutputTokens      int     `json:"output_tokens"`
+	CachedInputTokens int     `json:"cached_input_tokens"`
+	CostUSD           float64 `json:"cost_usd"`
+	StatusCode        int     `json:"status_code"`
+	LatencyMs         int64   `json:"latency_ms"`
+	ErrorMessage      string  `json:"error_message,omitempty"`
+	RequestedAt       string  `json:"requested_at"`
 }
 
 func GetUsageLogs(w http.ResponseWriter, r *http.Request) {
@@ -431,7 +433,7 @@ func GetUsageLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	query := database.DB.Order("requested_at DESC").Limit(limit).Offset(offset)
+	query := database.LogsDB.Order("requested_at DESC").Limit(limit).Offset(offset)
 	if v := q.Get("instance_id"); v != "" {
 		if id, err := strconv.Atoi(v); err == nil {
 			query = query.Where("instance_id = ?", id)
@@ -449,7 +451,7 @@ func GetUsageLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load provider keys for enrichment
+	// Load provider keys for enrichment (from main DB)
 	providerKeys := map[uint]string{}
 	var providers []database.LLMProvider
 	database.DB.Find(&providers)
@@ -460,17 +462,19 @@ func GetUsageLogs(w http.ResponseWriter, r *http.Request) {
 	result := make([]usageLogResponse, len(logs))
 	for i, l := range logs {
 		result[i] = usageLogResponse{
-			ID:           l.ID,
-			InstanceID:   l.InstanceID,
-			ProviderID:   l.ProviderID,
-			ProviderKey:  providerKeys[l.ProviderID],
-			ModelID:      l.ModelID,
-			InputTokens:  l.InputTokens,
-			OutputTokens: l.OutputTokens,
-			StatusCode:   l.StatusCode,
-			LatencyMs:    l.LatencyMs,
-			ErrorMessage: l.ErrorMessage,
-			RequestedAt:  formatTimestamp(l.RequestedAt),
+			ID:                l.ID,
+			InstanceID:        l.InstanceID,
+			ProviderID:        l.ProviderID,
+			ProviderKey:       providerKeys[l.ProviderID],
+			ModelID:           l.ModelID,
+			InputTokens:       l.InputTokens,
+			OutputTokens:      l.OutputTokens,
+			CachedInputTokens: l.CachedInputTokens,
+			CostUSD:           l.CostUSD,
+			StatusCode:        l.StatusCode,
+			LatencyMs:         l.LatencyMs,
+			ErrorMessage:      l.ErrorMessage,
+			RequestedAt:       formatTimestamp(l.RequestedAt),
 		}
 	}
 	writeJSON(w, http.StatusOK, result)

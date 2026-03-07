@@ -16,6 +16,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -136,6 +137,102 @@ func resolveRealAPIKey(instanceID uint, providerKey string) string {
 	return ""
 }
 
+// buildTargetURL constructs the upstream URL from the provider base URL and the request path/query.
+// Strips a leading /v1 from the path if baseURL already ends with /v1 to avoid double-prefixing.
+// For openai-responses, prepends /v1 when the path doesn't already include it (the OpenClaw SDK
+// appends /v1 to the configured base URL, so incoming paths arrive without the prefix).
+// Always removes the ?key= query parameter (Google SDK sends the API key there).
+func buildTargetURL(baseURL, requestPath, apiType string, query url.Values) string {
+	if strings.HasSuffix(baseURL, "/v1") && strings.HasPrefix(requestPath, "/v1/") {
+		requestPath = requestPath[3:]
+	} else if apiType == "openai-responses" && !strings.HasSuffix(baseURL, "/v1") && !strings.HasPrefix(requestPath, "/v1/") {
+		requestPath = "/v1" + requestPath
+	}
+	target := baseURL + requestPath
+	query.Del("key")
+	if encoded := query.Encode(); encoded != "" {
+		target += "?" + encoded
+	}
+	return target
+}
+
+// buildUpstreamRequest creates the HTTP request for the upstream provider.
+// Copies headers from the original request, stripping all auth headers, then sets the correct
+// outgoing auth header for the provider's API type.
+func buildUpstreamRequest(ctx context.Context, method, targetURL string, body []byte, origHeaders http.Header, apiKey, apiType string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, targetURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	skip := map[string]bool{
+		"authorization":  true,
+		"x-api-key":      true,
+		"x-goog-api-key": true,
+		"host":           true,
+	}
+	for k, vs := range origHeaders {
+		if skip[strings.ToLower(k)] {
+			continue
+		}
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
+	}
+	if apiKey != "" {
+		switch apiType {
+		case "anthropic-messages":
+			req.Header.Set("x-api-key", apiKey)
+		case "google-generative-ai":
+			req.Header.Set("x-goog-api-key", apiKey)
+		default:
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+	}
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return req, nil
+}
+
+// parseUsage extracts token counts from a provider response body.
+// Supports OpenAI, Anthropic, and Google formats — only one set of fields will be non-zero.
+func parseUsage(respBody []byte) (inputTokens, outputTokens, cachedInputTokens int) {
+	var u struct {
+		Usage struct {
+			PromptTokens        int `json:"prompt_tokens"`
+			CompletionTokens    int `json:"completion_tokens"`
+			PromptTokensDetails struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
+			InputTokens          int `json:"input_tokens"`
+			OutputTokens         int `json:"output_tokens"`
+			CacheReadInputTokens int `json:"cache_read_input_tokens"`
+		} `json:"usage"`
+		UsageMetadata struct {
+			PromptTokenCount        int `json:"promptTokenCount"`
+			CandidatesTokenCount    int `json:"candidatesTokenCount"`
+			CachedContentTokenCount int `json:"cachedContentTokenCount"`
+		} `json:"usageMetadata"`
+	}
+	if json.Unmarshal(respBody, &u) == nil {
+		inputTokens = u.Usage.PromptTokens + u.Usage.InputTokens + u.UsageMetadata.PromptTokenCount
+		outputTokens = u.Usage.CompletionTokens + u.Usage.OutputTokens + u.UsageMetadata.CandidatesTokenCount
+		cachedInputTokens = u.Usage.PromptTokensDetails.CachedTokens + u.Usage.CacheReadInputTokens + u.UsageMetadata.CachedContentTokenCount
+	}
+	return
+}
+
+// calculateCost computes the USD cost of a request given token counts and the provider model config.
+// Returns 0 if no cost config is found for the model.
+func calculateCost(models []database.ProviderModel, modelID string, inputTokens, outputTokens, cachedInputTokens int) float64 {
+	cost := findModelCost(models, modelID)
+	if cost == nil {
+		return 0
+	}
+	nonCached := float64(inputTokens - cachedInputTokens)
+	return (nonCached*cost.Input + float64(cachedInputTokens)*cost.CacheRead + float64(outputTokens)*cost.Output) / 1_000_000
+}
+
 // handleProxy is the single handler for all gateway requests.
 func handleProxy(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
@@ -160,57 +257,12 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	json.Unmarshal(body, &reqBody)
 
-	// Build upstream URL: baseURL + request path.
-	// Strip leading /v1 from the path if baseURL already ends with /v1 to avoid duplication
-	// (e.g. baseURL "https://api.anthropic.com/openai/v1" + path "/v1/chat/completions").
-	urlPath := r.URL.Path
-	if strings.HasSuffix(baseURL, "/v1") && strings.HasPrefix(urlPath, "/v1/") {
-		urlPath = urlPath[3:] // strip "/v1"
-	}
-	targetURL := baseURL + urlPath
-	// Strip ?key= from forwarded query string (Google SDK sends the API key as a query param)
-	query := r.URL.Query()
-	query.Del("key")
-	if encoded := query.Encode(); encoded != "" {
-		targetURL += "?" + encoded
-	}
+	targetURL := buildTargetURL(baseURL, r.URL.Path, apiType, r.URL.Query())
 
-	upstreamReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(body))
+	upstreamReq, err := buildUpstreamRequest(r.Context(), r.Method, targetURL, body, r.Header, apiKey, apiType)
 	if err != nil {
 		http.Error(w, `{"error":{"message":"failed to build upstream request"}}`, http.StatusInternalServerError)
 		return
-	}
-
-	// Copy headers, stripping all incoming auth headers (we set the correct one below)
-	skipHeaders := map[string]bool{
-		"authorization":  true,
-		"x-api-key":      true,
-		"x-goog-api-key": true,
-		"host":           true,
-	}
-	for k, vs := range r.Header {
-		if skipHeaders[strings.ToLower(k)] {
-			continue
-		}
-		for _, v := range vs {
-			upstreamReq.Header.Add(k, v)
-		}
-	}
-
-	// Set outgoing auth header according to the provider's API type
-	if apiKey != "" {
-		switch apiType {
-		case "anthropic-messages":
-			upstreamReq.Header.Set("x-api-key", apiKey)
-		case "google-generative-ai":
-			upstreamReq.Header.Set("x-goog-api-key", apiKey)
-		default:
-			upstreamReq.Header.Set("Authorization", "Bearer "+apiKey)
-		}
-	}
-
-	if upstreamReq.Header.Get("Content-Type") == "" {
-		upstreamReq.Header.Set("Content-Type", "application/json")
 	}
 
 	client := &http.Client{Timeout: 300 * time.Second}
@@ -225,17 +277,33 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	// Copy response headers
+	isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 	for k, vs := range resp.Header {
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}
 	}
+	if isStreaming {
+		w.Header().Set("X-Accel-Buffering", "no")
+	}
 	w.WriteHeader(resp.StatusCode)
 
-	isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 	if isStreaming {
-		// Stream response directly — no buffering
-		io.Copy(w, resp.Body)
+		// Flush each chunk immediately so the client receives SSE events in real time.
+		flusher, canFlush := w.(http.Flusher)
+		buf := make([]byte, 4096)
+		for {
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
+				w.Write(buf[:n])
+				if canFlush {
+					flusher.Flush()
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
 		latencyMs := time.Since(start).Milliseconds()
 		logRequest(instanceID, providerID, reqBody.Model, 0, 0, 0, 0, resp.StatusCode, latencyMs, "")
 		logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, resp.StatusCode, latencyMs, "")
@@ -249,40 +317,8 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		var costUSD float64
 		var errMsg string
 		if readErr == nil {
-			// Try all provider token count formats — only one will be non-zero for any given response
-			var usage struct {
-				Usage struct {
-					// OpenAI format
-					PromptTokens        int `json:"prompt_tokens"`
-					CompletionTokens    int `json:"completion_tokens"`
-					PromptTokensDetails struct {
-						CachedTokens int `json:"cached_tokens"`
-					} `json:"prompt_tokens_details"`
-					// Anthropic format (same "usage" key, different fields)
-					InputTokens          int `json:"input_tokens"`
-					OutputTokens         int `json:"output_tokens"`
-					CacheReadInputTokens int `json:"cache_read_input_tokens"`
-				} `json:"usage"`
-				// Google format
-				UsageMetadata struct {
-					PromptTokenCount        int `json:"promptTokenCount"`
-					CandidatesTokenCount    int `json:"candidatesTokenCount"`
-					CachedContentTokenCount int `json:"cachedContentTokenCount"`
-				} `json:"usageMetadata"`
-			}
-			if json.Unmarshal(respBody, &usage) == nil {
-				inputTokens = usage.Usage.PromptTokens + usage.Usage.InputTokens + usage.UsageMetadata.PromptTokenCount
-				outputTokens = usage.Usage.CompletionTokens + usage.Usage.OutputTokens + usage.UsageMetadata.CandidatesTokenCount
-				cachedInputTokens = usage.Usage.PromptTokensDetails.CachedTokens +
-					usage.Usage.CacheReadInputTokens +
-					usage.UsageMetadata.CachedContentTokenCount
-			}
-			if cost := findModelCost(providerModels, reqBody.Model); cost != nil {
-				nonCached := float64(inputTokens - cachedInputTokens)
-				costUSD = (nonCached*cost.Input +
-					float64(cachedInputTokens)*cost.CacheRead +
-					float64(outputTokens)*cost.Output) / 1_000_000
-			}
+			inputTokens, outputTokens, cachedInputTokens = parseUsage(respBody)
+			costUSD = calculateCost(providerModels, reqBody.Model, inputTokens, outputTokens, cachedInputTokens)
 			if resp.StatusCode >= 400 {
 				errMsg = string(respBody)
 				if len(errMsg) > 500 {
@@ -307,17 +343,19 @@ func logLine(instanceID uint, providerKey, model, path string, statusCode int, l
 	}
 }
 
-// logRequest records a proxied request in the LLMRequestLog table.
-func logRequest(instanceID, providerID uint, model string, inputTokens, outputTokens, statusCode int, latencyMs int64, errMsg string) {
-	database.DB.Create(&database.LLMRequestLog{
-		InstanceID:   instanceID,
-		ProviderID:   providerID,
-		ModelID:      model,
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
-		StatusCode:   statusCode,
-		LatencyMs:    latencyMs,
-		ErrorMessage: errMsg,
-		RequestedAt:  time.Now().UTC(),
+// logRequest records a proxied request in llm-logs.db.
+func logRequest(instanceID, providerID uint, model string, inputTokens, outputTokens, cachedInputTokens int, costUSD float64, statusCode int, latencyMs int64, errMsg string) {
+	database.LogsDB.Create(&database.LLMRequestLog{
+		InstanceID:        instanceID,
+		ProviderID:        providerID,
+		ModelID:           model,
+		InputTokens:       inputTokens,
+		OutputTokens:      outputTokens,
+		CachedInputTokens: cachedInputTokens,
+		CostUSD:           costUSD,
+		StatusCode:        statusCode,
+		LatencyMs:         latencyMs,
+		ErrorMessage:      errMsg,
+		RequestedAt:       time.Now().UTC(),
 	})
 }

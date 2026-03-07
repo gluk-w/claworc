@@ -1,10 +1,12 @@
 package llmgateway
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -16,7 +18,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
 
-// setupDB initialises an in-memory SQLite DB and points database.DB at it.
+// setupDB initialises in-memory SQLite DBs and points database.DB and database.LogsDB at them.
 func setupDB(t *testing.T) {
 	t.Helper()
 	var err error
@@ -30,10 +32,19 @@ func setupDB(t *testing.T) {
 		&database.Setting{},
 		&database.LLMProvider{},
 		&database.LLMGatewayKey{},
-		&database.LLMRequestLog{},
 		&database.InstanceAPIKey{},
 	); err != nil {
 		t.Fatalf("auto-migrate: %v", err)
+	}
+
+	database.LogsDB, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("open in-memory logs DB: %v", err)
+	}
+	if err := database.LogsDB.AutoMigrate(&database.LLMRequestLog{}); err != nil {
+		t.Fatalf("auto-migrate logs DB: %v", err)
 	}
 }
 
@@ -197,6 +208,7 @@ func TestOutgoingAuthHeader_ByAPIType(t *testing.T) {
 		expectedValue  string
 	}{
 		{"openai-completions", "Authorization", "Bearer real-key"},
+		{"openai-responses", "Authorization", "Bearer real-key"},
 		{"anthropic-messages", "x-api-key", "real-key"},
 		{"google-generative-ai", "x-goog-api-key", "real-key"},
 		{"", "Authorization", "Bearer real-key"}, // empty → default
@@ -353,6 +365,72 @@ func TestURL_V1Deduplication(t *testing.T) {
 	})
 }
 
+// --- 5b. openai-responses path prefix injection ---
+
+func TestOpenAIResponses_PathPrefixed(t *testing.T) {
+	// When api_type is "openai-responses", OpenClaw appends /v1 to the gateway base URL before
+	// initialising the SDK, so the SDK sends paths like /responses (not /v1/responses).
+	// The gateway must prepend /v1 so the upstream receives /v1/responses.
+	t.Run("baseURL without /v1 — /v1 prepended", func(t *testing.T) {
+		var capturedPath string
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedPath = r.URL.Path
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{}`))
+		}))
+		defer upstream.Close()
+
+		setupDB(t)
+		p := mustProvider(t, "openai", "openai-responses", upstream.URL)
+		token := mustGatewayKey(t, 1, p.ID)
+		mustAPIKey(t, 1, "openai", "real-key")
+
+		req := httptest.NewRequest("POST", "/responses", strings.NewReader(`{"model":"gpt-5"}`))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		handleProxy(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		if capturedPath != "/v1/responses" {
+			t.Errorf("upstream path: got %q, want /v1/responses", capturedPath)
+		}
+	})
+
+	t.Run("baseURL with /v1 — no double prefix", func(t *testing.T) {
+		var capturedPath string
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedPath = r.URL.Path
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{}`))
+		}))
+		defer upstream.Close()
+
+		setupDB(t)
+		p := mustProvider(t, "openai", "openai-responses", upstream.URL+"/v1")
+		token := mustGatewayKey(t, 1, p.ID)
+		mustAPIKey(t, 1, "openai", "real-key")
+
+		req := httptest.NewRequest("POST", "/responses", strings.NewReader(`{"model":"gpt-5"}`))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		handleProxy(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		if capturedPath != "/v1/responses" {
+			t.Errorf("upstream path: got %q, want /v1/responses", capturedPath)
+		}
+		if strings.Contains(capturedPath, "/v1/v1/") {
+			t.Errorf("double /v1 detected: %q", capturedPath)
+		}
+	})
+}
+
 // --- 6. Query string — ?key= is stripped ---
 
 func TestQueryString_KeyStripped(t *testing.T) {
@@ -436,7 +514,7 @@ func TestTokenCount_AllFormats(t *testing.T) {
 			}
 
 			var log database.LLMRequestLog
-			if err := database.DB.First(&log).Error; err != nil {
+			if err := database.LogsDB.First(&log).Error; err != nil {
 				t.Fatalf("no log row: %v", err)
 			}
 			if log.InputTokens != tc.wantInput {
@@ -475,12 +553,103 @@ func TestStreaming_NoTokenCount(t *testing.T) {
 	}
 
 	var log database.LLMRequestLog
-	if err := database.DB.First(&log).Error; err != nil {
+	if err := database.LogsDB.First(&log).Error; err != nil {
 		t.Fatalf("no log row: %v", err)
 	}
 	if log.InputTokens != 0 || log.OutputTokens != 0 {
 		t.Errorf("expected 0 tokens for streaming, got input=%d output=%d", log.InputTokens, log.OutputTokens)
 	}
+}
+
+// --- 8b. Streaming response — Flush() is called ---
+
+type flushRecorder struct {
+	*httptest.ResponseRecorder
+	flushCount int
+}
+
+func (f *flushRecorder) Flush() { f.flushCount++ }
+
+func TestStreaming_Flushed(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("data: {}\n\n"))
+		w.Write([]byte("data: {}\n\n"))
+		w.Write([]byte("data: {}\n\n"))
+	}))
+	defer upstream.Close()
+
+	setupDB(t)
+	p := mustProvider(t, "prov", "openai-completions", upstream.URL)
+	token := mustGatewayKey(t, 1, p.ID)
+	mustAPIKey(t, 1, "prov", "real-key")
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	fr := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	handleProxy(fr, req)
+
+	if fr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", fr.Code)
+	}
+	if fr.flushCount == 0 {
+		t.Error("expected Flush() to be called at least once for streaming response")
+	}
+}
+
+// --- 8c. Streaming response — X-Accel-Buffering: no is set ---
+
+func TestStreaming_XAccelBuffering(t *testing.T) {
+	makeUpstream := func(contentType string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", contentType)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("data: {}\n\n"))
+		}))
+	}
+
+	t.Run("streaming — X-Accel-Buffering: no present", func(t *testing.T) {
+		upstream := makeUpstream("text/event-stream")
+		defer upstream.Close()
+
+		setupDB(t)
+		p := mustProvider(t, "prov", "openai-completions", upstream.URL)
+		token := mustGatewayKey(t, 1, p.ID)
+		mustAPIKey(t, 1, "prov", "real-key")
+
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		handleProxy(rr, req)
+
+		if got := rr.Header().Get("X-Accel-Buffering"); got != "no" {
+			t.Errorf("X-Accel-Buffering: got %q, want \"no\"", got)
+		}
+	})
+
+	t.Run("non-streaming — X-Accel-Buffering absent", func(t *testing.T) {
+		upstream := makeUpstream("application/json")
+		defer upstream.Close()
+
+		setupDB(t)
+		p := mustProvider(t, "prov", "openai-completions", upstream.URL)
+		token := mustGatewayKey(t, 1, p.ID)
+		mustAPIKey(t, 1, "prov", "real-key")
+
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		handleProxy(rr, req)
+
+		if got := rr.Header().Get("X-Accel-Buffering"); got != "" {
+			t.Errorf("X-Accel-Buffering should be absent for non-streaming, got %q", got)
+		}
+	})
 }
 
 // --- 9. Upstream error — logged, 502 returned ---
@@ -514,7 +683,7 @@ func TestUpstreamError_502(t *testing.T) {
 	}
 
 	var log database.LLMRequestLog
-	if err := database.DB.First(&log).Error; err != nil {
+	if err := database.LogsDB.First(&log).Error; err != nil {
 		t.Fatalf("no log row: %v", err)
 	}
 	if log.StatusCode != http.StatusBadGateway {
@@ -548,7 +717,7 @@ func TestUpstream4xx_ErrorBodyTruncated(t *testing.T) {
 	handleProxy(rr, req)
 
 	var log database.LLMRequestLog
-	if err := database.DB.First(&log).Error; err != nil {
+	if err := database.LogsDB.First(&log).Error; err != nil {
 		t.Fatalf("no log row: %v", err)
 	}
 	if len(log.ErrorMessage) != 500 {
@@ -676,6 +845,458 @@ func TestResolveAPIKey_InstanceOverridesPrecedence(t *testing.T) {
 	}
 	if capturedAuth != "Bearer instance-real-key" {
 		t.Errorf("upstream auth: got %q, want \"Bearer instance-real-key\"", capturedAuth)
+	}
+}
+
+// --- 14. Cached token extraction — all three provider formats ---
+
+func TestCachedTokenExtraction(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       string
+		wantCached int
+		wantInput  int
+		wantOutput int
+	}{
+		{
+			"openai cached",
+			`{"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":40}}}`,
+			40, 100, 20,
+		},
+		{
+			"anthropic cached",
+			`{"usage":{"input_tokens":50,"output_tokens":15,"cache_read_input_tokens":10}}`,
+			10, 50, 15,
+		},
+		{
+			"google cached",
+			`{"usageMetadata":{"promptTokenCount":80,"candidatesTokenCount":12,"cachedContentTokenCount":30}}`,
+			30, 80, 12,
+		},
+		{
+			"no cache",
+			`{"usage":{"prompt_tokens":10,"completion_tokens":5}}`,
+			0, 10, 5,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(tc.body))
+			}))
+			defer upstream.Close()
+
+			setupDB(t)
+			p := mustProvider(t, "prov", "openai-completions", upstream.URL)
+			token := mustGatewayKey(t, 1, p.ID)
+			mustAPIKey(t, 1, "prov", "real-key")
+
+			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			handleProxy(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", rr.Code)
+			}
+
+			var log database.LLMRequestLog
+			if err := database.LogsDB.First(&log).Error; err != nil {
+				t.Fatalf("no log row: %v", err)
+			}
+			if log.CachedInputTokens != tc.wantCached {
+				t.Errorf("cached_input_tokens: got %d, want %d", log.CachedInputTokens, tc.wantCached)
+			}
+			if log.InputTokens != tc.wantInput {
+				t.Errorf("input_tokens: got %d, want %d", log.InputTokens, tc.wantInput)
+			}
+			if log.OutputTokens != tc.wantOutput {
+				t.Errorf("output_tokens: got %d, want %d", log.OutputTokens, tc.wantOutput)
+			}
+		})
+	}
+}
+
+// --- 15. Cost calculation ---
+
+func mustProviderWithModels(t *testing.T, key, apiType, baseURL string, models []database.ProviderModel) database.LLMProvider {
+	t.Helper()
+	modelsJSON, _ := json.Marshal(models)
+	p := database.LLMProvider{Key: key, Name: key, APIType: apiType, BaseURL: baseURL, Models: string(modelsJSON)}
+	if err := database.DB.Create(&p).Error; err != nil {
+		t.Fatalf("create provider: %v", err)
+	}
+	return p
+}
+
+func TestCostCalculation(t *testing.T) {
+	cases := []struct {
+		name           string
+		inputTokens    int
+		outputTokens   int
+		cachedTokens   int
+		inputRate      float64
+		outputRate     float64
+		cacheReadRate  float64
+		wantCostApprox float64
+	}{
+		{
+			"no cached tokens",
+			// 1000 input @ $3/M, 500 output @ $15/M = $0.003 + $0.0075 = $0.0105
+			1000, 500, 0, 3.0, 15.0, 0.3, 0.0105,
+		},
+		{
+			"with cached tokens",
+			// 1000 input (400 cached) @ $3/M non-cached, $0.3/M cached; 200 output @ $15/M
+			// = (600*3 + 400*0.3 + 200*15) / 1_000_000 = (1800+120+3000)/1_000_000 = 0.00492
+			1000, 200, 400, 3.0, 15.0, 0.3, 0.00492,
+		},
+		{
+			"zero tokens",
+			0, 0, 0, 3.0, 15.0, 0.3, 0.0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			respBody := fmt.Sprintf(`{"usage":{"prompt_tokens":%d,"completion_tokens":%d,"prompt_tokens_details":{"cached_tokens":%d}}}`,
+				tc.inputTokens, tc.outputTokens, tc.cachedTokens)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(respBody))
+			}))
+			defer upstream.Close()
+
+			setupDB(t)
+			models := []database.ProviderModel{
+				{
+					ID:   "test-model",
+					Name: "Test Model",
+					Cost: &database.ProviderModelCost{
+						Input:      tc.inputRate,
+						Output:     tc.outputRate,
+						CacheRead:  tc.cacheReadRate,
+						CacheWrite: 0,
+					},
+				},
+			}
+			p := mustProviderWithModels(t, "prov", "openai-completions", upstream.URL, models)
+			token := mustGatewayKey(t, 1, p.ID)
+			mustAPIKey(t, 1, "prov", "real-key")
+
+			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test-model"}`))
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			handleProxy(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", rr.Code)
+			}
+
+			var log database.LLMRequestLog
+			if err := database.LogsDB.First(&log).Error; err != nil {
+				t.Fatalf("no log row: %v", err)
+			}
+			if log.CachedInputTokens != tc.cachedTokens {
+				t.Errorf("cached_input_tokens: got %d, want %d", log.CachedInputTokens, tc.cachedTokens)
+			}
+			const epsilon = 0.000001
+			diff := log.CostUSD - tc.wantCostApprox
+			if diff < -epsilon || diff > epsilon {
+				t.Errorf("cost_usd: got %f, want %f", log.CostUSD, tc.wantCostApprox)
+			}
+		})
+	}
+}
+
+// --- 16. buildTargetURL — pure function tests ---
+
+func TestBuildTargetURL(t *testing.T) {
+	cases := []struct {
+		name        string
+		baseURL     string
+		requestPath string
+		query       string
+		apiType     string
+		want        string
+	}{
+		{
+			"/v1 dedup: baseURL ends with /v1, path starts with /v1/",
+			"https://api.example.com/v1",
+			"/v1/chat/completions",
+			"",
+			"openai-completions",
+			"https://api.example.com/v1/chat/completions",
+		},
+		{
+			"no dedup: baseURL without /v1 suffix",
+			"https://api.example.com",
+			"/v1/chat/completions",
+			"",
+			"openai-completions",
+			"https://api.example.com/v1/chat/completions",
+		},
+		{
+			"key= stripped from query",
+			"https://api.example.com",
+			"/v1/models",
+			"key=claworc-vk-abc",
+			"openai-completions",
+			"https://api.example.com/v1/models",
+		},
+		{
+			"key= stripped, other params preserved",
+			"https://api.example.com",
+			"/v1/models",
+			"key=claworc-vk-abc&foo=bar",
+			"openai-completions",
+			"https://api.example.com/v1/models?foo=bar",
+		},
+		{
+			"openai-responses: /v1 prepended when baseURL has no /v1 suffix",
+			"https://api.openai.com",
+			"/responses",
+			"",
+			"openai-responses",
+			"https://api.openai.com/v1/responses",
+		},
+		{
+			"openai-responses: no double /v1 when baseURL ends with /v1",
+			"https://api.openai.com/v1",
+			"/responses",
+			"",
+			"openai-responses",
+			"https://api.openai.com/v1/responses",
+		},
+		{
+			"openai-responses: path already has /v1/ prefix — no double prepend",
+			"https://api.openai.com",
+			"/v1/responses",
+			"",
+			"openai-responses",
+			"https://api.openai.com/v1/responses",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			vals, _ := url.ParseQuery(tc.query)
+			got := buildTargetURL(tc.baseURL, tc.requestPath, tc.apiType, vals)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// --- 17. buildUpstreamRequest — pure function tests ---
+
+func TestBuildUpstreamRequest(t *testing.T) {
+	ctx := context.Background()
+	body := []byte(`{"model":"test"}`)
+
+	t.Run("openai-completions → Authorization Bearer", func(t *testing.T) {
+		req, err := buildUpstreamRequest(ctx, "POST", "https://api.example.com/v1/chat/completions", body, http.Header{}, "my-key", "openai-completions")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer my-key" {
+			t.Errorf("got %q, want %q", got, "Bearer my-key")
+		}
+	})
+
+	t.Run("anthropic-messages → x-api-key", func(t *testing.T) {
+		req, err := buildUpstreamRequest(ctx, "POST", "https://api.anthropic.com/v1/messages", body, http.Header{}, "ant-key", "anthropic-messages")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := req.Header.Get("x-api-key"); got != "ant-key" {
+			t.Errorf("got %q, want %q", got, "ant-key")
+		}
+		if req.Header.Get("Authorization") != "" {
+			t.Errorf("Authorization should be empty for anthropic-messages")
+		}
+	})
+
+	t.Run("google-generative-ai → x-goog-api-key", func(t *testing.T) {
+		req, err := buildUpstreamRequest(ctx, "POST", "https://generativelanguage.googleapis.com/v1/models", body, http.Header{}, "goog-key", "google-generative-ai")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := req.Header.Get("x-goog-api-key"); got != "goog-key" {
+			t.Errorf("got %q, want %q", got, "goog-key")
+		}
+	})
+
+	t.Run("empty apiType → defaults to Bearer", func(t *testing.T) {
+		req, err := buildUpstreamRequest(ctx, "POST", "https://api.example.com/v1/chat/completions", body, http.Header{}, "def-key", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer def-key" {
+			t.Errorf("got %q, want %q", got, "Bearer def-key")
+		}
+	})
+
+	t.Run("incoming auth headers stripped", func(t *testing.T) {
+		orig := http.Header{
+			"Authorization":  []string{"Bearer evil"},
+			"X-Api-Key":      []string{"evil"},
+			"X-Goog-Api-Key": []string{"evil"},
+			"Host":           []string{"evil.example.com"},
+			"X-Custom":       []string{"keep-me"},
+		}
+		req, err := buildUpstreamRequest(ctx, "POST", "https://api.example.com/", body, orig, "real-key", "openai-completions")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if req.Header.Get("Authorization") == "Bearer evil" {
+			t.Error("Authorization was forwarded")
+		}
+		if req.Header.Get("x-api-key") == "evil" {
+			t.Error("x-api-key was forwarded")
+		}
+		if req.Header.Get("x-goog-api-key") == "evil" {
+			t.Error("x-goog-api-key was forwarded")
+		}
+		if req.Header.Get("X-Custom") != "keep-me" {
+			t.Errorf("X-Custom not forwarded: got %q", req.Header.Get("X-Custom"))
+		}
+	})
+
+	t.Run("default Content-Type set when missing", func(t *testing.T) {
+		req, err := buildUpstreamRequest(ctx, "POST", "https://api.example.com/", body, http.Header{}, "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := req.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("Content-Type: got %q, want application/json", got)
+		}
+	})
+
+	t.Run("explicit Content-Type preserved", func(t *testing.T) {
+		orig := http.Header{"Content-Type": []string{"text/plain"}}
+		req, err := buildUpstreamRequest(ctx, "POST", "https://api.example.com/", body, orig, "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := req.Header.Get("Content-Type"); got != "text/plain" {
+			t.Errorf("Content-Type: got %q, want text/plain", got)
+		}
+	})
+}
+
+// --- 18. parseUsage — pure function tests ---
+
+func TestParseUsage(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       string
+		wantInput  int
+		wantOutput int
+		wantCached int
+	}{
+		{
+			"openai",
+			`{"usage":{"prompt_tokens":10,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":3}}}`,
+			10, 20, 3,
+		},
+		{
+			"anthropic",
+			`{"usage":{"input_tokens":5,"output_tokens":15,"cache_read_input_tokens":2}}`,
+			5, 15, 2,
+		},
+		{
+			"google",
+			`{"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":12,"cachedContentTokenCount":4}}`,
+			8, 12, 4,
+		},
+		{
+			"invalid JSON → all zeros",
+			`not json`,
+			0, 0, 0,
+		},
+		{
+			"empty body → all zeros",
+			``,
+			0, 0, 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in, out, cached := parseUsage([]byte(tc.body))
+			if in != tc.wantInput {
+				t.Errorf("input: got %d, want %d", in, tc.wantInput)
+			}
+			if out != tc.wantOutput {
+				t.Errorf("output: got %d, want %d", out, tc.wantOutput)
+			}
+			if cached != tc.wantCached {
+				t.Errorf("cached: got %d, want %d", cached, tc.wantCached)
+			}
+		})
+	}
+}
+
+// --- 19. calculateCost — pure function tests ---
+
+func TestCalculateCost(t *testing.T) {
+	models := []database.ProviderModel{
+		{
+			ID:   "known-model",
+			Name: "Known Model",
+			Cost: &database.ProviderModelCost{
+				Input:     3.0,
+				Output:    15.0,
+				CacheRead: 0.3,
+			},
+		},
+	}
+
+	cases := []struct {
+		name     string
+		modelID  string
+		input    int
+		output   int
+		cached   int
+		wantCost float64
+	}{
+		{
+			"no model cost config → 0",
+			"unknown-model", 1000, 500, 0, 0,
+		},
+		{
+			"no cached tokens",
+			// 1000*3 + 500*15 = 3000+7500 = 10500 / 1e6 = 0.0105
+			"known-model", 1000, 500, 0, 0.0105,
+		},
+		{
+			"with cached tokens",
+			// (1000-400)*3 + 400*0.3 + 200*15 = 1800+120+3000 = 4920 / 1e6 = 0.00492
+			"known-model", 1000, 200, 400, 0.00492,
+		},
+		{
+			"zero tokens → 0",
+			"known-model", 0, 0, 0, 0,
+		},
+	}
+
+	const epsilon = 0.000001
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := calculateCost(models, tc.modelID, tc.input, tc.output, tc.cached)
+			diff := got - tc.wantCost
+			if diff < -epsilon || diff > epsilon {
+				t.Errorf("cost: got %f, want %f", got, tc.wantCost)
+			}
+		})
 	}
 }
 

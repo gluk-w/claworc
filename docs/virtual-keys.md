@@ -255,7 +255,7 @@ curl -s 'http://localhost:8080/api/v1/usage-logs?instance_id=1' | jq '.[0]'
 
 ## Usage Logs
 
-Every proxied request is logged to the `llm_request_logs` table.
+Every proxied request is logged to the `llm_request_logs` table in a dedicated **`{DataPath}/llm-logs.db`** SQLite file (separate from `claworc.db` to keep the main database lean and allow independent log rotation).
 
 ### Endpoint
 
@@ -285,13 +285,27 @@ Results are ordered newest-first.
 | `model_id` | Model name from the request body |
 | `input_tokens` | Prompt token count (non-streaming only) |
 | `output_tokens` | Completion token count (non-streaming only) |
+| `cached_input_tokens` | Cached prompt tokens (non-streaming only; 0 if provider doesn't report cache hits) |
+| `cost_usd` | Estimated cost in USD based on model cost config (0 if model cost not configured) |
 | `status_code` | HTTP status returned by the upstream provider |
 | `latency_ms` | End-to-end latency in milliseconds |
 | `error_message` | First 500 bytes of error body (on 4xx/5xx) |
 | `requested_at` | UTC timestamp |
 
-Streaming responses (`text/event-stream`) are logged with `input_tokens=0, output_tokens=0`
+Streaming responses (`text/event-stream`) are logged with `input_tokens=0, output_tokens=0, cached_input_tokens=0, cost_usd=0`
 because the response body is streamed directly without buffering.
+
+**Cost formula:**
+
+```
+cost_usd = (
+    (input_tokens - cached_input_tokens) × input_rate +
+    cached_input_tokens                  × cache_read_rate +
+    output_tokens                        × output_rate
+) / 1_000_000
+```
+
+Rates come from the `cost` field of the matching model in the provider's `Models` config. If no cost config is found for the model, `cost_usd` is `0`.
 
 
 ## Key Reference
