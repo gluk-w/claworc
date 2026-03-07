@@ -92,16 +92,18 @@ type LLMGatewayKey struct {
 
 // LLMRequestLog records each proxied LLM request for auditing and usage tracking.
 type LLMRequestLog struct {
-	ID           uint      `gorm:"primaryKey;autoIncrement"`
-	InstanceID   uint      `gorm:"not null;index"`
-	ProviderID   uint      `gorm:"not null"`
-	ModelID      string    `gorm:"not null"`
-	InputTokens  int       `gorm:"not null;default:0"`
-	OutputTokens int       `gorm:"not null;default:0"`
-	StatusCode   int       `gorm:"not null"`
-	LatencyMs    int64     `gorm:"not null"`
-	ErrorMessage string    `gorm:"type:text"`
-	RequestedAt  time.Time `gorm:"not null;index"`
+	ID                uint      `gorm:"primaryKey;autoIncrement"`
+	InstanceID        uint      `gorm:"not null;index"`
+	ProviderID        uint      `gorm:"not null"`
+	ModelID           string    `gorm:"not null"`
+	InputTokens       int       `gorm:"not null;default:0"`
+	OutputTokens      int       `gorm:"not null;default:0"`
+	CachedInputTokens int       `gorm:"not null;default:0"`
+	CostUSD           float64   `gorm:"not null;default:0"`
+	StatusCode        int       `gorm:"not null"`
+	LatencyMs         int64     `gorm:"not null"`
+	ErrorMessage      string    `gorm:"type:text"`
+	RequestedAt       time.Time `gorm:"not null;index"`
 }
 
 type InstanceAPIKey struct {

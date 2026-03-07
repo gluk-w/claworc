@@ -75,8 +75,8 @@ func extractGatewayToken(r *http.Request) string {
 	return ""
 }
 
-// authAndResolve validates the gateway token and returns provider info, real API key, and API type.
-func authAndResolve(r *http.Request) (instanceID, providerID uint, providerKey, baseURL, apiKey, apiType string, err error) {
+// authAndResolve validates the gateway token and returns provider info, real API key, API type, and provider models.
+func authAndResolve(r *http.Request) (instanceID, providerID uint, providerKey, baseURL, apiKey, apiType string, providerModels []database.ProviderModel, err error) {
 	token := extractGatewayToken(r)
 	if token == "" {
 		err = fmt.Errorf("missing or invalid gateway auth token")
@@ -98,7 +98,18 @@ func authAndResolve(r *http.Request) (instanceID, providerID uint, providerKey, 
 	if apiType == "" {
 		apiType = "openai-completions"
 	}
+	providerModels = database.ParseProviderModels(key.Provider.Models)
 	return
+}
+
+// findModelCost returns the cost config for the given model ID, or nil if not found.
+func findModelCost(models []database.ProviderModel, modelID string) *database.ProviderModelCost {
+	for _, m := range models {
+		if m.ID == modelID && m.Cost != nil {
+			return m.Cost
+		}
+	}
+	return nil
 }
 
 // resolveRealAPIKey finds the real API key for the given provider.
@@ -129,7 +140,7 @@ func resolveRealAPIKey(instanceID uint, providerKey string) string {
 func handleProxy(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	instanceID, providerID, providerKey, baseURL, apiKey, apiType, err := authAndResolve(r)
+	instanceID, providerID, providerKey, baseURL, apiKey, apiType, providerModels, err := authAndResolve(r)
 	if err != nil {
 		log.Printf("[gateway] auth failed: %s path=%s", err, r.URL.Path)
 		http.Error(w, `{"error":{"message":"`+err.Error()+`","type":"authentication_error"}}`, http.StatusUnauthorized)
@@ -207,7 +218,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		latencyMs := time.Since(start).Milliseconds()
 		http.Error(w, `{"error":{"message":"upstream request failed"}}`, http.StatusBadGateway)
-		logRequest(instanceID, providerID, reqBody.Model, 0, 0, http.StatusBadGateway, latencyMs, err.Error())
+		logRequest(instanceID, providerID, reqBody.Model, 0, 0, 0, 0, http.StatusBadGateway, latencyMs, err.Error())
 		logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, http.StatusBadGateway, latencyMs, err.Error())
 		return
 	}
@@ -226,7 +237,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		// Stream response directly — no buffering
 		io.Copy(w, resp.Body)
 		latencyMs := time.Since(start).Milliseconds()
-		logRequest(instanceID, providerID, reqBody.Model, 0, 0, resp.StatusCode, latencyMs, "")
+		logRequest(instanceID, providerID, reqBody.Model, 0, 0, 0, 0, resp.StatusCode, latencyMs, "")
 		logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, resp.StatusCode, latencyMs, "")
 	} else {
 		// Buffer response to extract token counts
@@ -234,28 +245,43 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		if readErr == nil {
 			w.Write(respBody)
 		}
-		var inputTokens, outputTokens int
+		var inputTokens, outputTokens, cachedInputTokens int
+		var costUSD float64
 		var errMsg string
 		if readErr == nil {
 			// Try all provider token count formats — only one will be non-zero for any given response
 			var usage struct {
 				Usage struct {
 					// OpenAI format
-					PromptTokens     int `json:"prompt_tokens"`
-					CompletionTokens int `json:"completion_tokens"`
+					PromptTokens        int `json:"prompt_tokens"`
+					CompletionTokens    int `json:"completion_tokens"`
+					PromptTokensDetails struct {
+						CachedTokens int `json:"cached_tokens"`
+					} `json:"prompt_tokens_details"`
 					// Anthropic format (same "usage" key, different fields)
-					InputTokens  int `json:"input_tokens"`
-					OutputTokens int `json:"output_tokens"`
+					InputTokens          int `json:"input_tokens"`
+					OutputTokens         int `json:"output_tokens"`
+					CacheReadInputTokens int `json:"cache_read_input_tokens"`
 				} `json:"usage"`
 				// Google format
 				UsageMetadata struct {
-					PromptTokenCount     int `json:"promptTokenCount"`
-					CandidatesTokenCount int `json:"candidatesTokenCount"`
+					PromptTokenCount        int `json:"promptTokenCount"`
+					CandidatesTokenCount    int `json:"candidatesTokenCount"`
+					CachedContentTokenCount int `json:"cachedContentTokenCount"`
 				} `json:"usageMetadata"`
 			}
 			if json.Unmarshal(respBody, &usage) == nil {
 				inputTokens = usage.Usage.PromptTokens + usage.Usage.InputTokens + usage.UsageMetadata.PromptTokenCount
 				outputTokens = usage.Usage.CompletionTokens + usage.Usage.OutputTokens + usage.UsageMetadata.CandidatesTokenCount
+				cachedInputTokens = usage.Usage.PromptTokensDetails.CachedTokens +
+					usage.Usage.CacheReadInputTokens +
+					usage.UsageMetadata.CachedContentTokenCount
+			}
+			if cost := findModelCost(providerModels, reqBody.Model); cost != nil {
+				nonCached := float64(inputTokens - cachedInputTokens)
+				costUSD = (nonCached*cost.Input +
+					float64(cachedInputTokens)*cost.CacheRead +
+					float64(outputTokens)*cost.Output) / 1_000_000
 			}
 			if resp.StatusCode >= 400 {
 				errMsg = string(respBody)
@@ -265,7 +291,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		latencyMs := time.Since(start).Milliseconds()
-		logRequest(instanceID, providerID, reqBody.Model, inputTokens, outputTokens, resp.StatusCode, latencyMs, errMsg)
+		logRequest(instanceID, providerID, reqBody.Model, inputTokens, outputTokens, cachedInputTokens, costUSD, resp.StatusCode, latencyMs, errMsg)
 		logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, resp.StatusCode, latencyMs, errMsg)
 	}
 }

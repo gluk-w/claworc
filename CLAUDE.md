@@ -33,6 +33,9 @@ SPA middleware for client-side routing.
 **API routes**: All under `/api/v1/`. Instance CRUD at `/api/v1/instances`, settings at `/api/v1/settings`, 
 health at `/health`. Logs are streamed via SSE. WebSocket proxying for chat and VNC.
 
+**LLM Gateway**: Proxy for LLM requests that replaces virtual keys with real, globally configured API tokens. It
+records statistics in a separate SQLite database. See`docs/virtual-keys.md`.
+
 **K8s integration** (`internal/orchestrator/kubernetes.go`): Uses the official Go `client-go` library. 
 Tries in-cluster config first, falls back to kubeconfig for local dev.
 

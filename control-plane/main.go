@@ -53,6 +53,10 @@ func main() {
 	}
 	defer database.Close()
 
+	if err := database.InitLogsDB(config.Cfg.DataPath); err != nil {
+		log.Fatalf("Logs DB init: %v", err)
+	}
+
 	log.Printf("Config: AuthDisabled=%v, RPID=%s, RPOrigins=%v", config.Cfg.AuthDisabled, config.Cfg.RPID, config.Cfg.RPOrigins)
 
 	// Init global SSH key pair
