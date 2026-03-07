@@ -10,11 +10,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/gluk-w/claworc/control-plane/internal/handlers"
+	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 )
 
 // withRunningInstance creates a provider and instance, waits for the instance
@@ -441,6 +444,142 @@ func TestIntegration_LogsStreaming(t *testing.T) {
 		// and health-check connections happen before the instance reaches "running".
 		if len(dataLines) == 0 {
 			t.Error("expected at least one SSE data line from sshd log, got none")
+		}
+	})
+}
+
+// ─── LLM Gateway ──────────────────────────────────────────────────────────────
+
+func TestIntegration_LLMGateway(t *testing.T) {
+	// Port 40001 is required for the LLMProxy agent-listener tunnel (PermitListen restriction).
+	if sessionGatewayPort != 40001 {
+		t.Skipf("gateway port is %d, not 40001; LLMProxy tunnel disabled (port in use at startup)", sessionGatewayPort)
+	}
+
+	withRunningInstance(t, func(instID uint, instName string) {
+		waitForSSHConnected(t, instID, 90*time.Second)
+
+		// Poll openclaw.json until models.providers is configured.
+		// ConfigureInstance writes virtual keys there after SSH connection is established.
+		type providerEntry struct {
+			BaseURL string `json:"baseUrl"`
+			APIKey  string `json:"apiKey"`
+		}
+		type openClawCfg struct {
+			Models struct {
+				Providers map[string]providerEntry `json:"providers"`
+			} `json:"models"`
+		}
+
+		var gatewayURL, virtualKey string
+		deadline := time.Now().Add(90 * time.Second)
+		for time.Now().Before(deadline) {
+			out, err := exec.Command("docker", "exec", instName, "cat", orchestrator.PathOpenClawConfig).Output()
+			if err != nil {
+				time.Sleep(3 * time.Second)
+				continue
+			}
+			var cfg openClawCfg
+			if err := json.Unmarshal(out, &cfg); err != nil {
+				time.Sleep(3 * time.Second)
+				continue
+			}
+			for _, prov := range cfg.Models.Providers {
+				if prov.APIKey != "" {
+					gatewayURL = prov.BaseURL
+					virtualKey = prov.APIKey
+					break
+				}
+			}
+			if virtualKey != "" {
+				break
+			}
+			time.Sleep(3 * time.Second)
+		}
+		if virtualKey == "" {
+			t.Fatal("openclaw.json models.providers not configured within 90s")
+		}
+		t.Logf("gateway baseUrl=%s, virtual key prefix=%s...", gatewayURL, virtualKey[:min(16, len(virtualKey))])
+
+		// Wait for LLMProxy tunnel to appear as active in ssh-status.
+		tunnelURL := fmt.Sprintf("%s/api/v1/instances/%d/ssh-status", sessionURL, instID)
+		httpClient := &http.Client{Timeout: 10 * time.Second}
+		deadline = time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) {
+			resp, err := httpClient.Get(tunnelURL)
+			if err != nil {
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			var status struct {
+				Tunnels []struct {
+					Label  string `json:"label"`
+					Status string `json:"status"`
+				} `json:"tunnels"`
+			}
+			json.NewDecoder(resp.Body).Decode(&status)
+			resp.Body.Close()
+			for _, tun := range status.Tunnels {
+				if tun.Label == "LLMProxy" && tun.Status == "active" {
+					t.Logf("LLMProxy tunnel is active ✓")
+					goto tunnelReady
+				}
+			}
+			t.Log("LLMProxy tunnel not yet active, retrying...")
+			time.Sleep(2 * time.Second)
+		}
+		t.Fatal("LLMProxy tunnel did not become active within 60s")
+	tunnelReady:
+
+		// Get SSH client.
+		sshCtx, sshCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer sshCancel()
+		client, err := handlers.SSHMgr.WaitForSSH(sshCtx, instID, 10*time.Second)
+		if err != nil {
+			t.Fatalf("get SSH client: %v", err)
+		}
+
+		curlBase := fmt.Sprintf("%s/v1/models", gatewayURL)
+
+		// ── Test 1: invalid key → 401 ────────────────────────────────────────
+		sess1, err := client.NewSession()
+		if err != nil {
+			t.Fatalf("open SSH session: %v", err)
+		}
+		out1, _ := sess1.CombinedOutput(fmt.Sprintf(
+			"curl -s -o /dev/null -w '%%{http_code}' -H 'Authorization: Bearer invalid-key' '%s'",
+			curlBase))
+		sess1.Close()
+
+		code1 := strings.TrimSpace(string(out1))
+		if code1 != "401" {
+			t.Errorf("invalid key: want HTTP 401, got %s", code1)
+		} else {
+			t.Logf("invalid key → HTTP 401 ✓")
+		}
+
+		// ── Test 2: valid virtual key → gateway accepts (upstream may still fail) ──
+		// The gateway must accept our virtual key. If the upstream returns 401 because
+		// no real API key is stored, the gateway proxies that response faithfully.
+		// We distinguish gateway auth failure (body has "authentication_error") from
+		// an upstream failure (any other body).
+		sess2, err := client.NewSession()
+		if err != nil {
+			t.Fatalf("open SSH session: %v", err)
+		}
+		out2, _ := sess2.CombinedOutput(fmt.Sprintf(
+			`curl -s -w '\n%%{http_code}' -H 'Authorization: Bearer %s' '%s'`,
+			virtualKey, curlBase))
+		sess2.Close()
+
+		lines := strings.Split(strings.TrimSpace(string(out2)), "\n")
+		code2 := lines[len(lines)-1]
+		body2 := strings.Join(lines[:len(lines)-1], "\n")
+
+		if code2 == "401" && strings.Contains(body2, `"authentication_error"`) {
+			t.Errorf("valid key: gateway rejected our virtual key with auth error (body: %s)", body2)
+		} else {
+			t.Logf("valid key → HTTP %s ✓ (gateway accepted key; upstream response body: %.120s)", code2, body2)
 		}
 	})
 }

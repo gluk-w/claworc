@@ -25,7 +25,7 @@ HELM_NAMESPACE := claworc
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
 	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models scrape-models test \
-	worker-deploy
+	worker-deploy worker-test
 
 agent: agent-base agent-build agent-test agent-push
 
@@ -158,7 +158,9 @@ ssh-file-integration-test:
 	cd tests && npm run test:ssh -- --testPathPattern file.test
 
 test-integration-backend:
-	cd control-plane && go test -tags docker_integration -v -timeout 600s \
+	@# Free port 40001 so TestIntegration_LLMGateway can bind it (e.g. kill the local dev server).
+	@-lsof -ti tcp:40001 | xargs kill -9 2>/dev/null || true
+	cd control-plane && go test -tags docker_integration -v -timeout 600s -count=1 \
 		./internal/handlers/ -run TestIntegration
 
 e2e-docker-tests:
@@ -175,3 +177,6 @@ scrape-models:
 
 worker-deploy:
 	cd website/worker && npx wrangler deploy
+
+worker-test:
+	cd website/worker && npm install && npx vitest run

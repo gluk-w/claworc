@@ -122,7 +122,6 @@ export default function InstanceDetailPage() {
   const [editingGatewayProviders, setEditingGatewayProviders] = useState(false);
   const [pendingProviders, setPendingProviders] = useState<number[] | null>(null);
   const [pendingProviderModels, setPendingProviderModels] = useState<Record<number, string[]> | null>(null);
-  const [pendingDefaultModel, setPendingDefaultModel] = useState<string | null>(null);
 
   // Update tab when hash changes
   useEffect(() => {
@@ -251,7 +250,6 @@ export default function InstanceDetailPage() {
     // to the container directly from the provider definition, not via models.extra.
     const providerModels: string[] = [];
     for (const p of allProviders) {
-      if (p.models.length > 0) continue;
       const bareModels = pendingProviderModels?.[p.id] ?? [];
       for (const m of bareModels) {
         providerModels.push(`${p.key}/${m}`);
@@ -281,7 +279,6 @@ export default function InstanceDetailPage() {
             disabled: instance!.models.disabled_defaults ?? [],
             extra: mergedModels,
           },
-          default_model: pendingDefaultModel ?? undefined,
         },
       },
       {
@@ -289,7 +286,6 @@ export default function InstanceDetailPage() {
           setEditingGatewayProviders(false);
           setPendingProviders(null);
           setPendingProviderModels(null);
-          setPendingDefaultModel(null);
           toast.custom(
             createElement(AppToast, {
               title: "Gateway providers saved",
@@ -446,7 +442,6 @@ export default function InstanceDetailPage() {
                     if (editingGatewayProviders) {
                       setPendingProviders(null);
                       setPendingProviderModels(null);
-                      setPendingDefaultModel(null);
                     } else {
                       setPendingProviders(instance.enabled_providers ?? []);
                       const initialModels: Record<number, string[]> = {};
@@ -457,7 +452,6 @@ export default function InstanceDetailPage() {
                           .map((m) => m.slice(prefix.length));
                       }
                       setPendingProviderModels(initialModels);
-                      setPendingDefaultModel(instance.default_model ?? "");
                     }
                     setEditingGatewayProviders(!editingGatewayProviders);
                   }}
@@ -481,8 +475,6 @@ export default function InstanceDetailPage() {
                         setPendingProviders(newEnabled);
                         setPendingProviderModels(newModels);
                       }}
-                      defaultModel={pendingDefaultModel ?? ""}
-                      onDefaultModelChange={setPendingDefaultModel}
                     />
                   )}
                   <div className="flex justify-end pt-2">

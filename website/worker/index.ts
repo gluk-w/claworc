@@ -94,8 +94,8 @@ function serializeModel(m: ModelRow) {
   return {
     model_id: m.model_id,
     model_name: m.model_name,
-    reasoning: m.reasoning === "true",
-    vision: m.vision === "true",
+    reasoning: m.reasoning.toLowerCase() === "true",
+    vision: m.vision.toLowerCase() === "true",
     context_window: m.context_window ? parseInt(m.context_window, 10) : null,
     max_tokens: m.max_tokens ? parseInt(m.max_tokens, 10) : null,
   };
@@ -109,13 +109,11 @@ function handleProviderList(): Response {
   const data = Object.entries(providers)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, prov]) => ({
-      key,
+      name: key,
       label: prov.label,
       icon_key: prov.icon_key || null,
       api_format: prov.api_format,
       model_count: prov.models.length,
-      has_reasoning: prov.models.some((m) => m.reasoning === "true"),
-      has_vision: prov.models.some((m) => m.vision === "true"),
     }));
   return jsonResponse(data);
 }

@@ -76,9 +76,15 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 		log.Fatalf("create admin user: %v", err)
 	}
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	// Try 40001 first: agent sshd has PermitListen 127.0.0.1:40001.
+	// A random port causes the LLMProxy tunnel to fail with "tcpip-forward request denied".
+	ln, err := net.Listen("tcp", "127.0.0.1:40001")
 	if err != nil {
-		log.Fatalf("find free gateway port: %v", err)
+		log.Printf("Warning: port 40001 unavailable (%v); using random port — LLMProxy tunnel and gateway test will be skipped", err)
+		ln, err = net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			log.Fatalf("find free gateway port: %v", err)
+		}
 	}
 	gatewayPort := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()

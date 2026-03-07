@@ -30,6 +30,8 @@ export interface CatalogProviderDetail {
     vision: boolean;
     context_window: number | null;
     max_tokens: number | null;
+    tag?: string | null;
+    description?: string | null;
   }[];
 }
 

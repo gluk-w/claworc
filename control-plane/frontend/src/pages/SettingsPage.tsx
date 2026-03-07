@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Key, Plus, RefreshCw } from "lucide-react";
+import { AlertTriangle, Eye, EyeOff, Key, Pencil, Plus, RefreshCw } from "lucide-react";
 import ProviderIcon from "@/components/ProviderIcon";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
@@ -70,16 +70,6 @@ export default function SettingsPage() {
     onError: (err) => errorToast("Sync failed", err),
   });
   const hasCatalogProviders = providers.some((p) => p.provider !== "");
-
-  // Expandable rows
-  const [expandedProviders, setExpandedProviders] = useState<Set<number>>(new Set());
-  const toggleExpanded = (id: number) =>
-    setExpandedProviders((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
 
   // Fetch catalog detail for each catalog provider (for model display in rows)
   const catalogKeys = [...new Set(providers.filter((p) => p.provider).map((p) => p.provider))];
@@ -328,19 +318,14 @@ export default function SettingsPage() {
                 const skn = settingsKeyName(p.key);
                 const apiKeyValue = settings.api_keys?.[skn];
                 const apiKeyDisplay = apiKeyValue ? `****${apiKeyValue.slice(-4)}` : "not set";
-                const isExpanded = expandedProviders.has(p.id);
                 const catalogModels = p.provider ? catalogDetailMap[p.provider]?.models : undefined;
                 const displayModels = catalogModels
                   ? catalogModels.map((m) => m.model_id)
                   : (p.models || []).map((m) => m.id);
                 return (
                   <div key={p.id}>
-                    <div className="flex items-center py-3 -mx-2 px-2 rounded hover:bg-gray-50 transition-colors">
-                      <button
-                        type="button"
-                        onClick={() => toggleExpanded(p.id)}
-                        className="min-w-0 flex-1 flex items-center gap-3 text-left"
-                      >
+                    <div className="flex items-center py-3 -mx-2 px-2 rounded transition-colors">
+                      <div className="min-w-0 flex-1 flex items-center gap-3">
                         <div className="shrink-0 w-6 h-6 flex items-center justify-center">
                           {p.provider ? (
                             <ProviderIcon provider={p.provider} size={22} />
@@ -358,39 +343,31 @@ export default function SettingsPage() {
                           <p className="text-xs font-mono text-gray-500 mt-0.5 truncate">{p.base_url}</p>
                           <p className="text-xs text-gray-400 mt-0.5">
                             API key: <span className="font-mono">{apiKeyDisplay}</span>
-                            {displayModels.length > 0 && (
-                              <span className="ml-2 text-gray-300">· {displayModels.length} models</span>
-                            )}
                           </p>
                         </div>
-                        <span className="text-gray-400 shrink-0 ml-2">
-                          {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                        </span>
-                      </button>
+                      </div>
                       <button
                         type="button"
                         onClick={() => openEditModal(p)}
                         className="shrink-0 ml-2 p-1 text-gray-400 hover:text-gray-600 rounded"
                         title="Edit provider"
                       >
-                        <ChevronRight size={16} />
+                        <Pencil size={14} />
                       </button>
                     </div>
-                    {isExpanded && (
-                      <div className="pb-3 px-2">
-                        {displayModels.length === 0 ? (
-                          <p className="text-xs text-gray-400 italic">No models available.</p>
-                        ) : (
-                          <div className="flex flex-wrap gap-1">
-                            {displayModels.map((id) => (
-                              <span key={id} className="font-mono text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
-                                {id}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                    <div className="pb-3 px-2">
+                      {displayModels.length === 0 ? (
+                        <p className="text-xs text-gray-400 italic">No models available.</p>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {displayModels.map((id) => (
+                            <span key={id} className="font-mono text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
+                              {id}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })}
