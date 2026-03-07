@@ -629,7 +629,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			OnProgress:      func(msg string) { setStatusMessage(inst.ID, msg) },
 		})
 		if err != nil {
-			log.Printf("Failed to create container resources for %s: %v", utils.SanitizeForLog(name), err)
+			log.Printf("Failed to create container resources for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(err.Error()))
 			setStatusMessage(inst.ID, fmt.Sprintf("Failed: %v", err))
 			database.DB.Model(&inst).Update("status", "error")
 			return
@@ -643,7 +643,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		// Push models, API keys, and gateway providers to the instance (waits for container ready)
 		database.DB.First(&inst, inst.ID)
 		if err := llmgateway.EnsureKeysForInstance(inst.ID, enabledProviders); err != nil {
-			log.Printf("Failed to ensure LLM gateway keys for instance %d: %v", inst.ID, err)
+			log.Printf("Failed to ensure LLM gateway keys for instance %d: %s", inst.ID, utils.SanitizeForLog(err.Error()))
 		}
 		models := resolveInstanceModels(inst)
 		gatewayProviders := resolveGatewayProviders(inst)
@@ -821,7 +821,7 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(*body.EnabledProviders)
 		database.DB.Model(&inst).Update("enabled_providers", string(b))
 		if err := llmgateway.EnsureKeysForInstance(inst.ID, *body.EnabledProviders); err != nil {
-			log.Printf("Failed to ensure LLM gateway keys for instance %d: %v", inst.ID, err)
+			log.Printf("Failed to ensure LLM gateway keys for instance %d: %s", inst.ID, utils.SanitizeForLog(err.Error()))
 		}
 	}
 

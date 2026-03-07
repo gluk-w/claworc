@@ -39,7 +39,7 @@ func EnsureKeysForInstance(instanceID uint, enabledProviderIDs []uint) error {
 		if err := database.DB.Create(&key).Error; err != nil {
 			return fmt.Errorf("create gateway key for instance %d, provider %d: %w", instanceID, providerID, err)
 		}
-		log.Printf("LLM gateway: created key for instance %d, provider %d", instanceID, providerID)
+		log.Printf("LLM gateway: created key for instance %d, provider %d", uint(instanceID), uint(providerID))
 	}
 
 	// Remove keys for disabled providers
