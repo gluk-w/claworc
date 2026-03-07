@@ -30,6 +30,12 @@
             ]
           },
           {
+            "group": "LLM & models",
+            "pages": [
+              "llm-gateway"
+            ]
+          },
+          {
             "group": "Security & access",
             "pages": [
               "authentication",
