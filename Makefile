@@ -40,10 +40,11 @@ agent-build:
 	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(AGENT_BASE_IMAGE):$(TAG) -t $(AGENT_BRAVE_IMAGE):$(TAG) -f agent/Dockerfile.brave --load agent/
 
 agent-test:
-	cd tests && AGENT_TEST_IMAGE=$(AGENT_IMAGE):$(TAG) \
+	cd agent/tests && AGENT_TEST_IMAGE=$(AGENT_IMAGE):$(TAG) \
 		AGENT_CHROME_TEST_IMAGE=$(AGENT_CHROME_IMAGE):$(TAG) \
 		AGENT_BRAVE_TEST_IMAGE=$(AGENT_BRAVE_IMAGE):$(TAG) \
-		npm run test:agent
+		npm run test
+
 
 agent-push:
 	@echo "Pushing all agent images in parallel..."
@@ -100,7 +101,7 @@ helm-template:
 
 install-test:
 	@echo "Installing test dependencies (npm)"
-	@cd tests && npm install
+	@cd agent/tests && npm install
 
 install-dev: install-test
 	@echo "Installing development dependencies..."
@@ -131,7 +132,7 @@ ssh-integration-test:
 ssh-file-integration-test:
 	docker build -t $(AGENT_BASE_IMAGE):local agent/
 	docker build --build-arg BASE_IMAGE=$(AGENT_BASE_IMAGE):local -f agent/Dockerfile.chromium -t claworc-agent:local agent/
-	cd tests && npm run test:ssh -- --testPathPattern file.test
+	cd agent/tests && npm run test:ssh -- --testPathPattern file.test
 
 test-integration-backend:
 	cd control-plane && CLAWORC_LLM_GATEWAY_PORT=40001 go test -tags docker_integration -v -timeout 600s -count=1 \

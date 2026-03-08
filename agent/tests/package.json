@@ -1,10 +1,8 @@
 {
-  "name": "claworc-tests",
+  "name": "claworc-agent-tests",
   "private": true,
   "scripts": {
-    "test": "vitest run",
-    "test:agent": "vitest run agent/",
-    "test:ssh": "vitest run ssh/"
+    "test": "vitest run"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",

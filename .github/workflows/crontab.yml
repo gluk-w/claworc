@@ -1,0 +1,31 @@
+name: Agent Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent/**'
+      - '.github/workflows/crontab.yml'
+  pull_request:
+    paths:
+      - 'agent/**'
+      - '.github/workflows/crontab.yml'
+
+jobs:
+  agent-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install test dependencies
+        run: make install-test
+
+      - name: Run agent tests
+        run: make agent-test
