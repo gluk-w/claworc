@@ -529,13 +529,13 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 	var instanceFilter *uint
 	var providerFilter *uint
 	if v := q.Get("instance_id"); v != "" {
-		if id, err := strconv.ParseUint(v, 10, 64); err == nil {
+		if id, err := strconv.ParseUint(v, 10, 32); err == nil {
 			uid := uint(id)
 			instanceFilter = &uid
 		}
 	}
 	if v := q.Get("provider_id"); v != "" {
-		if id, err := strconv.ParseUint(v, 10, 64); err == nil {
+		if id, err := strconv.ParseUint(v, 10, 32); err == nil {
 			uid := uint(id)
 			providerFilter = &uid
 		}

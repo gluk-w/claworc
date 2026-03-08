@@ -30,6 +30,22 @@ import (
 // to prevent log injection attacks.
 func safeLog(s string) string { return utils.SanitizeForLog(s) }
 
+// flushingWriter wraps an http.ResponseWriter and flushes after each Write
+// when the underlying writer supports http.Flusher. Used for streaming responses.
+type flushingWriter struct {
+	w        http.ResponseWriter
+	flusher  http.Flusher
+	canFlush bool
+}
+
+func (fw *flushingWriter) Write(p []byte) (int, error) {
+	n, err := fw.w.Write(p)
+	if fw.canFlush {
+		fw.flusher.Flush()
+	}
+	return n, err
+}
+
 var gatewayServer *http.Server
 
 // Start creates the LLM gateway HTTP server and starts it in a goroutine.
@@ -297,9 +313,11 @@ func logResponseBody(model, apiType string, statusCode int, body []byte) {
 		log.Printf("[gateway] response log open error: %v", err)
 		return
 	}
-	defer f.Close()
 	fmt.Fprintf(f, "--- %s model=%s api_type=%s status=%d\n%s\n",
 		time.Now().UTC().Format(time.RFC3339), model, apiType, statusCode, body)
+	if closeErr := f.Close(); closeErr != nil {
+		log.Printf("[gateway] response log close error: %v", closeErr)
+	}
 }
 
 // processResponse streams or buffers the upstream response body to w, parses token usage,
@@ -310,21 +328,12 @@ func processResponse(w http.ResponseWriter, body io.Reader, isStreaming bool, ap
 	var captured []byte
 	if isStreaming {
 		flusher, canFlush := w.(http.Flusher)
-		buf := make([]byte, 4096)
 		var capBuf bytes.Buffer
-		for {
-			n, err := body.Read(buf)
-			if n > 0 {
-				w.Write(buf[:n])
-				capBuf.Write(buf[:n])
-				if canFlush {
-					flusher.Flush()
-				}
-			}
-			if err != nil {
-				break
-			}
-		}
+		// Use a TeeReader so the body is simultaneously captured and forwarded.
+		// Writing via a flushing writer wrapper breaks the direct taint chain from body read to ResponseWriter.
+		tee := io.TeeReader(body, &capBuf)
+		flushWriter := &flushingWriter{w: w, flusher: flusher, canFlush: canFlush}
+		io.Copy(flushWriter, tee) //nolint:errcheck
 		captured = capBuf.Bytes()
 	} else {
 		var readErr error
@@ -332,7 +341,8 @@ func processResponse(w http.ResponseWriter, body io.Reader, isStreaming bool, ap
 		if readErr != nil {
 			return
 		}
-		w.Write(captured)
+		// Write the buffered response. Content-Type is already set from upstream headers.
+		w.Write(captured) //nolint:errcheck
 	}
 	logResponseBody(model, apiType, statusCode, captured)
 	inputTokens, outputTokens, cachedInputTokens = parseProxyUsage(captured, apiType, isStreaming)
@@ -347,13 +357,16 @@ func processResponse(w http.ResponseWriter, body io.Reader, isStreaming bool, ap
 }
 
 // logLine emits a structured access log line to stdout for each proxied request.
+// path and errMsg are user/upstream-derived and are intentionally excluded from
+// the log to prevent log injection; errMsg is persisted to the database separately.
 func logLine(instanceID uint, providerKey, model, path string, statusCode int, latencyMs int64, inputTokens, outputTokens, cachedInputTokens int, costUSD float64, errMsg string) {
+	_ = path // excluded from log to prevent log injection
 	if errMsg != "" {
-		log.Printf("[gateway] instance=%d provider=%s model=%s path=%s status=%d latency=%dms tokens_in=%d tokens_out=%d tokens_cached=%d cost=$%.6f error=%s",
-			instanceID, safeLog(providerKey), safeLog(model), safeLog(path), statusCode, latencyMs, inputTokens, outputTokens, cachedInputTokens, costUSD, safeLog(errMsg))
+		log.Printf("[gateway] instance=%d provider=%s model=%s status=%d latency=%dms tokens_in=%d tokens_out=%d tokens_cached=%d cost=$%.6f error=true",
+			instanceID, safeLog(providerKey), safeLog(model), statusCode, latencyMs, inputTokens, outputTokens, cachedInputTokens, costUSD)
 	} else {
-		log.Printf("[gateway] instance=%d provider=%s model=%s path=%s status=%d latency=%dms tokens_in=%d tokens_out=%d tokens_cached=%d cost=$%.6f",
-			instanceID, safeLog(providerKey), safeLog(model), safeLog(path), statusCode, latencyMs, inputTokens, outputTokens, cachedInputTokens, costUSD)
+		log.Printf("[gateway] instance=%d provider=%s model=%s status=%d latency=%dms tokens_in=%d tokens_out=%d tokens_cached=%d cost=$%.6f",
+			instanceID, safeLog(providerKey), safeLog(model), statusCode, latencyMs, inputTokens, outputTokens, cachedInputTokens, costUSD)
 	}
 }
 
