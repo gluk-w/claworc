@@ -17,7 +17,7 @@ RUN apt-get update && \
       fonts-noto-color-emoji fonts-noto-cjk fonts-dejavu-core fonts-freefont-ttf \
       tzdata locales \
       openssh-server git python3 python3-pip python3-venv python3-numpy \
-      build-essential procps nodejs && \
+      build-essential procps cron nodejs && \
     echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen && \
     npm install -g openclaw@latest && \
     curl -sSL https://install.python-poetry.org | POETRY_HOME=/usr/local python3 - && \
@@ -48,6 +48,7 @@ RUN chmod +x /etc/s6-overlay/s6-rc.d/init-setup/up \
     /etc/s6-overlay/s6-rc.d/svc-novnc/run \
     /etc/s6-overlay/s6-rc.d/svc-desktop/run \
     /etc/s6-overlay/s6-rc.d/svc-openclaw/run \
-    /etc/s6-overlay/s6-rc.d/svc-sshd/run
+    /etc/s6-overlay/s6-rc.d/svc-sshd/run \
+    /etc/s6-overlay/s6-rc.d/svc-cron/run
 
 ENTRYPOINT ["/init"]
