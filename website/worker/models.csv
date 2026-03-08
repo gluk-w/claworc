@@ -1,8 +1,8 @@
-provider_key,provider_label,icon_key,api_format,base_url,model_id,model_name,reasoning,vision,context_window,max_tokens,input_cost,output_cost,cached_read_cost,cached_write_cost
-bedrock,Amazon Bedrock,bedrock,bedrock-converse-stream,https://bedrock-runtime.us-east-1.amazonaws.com,us.anthropic.claude-opus-4-6-v1:0,Claude Opus 4.6 (Bedrock),TRUE,TRUE,200000,128000,,,,
-anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-opus-4-6,Claude Opus 4.6,TRUE,TRUE,200000,128000,5,25,,
-anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-sonnet-4-6,Claude Sonnet 4.6,TRUE,TRUE,200000,64000,3,15,,
-anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-haiku-4-6,Claude Haiku 4.5,TRUE,TRUE,200000,64000,1,5,,
+provider_key,provider_label,icon_key,api_format,base_url,model_id,model_name,reasoning,vision,context_window,max_tokens,input_cost,output_cost,cached_read_cost,cached_write_cost,tag,description
+bedrock,Amazon Bedrock,bedrock,bedrock-converse-stream,https://bedrock-runtime.us-east-1.amazonaws.com,us.anthropic.claude-opus-4-6-v1:0,Claude Opus 4.6 (Bedrock),TRUE,TRUE,200000,128000,,,,,,
+anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-opus-4-6,Claude Opus 4.6,TRUE,TRUE,200000,128000,5,25,0.5,6.25,flagship,Most capable — deep reasoning, complex tasks
+anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-sonnet-4-6,Claude Sonnet 4.6,TRUE,TRUE,200000,64000,3,15,0.3,3.75,balanced,Fast & capable — ideal default
+anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-haiku-4-5,Claude Haiku 4.5,TRUE,TRUE,200000,64000,1,5,0.1,1.25,speed,Fastest responses — high-volume, low-latency
 openai,OpenAI,openai,openai-responses,https://api.openai.com/,gpt-5.2,GPT-5.2,TRUE,TRUE,400000,128000,1.75,14,0.175,
 openai,OpenAI,openai,openai-responses,https://api.openai.com/,gpt-5-mini,GPT-5 mini,TRUE,TRUE,400000,128000,0.25,2,0.025,
 openai,OpenAI,openai,openai-responses,https://api.openai.com/,gpt-5-nano,GPT-5 nano,TRUE,TRUE,400000,128000,0.05,0.4,0.005,
@@ -35,11 +35,11 @@ litellm,LiteLLM (unified gateway),,openai-completions,http://localhost:4000,gpt-
 minimax,MiniMax,minimax,anthropic-messages,https://api.minimax.io/anthropic,MiniMax-M2.5,MiniMax M2.5,TRUE,FALSE,200000,8192,,,,
 minimax,MiniMax,minimax,anthropic-messages,https://api.minimax.io/anthropic,MiniMax-M2.5-highspeed,MiniMax M2.5 Highspeed,TRUE,FALSE,200000,8192,,,,
 mistral,Mistral,,,,mistral/mistral-large-latest,Mistral Large Latest,FALSE,FALSE,,,,,,
-moonshot,Moonshot AI,moonshot,openai-completions,https://api.moonshot.ai/v1,kimi-k2.5,Kimi K2.5,FALSE,FALSE,256000,8192,,,,
-moonshot,Moonshot AI,moonshot,openai-completions,https://api.moonshot.ai/v1,kimi-k2-0905-preview,Kimi K2 0905 Preview,FALSE,FALSE,256000,8192,,,,
-moonshot,Moonshot AI,moonshot,openai-completions,https://api.moonshot.ai/v1,kimi-k2-turbo-preview,Kimi K2 Turbo,FALSE,FALSE,256000,8192,,,,
-moonshot,Moonshot AI,moonshot,openai-completions,https://api.moonshot.ai/v1,kimi-k2-thinking,Kimi K2 Thinking,TRUE,FALSE,256000,8192,,,,
-moonshot,Moonshot AI,moonshot,openai-completions,https://api.moonshot.ai/v1,kimi-k2-thinking-turbo,Kimi K2 Thinking Turbo,TRUE,FALSE,256000,8192,,,,
+moonshot,Moonshot AI,moonshot,openai-completions,https://api.moonshot.ai/v1,kimi-k2.5,Kimi K2.5,TRUE,FALSE,262144,8192,0.6,3,0.1,
+moonshot,Moonshot AI,moonshot,openai-completions,https://api.moonshot.ai/v1,kimi-k2-0905-preview,Kimi K2 0905 Preview,FALSE,FALSE,262144,8192,0.6,2.5,0.15,
+moonshot,Moonshot AI,moonshot,openai-completions,https://api.moonshot.ai/v1,kimi-k2-turbo-preview,Kimi K2 Turbo,FALSE,FALSE,262144,8192,1.15,8,0.15,
+moonshot,Moonshot AI,moonshot,openai-completions,https://api.moonshot.ai/v1,kimi-k2-thinking,Kimi K2 Thinking,TRUE,FALSE,262144,8192,0.6,2.5,0.15,
+moonshot,Moonshot AI,moonshot,openai-completions,https://api.moonshot.ai/v1,kimi-k2-thinking-turbo,Kimi K2 Thinking Turbo,TRUE,FALSE,262144,8192,1.15,8,0.15,
 nvidia,NVIDIA,nvidia,openai-completions,https://integrate.api.nvidia.com/v1,nvidia/llama-3.1-nemotron-70b-instruct,Llama 3.1 Nemotron 70B Instruct,FALSE,FALSE,,,,,,
 nvidia,NVIDIA,nvidia,openai-completions,https://integrate.api.nvidia.com/v1,meta/llama-3.3-70b-instruct,Llama 3.3 70B Instruct,FALSE,FALSE,,,,,,
 nvidia,NVIDIA,nvidia,openai-completions,https://integrate.api.nvidia.com/v1,nvidia/mistral-nemo-minitron-8b-8k-instruct,Mistral Nemo Minitron 8B 8K Instruct,FALSE,FALSE,,,,,,

@@ -52,7 +52,7 @@ func TestProcessResponse_OpenAICompletions(t *testing.T) {
 		isStreaming: false,
 		apiType:     "openai-completions",
 		statusCode:  200,
-		wantIn:      23,
+		wantIn:      18,
 		wantOut:     30,
 		wantCached:  5,
 	})
@@ -136,7 +136,7 @@ func TestProcessResponse_OpenAICompletionsStream(t *testing.T) {
 		isStreaming: true,
 		apiType:     "openai-completions",
 		statusCode:  200,
-		wantIn:      23,
+		wantIn:      18,
 		wantOut:     30,
 		wantCached:  5,
 	})

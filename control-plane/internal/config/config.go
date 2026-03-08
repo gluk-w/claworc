@@ -20,7 +20,8 @@ type Settings struct {
 	TerminalSessionTimeout string `envconfig:"TERMINAL_SESSION_TIMEOUT" default:"30m"`
 
 	// LLM gateway settings
-	LLMGatewayPort int `envconfig:"LLM_GATEWAY_PORT" default:"40001"`
+	LLMGatewayPort int    `envconfig:"LLM_GATEWAY_PORT" default:"40001"`
+	LLMResponseLog string `envconfig:"LLM_RESPONSE_LOG" default:""`
 }
 
 var Cfg Settings

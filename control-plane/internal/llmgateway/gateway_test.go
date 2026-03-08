@@ -867,7 +867,7 @@ func TestCachedTokenExtraction(t *testing.T) {
 			"openai cached",
 			"openai-completions",
 			`{"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":40}}}`,
-			40, 100, 20,
+			40, 60, 20,
 		},
 		{
 			"anthropic cached",
@@ -1216,7 +1216,7 @@ func TestParseUsage(t *testing.T) {
 			"openai",
 			"openai-completions",
 			`{"usage":{"prompt_tokens":10,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":3}}}`,
-			10, 20, 3,
+			7, 20, 3,
 		},
 		{
 			"anthropic",
@@ -1294,8 +1294,8 @@ func TestCalculateCost(t *testing.T) {
 		},
 		{
 			"with cached tokens",
-			// (1000-400)*3 + 400*0.3 + 200*15 = 1800+120+3000 = 4920 / 1e6 = 0.00492
-			"known-model", 1000, 200, 400, 0.00492,
+			// input is non-cached: 600*3 + 400*0.3 + 200*15 = 1800+120+3000 = 4920 / 1e6 = 0.00492
+			"known-model", 600, 200, 400, 0.00492,
 		},
 		{
 			"zero tokens → 0",
@@ -1358,8 +1358,8 @@ func TestStreamingDB_OpenAICompletions(t *testing.T) {
 	if err := database.LogsDB.First(&log).Error; err != nil {
 		t.Fatalf("no log row: %v", err)
 	}
-	if log.InputTokens != 23 {
-		t.Errorf("input_tokens: got %d, want 23", log.InputTokens)
+	if log.InputTokens != 18 {
+		t.Errorf("input_tokens: got %d, want 18", log.InputTokens)
 	}
 	if log.OutputTokens != 30 {
 		t.Errorf("output_tokens: got %d, want 30", log.OutputTokens)
@@ -1367,7 +1367,7 @@ func TestStreamingDB_OpenAICompletions(t *testing.T) {
 	if log.CachedInputTokens != 5 {
 		t.Errorf("cached_input_tokens: got %d, want 5", log.CachedInputTokens)
 	}
-	// cost = (23-5)*3/1e6 + 5*0.3/1e6 + 30*15/1e6 = 54/1e6 + 1.5/1e6 + 450/1e6 = 0.0005055
+	// cost = 18*3/1e6 + 5*0.3/1e6 + 30*15/1e6 = 54/1e6 + 1.5/1e6 + 450/1e6 = 0.0005055
 	const wantCost = 0.0005055
 	const epsilon = 0.000001
 	if diff := log.CostUSD - wantCost; diff < -epsilon || diff > epsilon {

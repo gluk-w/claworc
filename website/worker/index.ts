@@ -16,6 +16,10 @@ interface ModelRow {
   vision: string;
   context_window: string;
   max_tokens: string;
+  input_cost: string;
+  output_cost: string;
+  cached_read_cost: string;
+  cached_write_cost: string;
 }
 
 interface Provider {
@@ -98,6 +102,10 @@ function serializeModel(m: ModelRow) {
     vision: m.vision.toLowerCase() === "true",
     context_window: m.context_window ? parseInt(m.context_window, 10) : null,
     max_tokens: m.max_tokens ? parseInt(m.max_tokens, 10) : null,
+    input_cost: m.input_cost ? parseFloat(m.input_cost) : null,
+    output_cost: m.output_cost ? parseFloat(m.output_cost) : null,
+    cached_read_cost: m.cached_read_cost ? parseFloat(m.cached_read_cost) : null,
+    cached_write_cost: m.cached_write_cost ? parseFloat(m.cached_write_cost) : null,
   };
 }
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useUsageStats, useResetUsageLogs } from "@/hooks/useProviders";
 import {
   ResponsiveContainer,
@@ -14,7 +14,7 @@ import {
 } from "recharts";
 
 function formatCost(v: number) {
-  return `$${v.toFixed(4)}`;
+  return `$${v.toFixed(2)}`;
 }
 
 function formatTokens(v: number) {
@@ -34,10 +34,23 @@ function daysAgo(n: number) {
 }
 
 export default function UsagePage() {
-  const [startDate, setStartDate] = useState(daysAgo(30));
-  const [endDate, setEndDate] = useState(today());
-  const [instanceId, setInstanceId] = useState<number | undefined>();
-  const [providerId, setProviderId] = useState<number | undefined>();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const startDate = searchParams.get("start") ?? daysAgo(30);
+  const endDate = searchParams.get("end") ?? today();
+  const instanceId = searchParams.get("instance") ? Number(searchParams.get("instance")) : undefined;
+  const providerId = searchParams.get("provider") ? Number(searchParams.get("provider")) : undefined;
+
+  function updateParams(updates: Record<string, string | undefined>) {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      for (const [k, v] of Object.entries(updates)) {
+        if (v === undefined) next.delete(k);
+        else next.set(k, v);
+      }
+      return next;
+    }, { replace: true });
+  }
 
   const resetMutation = useResetUsageLogs();
 
@@ -69,7 +82,7 @@ export default function UsagePage() {
             type="date"
             value={startDate}
             max={endDate}
-            onChange={(e) => setStartDate(e.target.value)}
+            onChange={(e) => updateParams({ start: e.target.value })}
             className="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -79,7 +92,7 @@ export default function UsagePage() {
             type="date"
             value={endDate}
             min={startDate}
-            onChange={(e) => setEndDate(e.target.value)}
+            onChange={(e) => updateParams({ end: e.target.value })}
             className="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -87,7 +100,7 @@ export default function UsagePage() {
           <label className="text-xs font-medium text-gray-500">Instance</label>
           <select
             value={instanceId ?? ""}
-            onChange={(e) => setInstanceId(e.target.value ? Number(e.target.value) : undefined)}
+            onChange={(e) => updateParams({ instance: e.target.value || undefined })}
             className="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="">All instances</option>
@@ -102,7 +115,7 @@ export default function UsagePage() {
           <label className="text-xs font-medium text-gray-500">Provider</label>
           <select
             value={providerId ?? ""}
-            onChange={(e) => setProviderId(e.target.value ? Number(e.target.value) : undefined)}
+            onChange={(e) => updateParams({ provider: e.target.value || undefined })}
             className="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="">All providers</option>
@@ -113,17 +126,22 @@ export default function UsagePage() {
             ))}
           </select>
         </div>
-        <button
-          onClick={() => {
-            if (window.confirm("Delete all usage logs? This cannot be undone.")) {
-              resetMutation.mutate();
-            }
-          }}
-          disabled={resetMutation.isPending}
-          className="self-end px-3 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-md"
-        >
-          Reset
-        </button>
+        <span className="relative group self-end">
+          <button
+            onClick={() => {
+              if (window.confirm("Delete all usage logs? This cannot be undone.")) {
+                resetMutation.mutate();
+              }
+            }}
+            disabled={resetMutation.isPending}
+            className="px-3 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-md"
+          >
+            Reset
+          </button>
+          <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 whitespace-nowrap rounded bg-gray-900 px-2.5 py-1.5 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100 z-50">
+            Delete the usage information
+          </span>
+        </span>
       </div>
 
       {isLoading ? (

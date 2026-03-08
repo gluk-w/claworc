@@ -2,10 +2,10 @@ import { vi, describe, it, expect } from "vitest";
 
 vi.mock("./models.csv", () => ({
   default: [
-    "provider_key,provider_label,icon_key,api_format,base_url,model_id,model_name,reasoning,vision,context_window,max_tokens",
-    "anthropic,Anthropic,anthropic,anthropic,https://api.anthropic.com,claude-3-opus-20240229,Claude 3 Opus,FALSE,TRUE,200000,4096",
-    "anthropic,Anthropic,anthropic,anthropic,https://api.anthropic.com,claude-3-sonnet-20240229,Claude 3 Sonnet,FALSE,TRUE,200000,4096",
-    "openai,OpenAI,openai,openai,https://api.openai.com,gpt-4o,GPT-4o,FALSE,TRUE,128000,4096",
+    "provider_key,provider_label,icon_key,api_format,base_url,model_id,model_name,reasoning,vision,context_window,max_tokens,input_cost,output_cost,cached_read_cost,cached_write_cost",
+    "anthropic,Anthropic,anthropic,anthropic,https://api.anthropic.com,claude-3-opus-20240229,Claude 3 Opus,FALSE,TRUE,200000,4096,5,25,0.5,",
+    "anthropic,Anthropic,anthropic,anthropic,https://api.anthropic.com,claude-3-sonnet-20240229,Claude 3 Sonnet,FALSE,TRUE,200000,4096,3,15,,",
+    "openai,OpenAI,openai,openai,https://api.openai.com,gpt-4o,GPT-4o,FALSE,TRUE,128000,4096,2.5,10,,",
   ].join("\n"),
 }));
 
@@ -115,6 +115,20 @@ describe("Model detail", () => {
     };
     expect(data.context_window).toBe(200000);
     expect(data.max_tokens).toBe(4096);
+  });
+
+  it("cost fields are floats or null", async () => {
+    const res = await get("/providers/anthropic/claude-3-opus-20240229");
+    const data = (await res.json()) as {
+      input_cost: number | null;
+      output_cost: number | null;
+      cached_read_cost: number | null;
+      cached_write_cost: number | null;
+    };
+    expect(data.input_cost).toBe(5);
+    expect(data.output_cost).toBe(25);
+    expect(data.cached_read_cost).toBe(0.5);
+    expect(data.cached_write_cost).toBeNull();
   });
 
   it("GET /providers/anthropic/no-such-model returns 404 JSON", async () => {

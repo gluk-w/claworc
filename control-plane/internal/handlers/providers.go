@@ -115,11 +115,15 @@ var getCatalogModels = func(catalogKey string) []database.ProviderModel {
 
 	var detail struct {
 		Models []struct {
-			ModelID       string `json:"model_id"`
-			ModelName     string `json:"model_name"`
-			Reasoning     bool   `json:"reasoning"`
-			ContextWindow *int   `json:"context_window"`
-			MaxTokens     *int   `json:"max_tokens"`
+			ModelID         string  `json:"model_id"`
+			ModelName       string  `json:"model_name"`
+			Reasoning       bool    `json:"reasoning"`
+			ContextWindow   *int    `json:"context_window"`
+			MaxTokens       *int    `json:"max_tokens"`
+			InputCost       float64 `json:"input_cost"`
+			OutputCost      float64 `json:"output_cost"`
+			CachedReadCost  float64 `json:"cached_read_cost"`
+			CachedWriteCost float64 `json:"cached_write_cost"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(entry.body, &detail); err != nil {
@@ -127,13 +131,22 @@ var getCatalogModels = func(catalogKey string) []database.ProviderModel {
 	}
 	result := make([]database.ProviderModel, len(detail.Models))
 	for i, m := range detail.Models {
-		result[i] = database.ProviderModel{
+		pm := database.ProviderModel{
 			ID:            m.ModelID,
 			Name:          m.ModelName,
 			Reasoning:     m.Reasoning,
 			ContextWindow: m.ContextWindow,
 			MaxTokens:     m.MaxTokens,
 		}
+		if m.InputCost > 0 || m.OutputCost > 0 || m.CachedReadCost > 0 || m.CachedWriteCost > 0 {
+			pm.Cost = &database.ProviderModelCost{
+				Input:      m.InputCost,
+				Output:     m.OutputCost,
+				CacheRead:  m.CachedReadCost,
+				CacheWrite: m.CachedWriteCost,
+			}
+		}
+		result[i] = pm
 	}
 	return result
 }
@@ -335,8 +348,10 @@ func SyncProviderModels(w http.ResponseWriter, r *http.Request) {
 	delete(catalogCache, path)
 	catalogCacheMu.Unlock()
 
+	log.Printf("Syncing models for provider %d (%s)", p.ID, p.Provider)
 	models := getCatalogModels(p.Provider)
 	if models == nil {
+		log.Printf("Failed to fetch catalog models for provider %d (%s)", p.ID, p.Provider)
 		writeError(w, http.StatusBadGateway, "Failed to fetch catalog models")
 		return
 	}
@@ -347,7 +362,7 @@ func SyncProviderModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Failed to update provider models")
 		return
 	}
-	pushProviderUpdateToInstances(uint(id))
+	log.Printf("Synced %d models for provider %d (%s)", len(models), p.ID, p.Provider)
 	writeJSON(w, http.StatusOK, toProviderResp(p))
 }
 
@@ -355,6 +370,7 @@ func SyncAllProviderModels(w http.ResponseWriter, r *http.Request) {
 	var providers []database.LLMProvider
 	database.DB.Order("id ASC").Find(&providers)
 
+	log.Printf("Syncing models for all catalog providers (%d total)", len(providers))
 	var result []providerResp
 	for _, p := range providers {
 		if p.Provider == "" {
@@ -368,14 +384,14 @@ func SyncAllProviderModels(w http.ResponseWriter, r *http.Request) {
 
 		models := getCatalogModels(p.Provider)
 		if models == nil {
+			log.Printf("Failed to fetch catalog models for provider %d (%s)", p.ID, p.Provider)
 			result = append(result, toProviderResp(p))
 			continue
 		}
 		modelsJSON, _ := json.Marshal(models)
 		p.Models = string(modelsJSON)
-		if err := database.DB.Save(&p).Error; err == nil {
-			pushProviderUpdateToInstances(p.ID)
-		}
+		database.DB.Save(&p)
+		log.Printf("Synced %d models for provider %d (%s)", len(models), p.ID, p.Provider)
 		result = append(result, toProviderResp(p))
 	}
 	if result == nil {

@@ -19,9 +19,9 @@ func ParseUsageOpenAICompletions(body []byte) (inputTokens, outputTokens, cached
 		} `json:"usage"`
 	}
 	if json.Unmarshal(body, &u) == nil {
-		inputTokens = u.Usage.PromptTokens
-		outputTokens = u.Usage.CompletionTokens
 		cachedInputTokens = u.Usage.PromptTokensDetails.CachedTokens
+		inputTokens = u.Usage.PromptTokens - cachedInputTokens
+		outputTokens = u.Usage.CompletionTokens
 	}
 	return
 }
@@ -105,9 +105,9 @@ func ParseUsageOpenAICompletionsStream(body []byte) (inputTokens, outputTokens, 
 			break
 		}
 		if json.Unmarshal([]byte(data), &chunk) == nil && chunk.Usage.PromptTokens > 0 {
-			inputTokens = chunk.Usage.PromptTokens
-			outputTokens = chunk.Usage.CompletionTokens
 			cachedInputTokens = chunk.Usage.PromptTokensDetails.CachedTokens
+			inputTokens = chunk.Usage.PromptTokens - cachedInputTokens
+			outputTokens = chunk.Usage.CompletionTokens
 		}
 	}
 	return

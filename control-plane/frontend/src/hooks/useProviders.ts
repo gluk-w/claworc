@@ -110,7 +110,8 @@ export function useUsageStats(params: {
   return useQuery<UsageStatsResponse>({
     queryKey: ["llm-usage-stats", params],
     queryFn: () => fetchUsageStats(params),
-    staleTime: 60_000,
+    staleTime: 10_000,
+    refetchInterval: 10_000,
   });
 }
 

@@ -86,8 +86,8 @@ func TestParseUsageOpenAICompletionsStream_WithUsage(t *testing.T) {
 			"data: {\"id\":\"chatcmpl-x\",\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":23,\"completion_tokens\":30,\"prompt_tokens_details\":{\"cached_tokens\":5},\"total_tokens\":53}}\n\n" +
 			"data: [DONE]\n")
 	in, out, cached := ParseUsageOpenAICompletionsStream(body)
-	if in != 23 || out != 30 || cached != 5 {
-		t.Errorf("got (%d, %d, %d), want (23, 30, 5)", in, out, cached)
+	if in != 18 || out != 30 || cached != 5 {
+		t.Errorf("got (%d, %d, %d), want (18, 30, 5)", in, out, cached)
 	}
 }
 
@@ -188,6 +188,30 @@ func TestParseUsageOllamaStream_NoDoneChunk(t *testing.T) {
 	in, out, cached := ParseUsageOllamaStream(body)
 	if in != 0 || out != 0 || cached != 0 {
 		t.Errorf("got (%d, %d, %d), want (0, 0, 0)", in, out, cached)
+	}
+}
+
+func TestParseUsageAnthropicMessagesStream_WithCacheCreation(t *testing.T) {
+	// Real Anthropic API stream: input_tokens=1, cache_creation_input_tokens=452,
+	// cache_read_input_tokens=14751. The message_delta carries the final output_tokens=42.
+	// cached should reflect cache_read_input_tokens (14751), not cache_creation.
+	body := []byte("event: message_start\n" +
+		`data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_01PTjhsPobs9hA35CDDJuKgi","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"cache_creation_input_tokens":452,"cache_read_input_tokens":14751,"cache_creation":{"ephemeral_5m_input_tokens":452,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global"}}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: ping\n" +
+		`data: {"type": "ping"}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello!"}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":1,"cache_creation_input_tokens":452,"cache_read_input_tokens":14751,"output_tokens":42}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n")
+	in, out, cached := ParseUsageAnthropicMessagesStream(body)
+	if in != 1 || out != 42 || cached != 14751 {
+		t.Errorf("got (%d, %d, %d), want (1, 42, 14751)", in, out, cached)
 	}
 }
 
