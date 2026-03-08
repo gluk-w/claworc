@@ -1,14 +1,50 @@
-name: Build and Push Control Plane Image
+name: Control Plane
 
 on:
   push:
-    branches: [main]
     paths:
-      - 'control-plane'
+      - 'control-plane/**'
       - '.github/workflows/control-plane.yml'
 
 jobs:
-  control-plane:
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: control-plane/go.mod
+
+      - name: Run unit tests
+        uses: robherley/go-test-action@v0
+        with:
+          moduleDirectory: control-plane
+          testarguments: ./internal/...
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: control-plane/go.mod
+
+      - name: Run integration tests
+        uses: robherley/go-test-action@v0
+        with:
+          moduleDirectory: control-plane
+          testarguments: -tags docker_integration -timeout 600s -count=1 ./internal/handlers/ -run TestIntegration
+        env:
+          CLAWORC_LLM_GATEWAY_PORT: 40001
+
+  push:
+    name: Build and Push Image
+    if: github.ref == 'refs/heads/main'
+    needs: [unit, integration]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

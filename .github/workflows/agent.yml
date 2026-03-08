@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'agent'
+      - 'agent/**'
       - '.github/workflows/agent.yml'
 
 jobs:
