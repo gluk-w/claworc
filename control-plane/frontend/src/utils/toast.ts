@@ -9,7 +9,7 @@ function extractErrorDetail(error: unknown): string | undefined {
   if (typeof error === "string") return error;
   if (typeof error === "object" && error !== null) {
     // Axios error
-    const axiosDetail = (error as any).response?.data?.detail;
+    const axiosDetail = (error as any).response?.data?.detail ?? (error as any).response?.data?.error;
     if (typeof axiosDetail === "string") return axiosDetail;
     // Standard Error
     if (error instanceof Error && error.message) return error.message;

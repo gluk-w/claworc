@@ -30,6 +30,15 @@
             ]
           },
           {
+            "group": "Models",
+            "pages": [
+              "models/overview",
+              "models/configuration",
+              "models/assign-models",
+              "models/usage-dashboard"
+            ]
+          },
+          {
             "group": "Security & access",
             "pages": [
               "authentication",

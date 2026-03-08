@@ -468,22 +468,26 @@ func TestQueryString_KeyStripped(t *testing.T) {
 func TestTokenCount_AllFormats(t *testing.T) {
 	cases := []struct {
 		name       string
+		apiType    string
 		body       string
 		wantInput  int
 		wantOutput int
 	}{
 		{
 			"openai",
+			"openai-completions",
 			`{"usage":{"prompt_tokens":10,"completion_tokens":20}}`,
 			10, 20,
 		},
 		{
 			"anthropic",
+			"anthropic-messages",
 			`{"usage":{"input_tokens":5,"output_tokens":15}}`,
 			5, 15,
 		},
 		{
 			"google",
+			"google-generative-ai",
 			`{"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":12}}`,
 			8, 12,
 		},
@@ -499,7 +503,7 @@ func TestTokenCount_AllFormats(t *testing.T) {
 			defer upstream.Close()
 
 			setupDB(t)
-			p := mustProvider(t, "prov", "openai-completions", upstream.URL)
+			p := mustProvider(t, "prov", tc.apiType, upstream.URL)
 			token := mustGatewayKey(t, 1, p.ID)
 			mustAPIKey(t, 1, "prov", "real-key")
 
@@ -853,6 +857,7 @@ func TestResolveAPIKey_InstanceOverridesPrecedence(t *testing.T) {
 func TestCachedTokenExtraction(t *testing.T) {
 	cases := []struct {
 		name       string
+		apiType    string
 		body       string
 		wantCached int
 		wantInput  int
@@ -860,21 +865,25 @@ func TestCachedTokenExtraction(t *testing.T) {
 	}{
 		{
 			"openai cached",
+			"openai-completions",
 			`{"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":40}}}`,
-			40, 100, 20,
+			40, 60, 20,
 		},
 		{
 			"anthropic cached",
+			"anthropic-messages",
 			`{"usage":{"input_tokens":50,"output_tokens":15,"cache_read_input_tokens":10}}`,
 			10, 50, 15,
 		},
 		{
 			"google cached",
+			"google-generative-ai",
 			`{"usageMetadata":{"promptTokenCount":80,"candidatesTokenCount":12,"cachedContentTokenCount":30}}`,
 			30, 80, 12,
 		},
 		{
 			"no cache",
+			"openai-completions",
 			`{"usage":{"prompt_tokens":10,"completion_tokens":5}}`,
 			0, 10, 5,
 		},
@@ -890,7 +899,7 @@ func TestCachedTokenExtraction(t *testing.T) {
 			defer upstream.Close()
 
 			setupDB(t)
-			p := mustProvider(t, "prov", "openai-completions", upstream.URL)
+			p := mustProvider(t, "prov", tc.apiType, upstream.URL)
 			token := mustGatewayKey(t, 1, p.ID)
 			mustAPIKey(t, 1, "prov", "real-key")
 
@@ -1192,11 +1201,12 @@ func TestBuildUpstreamRequest(t *testing.T) {
 	})
 }
 
-// --- 18. parseUsage — pure function tests ---
+// --- 18. ParseUsage — pure function tests ---
 
 func TestParseUsage(t *testing.T) {
 	cases := []struct {
 		name       string
+		apiType    string
 		body       string
 		wantInput  int
 		wantOutput int
@@ -1204,26 +1214,31 @@ func TestParseUsage(t *testing.T) {
 	}{
 		{
 			"openai",
+			"openai-completions",
 			`{"usage":{"prompt_tokens":10,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":3}}}`,
-			10, 20, 3,
+			7, 20, 3,
 		},
 		{
 			"anthropic",
+			"anthropic-messages",
 			`{"usage":{"input_tokens":5,"output_tokens":15,"cache_read_input_tokens":2}}`,
 			5, 15, 2,
 		},
 		{
 			"google",
+			"google-generative-ai",
 			`{"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":12,"cachedContentTokenCount":4}}`,
 			8, 12, 4,
 		},
 		{
 			"invalid JSON → all zeros",
+			"openai-completions",
 			`not json`,
 			0, 0, 0,
 		},
 		{
 			"empty body → all zeros",
+			"openai-completions",
 			``,
 			0, 0, 0,
 		},
@@ -1231,7 +1246,7 @@ func TestParseUsage(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			in, out, cached := parseUsage([]byte(tc.body))
+			in, out, cached := ParseUsage(tc.apiType, []byte(tc.body))
 			if in != tc.wantInput {
 				t.Errorf("input: got %d, want %d", in, tc.wantInput)
 			}
@@ -1279,8 +1294,8 @@ func TestCalculateCost(t *testing.T) {
 		},
 		{
 			"with cached tokens",
-			// (1000-400)*3 + 400*0.3 + 200*15 = 1800+120+3000 = 4920 / 1e6 = 0.00492
-			"known-model", 1000, 200, 400, 0.00492,
+			// input is non-cached: 600*3 + 400*0.3 + 200*15 = 1800+120+3000 = 4920 / 1e6 = 0.00492
+			"known-model", 600, 200, 400, 0.00492,
 		},
 		{
 			"zero tokens → 0",
@@ -1297,6 +1312,160 @@ func TestCalculateCost(t *testing.T) {
 				t.Errorf("cost: got %f, want %f", got, tc.wantCost)
 			}
 		})
+	}
+}
+
+// --- 8d. Streaming — tokens and cost stored in DB ---
+
+func TestStreamingDB_OpenAICompletions(t *testing.T) {
+	// Stream with a usage chunk (stream_options: include_usage).
+	// Expected: InputTokens=23, OutputTokens=30, CachedInputTokens=5, CostUSD≈0.0005055
+	const stream = "" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n" +
+		"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":23,\"completion_tokens\":30,\"prompt_tokens_details\":{\"cached_tokens\":5},\"total_tokens\":58}}\n\n" +
+		"data: [DONE]\n"
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(stream))
+	}))
+	defer upstream.Close()
+
+	setupDB(t)
+	models := []database.ProviderModel{
+		{
+			ID:   "test-model",
+			Name: "Test Model",
+			Cost: &database.ProviderModelCost{Input: 3.0, Output: 15.0, CacheRead: 0.3},
+		},
+	}
+	p := mustProviderWithModels(t, "prov", "openai-completions", upstream.URL, models)
+	token := mustGatewayKey(t, 1, p.ID)
+	mustAPIKey(t, 1, "prov", "real-key")
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test-model"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handleProxy(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var log database.LLMRequestLog
+	if err := database.LogsDB.First(&log).Error; err != nil {
+		t.Fatalf("no log row: %v", err)
+	}
+	if log.InputTokens != 18 {
+		t.Errorf("input_tokens: got %d, want 18", log.InputTokens)
+	}
+	if log.OutputTokens != 30 {
+		t.Errorf("output_tokens: got %d, want 30", log.OutputTokens)
+	}
+	if log.CachedInputTokens != 5 {
+		t.Errorf("cached_input_tokens: got %d, want 5", log.CachedInputTokens)
+	}
+	// cost = 18*3/1e6 + 5*0.3/1e6 + 30*15/1e6 = 54/1e6 + 1.5/1e6 + 450/1e6 = 0.0005055
+	const wantCost = 0.0005055
+	const epsilon = 0.000001
+	if diff := log.CostUSD - wantCost; diff < -epsilon || diff > epsilon {
+		t.Errorf("cost_usd: got %f, want %f", log.CostUSD, wantCost)
+	}
+}
+
+func TestStreamingDB_AnthropicMessages(t *testing.T) {
+	// Stream with message_start (input tokens + cache) and message_delta (final output tokens).
+	// Expected: InputTokens=20, OutputTokens=10, CachedInputTokens=4
+	const stream = "" +
+		"event: message_start\n" +
+		"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":20,\"cache_read_input_tokens\":4,\"output_tokens\":1}}}\n\n" +
+		"event: message_delta\n" +
+		"data: {\"type\":\"message_delta\",\"delta\":{},\"usage\":{\"output_tokens\":10}}\n\n" +
+		"event: message_stop\n" +
+		"data: {\"type\":\"message_stop\"}\n"
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(stream))
+	}))
+	defer upstream.Close()
+
+	setupDB(t)
+	p := mustProvider(t, "prov", "anthropic-messages", upstream.URL)
+	token := mustGatewayKey(t, 1, p.ID)
+	mustAPIKey(t, 1, "prov", "real-key")
+
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"claude-3-5-sonnet"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handleProxy(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var log database.LLMRequestLog
+	if err := database.LogsDB.First(&log).Error; err != nil {
+		t.Fatalf("no log row: %v", err)
+	}
+	if log.InputTokens != 20 {
+		t.Errorf("input_tokens: got %d, want 20", log.InputTokens)
+	}
+	if log.OutputTokens != 10 {
+		t.Errorf("output_tokens: got %d, want 10", log.OutputTokens)
+	}
+	if log.CachedInputTokens != 4 {
+		t.Errorf("cached_input_tokens: got %d, want 4", log.CachedInputTokens)
+	}
+}
+
+func TestStreamingDB_OpenAIResponses(t *testing.T) {
+	// Stream with a response.completed event carrying usage.
+	// Expected: InputTokens=13, OutputTokens=17, CachedInputTokens=0
+	const stream = "" +
+		"event: response.output_text.delta\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n" +
+		"event: response.completed\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":13,\"input_tokens_details\":{\"cached_tokens\":0},\"output_tokens\":17}}}\n\n"
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(stream))
+	}))
+	defer upstream.Close()
+
+	setupDB(t)
+	p := mustProvider(t, "prov", "openai-responses", upstream.URL)
+	token := mustGatewayKey(t, 1, p.ID)
+	mustAPIKey(t, 1, "prov", "real-key")
+
+	req := httptest.NewRequest("POST", "/responses", strings.NewReader(`{"model":"gpt-5"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handleProxy(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var log database.LLMRequestLog
+	if err := database.LogsDB.First(&log).Error; err != nil {
+		t.Fatalf("no log row: %v", err)
+	}
+	if log.InputTokens != 13 {
+		t.Errorf("input_tokens: got %d, want 13", log.InputTokens)
+	}
+	if log.OutputTokens != 17 {
+		t.Errorf("output_tokens: got %d, want 17", log.OutputTokens)
+	}
+	if log.CachedInputTokens != 0 {
+		t.Errorf("cached_input_tokens: got %d, want 0", log.CachedInputTokens)
 	}
 }
 

@@ -17,9 +17,11 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
@@ -169,10 +171,11 @@ func buildUpstreamRequest(ctx context.Context, method, targetURL string, body []
 		return nil, err
 	}
 	skip := map[string]bool{
-		"authorization":  true,
-		"x-api-key":      true,
-		"x-goog-api-key": true,
-		"host":           true,
+		"authorization":   true,
+		"x-api-key":       true,
+		"x-goog-api-key":  true,
+		"host":            true,
+		"accept-encoding": true, // let Go's http.Client manage compression so resp.Body is always plain text
 	}
 	for k, vs := range origHeaders {
 		if skip[strings.ToLower(k)] {
@@ -198,43 +201,15 @@ func buildUpstreamRequest(ctx context.Context, method, targetURL string, body []
 	return req, nil
 }
 
-// parseUsage extracts token counts from a provider response body.
-// Supports OpenAI, Anthropic, and Google formats — only one set of fields will be non-zero.
-func parseUsage(respBody []byte) (inputTokens, outputTokens, cachedInputTokens int) {
-	var u struct {
-		Usage struct {
-			PromptTokens        int `json:"prompt_tokens"`
-			CompletionTokens    int `json:"completion_tokens"`
-			PromptTokensDetails struct {
-				CachedTokens int `json:"cached_tokens"`
-			} `json:"prompt_tokens_details"`
-			InputTokens          int `json:"input_tokens"`
-			OutputTokens         int `json:"output_tokens"`
-			CacheReadInputTokens int `json:"cache_read_input_tokens"`
-		} `json:"usage"`
-		UsageMetadata struct {
-			PromptTokenCount        int `json:"promptTokenCount"`
-			CandidatesTokenCount    int `json:"candidatesTokenCount"`
-			CachedContentTokenCount int `json:"cachedContentTokenCount"`
-		} `json:"usageMetadata"`
-	}
-	if json.Unmarshal(respBody, &u) == nil {
-		inputTokens = u.Usage.PromptTokens + u.Usage.InputTokens + u.UsageMetadata.PromptTokenCount
-		outputTokens = u.Usage.CompletionTokens + u.Usage.OutputTokens + u.UsageMetadata.CandidatesTokenCount
-		cachedInputTokens = u.Usage.PromptTokensDetails.CachedTokens + u.Usage.CacheReadInputTokens + u.UsageMetadata.CachedContentTokenCount
-	}
-	return
-}
-
 // calculateCost computes the USD cost of a request given token counts and the provider model config.
+// inputTokens is the number of non-cached input tokens; cachedInputTokens is the cached subset.
 // Returns 0 if no cost config is found for the model.
 func calculateCost(models []database.ProviderModel, modelID string, inputTokens, outputTokens, cachedInputTokens int) float64 {
 	cost := findModelCost(models, modelID)
 	if cost == nil {
 		return 0
 	}
-	nonCached := float64(inputTokens - cachedInputTokens)
-	return (nonCached*cost.Input + float64(cachedInputTokens)*cost.CacheRead + float64(outputTokens)*cost.Output) / 1_000_000
+	return (float64(inputTokens)*cost.Input + float64(cachedInputTokens)*cost.CacheRead + float64(outputTokens)*cost.Output) / 1_000_000
 }
 
 // handleProxy is the single handler for all gateway requests.
@@ -270,7 +245,12 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	targetURL := buildTargetURL(baseURL, r.URL.Path, apiType, r.URL.Query())
 
-	upstreamReq, err := buildUpstreamRequest(r.Context(), r.Method, targetURL, body, r.Header, apiKey, apiType)
+	// Use context.Background() instead of r.Context() so that a client disconnect
+	// does not cancel the upstream request mid-stream. This is important for streaming
+	// responses: if the client closes the connection before the upstream sends final
+	// token-count events (e.g. Anthropic's message_delta), the captured buffer would
+	// be incomplete and token counts would be recorded as 0.
+	upstreamReq, err := buildUpstreamRequest(context.Background(), r.Method, targetURL, body, r.Header, apiKey, apiType)
 	if err != nil {
 		http.Error(w, `{"error":{"message":"failed to build upstream request"}}`, http.StatusInternalServerError)
 		return
@@ -282,7 +262,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		latencyMs := time.Since(start).Milliseconds()
 		http.Error(w, `{"error":{"message":"upstream request failed"}}`, http.StatusBadGateway)
 		logRequest(instanceID, providerID, reqBody.Model, 0, 0, 0, 0, http.StatusBadGateway, latencyMs, err.Error())
-		logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, http.StatusBadGateway, latencyMs, err.Error())
+		logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, http.StatusBadGateway, latencyMs, 0, 0, 0, 0, err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -299,14 +279,44 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 
+	inputTokens, outputTokens, cachedInputTokens, costUSD, errMsg := processResponse(w, resp.Body, isStreaming, apiType, resp.StatusCode, providerModels, reqBody.Model)
+	latencyMs := time.Since(start).Milliseconds()
+	logRequest(instanceID, providerID, reqBody.Model, inputTokens, outputTokens, cachedInputTokens, costUSD, resp.StatusCode, latencyMs, errMsg)
+	logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, resp.StatusCode, latencyMs, inputTokens, outputTokens, cachedInputTokens, costUSD, errMsg)
+}
+
+// logResponseBody appends the raw upstream response body to the file specified by
+// CLAWORC_LLM_RESPONSE_LOG. A no-op when the env var is unset.
+func logResponseBody(model, apiType string, statusCode int, body []byte) {
+	path := config.Cfg.LLMResponseLog
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("[gateway] response log open error: %v", err)
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "--- %s model=%s api_type=%s status=%d\n%s\n",
+		time.Now().UTC().Format(time.RFC3339), model, apiType, statusCode, body)
+}
+
+// processResponse streams or buffers the upstream response body to w, parses token usage,
+// and returns metrics for logging. For streaming responses each chunk is forwarded immediately
+// while also being captured for post-stream token parsing. For non-streaming responses the
+// body is buffered, written to w, then parsed.
+func processResponse(w http.ResponseWriter, body io.Reader, isStreaming bool, apiType string, statusCode int, providerModels []database.ProviderModel, model string) (inputTokens, outputTokens, cachedInputTokens int, costUSD float64, errMsg string) {
+	var captured []byte
 	if isStreaming {
-		// Flush each chunk immediately so the client receives SSE events in real time.
 		flusher, canFlush := w.(http.Flusher)
 		buf := make([]byte, 4096)
+		var capBuf bytes.Buffer
 		for {
-			n, err := resp.Body.Read(buf)
+			n, err := body.Read(buf)
 			if n > 0 {
 				w.Write(buf[:n])
+				capBuf.Write(buf[:n])
 				if canFlush {
 					flusher.Flush()
 				}
@@ -315,48 +325,41 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		latencyMs := time.Since(start).Milliseconds()
-		logRequest(instanceID, providerID, reqBody.Model, 0, 0, 0, 0, resp.StatusCode, latencyMs, "")
-		logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, resp.StatusCode, latencyMs, "")
+		captured = capBuf.Bytes()
 	} else {
-		// Buffer response to extract token counts
-		respBody, readErr := io.ReadAll(resp.Body)
-		if readErr == nil {
-			w.Write(respBody)
+		var readErr error
+		captured, readErr = io.ReadAll(body)
+		if readErr != nil {
+			return
 		}
-		var inputTokens, outputTokens, cachedInputTokens int
-		var costUSD float64
-		var errMsg string
-		if readErr == nil {
-			inputTokens, outputTokens, cachedInputTokens = parseUsage(respBody)
-			costUSD = calculateCost(providerModels, reqBody.Model, inputTokens, outputTokens, cachedInputTokens)
-			if resp.StatusCode >= 400 {
-				errMsg = string(respBody)
-				if len(errMsg) > 500 {
-					errMsg = errMsg[:500]
-				}
-			}
-		}
-		latencyMs := time.Since(start).Milliseconds()
-		logRequest(instanceID, providerID, reqBody.Model, inputTokens, outputTokens, cachedInputTokens, costUSD, resp.StatusCode, latencyMs, errMsg)
-		logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, resp.StatusCode, latencyMs, errMsg)
+		w.Write(captured)
 	}
+	logResponseBody(model, apiType, statusCode, captured)
+	inputTokens, outputTokens, cachedInputTokens = parseProxyUsage(captured, apiType, isStreaming)
+	costUSD = calculateCost(providerModels, model, inputTokens, outputTokens, cachedInputTokens)
+	if statusCode >= 400 {
+		errMsg = string(captured)
+		if len(errMsg) > 500 {
+			errMsg = errMsg[:500]
+		}
+	}
+	return
 }
 
 // logLine emits a structured access log line to stdout for each proxied request.
-func logLine(instanceID uint, providerKey, model, path string, statusCode int, latencyMs int64, errMsg string) {
+func logLine(instanceID uint, providerKey, model, path string, statusCode int, latencyMs int64, inputTokens, outputTokens, cachedInputTokens int, costUSD float64, errMsg string) {
 	if errMsg != "" {
-		log.Printf("[gateway] instance=%d provider=%s model=%s path=%s status=%d latency=%dms error=%s",
-			instanceID, safeLog(providerKey), safeLog(model), safeLog(path), statusCode, latencyMs, safeLog(errMsg))
+		log.Printf("[gateway] instance=%d provider=%s model=%s path=%s status=%d latency=%dms tokens_in=%d tokens_out=%d tokens_cached=%d cost=$%.6f error=%s",
+			instanceID, safeLog(providerKey), safeLog(model), safeLog(path), statusCode, latencyMs, inputTokens, outputTokens, cachedInputTokens, costUSD, safeLog(errMsg))
 	} else {
-		log.Printf("[gateway] instance=%d provider=%s model=%s path=%s status=%d latency=%dms",
-			instanceID, safeLog(providerKey), safeLog(model), safeLog(path), statusCode, latencyMs)
+		log.Printf("[gateway] instance=%d provider=%s model=%s path=%s status=%d latency=%dms tokens_in=%d tokens_out=%d tokens_cached=%d cost=$%.6f",
+			instanceID, safeLog(providerKey), safeLog(model), safeLog(path), statusCode, latencyMs, inputTokens, outputTokens, cachedInputTokens, costUSD)
 	}
 }
 
 // logRequest records a proxied request in llm-logs.db.
 func logRequest(instanceID, providerID uint, model string, inputTokens, outputTokens, cachedInputTokens int, costUSD float64, statusCode int, latencyMs int64, errMsg string) {
-	database.LogsDB.Create(&database.LLMRequestLog{
+	if err := database.LogsDB.Create(&database.LLMRequestLog{
 		InstanceID:        instanceID,
 		ProviderID:        providerID,
 		ModelID:           model,
@@ -368,5 +371,7 @@ func logRequest(instanceID, providerID uint, model string, inputTokens, outputTo
 		LatencyMs:         latencyMs,
 		ErrorMessage:      errMsg,
 		RequestedAt:       time.Now().UTC(),
-	})
+	}).Error; err != nil {
+		log.Printf("[gateway] failed to write usage log: %v", err)
+	}
 }

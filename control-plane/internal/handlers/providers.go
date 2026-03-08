@@ -115,11 +115,15 @@ var getCatalogModels = func(catalogKey string) []database.ProviderModel {
 
 	var detail struct {
 		Models []struct {
-			ModelID       string `json:"model_id"`
-			ModelName     string `json:"model_name"`
-			Reasoning     bool   `json:"reasoning"`
-			ContextWindow *int   `json:"context_window"`
-			MaxTokens     *int   `json:"max_tokens"`
+			ModelID         string  `json:"model_id"`
+			ModelName       string  `json:"model_name"`
+			Reasoning       bool    `json:"reasoning"`
+			ContextWindow   *int    `json:"context_window"`
+			MaxTokens       *int    `json:"max_tokens"`
+			InputCost       float64 `json:"input_cost"`
+			OutputCost      float64 `json:"output_cost"`
+			CachedReadCost  float64 `json:"cached_read_cost"`
+			CachedWriteCost float64 `json:"cached_write_cost"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(entry.body, &detail); err != nil {
@@ -127,13 +131,22 @@ var getCatalogModels = func(catalogKey string) []database.ProviderModel {
 	}
 	result := make([]database.ProviderModel, len(detail.Models))
 	for i, m := range detail.Models {
-		result[i] = database.ProviderModel{
+		pm := database.ProviderModel{
 			ID:            m.ModelID,
 			Name:          m.ModelName,
 			Reasoning:     m.Reasoning,
 			ContextWindow: m.ContextWindow,
 			MaxTokens:     m.MaxTokens,
 		}
+		if m.InputCost > 0 || m.OutputCost > 0 || m.CachedReadCost > 0 || m.CachedWriteCost > 0 {
+			pm.Cost = &database.ProviderModelCost{
+				Input:      m.InputCost,
+				Output:     m.OutputCost,
+				CacheRead:  m.CachedReadCost,
+				CacheWrite: m.CachedWriteCost,
+			}
+		}
+		result[i] = pm
 	}
 	return result
 }
@@ -335,8 +348,10 @@ func SyncProviderModels(w http.ResponseWriter, r *http.Request) {
 	delete(catalogCache, path)
 	catalogCacheMu.Unlock()
 
+	log.Printf("Syncing models for provider %d (%s)", p.ID, p.Provider)
 	models := getCatalogModels(p.Provider)
 	if models == nil {
+		log.Printf("Failed to fetch catalog models for provider %d (%s)", p.ID, p.Provider)
 		writeError(w, http.StatusBadGateway, "Failed to fetch catalog models")
 		return
 	}
@@ -347,7 +362,7 @@ func SyncProviderModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Failed to update provider models")
 		return
 	}
-	pushProviderUpdateToInstances(uint(id))
+	log.Printf("Synced %d models for provider %d (%s)", len(models), p.ID, p.Provider)
 	writeJSON(w, http.StatusOK, toProviderResp(p))
 }
 
@@ -355,6 +370,7 @@ func SyncAllProviderModels(w http.ResponseWriter, r *http.Request) {
 	var providers []database.LLMProvider
 	database.DB.Order("id ASC").Find(&providers)
 
+	log.Printf("Syncing models for all catalog providers (%d total)", len(providers))
 	var result []providerResp
 	for _, p := range providers {
 		if p.Provider == "" {
@@ -368,14 +384,14 @@ func SyncAllProviderModels(w http.ResponseWriter, r *http.Request) {
 
 		models := getCatalogModels(p.Provider)
 		if models == nil {
+			log.Printf("Failed to fetch catalog models for provider %d (%s)", p.ID, p.Provider)
 			result = append(result, toProviderResp(p))
 			continue
 		}
 		modelsJSON, _ := json.Marshal(models)
 		p.Models = string(modelsJSON)
-		if err := database.DB.Save(&p).Error; err == nil {
-			pushProviderUpdateToInstances(p.ID)
-		}
+		database.DB.Save(&p)
+		log.Printf("Synced %d models for provider %d (%s)", len(models), p.ID, p.Provider)
 		result = append(result, toProviderResp(p))
 	}
 	if result == nil {
@@ -400,6 +416,303 @@ func DeleteProvider(w http.ResponseWriter, r *http.Request) {
 	// Cascade-delete all gateway keys for this provider
 	database.DB.Where("provider_id = ?", id).Delete(&database.LLMGatewayKey{})
 	database.DB.Delete(&p)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---------------------------------------------------------------------------
+// Usage stats aggregation
+// ---------------------------------------------------------------------------
+
+type InstanceUsageStat struct {
+	InstanceID          uint    `json:"instance_id"`
+	InstanceName        string  `json:"instance_name"`
+	InstanceDisplayName string  `json:"instance_display_name"`
+	TotalRequests       int     `json:"total_requests"`
+	InputTokens         int64   `json:"input_tokens"`
+	CachedInputTokens   int64   `json:"cached_input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CostUSD             float64 `json:"cost_usd"`
+}
+
+type ProviderUsageStat struct {
+	ProviderID        uint    `json:"provider_id"`
+	ProviderKey       string  `json:"provider_key"`
+	ProviderName      string  `json:"provider_name"`
+	TotalRequests     int     `json:"total_requests"`
+	InputTokens       int64   `json:"input_tokens"`
+	CachedInputTokens int64   `json:"cached_input_tokens"`
+	OutputTokens      int64   `json:"output_tokens"`
+	CostUSD           float64 `json:"cost_usd"`
+}
+
+type ModelUsageStat struct {
+	ModelID           string  `json:"model_id"`
+	ProviderID        uint    `json:"provider_id"`
+	ProviderKey       string  `json:"provider_key"`
+	TotalRequests     int     `json:"total_requests"`
+	InputTokens       int64   `json:"input_tokens"`
+	CachedInputTokens int64   `json:"cached_input_tokens"`
+	OutputTokens      int64   `json:"output_tokens"`
+	CostUSD           float64 `json:"cost_usd"`
+}
+
+type UsageTimePoint struct {
+	Date              string  `json:"date"`
+	TotalRequests     int     `json:"total_requests"`
+	InputTokens       int64   `json:"input_tokens"`
+	CachedInputTokens int64   `json:"cached_input_tokens"`
+	OutputTokens      int64   `json:"output_tokens"`
+	CostUSD           float64 `json:"cost_usd"`
+}
+
+type UsageTotals struct {
+	TotalRequests     int     `json:"total_requests"`
+	InputTokens       int64   `json:"input_tokens"`
+	CachedInputTokens int64   `json:"cached_input_tokens"`
+	OutputTokens      int64   `json:"output_tokens"`
+	CostUSD           float64 `json:"cost_usd"`
+}
+
+type UsageInstanceInfo struct {
+	ID          uint   `json:"id"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+}
+
+type UsageProviderInfo struct {
+	ID   uint   `json:"id"`
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
+
+type UsageStatsResponse struct {
+	ByInstance  []InstanceUsageStat `json:"by_instance"`
+	ByProvider  []ProviderUsageStat `json:"by_provider"`
+	ByModel     []ModelUsageStat    `json:"by_model"`
+	TimeSeries  []UsageTimePoint    `json:"time_series"`
+	Total       UsageTotals         `json:"total"`
+	Instances   []UsageInstanceInfo `json:"instances"`
+	Providers   []UsageProviderInfo `json:"providers"`
+	Granularity string              `json:"granularity"`
+}
+
+func GetUsageStats(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	now := time.Now().UTC()
+	startDate := now.AddDate(0, 0, -30).Format("2006-01-02")
+	endDate := now.Format("2006-01-02")
+	if v := q.Get("start_date"); v != "" {
+		startDate = v
+	}
+	if v := q.Get("end_date"); v != "" {
+		endDate = v
+	}
+	// Determine time-series granularity based on date range
+	startParsed, _ := time.Parse("2006-01-02", startDate)
+	endParsed, _ := time.Parse("2006-01-02", endDate)
+	daysDiff := int(endParsed.Sub(startParsed).Hours() / 24)
+
+	var tsGroupExpr, granularity string
+	switch {
+	case daysDiff == 0:
+		tsGroupExpr = "strftime('%Y-%m-%dT%H:%M', requested_at)"
+		granularity = "minute"
+	case daysDiff < 7:
+		tsGroupExpr = "strftime('%Y-%m-%dT%H', requested_at)"
+		granularity = "hour"
+	default:
+		tsGroupExpr = "strftime('%Y-%m-%d', requested_at)"
+		granularity = "day"
+	}
+
+	// Build optional filters
+	var instanceFilter *uint
+	var providerFilter *uint
+	if v := q.Get("instance_id"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 64); err == nil {
+			uid := uint(id)
+			instanceFilter = &uid
+		}
+	}
+	if v := q.Get("provider_id"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 64); err == nil {
+			uid := uint(id)
+			providerFilter = &uid
+		}
+	}
+
+	// Use DATE() to compare only the date part, making filtering format-agnostic
+	// regardless of how GORM/SQLite stores the time.Time value.
+	baseWhere := "DATE(requested_at) >= ? AND DATE(requested_at) <= ?"
+	baseArgs := []interface{}{startDate, endDate}
+	if instanceFilter != nil {
+		baseWhere += " AND instance_id = ?"
+		baseArgs = append(baseArgs, *instanceFilter)
+	}
+	if providerFilter != nil {
+		baseWhere += " AND provider_id = ?"
+		baseArgs = append(baseArgs, *providerFilter)
+	}
+
+	// by_instance
+	type instRow struct {
+		InstanceID        uint
+		TotalRequests     int
+		InputTokens       int64
+		CachedInputTokens int64
+		OutputTokens      int64
+		CostUSD           float64
+	}
+	var instRows []instRow
+	database.LogsDB.Raw(
+		"SELECT instance_id, COUNT(*) total_requests, SUM(input_tokens) input_tokens, SUM(cached_input_tokens) cached_input_tokens, SUM(output_tokens) output_tokens, SUM(cost_usd) cost_usd FROM llm_request_logs WHERE "+baseWhere+" GROUP BY instance_id ORDER BY cost_usd DESC",
+		baseArgs...,
+	).Scan(&instRows)
+
+	// by_provider
+	type provRow struct {
+		ProviderID        uint
+		TotalRequests     int
+		InputTokens       int64
+		CachedInputTokens int64
+		OutputTokens      int64
+		CostUSD           float64
+	}
+	var provRows []provRow
+	database.LogsDB.Raw(
+		"SELECT provider_id, COUNT(*) total_requests, SUM(input_tokens) input_tokens, SUM(cached_input_tokens) cached_input_tokens, SUM(output_tokens) output_tokens, SUM(cost_usd) cost_usd FROM llm_request_logs WHERE "+baseWhere+" GROUP BY provider_id ORDER BY cost_usd DESC",
+		baseArgs...,
+	).Scan(&provRows)
+
+	// by_model
+	type modelRow struct {
+		ModelID           string
+		ProviderID        uint
+		TotalRequests     int
+		InputTokens       int64
+		CachedInputTokens int64
+		OutputTokens      int64
+		CostUSD           float64
+	}
+	var modelRows []modelRow
+	database.LogsDB.Raw(
+		"SELECT model_id, provider_id, COUNT(*) total_requests, SUM(input_tokens) input_tokens, SUM(cached_input_tokens) cached_input_tokens, SUM(output_tokens) output_tokens, SUM(cost_usd) cost_usd FROM llm_request_logs WHERE "+baseWhere+" GROUP BY model_id, provider_id ORDER BY cost_usd DESC",
+		baseArgs...,
+	).Scan(&modelRows)
+
+	// time_series
+	type tsRow struct {
+		Date              string
+		TotalRequests     int
+		InputTokens       int64
+		CachedInputTokens int64
+		OutputTokens      int64
+		CostUSD           float64
+	}
+	var tsRows []tsRow
+	database.LogsDB.Raw(
+		"SELECT "+tsGroupExpr+" date, COUNT(*) total_requests, SUM(input_tokens) input_tokens, SUM(cached_input_tokens) cached_input_tokens, SUM(output_tokens) output_tokens, SUM(cost_usd) cost_usd FROM llm_request_logs WHERE "+baseWhere+" GROUP BY "+tsGroupExpr+" ORDER BY date ASC",
+		baseArgs...,
+	).Scan(&tsRows)
+
+	// Load instance name map from main DB
+	var instances []database.Instance
+	database.DB.Select("id, name, display_name").Find(&instances)
+	type instInfo struct{ Name, DisplayName string }
+	instInfoMap := map[uint]instInfo{}
+	for _, inst := range instances {
+		instInfoMap[inst.ID] = instInfo{Name: inst.Name, DisplayName: inst.DisplayName}
+	}
+
+	// Load provider key/name map from main DB
+	var providers []database.LLMProvider
+	database.DB.Select("id, key, name").Find(&providers)
+	provInfoMap := map[uint]struct{ Key, Name string }{}
+	for _, p := range providers {
+		provInfoMap[p.ID] = struct{ Key, Name string }{p.Key, p.Name}
+	}
+
+	// Build response
+	resp := UsageStatsResponse{
+		ByInstance: make([]InstanceUsageStat, len(instRows)),
+		ByProvider: make([]ProviderUsageStat, len(provRows)),
+		ByModel:    make([]ModelUsageStat, len(modelRows)),
+		TimeSeries: make([]UsageTimePoint, len(tsRows)),
+		Instances:  make([]UsageInstanceInfo, len(instances)),
+		Providers:  make([]UsageProviderInfo, len(providers)),
+	}
+
+	for i, row := range instRows {
+		ii := instInfoMap[row.InstanceID]
+		resp.ByInstance[i] = InstanceUsageStat{
+			InstanceID:          row.InstanceID,
+			InstanceName:        ii.Name,
+			InstanceDisplayName: ii.DisplayName,
+			TotalRequests:       row.TotalRequests,
+			InputTokens:         row.InputTokens,
+			CachedInputTokens:   row.CachedInputTokens,
+			OutputTokens:        row.OutputTokens,
+			CostUSD:             row.CostUSD,
+		}
+		resp.Total.TotalRequests += row.TotalRequests
+		resp.Total.InputTokens += row.InputTokens
+		resp.Total.CachedInputTokens += row.CachedInputTokens
+		resp.Total.OutputTokens += row.OutputTokens
+		resp.Total.CostUSD += row.CostUSD
+	}
+
+	for i, row := range provRows {
+		info := provInfoMap[row.ProviderID]
+		resp.ByProvider[i] = ProviderUsageStat{
+			ProviderID:        row.ProviderID,
+			ProviderKey:       info.Key,
+			ProviderName:      info.Name,
+			TotalRequests:     row.TotalRequests,
+			InputTokens:       row.InputTokens,
+			CachedInputTokens: row.CachedInputTokens,
+			OutputTokens:      row.OutputTokens,
+			CostUSD:           row.CostUSD,
+		}
+	}
+
+	for i, row := range modelRows {
+		info := provInfoMap[row.ProviderID]
+		resp.ByModel[i] = ModelUsageStat{
+			ModelID:           row.ModelID,
+			ProviderID:        row.ProviderID,
+			ProviderKey:       info.Key,
+			TotalRequests:     row.TotalRequests,
+			InputTokens:       row.InputTokens,
+			CachedInputTokens: row.CachedInputTokens,
+			OutputTokens:      row.OutputTokens,
+			CostUSD:           row.CostUSD,
+		}
+	}
+
+	for i, row := range tsRows {
+		resp.TimeSeries[i] = UsageTimePoint{
+			Date:              row.Date,
+			TotalRequests:     row.TotalRequests,
+			InputTokens:       row.InputTokens,
+			CachedInputTokens: row.CachedInputTokens,
+			OutputTokens:      row.OutputTokens,
+			CostUSD:           row.CostUSD,
+		}
+	}
+
+	for i, inst := range instances {
+		resp.Instances[i] = UsageInstanceInfo{ID: inst.ID, Name: inst.Name, DisplayName: inst.DisplayName}
+	}
+	for i, p := range providers {
+		resp.Providers[i] = UsageProviderInfo{ID: p.ID, Key: p.Key, Name: p.Name}
+	}
+
+	resp.Granularity = granularity
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func ResetUsageLogs(w http.ResponseWriter, r *http.Request) {
+	database.LogsDB.Exec("DELETE FROM llm_request_logs")
 	w.WriteHeader(http.StatusNoContent)
 }
 

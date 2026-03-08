@@ -33,6 +33,13 @@ All Claworc configuration is done via environment variables with the `CLAWORC_` 
 | `CLAWORC_TERMINAL_RECORDING_DIR` | *(empty)* | Directory to write terminal session recordings. Leave empty to disable. Recordings are timestamped files named by session ID. |
 | `CLAWORC_TERMINAL_SESSION_TIMEOUT` | `30m` | How long an idle detached terminal session is kept before being reaped. Accepts Go duration strings: `30m`, `1h`, `2h30m`. |
 
+## LLM gateway
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLAWORC_LLM_GATEWAY_PORT` | `40001` | Port the internal LLM gateway listens on. The gateway binds to `127.0.0.1` only and is never publicly accessible — instances reach it through an SSH tunnel. Change this if port `40001` conflicts with another service on the control plane host. |
+| `CLAWORC_LLM_RESPONSE_LOG` | *(empty)* | Path to a file where raw upstream LLM response bodies are appended for debugging. Each entry includes a timestamp, model ID, API type, HTTP status, and the full response body. Leave empty (the default) to disable. **Do not enable in production** — response bodies may contain sensitive content. |
+
 ## Example configurations
 
 ### Minimal Docker Compose

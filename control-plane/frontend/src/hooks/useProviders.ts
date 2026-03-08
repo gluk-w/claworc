@@ -7,7 +7,10 @@ import {
   deleteProvider,
   fetchCatalogProviders,
   fetchCatalogProviderDetail,
+  fetchUsageStats,
+  resetUsageLogs,
 } from "@/api/llm";
+import type { UsageStatsResponse } from "@/api/llm";
 import type { ProviderModel } from "@/types/instance";
 import { successToast, errorToast } from "@/utils/toast";
 import toast from "react-hot-toast";
@@ -98,6 +101,20 @@ export function useCatalogProviderDetail(key: string | null) {
   });
 }
 
+export function useUsageStats(params: {
+  start_date?: string;
+  end_date?: string;
+  instance_id?: number;
+  provider_id?: number;
+}) {
+  return useQuery<UsageStatsResponse>({
+    queryKey: ["llm-usage-stats", params],
+    queryFn: () => fetchUsageStats(params),
+    staleTime: 10_000,
+    refetchInterval: 10_000,
+  });
+}
+
 export function useDeleteProvider() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -107,5 +124,18 @@ export function useDeleteProvider() {
       queryClient.invalidateQueries({ queryKey: ["llm-providers"] });
     },
     onError: (err) => errorToast("Failed to delete provider", err),
+  });
+}
+
+export function useResetUsageLogs() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: resetUsageLogs,
+    onSuccess: () => {
+      successToast("Usage logs cleared");
+      queryClient.invalidateQueries({ queryKey: ["llm-usage-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["llm-usage-logs"] });
+    },
+    onError: (err) => errorToast("Failed to reset usage logs", err),
   });
 }

@@ -26,7 +26,7 @@ import {
   useRestartedToast,
 } from "@/hooks/useInstances";
 import { useProviders } from "@/hooks/useProviders";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { fetchCatalogProviderDetail } from "@/api/llm";
 import type { CatalogProviderDetail } from "@/api/llm";
 import ProviderIcon from "@/components/ProviderIcon";
@@ -49,6 +49,7 @@ export default function InstanceDetailPage() {
   const location = useLocation();
   const instanceId = Number(id);
 
+  const qc = useQueryClient();
   const { isAdmin } = useAuth();
   const { data: instance, isLoading } = useInstance(instanceId);
   const { data: allProviders = [] } = useProviders();
@@ -130,6 +131,7 @@ export default function InstanceDetailPage() {
     setActiveTab(tab);
     if (tab === "terminal") setTerminalActivated(true);
     if (tab === "chrome") setChromeActivated(true);
+    if (tab === "config") qc.invalidateQueries({ queryKey: ["instances", instanceId, "config"] });
   }, [location.hash]);
 
   const handleFilesPathChange = (path: string) => {
@@ -142,6 +144,7 @@ export default function InstanceDetailPage() {
     setActiveTab(tab);
     if (tab === "terminal") setTerminalActivated(true);
     if (tab === "chrome") setChromeActivated(true);
+    if (tab === "config") qc.invalidateQueries({ queryKey: ["instances", instanceId, "config"] });
     navigate(`#${tab}`, { replace: true });
   };
 
@@ -203,9 +206,11 @@ export default function InstanceDetailPage() {
           );
         },
         onError: (err: unknown) => {
-          const message = err instanceof Error ? err.message : "Unknown error";
+          const axiosMsg = (err as any)?.response?.data?.error ?? (err as any)?.response?.data?.detail;
+          const message = axiosMsg ?? (err instanceof Error ? err.message : "Unknown error");
+          const hint = "Fix the JSON syntax in the editor and try again.";
           toast.custom(
-            createElement(AppToast, { title: "Failed to save settings", description: message, status: "error", toastId }),
+            createElement(AppToast, { title: "Failed to save settings", description: `${message} — ${hint}`, status: "error", toastId }),
             { id: toastId, duration: 5000 },
           );
         },

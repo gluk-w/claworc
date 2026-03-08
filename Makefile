@@ -22,7 +22,7 @@ HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
 
 .PHONY: agent agent-base agent-build agent-test agent-push agent-exec dashboard docker-prune release \
-	helm-install helm-upgrade helm-uninstall helm-template install-dev dev \
+	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-docs \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
 	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models scrape-models test \
 	worker-deploy worker-test
@@ -121,31 +121,7 @@ dev:
 	@echo "Control plane: http://localhost:8000"
 	@echo "Frontend:      http://localhost:5173"
 	@echo ""
-	CLAWORC_AUTH_DISABLED=true goreman -set-ports=false start
-
-# --- Local Docker testing ---------------------------------------------------
-
-local-build:
-	docker build -t $(AGENT_BASE_IMAGE):local agent/
-	docker build --build-arg BASE_IMAGE=$(AGENT_BASE_IMAGE):local -f agent/Dockerfile.chromium -t claworc-agent:local agent/
-	docker build -t claworc-dashboard:local control-plane/
-
-local-up:
-	@mkdir -p "$(CURDIR)/data/configs"
-	CLAWORC_DATA_DIR=$(CURDIR)/data docker compose up -d
-	@echo ""
-	@echo "Dashboard: http://localhost:8000"
-	@echo "Data dir:  $(CURDIR)/data"
-
-local-down:
-	docker compose down
-
-local-logs:
-	docker compose logs -f
-
-local-clean:
-	docker compose down --rmi local -v
-	rm -rf "$(CURDIR)/data"
+	CLAWORC_AUTH_DISABLED=true CLAWORC_LLM_RESPONSE_LOG=$(CURDIR)/llm-responses.log goreman -set-ports=false start
 
 ssh-integration-test:
 	docker build -t $(AGENT_BASE_IMAGE):local agent/
@@ -172,6 +148,9 @@ extract-models:
 
 scrape-models:
 	python3 scripts/scrape_provider_docs.py
+
+dev-docs:
+	cd website_docs && npx mint dev
 
 worker-deploy:
 	cd website/worker && npx wrangler deploy

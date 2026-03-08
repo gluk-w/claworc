@@ -278,6 +278,8 @@ func main() {
 				r.Delete("/llm/providers/{id}", handlers.DeleteProvider)
 				r.Post("/llm/providers/{id}/sync", handlers.SyncProviderModels)
 				r.Get("/llm/usage", handlers.GetUsageLogs)
+				r.Delete("/llm/usage", handlers.ResetUsageLogs)
+				r.Get("/llm/usage/stats", handlers.GetUsageStats)
 
 				// Provider catalog proxy (claworc.com/providers, cached 1h)
 				r.Get("/llm/catalog", handlers.GetCatalogProviders)
