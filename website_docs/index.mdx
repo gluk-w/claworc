@@ -31,7 +31,7 @@ Each agent container runs:
     Access each instance's browser and terminal directly from your browser via VNC over WebSocket. Choose Chrome, Chromium, or Brave.
   </Card>
   <Card title="Configuration editor" icon="file-code">
-    Edit each instance's `clawdbot.json` config with a Monaco editor. API keys are injected securely and never written to disk in plaintext.
+    Quickly edit each instance's `openclaw.json` config and restart OpenClaw automatically.
   </Card>
   <Card title="Live logs" icon="terminal">
     Stream real-time container logs with auto-scroll via Server-Sent Events.
@@ -41,6 +41,9 @@ Each agent container runs:
   </Card>
   <Card title="Audit logging" icon="shield-check">
     Every SSH connection, command, file operation, and key rotation is recorded with a configurable retention period.
+  </Card>
+  <Card title="LLM gateway" icon="key" href="/models/overview">
+    A built-in proxy issues each OpenClaw instance a virtual key per provider. Real API credentials never leave the control plane and can be revoked per instance without rotating your actual keys.
   </Card>
 </CardGroup>
 

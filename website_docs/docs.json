@@ -30,9 +30,12 @@
             ]
           },
           {
-            "group": "LLM & models",
+            "group": "Models",
             "pages": [
-              "llm-gateway"
+              "models/overview",
+              "models/configuration",
+              "models/assign-models",
+              "models/usage-dashboard"
             ]
           },
           {

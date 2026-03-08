@@ -119,15 +119,15 @@ Claworc separates configuration into two levels: **global defaults** that apply 
 
 This model lets you configure once globally and selectively customize where needed.
 
-Each instance also has its own `clawdbot.json` for agent behavior (model selection, tools, integrations).
+Each instance also has its own `openclaw.json` for agent behavior (model selection, tools, integrations).
 
-See [Configuration](/configuration) for the full reference, including per-instance override options and examples.
+See [Configuration](/models/configuration) for the full reference, including per-instance override options and examples.
 
 ## Enabling models for an instance
 
 The **Overview** tab on each instance detail page includes an **Enabled Models** section (visible to admins). This controls which LLM providers and models the agent can use.
 
-Before you can enable models on an instance, configure at least one provider in **Settings**. See [LLM gateway](/llm-gateway) for how to add providers and manage API keys.
+Before you can enable models on an instance, configure at least one provider in **Settings**. See [Configuration](/models/configuration) for how to add providers and manage API keys.
 
 Once providers are configured, open the instance, click **Edit** next to Enabled Models, and check the models you want to make available. You can also set a **Default model** — the model the agent uses unless instructed otherwise.
 

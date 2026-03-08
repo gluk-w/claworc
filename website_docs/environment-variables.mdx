@@ -38,6 +38,7 @@ All Claworc configuration is done via environment variables with the `CLAWORC_` 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CLAWORC_LLM_GATEWAY_PORT` | `40001` | Port the internal LLM gateway listens on. The gateway binds to `127.0.0.1` only and is never publicly accessible — instances reach it through an SSH tunnel. Change this if port `40001` conflicts with another service on the control plane host. |
+| `CLAWORC_LLM_RESPONSE_LOG` | *(empty)* | Path to a file where raw upstream LLM response bodies are appended for debugging. Each entry includes a timestamp, model ID, API type, HTTP status, and the full response body. Leave empty (the default) to disable. **Do not enable in production** — response bodies may contain sensitive content. |
 
 ## Example configurations
 

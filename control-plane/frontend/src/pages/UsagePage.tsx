@@ -61,6 +61,20 @@ export default function UsagePage() {
     provider_id: providerId,
   });
 
+  const granularity = stats?.granularity ?? "day";
+
+  function formatTimeLabel(label: string): string {
+    if (granularity === "minute") return label.slice(11); // "HH:MM"
+    if (granularity === "hour") return label.slice(5, 10) + " " + label.slice(11) + ":00"; // "MM-DD HH:00"
+    return label.slice(5); // "MM-DD"
+  }
+
+  function formatTimeTooltip(label: string): string {
+    if (granularity === "minute") return label.replace("T", " ") + ":00";
+    if (granularity === "hour") return label.replace("T", " ") + ":00";
+    return `Date: ${label}`;
+  }
+
   const total = stats?.total;
   const timeSeries = stats?.time_series ?? [];
   const byInstance = (stats?.by_instance ?? []).map((s) => ({
@@ -126,7 +140,7 @@ export default function UsagePage() {
             ))}
           </select>
         </div>
-        <span className="relative group self-end">
+        <span className="relative group self-end ml-auto">
           <button
             onClick={() => {
               if (window.confirm("Delete all usage logs? This cannot be undone.")) {
@@ -190,11 +204,11 @@ export default function UsagePage() {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={(d) => d.slice(5)} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={formatTimeLabel} />
                   <YAxis tick={{ fontSize: 11 }} />
                   <Tooltip
                     formatter={(v: number) => [v.toLocaleString(), "Requests"]}
-                    labelFormatter={(l) => `Date: ${l}`}
+                    labelFormatter={formatTimeTooltip}
                   />
                   <Area
                     type="monotone"
@@ -219,11 +233,11 @@ export default function UsagePage() {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={(d) => d.slice(5)} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={formatTimeLabel} />
                   <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v.toFixed(2)}`} />
                   <Tooltip
                     formatter={(v: number) => [formatCost(v), "Cost"]}
-                    labelFormatter={(l) => `Date: ${l}`}
+                    labelFormatter={formatTimeTooltip}
                   />
                   <Area
                     type="monotone"

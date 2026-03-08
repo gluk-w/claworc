@@ -143,6 +143,7 @@ export interface UsageStatsResponse {
   };
   instances: { id: number; name: string; display_name: string }[];
   providers: { id: number; key: string; name: string }[];
+  granularity: "minute" | "hour" | "day";
 }
 
 export async function fetchUsageStats(params: {

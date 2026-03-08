@@ -486,13 +486,14 @@ type UsageProviderInfo struct {
 }
 
 type UsageStatsResponse struct {
-	ByInstance []InstanceUsageStat `json:"by_instance"`
-	ByProvider []ProviderUsageStat `json:"by_provider"`
-	ByModel    []ModelUsageStat    `json:"by_model"`
-	TimeSeries []UsageTimePoint    `json:"time_series"`
-	Total      UsageTotals         `json:"total"`
-	Instances  []UsageInstanceInfo `json:"instances"`
-	Providers  []UsageProviderInfo `json:"providers"`
+	ByInstance  []InstanceUsageStat `json:"by_instance"`
+	ByProvider  []ProviderUsageStat `json:"by_provider"`
+	ByModel     []ModelUsageStat    `json:"by_model"`
+	TimeSeries  []UsageTimePoint    `json:"time_series"`
+	Total       UsageTotals         `json:"total"`
+	Instances   []UsageInstanceInfo `json:"instances"`
+	Providers   []UsageProviderInfo `json:"providers"`
+	Granularity string              `json:"granularity"`
 }
 
 func GetUsageStats(w http.ResponseWriter, r *http.Request) {
@@ -506,9 +507,23 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("end_date"); v != "" {
 		endDate = v
 	}
-	// Make end inclusive by appending end of day
-	startTime := startDate + " 00:00:00"
-	endTime := endDate + " 23:59:59"
+	// Determine time-series granularity based on date range
+	startParsed, _ := time.Parse("2006-01-02", startDate)
+	endParsed, _ := time.Parse("2006-01-02", endDate)
+	daysDiff := int(endParsed.Sub(startParsed).Hours() / 24)
+
+	var tsGroupExpr, granularity string
+	switch {
+	case daysDiff == 0:
+		tsGroupExpr = "strftime('%Y-%m-%dT%H:%M', requested_at)"
+		granularity = "minute"
+	case daysDiff < 7:
+		tsGroupExpr = "strftime('%Y-%m-%dT%H', requested_at)"
+		granularity = "hour"
+	default:
+		tsGroupExpr = "strftime('%Y-%m-%d', requested_at)"
+		granularity = "day"
+	}
 
 	// Build optional filters
 	var instanceFilter *uint
@@ -526,9 +541,10 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build base WHERE clause
-	baseWhere := "requested_at >= ? AND requested_at <= ?"
-	baseArgs := []interface{}{startTime, endTime}
+	// Use DATE() to compare only the date part, making filtering format-agnostic
+	// regardless of how GORM/SQLite stores the time.Time value.
+	baseWhere := "DATE(requested_at) >= ? AND DATE(requested_at) <= ?"
+	baseArgs := []interface{}{startDate, endDate}
 	if instanceFilter != nil {
 		baseWhere += " AND instance_id = ?"
 		baseArgs = append(baseArgs, *instanceFilter)
@@ -595,7 +611,7 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 	}
 	var tsRows []tsRow
 	database.LogsDB.Raw(
-		"SELECT strftime('%Y-%m-%d', requested_at) date, COUNT(*) total_requests, SUM(input_tokens) input_tokens, SUM(cached_input_tokens) cached_input_tokens, SUM(output_tokens) output_tokens, SUM(cost_usd) cost_usd FROM llm_request_logs WHERE "+baseWhere+" GROUP BY strftime('%Y-%m-%d', requested_at) ORDER BY date ASC",
+		"SELECT "+tsGroupExpr+" date, COUNT(*) total_requests, SUM(input_tokens) input_tokens, SUM(cached_input_tokens) cached_input_tokens, SUM(output_tokens) output_tokens, SUM(cost_usd) cost_usd FROM llm_request_logs WHERE "+baseWhere+" GROUP BY "+tsGroupExpr+" ORDER BY date ASC",
 		baseArgs...,
 	).Scan(&tsRows)
 
@@ -691,6 +707,7 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 		resp.Providers[i] = UsageProviderInfo{ID: p.ID, Key: p.Key, Name: p.Name}
 	}
 
+	resp.Granularity = granularity
 	writeJSON(w, http.StatusOK, resp)
 }
 
