@@ -14,6 +14,14 @@ const entries = Object.entries(containers).map(
   ([browser, info]) => [browser, info.name] as [string, string],
 );
 
+// When no containers are available (no images built), skip all tests.
+// We must have at least one describe block to avoid vitest "no test suite" error.
+if (entries.length === 0) {
+  describe.skip("browser (no containers available)", () => {
+    it.skip("skipped — no agent images found", () => {});
+  });
+}
+
 describe.skipIf(entries.length === 0).each(entries)(
   "browser: %s",
   (browser, container) => {
