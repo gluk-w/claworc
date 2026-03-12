@@ -37,7 +37,7 @@ jobs:
         uses: robherley/go-test-action@v0
         with:
           moduleDirectory: control-plane
-          testarguments: -tags docker_integration -timeout 600s -count=1 ./internal/handlers/ -run TestIntegration
+          testarguments: -tags docker_integration -timeout 1200s -count=1 ./internal/handlers/ -run TestIntegration
         env:
           CLAWORC_LLM_GATEWAY_PORT: 40001
 

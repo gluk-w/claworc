@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,24 +18,37 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 )
 
-// createFileTestInstance creates a Docker instance via API and waits for SSH to become available.
-// Registers t.Cleanup to delete the instance.
-// Returns the instance ID.
-func createFileTestInstance(t *testing.T, baseURL string, client *http.Client) uint {
-	t.Helper()
+// sharedFileInstance holds the single Docker instance reused across all file tests.
+// Using a shared instance avoids per-test container startup (~60s each).
+var (
+	sharedFileInstanceOnce sync.Once
+	sharedFileInstanceID   uint
+	sharedFileInstanceErr  error
+)
 
+// getSharedFileInstance returns the shared Docker instance ID, creating it on first call.
+// The instance is reused for the lifetime of the test binary to avoid per-test container startup.
+func getSharedFileInstance(baseURL string, client *http.Client) (uint, error) {
+	sharedFileInstanceOnce.Do(func() {
+		sharedFileInstanceID, sharedFileInstanceErr = createAndWaitForInstance(baseURL, client)
+	})
+	return sharedFileInstanceID, sharedFileInstanceErr
+}
+
+// createAndWaitForInstance creates a Docker instance and waits up to 120s for SSH.
+func createAndWaitForInstance(baseURL string, client *http.Client) (uint, error) {
 	displayName := fmt.Sprintf("filetest-%d", time.Now().UnixNano())
 	body, _ := json.Marshal(map[string]interface{}{
 		"display_name": displayName,
 	})
 	resp, err := client.Post(baseURL+"/api/v1/instances", "application/json", bytes.NewReader(body))
 	if err != nil {
-		t.Fatalf("create instance: %v", err)
+		return 0, fmt.Errorf("create instance: %w", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		t.Fatalf("create instance: expected 201, got %d: %s", resp.StatusCode, string(b))
+		return 0, fmt.Errorf("create instance: expected 201, got %d: %s", resp.StatusCode, string(b))
 	}
 	var instResp struct {
 		ID   uint   `json:"id"`
@@ -42,22 +56,10 @@ func createFileTestInstance(t *testing.T, baseURL string, client *http.Client) u
 	}
 	json.NewDecoder(resp.Body).Decode(&instResp)
 	resp.Body.Close()
+
 	instID := instResp.ID
-	t.Logf("Created file-test instance id=%d name=%s", instID, instResp.Name)
 
-	t.Cleanup(func() {
-		req, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/v1/instances/%d", baseURL, instID), nil)
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Logf("Warning: delete instance id=%d: %v", instID, err)
-			return
-		}
-		resp.Body.Close()
-		t.Logf("Deleted file-test instance id=%d", instID)
-	})
-
-	// Wait for SSH connection to be established (poll ssh-status)
-	t.Log("Waiting for SSH connection...")
+	// Wait up to 120s for SSH to become connected.
 	deadline := time.Now().Add(120 * time.Second)
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(fmt.Sprintf("%s/api/v1/instances/%d/ssh-status", baseURL, instID))
@@ -72,14 +74,23 @@ func createFileTestInstance(t *testing.T, baseURL string, client *http.Client) u
 		resp.Body.Close()
 
 		if statusResp.State == sshproxy.StateConnected.String() {
-			t.Logf("SSH connected for instance id=%d", instID)
-			return instID
+			return instID, nil
 		}
-		t.Logf("SSH state=%s, waiting...", statusResp.State)
 		time.Sleep(3 * time.Second)
 	}
-	t.Fatalf("SSH did not connect within 120s for instance id=%d", instID)
-	return 0
+	return 0, fmt.Errorf("SSH did not connect within 120s for instance id=%d", instID)
+}
+
+// createFileTestInstance returns the shared Docker instance ID.
+// All file tests share one container to avoid per-test startup latency (~60s each).
+func createFileTestInstance(t *testing.T, baseURL string, client *http.Client) uint {
+	t.Helper()
+	instID, err := getSharedFileInstance(baseURL, client)
+	if err != nil {
+		t.Fatalf("shared file test instance: %v", err)
+	}
+	t.Logf("Using shared file-test instance id=%d", instID)
+	return instID
 }
 
 // fileURL returns the URL for a file operation on an instance.
