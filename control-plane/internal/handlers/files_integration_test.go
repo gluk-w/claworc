@@ -91,24 +91,24 @@ func TestIntegration_Files_BrowseDirectory(t *testing.T) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
-	resp, err := client.Get(fileURL(sessionURL, instID, "browse") + "?path=/root")
+	resp, err := client.Get(fileURL(sessionURL, instID, "browse") + "?path=/home/claworc")
 	if err != nil {
 		t.Fatalf("GET browse: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("browse /root: expected 200, got %d: %s", resp.StatusCode, string(b))
+		t.Fatalf("browse /home/claworc: expected 200, got %d: %s", resp.StatusCode, string(b))
 	}
 	var result struct {
 		Path    string        `json:"path"`
 		Entries []interface{} `json:"entries"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
-	if result.Path != "/root" {
-		t.Errorf("path = %q, want /root", result.Path)
+	if result.Path != "/home/claworc" {
+		t.Errorf("path = %q, want /home/claworc", result.Path)
 	}
-	t.Logf("Browse /root returned %d entries", len(result.Entries))
+	t.Logf("Browse /home/claworc returned %d entries", len(result.Entries))
 }
 
 func TestIntegration_Files_BrowseNonExistent(t *testing.T) {
@@ -131,7 +131,7 @@ func TestIntegration_Files_CreateAndReadFile(t *testing.T) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
-	filePath := "/root/inttest_create_read.txt"
+	filePath := "/home/claworc/inttest_create_read.txt"
 	content := "hello from integration test"
 
 	// Create
@@ -169,7 +169,7 @@ func TestIntegration_Files_CreateDirectory(t *testing.T) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
-	dirPath := "/root/inttest_mkdir_dir"
+	dirPath := "/home/claworc/inttest_mkdir_dir"
 
 	mkdirBody, _ := json.Marshal(map[string]string{"path": dirPath})
 	resp, err := client.Post(fileURL(sessionURL, instID, "mkdir"), "application/json", bytes.NewReader(mkdirBody))
@@ -182,7 +182,7 @@ func TestIntegration_Files_CreateDirectory(t *testing.T) {
 	}
 
 	// Browse parent and verify dir appears
-	resp, err = client.Get(fileURL(sessionURL, instID, "browse") + "?path=/root")
+	resp, err = client.Get(fileURL(sessionURL, instID, "browse") + "?path=/home/claworc")
 	if err != nil {
 		t.Fatalf("GET browse: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestIntegration_Files_UploadFile(t *testing.T) {
 	mw.Close()
 
 	req, _ := http.NewRequest(http.MethodPost,
-		fileURL(sessionURL, instID, "upload")+"?path=/root",
+		fileURL(sessionURL, instID, "upload")+"?path=/home/claworc",
 		&buf)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	resp, err := client.Do(req)
@@ -236,7 +236,7 @@ func TestIntegration_Files_UploadFile(t *testing.T) {
 	}
 
 	// Read back
-	resp, err = client.Get(fileURL(sessionURL, instID, "read") + "?path=/root/inttest_upload.txt")
+	resp, err = client.Get(fileURL(sessionURL, instID, "read") + "?path=/home/claworc/inttest_upload.txt")
 	if err != nil {
 		t.Fatalf("GET read: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestIntegration_Files_DownloadFile(t *testing.T) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
-	filePath := "/root/inttest_download.txt"
+	filePath := "/home/claworc/inttest_download.txt"
 	content := "download me"
 
 	createBody, _ := json.Marshal(map[string]string{"path": filePath, "content": content})
@@ -289,7 +289,7 @@ func TestIntegration_Files_DeleteFile(t *testing.T) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
-	filePath := "/root/inttest_delete_file.txt"
+	filePath := "/home/claworc/inttest_delete_file.txt"
 
 	createBody, _ := json.Marshal(map[string]string{"path": filePath, "content": "to be deleted"})
 	resp, _ := client.Post(fileURL(sessionURL, instID, "create"), "application/json", bytes.NewReader(createBody))
@@ -322,7 +322,7 @@ func TestIntegration_Files_DeleteDirectory(t *testing.T) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
-	dirPath := "/root/inttest_delete_dir"
+	dirPath := "/home/claworc/inttest_delete_dir"
 
 	mkdirBody, _ := json.Marshal(map[string]string{"path": dirPath})
 	resp, _ := client.Post(fileURL(sessionURL, instID, "mkdir"), "application/json", bytes.NewReader(mkdirBody))
@@ -340,7 +340,7 @@ func TestIntegration_Files_DeleteDirectory(t *testing.T) {
 	}
 
 	// Verify gone by browsing parent
-	resp, err = client.Get(fileURL(sessionURL, instID, "browse") + "?path=/root")
+	resp, err = client.Get(fileURL(sessionURL, instID, "browse") + "?path=/home/claworc")
 	if err != nil {
 		t.Fatalf("GET browse after delete: %v", err)
 	}
@@ -363,8 +363,8 @@ func TestIntegration_Files_RenameFile(t *testing.T) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
-	oldPath := "/root/inttest_rename_old.txt"
-	newPath := "/root/inttest_rename_new.txt"
+	oldPath := "/home/claworc/inttest_rename_old.txt"
+	newPath := "/home/claworc/inttest_rename_new.txt"
 	content := "rename me"
 
 	createBody, _ := json.Marshal(map[string]string{"path": oldPath, "content": content})
@@ -413,14 +413,14 @@ func TestIntegration_Files_SearchByName(t *testing.T) {
 
 	// Create a file with a distinctive name
 	uniqueName := fmt.Sprintf("inttest_search_unique_%d.txt", time.Now().UnixNano())
-	filePath := "/root/" + uniqueName
+	filePath := "/home/claworc/" + uniqueName
 
 	createBody, _ := json.Marshal(map[string]string{"path": filePath, "content": "searchable"})
 	resp, _ := client.Post(fileURL(sessionURL, instID, "create"), "application/json", bytes.NewReader(createBody))
 	resp.Body.Close()
 
 	// Search for it
-	resp, err := client.Get(fileURL(sessionURL, instID, "search") + "?path=/root&query=inttest_search_unique")
+	resp, err := client.Get(fileURL(sessionURL, instID, "search") + "?path=/home/claworc&query=inttest_search_unique")
 	if err != nil {
 		t.Fatalf("GET search: %v", err)
 	}
@@ -456,7 +456,7 @@ func TestIntegration_Files_FullWorkflow(t *testing.T) {
 	instID := createFileTestInstance(t, sessionURL, client)
 
 	// 1. Create directory
-	dirPath := "/root/inttest_workflow_dir"
+	dirPath := "/home/claworc/inttest_workflow_dir"
 	mkdirBody, _ := json.Marshal(map[string]string{"path": dirPath})
 	resp, _ := client.Post(fileURL(sessionURL, instID, "mkdir"), "application/json", bytes.NewReader(mkdirBody))
 	resp.Body.Close()
@@ -529,7 +529,7 @@ func TestIntegration_Files_UnauthenticatedAccess(t *testing.T) {
 	// Since our test server has auth disabled, this test verifies the endpoint is reachable.
 	// In a production environment this would return 401.
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("%s/api/v1/instances/%d/files/browse?path=/root", sessionURL, instID))
+	resp, err := client.Get(fmt.Sprintf("%s/api/v1/instances/%d/files/browse?path=/home/claworc", sessionURL, instID))
 	if err != nil {
 		t.Fatalf("GET browse: %v", err)
 	}
@@ -544,7 +544,7 @@ func TestIntegration_Files_WrongInstance(t *testing.T) {
 
 	// Use a non-existent instance ID
 	nonExistentID := instID + 99999
-	resp, err := client.Get(fmt.Sprintf("%s/api/v1/instances/%d/files/browse?path=/root", sessionURL, nonExistentID))
+	resp, err := client.Get(fmt.Sprintf("%s/api/v1/instances/%d/files/browse?path=/home/claworc", sessionURL, nonExistentID))
 	if err != nil {
 		t.Fatalf("GET browse: %v", err)
 	}
