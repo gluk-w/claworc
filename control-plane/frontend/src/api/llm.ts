@@ -20,12 +20,10 @@ export interface CatalogProviderDetail {
   label: string;
   icon_key: string | null;
   api_format: string;
+  base_url: string | null;
   models: {
     model_id: string;
     model_name: string;
-    slug: string;
-    api_format: string;
-    base_url: string | null;
     reasoning: boolean;
     vision: boolean;
     context_window: number | null;

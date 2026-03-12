@@ -69,8 +69,6 @@ export default function SettingsPage() {
     },
     onError: (err) => errorToast("Sync failed", err),
   });
-  const hasCatalogProviders = providers.some((p) => p.provider !== "");
-
   // Fetch catalog detail for each catalog provider (for model display in rows)
   const catalogKeys = [...new Set(providers.filter((p) => p.provider).map((p) => p.provider))];
   const catalogDetailResults = useQueries({
@@ -111,7 +109,7 @@ export default function SettingsPage() {
   // When catalog detail loads for the selected provider, fill in the base_url
   useEffect(() => {
     if (!catalogDetail || mCatalogKey === "__custom__" || !mCatalogKey) return;
-    const baseUrl = catalogDetail.models.find((m) => m.base_url)?.base_url;
+    const baseUrl = catalogDetail.base_url;
     if (baseUrl) setMBaseURL(baseUrl);
   }, [catalogDetail, mCatalogKey]);
 
@@ -293,7 +291,7 @@ export default function SettingsPage() {
               <button
                 type="button"
                 onClick={() => syncMutation.mutate()}
-                disabled={syncMutation.isPending || !hasCatalogProviders}
+                disabled={syncMutation.isPending}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <RefreshCw size={12} className={syncMutation.isPending ? "animate-spin" : ""} />
@@ -311,7 +309,9 @@ export default function SettingsPage() {
           </div>
 
           {providers.length === 0 ? (
-            <p className="text-sm text-gray-400 italic">No providers configured.</p>
+            <p className="text-sm text-gray-400 italic">
+              Click Add Provider to pick from a catalog of {catalogProviders.length} providers or add a custom one.
+            </p>
           ) : (
             <div className="divide-y divide-gray-100">
               {providers.map((p) => {

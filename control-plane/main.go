@@ -136,6 +136,7 @@ func main() {
 	if err := orchestrator.InitOrchestrator(ctx); err != nil {
 		log.Printf("WARNING: %v", err)
 	}
+	handlers.StartCatalogSync(ctx)
 
 	// Start LLM gateway (internal only, reachable via SSH agent-listener tunnel)
 	if err := llmgateway.Start(ctx, "127.0.0.1", config.Cfg.LLMGatewayPort); err != nil {

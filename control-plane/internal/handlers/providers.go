@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +37,64 @@ var (
 	catalogCache      = map[string]*catalogCacheEntry{}
 	catalogHTTPClient = &http.Client{Timeout: 10 * time.Second}
 )
+
+// StartCatalogSync pre-warms the in-memory catalog cache at startup and refreshes hourly.
+func StartCatalogSync(ctx context.Context) {
+	go func() {
+		refreshCatalog()
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				refreshCatalog()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func refreshCatalog() {
+	resp, err := catalogHTTPClient.Get(catalogBaseURL + "/")
+	if err != nil {
+		log.Printf("catalog refresh: list: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+
+	catalogCacheMu.Lock()
+	catalogCache["/"] = &catalogCacheEntry{body: body, expiresAt: time.Now().Add(time.Hour)}
+	catalogCacheMu.Unlock()
+
+	var list []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &list); err != nil {
+		return
+	}
+
+	for _, item := range list {
+		path := "/" + item.Name
+		resp2, err := catalogHTTPClient.Get(catalogBaseURL + path)
+		if err != nil || resp2.StatusCode != http.StatusOK {
+			if resp2 != nil {
+				resp2.Body.Close()
+			}
+			continue
+		}
+		body2, _ := io.ReadAll(resp2.Body)
+		resp2.Body.Close()
+		catalogCacheMu.Lock()
+		catalogCache[path] = &catalogCacheEntry{body: body2, expiresAt: time.Now().Add(time.Hour)}
+		catalogCacheMu.Unlock()
+	}
+	log.Printf("catalog refresh: cached %d providers", len(list))
+}
 
 func proxyCatalog(w http.ResponseWriter, path string) {
 	catalogCacheMu.RLock()
@@ -72,15 +131,82 @@ func proxyCatalog(w http.ResponseWriter, path string) {
 	w.Write(entry.body)
 }
 
-// GetCatalogProviders proxies GET /providers/ from the catalog API.
+// GetCatalogProviders returns the catalog provider list with "name" remapped to "key".
 func GetCatalogProviders(w http.ResponseWriter, r *http.Request) {
-	proxyCatalog(w, "/")
+	catalogCacheMu.RLock()
+	entry := catalogCache["/"]
+	catalogCacheMu.RUnlock()
+
+	if entry == nil || time.Now().After(entry.expiresAt) {
+		proxyCatalog(w, "/")
+		return
+	}
+
+	var raw []map[string]any
+	if err := json.Unmarshal(entry.body, &raw); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(entry.body)
+		return
+	}
+	for _, p := range raw {
+		if name, ok := p["name"]; ok {
+			p["key"] = name
+		}
+	}
+	writeJSON(w, http.StatusOK, raw)
 }
 
-// GetCatalogProviderDetail proxies GET /providers/{key}/ from the catalog API.
+// GetCatalogProviderDetail returns catalog provider detail with "name" remapped to "key"
+// and model fields remapped from id/name to model_id/model_name.
 func GetCatalogProviderDetail(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
-	proxyCatalog(w, "/"+key+"/")
+	path := "/" + strings.ToLower(key) // no trailing slash
+
+	catalogCacheMu.RLock()
+	entry := catalogCache[path]
+	catalogCacheMu.RUnlock()
+
+	if entry == nil || time.Now().After(entry.expiresAt) {
+		resp, err := catalogHTTPClient.Get(catalogBaseURL + path)
+		if err != nil {
+			http.Error(w, `{"error":"catalog unavailable"}`, http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			w.WriteHeader(resp.StatusCode)
+			w.Write(body)
+			return
+		}
+		entry = &catalogCacheEntry{body: body, expiresAt: time.Now().Add(time.Hour)}
+		catalogCacheMu.Lock()
+		catalogCache[path] = entry
+		catalogCacheMu.Unlock()
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(entry.body, &raw); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(entry.body)
+		return
+	}
+	if name, ok := raw["name"]; ok {
+		raw["key"] = name
+	}
+	if models, ok := raw["models"].([]any); ok {
+		for _, m := range models {
+			if mm, ok := m.(map[string]any); ok {
+				if id, ok := mm["id"]; ok {
+					mm["model_id"] = id
+				}
+				if mname, ok := mm["name"]; ok {
+					mm["model_name"] = mname
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, raw)
 }
 
 // getCatalogProviderModels returns ProviderModel entries for a catalog provider,
@@ -90,7 +216,7 @@ var getCatalogModels = func(catalogKey string) []database.ProviderModel {
 	if catalogKey == "" {
 		return nil
 	}
-	path := "/" + catalogKey + "/"
+	path := "/" + strings.ToLower(catalogKey) // no trailing slash
 
 	catalogCacheMu.RLock()
 	entry := catalogCache[path]
@@ -115,8 +241,8 @@ var getCatalogModels = func(catalogKey string) []database.ProviderModel {
 
 	var detail struct {
 		Models []struct {
-			ModelID         string  `json:"model_id"`
-			ModelName       string  `json:"model_name"`
+			ModelID         string  `json:"id"`
+			ModelName       string  `json:"name"`
 			Reasoning       bool    `json:"reasoning"`
 			ContextWindow   *int    `json:"context_window"`
 			MaxTokens       *int    `json:"max_tokens"`
@@ -343,7 +469,7 @@ func SyncProviderModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Force-refresh the catalog cache by clearing the entry first
-	path := "/" + p.Provider + "/"
+	path := "/" + strings.ToLower(p.Provider)
 	catalogCacheMu.Lock()
 	delete(catalogCache, path)
 	catalogCacheMu.Unlock()
@@ -377,7 +503,7 @@ func SyncAllProviderModels(w http.ResponseWriter, r *http.Request) {
 			result = append(result, toProviderResp(p))
 			continue
 		}
-		path := "/" + p.Provider + "/"
+		path := "/" + strings.ToLower(p.Provider)
 		catalogCacheMu.Lock()
 		delete(catalogCache, path)
 		catalogCacheMu.Unlock()
