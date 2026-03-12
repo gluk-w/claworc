@@ -63,6 +63,12 @@ func (fs *testFS) handleExec(cmd string) (stdout string, exitCode int) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
+	// Unwrap su claworc -c '...' prefix added by sshproxy.suClaworc.
+	const suPrefix = "su claworc -c "
+	if strings.HasPrefix(cmd, suPrefix) {
+		cmd = extractQuotedArg(cmd[len(suPrefix):])
+	}
+
 	// Parse the command
 	switch {
 	case strings.HasPrefix(cmd, "ls -la --color=never "):
