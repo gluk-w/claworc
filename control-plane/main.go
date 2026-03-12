@@ -241,6 +241,9 @@ func main() {
 			r.Post("/instances/{id}/files/create", handlers.CreateNewFile)
 			r.Post("/instances/{id}/files/mkdir", handlers.CreateDirectory)
 			r.Post("/instances/{id}/files/upload", handlers.UploadFile)
+			r.Delete("/instances/{id}/files", handlers.DeleteFile)
+			r.Post("/instances/{id}/files/rename", handlers.RenameFile)
+			r.Get("/instances/{id}/files/search", handlers.SearchFiles)
 
 			// Chat WebSocket
 			r.Get("/instances/{id}/chat", handlers.ChatProxy)

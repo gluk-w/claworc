@@ -1,5 +1,11 @@
 import client from "./client";
-import type { ListDirectoryResponse, ReadFileResponse } from "@/types/files";
+import type { ListDirectoryResponse, ReadFileResponse, FileEntry } from "@/types/files";
+
+export interface SearchResponse {
+  path: string;
+  query: string;
+  results: FileEntry[];
+}
 
 export async function browseFiles(
   instanceId: number,
@@ -67,6 +73,40 @@ export async function uploadFile(
         "Content-Type": "multipart/form-data",
       },
     },
+  );
+  return data;
+}
+
+export async function deleteFile(
+  instanceId: number,
+  path: string,
+): Promise<{ success: boolean }> {
+  const { data } = await client.delete(`/instances/${instanceId}/files`, {
+    params: { path },
+  });
+  return data;
+}
+
+export async function renameFile(
+  instanceId: number,
+  from: string,
+  to: string,
+): Promise<{ success: boolean; path: string }> {
+  const { data } = await client.post(`/instances/${instanceId}/files/rename`, {
+    from,
+    to,
+  });
+  return data;
+}
+
+export async function searchFiles(
+  instanceId: number,
+  path: string,
+  query: string,
+): Promise<SearchResponse> {
+  const { data } = await client.get<SearchResponse>(
+    `/instances/${instanceId}/files/search`,
+    { params: { path, query } },
   );
   return data;
 }

@@ -70,3 +70,19 @@
 .wx-filemanager .wx-tree {
   overflow-y: auto !important;
 }
+
+/* SVAR Filemanager: pointer cursor for file/folder rows in table view */
+.wx-filemanager .wx-row {
+  cursor: pointer;
+}
+
+/* SVAR Filemanager: ensure context menu portal renders above all content */
+.wx-filemanager [class*="wx-content-wrapper"] {
+  position: relative;
+  z-index: 1;
+}
+
+/* SVAR Filemanager: prevent overflow caused by max-width: 100vw */
+.wx-filemanager {
+  max-width: 100% !important;
+}

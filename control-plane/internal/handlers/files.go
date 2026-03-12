@@ -28,7 +28,7 @@ func BrowseFiles(w http.ResponseWriter, r *http.Request) {
 
 	dirPath := r.URL.Query().Get("path")
 	if dirPath == "" {
-		dirPath = "/root"
+		dirPath = "/home/claworc"
 	}
 
 	var inst database.Instance
@@ -340,6 +340,166 @@ func UploadFile(w http.ResponseWriter, r *http.Request) {
 		"success":  true,
 		"path":     fullPath,
 		"filename": header.Filename,
+	})
+}
+
+func DeleteFile(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	filePath := r.URL.Query().Get("path")
+	if filePath == "" {
+		writeError(w, http.StatusBadRequest, "path parameter required")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	client, ok := SSHMgr.GetConnection(inst.ID)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "No SSH connection for instance")
+		return
+	}
+
+	start := time.Now()
+	if err := sshproxy.DeletePath(client, filePath); err != nil {
+		log.Printf("Failed to delete %s for instance %s: %v", utils.SanitizeForLog(filePath), utils.SanitizeForLog(inst.Name), err)
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to delete: %v", err))
+		return
+	}
+	log.Printf("[files] DeleteFile instance=%d path=%s duration=%s", inst.ID, utils.SanitizeForLog(filePath), time.Since(start))
+	auditFileOp(r, inst.ID, fmt.Sprintf("op=delete, path=%s", filePath))
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func RenameFile(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var body struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if body.From == "" || body.To == "" {
+		writeError(w, http.StatusBadRequest, "from and to are required")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	client, ok := SSHMgr.GetConnection(inst.ID)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "No SSH connection for instance")
+		return
+	}
+
+	start := time.Now()
+	if err := sshproxy.RenamePath(client, body.From, body.To); err != nil {
+		log.Printf("Failed to rename %s -> %s for instance %s: %v", utils.SanitizeForLog(body.From), utils.SanitizeForLog(body.To), utils.SanitizeForLog(inst.Name), err)
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to rename: %v", err))
+		return
+	}
+	log.Printf("[files] RenameFile instance=%d from=%s to=%s duration=%s", inst.ID, utils.SanitizeForLog(body.From), utils.SanitizeForLog(body.To), time.Since(start))
+	auditFileOp(r, inst.ID, fmt.Sprintf("op=rename, from=%s, to=%s", body.From, body.To))
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"path":    body.To,
+	})
+}
+
+func SearchFiles(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	dirPath := r.URL.Query().Get("path")
+	if dirPath == "" {
+		dirPath = "/home/claworc"
+	}
+	query := r.URL.Query().Get("query")
+	if query == "" {
+		writeError(w, http.StatusBadRequest, "query parameter required")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	client, ok := SSHMgr.GetConnection(inst.ID)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "No SSH connection for instance")
+		return
+	}
+
+	start := time.Now()
+	results, err := sshproxy.SearchFiles(client, dirPath, query)
+	if err != nil {
+		log.Printf("Failed to search files in %s for instance %s: %v", utils.SanitizeForLog(dirPath), utils.SanitizeForLog(inst.Name), err)
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to search: %v", err))
+		return
+	}
+	log.Printf("[files] SearchFiles instance=%d path=%s query=%s results=%d duration=%s", inst.ID, utils.SanitizeForLog(dirPath), utils.SanitizeForLog(query), len(results), time.Since(start))
+	auditFileOp(r, inst.ID, fmt.Sprintf("op=search, path=%s, query=%s, results=%d", dirPath, query, len(results)))
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"path":    dirPath,
+		"query":   query,
+		"results": results,
 	})
 }
 

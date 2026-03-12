@@ -159,11 +159,18 @@ func ParseLsOutput(output string) []FileEntry {
 	return entries
 }
 
+// suClaworc wraps a shell command to run as the claworc user.
+// Uses shellQuote so the command (which may itself contain single-quoted paths)
+// is safely re-escaped for the su -c argument.
+func suClaworc(cmd string) string {
+	return "su claworc -c " + shellQuote(cmd)
+}
+
 // ListDirectory lists the contents of a remote directory via SSH.
 // It executes `ls -la --color=never` and parses the output into FileEntry structs.
 func ListDirectory(client *ssh.Client, path string) ([]FileEntry, error) {
 	start := time.Now()
-	stdout, stderr, exitCode, err := executeCommand(client, fmt.Sprintf("ls -la --color=never %s", shellQuote(path)))
+	stdout, stderr, exitCode, err := executeCommand(client, suClaworc(fmt.Sprintf("ls -la --color=never %s", shellQuote(path))))
 	if err != nil {
 		return nil, fmt.Errorf("list directory: %w", err)
 	}
@@ -177,7 +184,7 @@ func ListDirectory(client *ssh.Client, path string) ([]FileEntry, error) {
 // ReadFile reads the contents of a remote file via SSH.
 func ReadFile(client *ssh.Client, path string) ([]byte, error) {
 	start := time.Now()
-	stdout, stderr, exitCode, err := executeCommand(client, fmt.Sprintf("cat %s", shellQuote(path)))
+	stdout, stderr, exitCode, err := executeCommand(client, suClaworc(fmt.Sprintf("cat %s", shellQuote(path))))
 	if err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
 	}
@@ -198,7 +205,7 @@ func WriteFile(client *ssh.Client, path string, data []byte) error {
 	const chunkSize = 48000
 
 	// Truncate / create the target file
-	_, stderr, exitCode, err := executeCommand(client, fmt.Sprintf("> %s", shellQuote(path)))
+	_, stderr, exitCode, err := executeCommand(client, suClaworc(fmt.Sprintf("> %s", shellQuote(path))))
 	if err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
@@ -212,7 +219,7 @@ func WriteFile(client *ssh.Client, path string, data []byte) error {
 			end = len(data)
 		}
 		b64 := base64.StdEncoding.EncodeToString(data[i:end])
-		cmd := fmt.Sprintf("echo '%s' | base64 -d >> %s", b64, shellQuote(path))
+		cmd := suClaworc(fmt.Sprintf("echo '%s' | base64 -d >> %s", b64, shellQuote(path)))
 		_, stderr, exitCode, err = executeCommand(client, cmd)
 		if err != nil {
 			return fmt.Errorf("write file: %w", err)
@@ -229,7 +236,7 @@ func WriteFile(client *ssh.Client, path string, data []byte) error {
 // CreateDirectory creates a remote directory (and any parent directories) via SSH.
 func CreateDirectory(client *ssh.Client, path string) error {
 	start := time.Now()
-	_, stderr, exitCode, err := executeCommand(client, fmt.Sprintf("mkdir -p %s", shellQuote(path)))
+	_, stderr, exitCode, err := executeCommand(client, suClaworc(fmt.Sprintf("mkdir -p %s", shellQuote(path))))
 	if err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
@@ -238,4 +245,70 @@ func CreateDirectory(client *ssh.Client, path string) error {
 	}
 	log.Printf("[sshfiles] CreateDirectory %s completed in %s", path, time.Since(start))
 	return nil
+}
+
+// DeletePath removes a file or directory (recursively) via SSH.
+func DeletePath(client *ssh.Client, path string) error {
+	start := time.Now()
+	_, stderr, exitCode, err := executeCommand(client, suClaworc(fmt.Sprintf("rm -rf %s", shellQuote(path))))
+	if err != nil {
+		return fmt.Errorf("delete path: %w", err)
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("delete path: %s", strings.TrimSpace(stderr))
+	}
+	log.Printf("[sshfiles] DeletePath %s completed in %s", path, time.Since(start))
+	return nil
+}
+
+// RenamePath renames or moves a file or directory via SSH.
+func RenamePath(client *ssh.Client, oldPath, newPath string) error {
+	start := time.Now()
+	_, stderr, exitCode, err := executeCommand(client, suClaworc(fmt.Sprintf("mv %s %s", shellQuote(oldPath), shellQuote(newPath))))
+	if err != nil {
+		return fmt.Errorf("rename path: %w", err)
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("rename path: %s", strings.TrimSpace(stderr))
+	}
+	log.Printf("[sshfiles] RenamePath %s -> %s completed in %s", oldPath, newPath, time.Since(start))
+	return nil
+}
+
+// SearchFiles searches for files by name within a directory via SSH.
+// Returns matching FileEntry items (up to 200 results). Hidden files are excluded.
+func SearchFiles(client *ssh.Client, dir, query string) ([]FileEntry, error) {
+	start := time.Now()
+	// -not -path "*/\.*" excludes hidden files/dirs; head -200 caps results.
+	cmd := suClaworc(fmt.Sprintf("find %s -iname %s -not -path '*/\\.*' 2>/dev/null | head -200", shellQuote(dir), shellQuote("*"+query+"*")))
+	stdout, stderr, exitCode, err := executeCommand(client, cmd)
+	if err != nil {
+		return nil, fmt.Errorf("search files: %w", err)
+	}
+	if exitCode != 0 {
+		return nil, fmt.Errorf("search files: %s", strings.TrimSpace(stderr))
+	}
+
+	var entries []FileEntry
+	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Use stat to determine type
+		statOut, _, statCode, statErr := executeCommand(client, suClaworc(fmt.Sprintf("stat -c '%%F' %s 2>/dev/null", shellQuote(line))))
+		entryType := "file"
+		if statErr == nil && statCode == 0 {
+			if strings.Contains(strings.TrimSpace(statOut), "directory") {
+				entryType = "directory"
+			}
+		}
+		entries = append(entries, FileEntry{
+			Name:        line,
+			Type:        entryType,
+			Permissions: "",
+		})
+	}
+	log.Printf("[sshfiles] SearchFiles dir=%s query=%s results=%d completed in %s", dir, query, len(entries), time.Since(start))
+	return entries, nil
 }

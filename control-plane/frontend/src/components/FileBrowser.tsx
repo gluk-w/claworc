@@ -4,7 +4,7 @@ import "@svar-ui/react-filemanager/all.css";
 import { useQueryClient } from "@tanstack/react-query";
 import { successToast, errorToast } from "@/utils/toast";
 import { useBrowseFiles, useReadFile } from "@/hooks/useFiles";
-import { createFile, uploadFile } from "@/api/files";
+import { createFile, uploadFile, deleteFile, renameFile } from "@/api/files";
 import type { FileEntry } from "@/types/files";
 
 interface FileBrowserProps {
@@ -21,7 +21,7 @@ interface SvarFileItem {
   type: "folder" | "file";
 }
 
-const ROOT_PATH = "/config";
+const ROOT_PATH = "/home/claworc";
 
 export default function FileBrowser({ instanceId, initialPath = "/", onPathChange }: FileBrowserProps) {
   const [currentPath, setCurrentPath] = useState(initialPath);
@@ -56,10 +56,13 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
     true,
   );
 
-  // Function to invalidate the current browse query
-  const refreshCurrentPath = () => {
+  // Stable ref so interceptors (captured at mount) always refresh the *current* path
+  const refreshCurrentPathRef = useRef<() => void>(() => {});
+  refreshCurrentPathRef.current = () => {
+    const p = currentPathRef.current;
+    const rp = p === "/" ? ROOT_PATH : ROOT_PATH + p;
     queryClient.invalidateQueries({
-      queryKey: ["instances", instanceId, "files", "browse", realPath],
+      queryKey: ["instances", instanceId, "files", "browse", rp],
     });
   };
   const { data: fileContent } = useReadFile(
@@ -174,7 +177,7 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
         await createFile(instanceId, filePath, "");
         successToast("File created");
 
-        refreshCurrentPath();
+        refreshCurrentPathRef.current();
         return false;
       } catch (error: any) {
         errorToast("Failed to create file", error);
@@ -194,10 +197,80 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
         await uploadFile(instanceId, parentRealPath, ev.file);
         successToast("File uploaded");
 
-        refreshCurrentPath();
+        refreshCurrentPathRef.current();
         return false;
       } catch (error: any) {
         errorToast("Failed to upload file", error);
+        return false;
+      }
+    });
+
+    // Intercept delete to remove file(s)/folder(s) via our API
+    // SVAR fires "delete-files" (plural) with {ids: TID[]}
+    api.intercept("delete-files", async (ev: any) => {
+      if (!ev?.ids?.length) return false;
+      try {
+        for (const id of ev.ids) {
+          const rp = id === "/" ? ROOT_PATH : ROOT_PATH + id;
+          await deleteFile(instanceId, rp);
+          dirCacheRef.current.delete(id);
+        }
+        successToast(ev.ids.length > 1 ? `Deleted ${ev.ids.length} items` : "Deleted");
+        refreshCurrentPathRef.current();
+        return false;
+      } catch (error: any) {
+        errorToast("Failed to delete", error);
+        return false;
+      }
+    });
+
+    // Intercept download to trigger browser file download via our API
+    api.intercept("download-file", async (ev: any) => {
+      if (!ev?.id) return false;
+      const rp = ev.id === "/" ? ROOT_PATH : ROOT_PATH + ev.id;
+      const url = `/api/v1/instances/${instanceId}/files/download?path=${encodeURIComponent(rp)}`;
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = ev.id.split("/").pop() || "download";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return false;
+    });
+
+    // Intercept request-data (breadcrumbs refresh button) to reload current directory
+    api.intercept("request-data", async (ev: any) => {
+      if (!ev?.id) return false;
+      const p = ev.id as string;
+      const rp = p === "/" ? ROOT_PATH : ROOT_PATH + p;
+      queryClient.invalidateQueries({
+        queryKey: ["instances", instanceId, "files", "browse", rp],
+      });
+      return false;
+    });
+
+    // Intercept rename to move the file/folder via our API
+    api.intercept("rename-file", async (ev: any) => {
+      if (!ev?.id || !ev?.name) {
+        return false;
+      }
+
+      try {
+        const oldRealPath = ev.id === "/" ? ROOT_PATH : ROOT_PATH + ev.id;
+        // Derive new path: same parent directory, new name
+        const parentVirtual = ev.id.substring(0, ev.id.lastIndexOf("/")) || "/";
+        const parentReal = parentVirtual === "/" ? ROOT_PATH : ROOT_PATH + parentVirtual;
+        const newRealPath = parentReal + "/" + ev.name;
+
+        await renameFile(instanceId, oldRealPath, newRealPath);
+        successToast("Renamed");
+
+        // Evict old path from cache
+        dirCacheRef.current.delete(ev.id);
+        refreshCurrentPathRef.current();
+        return false;
+      } catch (error: any) {
+        errorToast("Failed to rename", error);
         return false;
       }
     });
@@ -227,7 +300,7 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
     setEditedContent(null);
   };
 
-  if (isLoading && fileData.length === 0) {
+  if (fileData.length === 0) {
     return (
       <div className="flex items-center justify-center h-96 text-gray-500">
         Loading files...
@@ -238,9 +311,11 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
   return (
     <div className="h-full flex flex-col">
       <div className="flex flex-1 min-h-0">
-        <Willow>
-          <Filemanager data={fileData} mode={"table"} panels={panels} init={handleInit} />
-        </Willow>
+        <div className="flex-1 min-w-0 overflow-hidden h-full">
+          <Willow>
+            <Filemanager data={fileData} mode={"table"} panels={panels} init={handleInit} />
+          </Willow>
+        </div>
         {selectedFile && fileContent && (
           <div className="w-1/2 border border-gray-200 rounded-lg overflow-hidden bg-white flex flex-col">
             <div className="border-b border-gray-200 px-4 py-2 bg-gray-50 flex items-center justify-between shrink-0">

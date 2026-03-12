@@ -188,6 +188,17 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 			r.Delete("/instances/{id}/terminal/sessions/{sessionId}", handlers.CloseTerminalSession)
 			r.Get("/instances/{id}/logs", handlers.StreamLogs)
 
+			// Files
+			r.Get("/instances/{id}/files/browse", handlers.BrowseFiles)
+			r.Get("/instances/{id}/files/read", handlers.ReadFileContent)
+			r.Get("/instances/{id}/files/download", handlers.DownloadFile)
+			r.Post("/instances/{id}/files/create", handlers.CreateNewFile)
+			r.Post("/instances/{id}/files/mkdir", handlers.CreateDirectory)
+			r.Post("/instances/{id}/files/upload", handlers.UploadFile)
+			r.Delete("/instances/{id}/files", handlers.DeleteFile)
+			r.Post("/instances/{id}/files/rename", handlers.RenameFile)
+			r.Get("/instances/{id}/files/search", handlers.SearchFiles)
+
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequireAdmin)
 

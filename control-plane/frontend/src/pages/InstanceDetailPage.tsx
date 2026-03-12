@@ -95,7 +95,8 @@ export default function InstanceDetailPage() {
   const getFilesPathFromHash = (): string => {
     const hash = location.hash.slice(1);
     if (hash.startsWith("files://")) {
-      return hash.slice("files://".length) || "/";
+      const rest = hash.slice("files://".length);
+      return rest ? `/${rest}` : "/";
     }
     return "/";
   };
@@ -135,7 +136,7 @@ export default function InstanceDetailPage() {
   }, [location.hash]);
 
   const handleFilesPathChange = (path: string) => {
-    const hash = path === "/" ? "files" : `files://${path}`;
+    const hash = path === "/" ? "files" : `files://${path.replace(/^\//, "")}`;
     navigate(`#${hash}`, { replace: true });
   };
 
@@ -325,6 +326,7 @@ export default function InstanceDetailPage() {
     { key: "overview", label: "Overview" },
     { key: "chrome", label: "Browser" },
     { key: "terminal", label: "Terminal" },
+    { key: "files", label: "Files" },
     { key: "config", label: "Config" },
     { key: "logs", label: "Logs" },
   ];

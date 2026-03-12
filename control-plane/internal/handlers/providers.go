@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -79,7 +80,7 @@ func GetCatalogProviders(w http.ResponseWriter, r *http.Request) {
 
 // GetCatalogProviderDetail proxies GET /providers/{key}/ from the catalog API.
 func GetCatalogProviderDetail(w http.ResponseWriter, r *http.Request) {
-	key := chi.URLParam(r, "key")
+	key := strings.ToLower(chi.URLParam(r, "key"))
 	proxyCatalog(w, "/"+key+"/")
 }
 
@@ -90,7 +91,7 @@ var getCatalogModels = func(catalogKey string) []database.ProviderModel {
 	if catalogKey == "" {
 		return nil
 	}
-	path := "/" + catalogKey + "/"
+	path := "/" + strings.ToLower(catalogKey) + "/"
 
 	catalogCacheMu.RLock()
 	entry := catalogCache[path]
