@@ -367,15 +367,47 @@ func SyncProviderModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toProviderResp(p))
 }
 
+type syncProviderResult struct {
+	ID         uint         `json:"id"`
+	Key        string       `json:"key"`
+	Name       string       `json:"name"`
+	Skipped    bool         `json:"skipped"`
+	Success    bool         `json:"success"`
+	ModelCount int          `json:"model_count"`
+	Error      string       `json:"error,omitempty"`
+	Provider   providerResp `json:"provider"`
+}
+
+type syncAllResp struct {
+	TotalProviders  int                  `json:"total_providers"`
+	Synced          int                  `json:"synced"`
+	Skipped         int                  `json:"skipped"`
+	Failed          int                  `json:"failed"`
+	TotalModelCount int                  `json:"total_model_count"`
+	Results         []syncProviderResult `json:"results"`
+}
+
 func SyncAllProviderModels(w http.ResponseWriter, r *http.Request) {
 	var providers []database.LLMProvider
 	database.DB.Order("id ASC").Find(&providers)
 
 	log.Printf("Syncing models for all catalog providers (%d total)", len(providers))
-	var result []providerResp
+	resp := syncAllResp{
+		TotalProviders: len(providers),
+		Results:        []syncProviderResult{},
+	}
 	for _, p := range providers {
+		entry := syncProviderResult{
+			ID:       p.ID,
+			Key:      p.Provider,
+			Name:     p.Name,
+			Provider: toProviderResp(p),
+		}
 		if p.Provider == "" {
-			result = append(result, toProviderResp(p))
+			entry.Skipped = true
+			entry.Success = true
+			resp.Skipped++
+			resp.Results = append(resp.Results, entry)
 			continue
 		}
 		path := "/" + p.Provider + "/"
@@ -386,19 +418,24 @@ func SyncAllProviderModels(w http.ResponseWriter, r *http.Request) {
 		models := getCatalogModels(p.Provider)
 		if models == nil {
 			log.Printf("Failed to fetch catalog models for provider %d (%s)", p.ID, p.Provider)
-			result = append(result, toProviderResp(p))
+			entry.Success = false
+			entry.Error = "failed to fetch catalog models"
+			resp.Failed++
+			resp.Results = append(resp.Results, entry)
 			continue
 		}
 		modelsJSON, _ := json.Marshal(models)
 		p.Models = string(modelsJSON)
 		database.DB.Save(&p)
 		log.Printf("Synced %d models for provider %d (%s)", len(models), p.ID, p.Provider)
-		result = append(result, toProviderResp(p))
+		entry.Success = true
+		entry.ModelCount = len(models)
+		entry.Provider = toProviderResp(p)
+		resp.Synced++
+		resp.TotalModelCount += len(models)
+		resp.Results = append(resp.Results, entry)
 	}
-	if result == nil {
-		result = []providerResp{}
-	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func DeleteProvider(w http.ResponseWriter, r *http.Request) {
