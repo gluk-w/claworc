@@ -71,7 +71,7 @@ func createFileTestInstance(t *testing.T, baseURL string, client *http.Client) u
 		json.NewDecoder(resp.Body).Decode(&statusResp)
 		resp.Body.Close()
 
-		if statusResp.State == string(sshproxy.StateConnected) {
+		if statusResp.State == sshproxy.StateConnected.String() {
 			t.Logf("SSH connected for instance id=%d", instID)
 			return instID
 		}

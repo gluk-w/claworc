@@ -32,12 +32,14 @@ type fileTestFS struct {
 func newFileTestFS() *fileTestFS {
 	return &fileTestFS{
 		files: map[string][]byte{
-			"/root/hello.txt": []byte("hello world"),
-			"/root/data.bin":  {0x00, 0x01, 0x02, 0xFF},
+			"/root/hello.txt":          []byte("hello world"),
+			"/root/data.bin":           {0x00, 0x01, 0x02, 0xFF},
+			"/home/claworc/readme.txt": []byte("claworc home"),
 		},
 		dirs: map[string]bool{
-			"/root": true,
-			"/tmp":  true,
+			"/root":         true,
+			"/tmp":          true,
+			"/home/claworc": true,
 		},
 	}
 }
@@ -45,6 +47,12 @@ func newFileTestFS() *fileTestFS {
 func (fs *fileTestFS) handleExec(cmd string) (stdout string, exitCode int) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
+
+	// Unwrap su claworc -c '...' prefix added by sshproxy.suClaworc.
+	const suPrefix = "su claworc -c "
+	if strings.HasPrefix(cmd, suPrefix) {
+		cmd = fileExtractQuotedArg(cmd[len(suPrefix):])
+	}
 
 	switch {
 	case strings.HasPrefix(cmd, "ls -la --color=never "):
@@ -418,7 +426,7 @@ func TestBrowseFiles_DefaultPath(t *testing.T) {
 
 	mgr.Connect(context.Background(), inst.ID, host, port)
 
-	// No path query parameter — should default to /root
+	// No path query parameter — should default to /home/claworc
 	req := buildRequest(t, "GET", "/api/v1/instances/1/files/browse", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
 	w := httptest.NewRecorder()
 
@@ -429,8 +437,8 @@ func TestBrowseFiles_DefaultPath(t *testing.T) {
 	}
 
 	result := parseResponse(t, w)
-	if result["path"] != "/root" {
-		t.Errorf("expected default path '/root', got %v", result["path"])
+	if result["path"] != "/home/claworc" {
+		t.Errorf("expected default path '/home/claworc', got %v", result["path"])
 	}
 }
 
