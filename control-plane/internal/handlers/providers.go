@@ -860,6 +860,41 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// probeProviderURL makes a validated HTTP GET request to a provider URL and returns
+// the status code. The URL is validated and reconstructed from parsed components
+// to ensure only http(s) schemes with valid hosts are used.
+func probeProviderURL(ctx context.Context, baseURL, pathSuffix, apiType, apiKey string) (statusCode int, respBody string, err error) {
+	safeURL, urlErr := utils.ValidateAndBuildURL(baseURL, pathSuffix)
+	if urlErr != nil {
+		return 0, "", urlErr
+	}
+
+	req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, safeURL, nil)
+	if reqErr != nil {
+		return 0, "", reqErr
+	}
+
+	// Set auth header per API type
+	switch apiType {
+	case "anthropic-messages":
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+	case "google-generative-ai":
+		req.Header.Set("x-goog-api-key", apiKey)
+	default:
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, doErr := catalogHTTPClient.Do(req)
+	if doErr != nil {
+		return 0, "", doErr
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return resp.StatusCode, strings.TrimSpace(string(body)), nil
+}
+
 // TestProviderKey validates an API key by making a lightweight probe request
 // to the provider's API. No saved provider is required — credentials are passed inline.
 func TestProviderKey(w http.ResponseWriter, r *http.Request) {
@@ -888,42 +923,16 @@ func TestProviderKey(w http.ResponseWriter, r *http.Request) {
 		probePath = "/v1/models"
 	}
 
-	// Validate base URL and build safe probe URL (scheme, host, path validated)
-	probeURL, urlErr := utils.ValidateAndBuildURL(body.BaseURL, probePath)
-	if urlErr != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL"})
-		return
-	}
-
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, probeURL, nil)
+	statusCode, respBody, err := probeProviderURL(r.Context(), body.BaseURL, probePath, body.APIType, body.APIKey)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL"})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL or connection failed"})
 		return
 	}
 
-	// Set auth header per API type (same logic as gateway's buildUpstreamRequest)
-	switch body.APIType {
-	case "anthropic-messages":
-		req.Header.Set("x-api-key", body.APIKey)
-		req.Header.Set("anthropic-version", "2023-06-01")
-	case "google-generative-ai":
-		req.Header.Set("x-goog-api-key", body.APIKey)
-	default:
-		req.Header.Set("Authorization", "Bearer "+body.APIKey)
-	}
-
-	resp, err := catalogHTTPClient.Do(req)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": err.Error()})
-		return
-	}
-	defer resp.Body.Close()
-
-	ok := resp.StatusCode >= 200 && resp.StatusCode < 300
-	result := map[string]interface{}{"ok": ok, "status": resp.StatusCode}
+	ok := statusCode >= 200 && statusCode < 300
+	result := map[string]interface{}{"ok": ok, "status": statusCode}
 	if !ok {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		result["error"] = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		result["error"] = fmt.Sprintf("HTTP %d: %s", statusCode, respBody)
 	}
 	writeJSON(w, http.StatusOK, result)
 }
