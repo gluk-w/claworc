@@ -196,8 +196,7 @@ export default function SettingsPage() {
     const key = effectiveKey;
     try {
       if (modalMode === "create") {
-        const catalogEntry = catalogProviders.find((c) => c.name === mCatalogKey);
-        const apiType = isCustomProvider ? mApiType : (catalogEntry?.api_format ?? "openai-completions");
+        const apiType = resolveApiType();
         const models = isCustomProvider ? mModels : [];
         await createProviderMutation.mutateAsync({ key, provider: mProvider, name: mName, base_url: mBaseURL, api_type: apiType, models, api_key: mApiKey.trim() || undefined });
       } else {
@@ -275,6 +274,14 @@ export default function SettingsPage() {
   const hasChanges =
     pendingBraveKey !== null ||
     Object.keys(resources).length > 0;
+
+  // Resolve the effective API type for the current modal state
+  const resolveApiType = (): string => {
+    if (isCustomProvider) return mApiType;
+    if (modalMode === "edit") return modalProvider!.api_type || "openai-completions";
+    const catalogEntry = catalogProviders.find((c) => c.name === mCatalogKey);
+    return catalogEntry?.api_format ?? "openai-completions";
+  };
 
   // Determine if "Save" is enabled in modal
   const showForm = modalMode === "edit" || (mCatalogKey !== "");
@@ -803,13 +810,7 @@ export default function SettingsPage() {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    const catalogEntry = catalogProviders.find((c) => c.name === mCatalogKey);
-                    const apiType = isCustomProvider
-                      ? mApiType
-                      : (modalMode === "edit" ? modalProvider!.api_type : catalogEntry?.api_format) || "openai-completions";
-                    testMutation.mutate({ base_url: mBaseURL, api_key: mApiKey, api_type: apiType });
-                  }}
+                  onClick={() => testMutation.mutate({ base_url: mBaseURL, api_key: mApiKey, api_type: resolveApiType() })}
                   disabled={!mBaseURL || !mApiKey.trim() || testMutation.isPending}
                   className="px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >

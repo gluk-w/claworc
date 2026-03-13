@@ -854,26 +854,18 @@ func TestProviderKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build probe URL per API type
+	baseURL := strings.TrimRight(body.BaseURL, "/")
 	var probeURL string
 	switch body.APIType {
-	case "openai-completions", "openai-responses":
-		probeURL = strings.TrimRight(body.BaseURL, "/") + "/v1/models"
-	case "anthropic-messages":
-		probeURL = strings.TrimRight(body.BaseURL, "/") + "/v1/models"
-	case "google-generative-ai":
-		probeURL = strings.TrimRight(body.BaseURL, "/") + "/v1/models"
 	case "ollama":
-		probeURL = strings.TrimRight(body.BaseURL, "/") + "/api/tags"
+		probeURL = baseURL + "/api/tags"
 	case "bedrock-converse-stream":
-		probeURL = strings.TrimRight(body.BaseURL, "/")
+		probeURL = baseURL
 	default:
-		probeURL = strings.TrimRight(body.BaseURL, "/") + "/v1/models"
+		probeURL = baseURL + "/v1/models"
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, probeURL, nil)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, probeURL, nil)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL: " + err.Error()})
 		return
@@ -890,8 +882,7 @@ func TestProviderKey(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("Authorization", "Bearer "+body.APIKey)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := catalogHTTPClient.Do(req)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": err.Error()})
 		return
