@@ -215,7 +215,7 @@ var getCatalogModels = func(catalogKey string) []database.ProviderModel {
 	entry, err := getCatalogEntryByKey(strings.ToLower(catalogKey))
 	if err != nil || entry == nil {
 		if err != nil {
-			log.Printf("getCatalogModels: %s: %v", catalogKey, err)
+			log.Printf("getCatalogModels: %s: %v", utils.SanitizeForLog(catalogKey), err)
 		}
 		return nil
 	}
@@ -878,24 +878,29 @@ func TestProviderKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build probe URL per API type
-	baseURL := strings.TrimRight(body.BaseURL, "/")
-	var probeURL string
-	switch body.APIType {
-	case "ollama":
-		probeURL = baseURL + "/api/tags"
-	case "bedrock-converse-stream":
-		probeURL = baseURL
-	default:
-		probeURL = baseURL + "/v1/models"
-	}
-
-	// Validate the probe URL to prevent SSRF — only allow http(s) schemes
-	parsedURL, parseErr := url.Parse(probeURL)
-	if parseErr != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+	// Parse and validate the base URL to prevent SSRF — only allow http(s) schemes
+	parsedBase, parseErr := url.Parse(strings.TrimRight(body.BaseURL, "/"))
+	if parseErr != nil || (parsedBase.Scheme != "http" && parsedBase.Scheme != "https") || parsedBase.Host == "" {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL"})
 		return
 	}
+
+	// Reconstruct probe URL from validated components to break taint chain
+	var probePath string
+	switch body.APIType {
+	case "ollama":
+		probePath = "/api/tags"
+	case "bedrock-converse-stream":
+		probePath = ""
+	default:
+		probePath = "/v1/models"
+	}
+	safeURL := url.URL{
+		Scheme: parsedBase.Scheme,
+		Host:   parsedBase.Host,
+		Path:   parsedBase.Path + probePath,
+	}
+	probeURL := safeURL.String()
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, probeURL, nil)
 	if err != nil {

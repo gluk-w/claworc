@@ -344,9 +344,11 @@ func DeleteSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	destDir := filepath.Join(config.Cfg.DataPath, "skills", slug)
+	// Sanitize slug to prevent path traversal
+	cleanSlug := filepath.Base(slug)
+	destDir := filepath.Join(config.Cfg.DataPath, "skills", cleanSlug)
 	if err := os.RemoveAll(destDir); err != nil {
-		log.Printf("delete skill dir %s: %v", destDir, err)
+		log.Printf("delete skill dir: %v", err)
 	}
 
 	if err := database.DB.Delete(&skill).Error; err != nil {
