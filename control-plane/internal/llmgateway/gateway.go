@@ -160,16 +160,10 @@ func resolveRealAPIKey(instanceID uint, providerKey string) string {
 }
 
 // buildTargetURL constructs the upstream URL from the provider base URL and the request path/query.
-// Strips a leading /v1 from the path if baseURL already ends with /v1 to avoid double-prefixing.
-// For openai-responses, prepends /v1 when the path doesn't already include it (the OpenClaw SDK
-// appends /v1 to the configured base URL, so incoming paths arrive without the prefix).
+// Path rewriting (e.g. /v1 deduplication, prefix injection) is delegated to at.RewritePath.
 // Always removes the ?key= query parameter (Google SDK sends the API key there).
-func buildTargetURL(baseURL, requestPath, apiType string, query url.Values) string {
-	if strings.HasSuffix(baseURL, "/v1") && strings.HasPrefix(requestPath, "/v1/") {
-		requestPath = requestPath[3:]
-	} else if apiType == "openai-responses" && !strings.HasSuffix(baseURL, "/v1") && !strings.HasPrefix(requestPath, "/v1/") {
-		requestPath = "/v1" + requestPath
-	}
+func buildTargetURL(baseURL string, requestPath string, at APIType, query url.Values) string {
+	requestPath = at.RewritePath(baseURL, requestPath)
 	target := baseURL + requestPath
 	query.Del("key")
 	if encoded := query.Encode(); encoded != "" {
@@ -180,8 +174,8 @@ func buildTargetURL(baseURL, requestPath, apiType string, query url.Values) stri
 
 // buildUpstreamRequest creates the HTTP request for the upstream provider.
 // Copies headers from the original request, stripping all auth headers, then sets the correct
-// outgoing auth header for the provider's API type.
-func buildUpstreamRequest(ctx context.Context, method, targetURL string, body []byte, origHeaders http.Header, apiKey, apiType string) (*http.Request, error) {
+// outgoing auth header via at.SetAuthHeader.
+func buildUpstreamRequest(ctx context.Context, method, targetURL string, body []byte, origHeaders http.Header, apiKey string, at APIType) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -202,14 +196,7 @@ func buildUpstreamRequest(ctx context.Context, method, targetURL string, body []
 		}
 	}
 	if apiKey != "" {
-		switch apiType {
-		case "anthropic-messages":
-			req.Header.Set("x-api-key", apiKey)
-		case "google-generative-ai":
-			req.Header.Set("x-goog-api-key", apiKey)
-		default:
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-		}
+		at.SetAuthHeader(req, apiKey)
 	}
 	if req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
@@ -259,14 +246,15 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	json.Unmarshal(body, &reqBody)
 
-	targetURL := buildTargetURL(baseURL, r.URL.Path, apiType, r.URL.Query())
+	at := GetAPIType(apiType)
+	targetURL := buildTargetURL(baseURL, r.URL.Path, at, r.URL.Query())
 
 	// Use context.Background() instead of r.Context() so that a client disconnect
 	// does not cancel the upstream request mid-stream. This is important for streaming
 	// responses: if the client closes the connection before the upstream sends final
 	// token-count events (e.g. Anthropic's message_delta), the captured buffer would
 	// be incomplete and token counts would be recorded as 0.
-	upstreamReq, err := buildUpstreamRequest(context.Background(), r.Method, targetURL, body, r.Header, apiKey, apiType)
+	upstreamReq, err := buildUpstreamRequest(context.Background(), r.Method, targetURL, body, r.Header, apiKey, at)
 	if err != nil {
 		http.Error(w, `{"error":{"message":"failed to build upstream request"}}`, http.StatusInternalServerError)
 		return
@@ -295,7 +283,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 
-	inputTokens, outputTokens, cachedInputTokens, costUSD, errMsg := processResponse(w, resp.Body, isStreaming, apiType, resp.StatusCode, providerModels, reqBody.Model)
+	inputTokens, outputTokens, cachedInputTokens, costUSD, errMsg := processResponse(w, resp.Body, isStreaming, at, apiType, resp.StatusCode, providerModels, reqBody.Model)
 	latencyMs := time.Since(start).Milliseconds()
 	logRequest(instanceID, providerID, reqBody.Model, inputTokens, outputTokens, cachedInputTokens, costUSD, resp.StatusCode, latencyMs, errMsg)
 	logLine(instanceID, providerKey, reqBody.Model, r.URL.Path, resp.StatusCode, latencyMs, inputTokens, outputTokens, cachedInputTokens, costUSD, errMsg)
@@ -324,7 +312,7 @@ func logResponseBody(model, apiType string, statusCode int, body []byte) {
 // and returns metrics for logging. For streaming responses each chunk is forwarded immediately
 // while also being captured for post-stream token parsing. For non-streaming responses the
 // body is buffered, written to w, then parsed.
-func processResponse(w http.ResponseWriter, body io.Reader, isStreaming bool, apiType string, statusCode int, providerModels []database.ProviderModel, model string) (inputTokens, outputTokens, cachedInputTokens int, costUSD float64, errMsg string) {
+func processResponse(w http.ResponseWriter, body io.Reader, isStreaming bool, at APIType, apiType string, statusCode int, providerModels []database.ProviderModel, model string) (inputTokens, outputTokens, cachedInputTokens int, costUSD float64, errMsg string) {
 	var captured []byte
 	if isStreaming {
 		flusher, canFlush := w.(http.Flusher)
@@ -345,7 +333,7 @@ func processResponse(w http.ResponseWriter, body io.Reader, isStreaming bool, ap
 		w.Write(captured) //nolint:errcheck
 	}
 	logResponseBody(model, apiType, statusCode, captured)
-	inputTokens, outputTokens, cachedInputTokens = parseProxyUsage(captured, apiType, isStreaming)
+	inputTokens, outputTokens, cachedInputTokens = parseProxyUsage(captured, at, isStreaming)
 	costUSD = calculateCost(providerModels, model, inputTokens, outputTokens, cachedInputTokens)
 	if statusCode >= 400 {
 		errMsg = string(captured)

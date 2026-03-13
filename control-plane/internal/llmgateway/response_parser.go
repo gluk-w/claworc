@@ -250,39 +250,16 @@ func ParseUsageBedrockConverseStream(body []byte) (inputTokens, outputTokens, ca
 	return
 }
 
-// parseProxyUsage dispatches to the correct streaming or non-streaming parser based on apiType.
-func parseProxyUsage(body []byte, apiType string, isStreaming bool) (inputTokens, outputTokens, cachedInputTokens int) {
-	if !isStreaming {
-		return ParseUsage(apiType, body)
+// parseProxyUsage delegates to the correct streaming or non-streaming parser via the APIType interface.
+func parseProxyUsage(body []byte, at APIType, isStreaming bool) (inputTokens, outputTokens, cachedInputTokens int) {
+	if isStreaming {
+		return at.ParseStreamingUsage(body)
 	}
-	switch apiType {
-	case "openai-responses":
-		return ParseUsageOpenAIResponsesStream(body)
-	case "anthropic-messages":
-		return ParseUsageAnthropicMessagesStream(body)
-	case "ollama":
-		return ParseUsageOllamaStream(body)
-	case "bedrock-converse":
-		return ParseUsageBedrockConverseStream(body)
-	default: // openai-completions and unknown types
-		return ParseUsageOpenAICompletionsStream(body)
-	}
+	return at.ParseUsage(body)
 }
 
-// ParseUsage dispatches to the correct parser based on apiType.
+// ParseUsage dispatches to the correct parser based on apiType string.
+// Public backward-compat wrapper used by external callers.
 func ParseUsage(apiType string, body []byte) (inputTokens, outputTokens, cachedInputTokens int) {
-	switch apiType {
-	case "openai-responses":
-		return ParseUsageOpenAIResponses(body)
-	case "anthropic-messages":
-		return ParseUsageAnthropicMessages(body)
-	case "google-generative-ai":
-		return ParseUsageGoogleGenerativeAI(body)
-	case "ollama":
-		return ParseUsageOllama(body)
-	case "bedrock-converse":
-		return ParseUsageBedrockConverseStream(body)
-	default:
-		return ParseUsageOpenAICompletions(body)
-	}
+	return GetAPIType(apiType).ParseUsage(body)
 }

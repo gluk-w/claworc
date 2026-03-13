@@ -874,16 +874,10 @@ func probeProviderURL(ctx context.Context, baseURL, pathSuffix, apiType, apiKey 
 		return 0, "", reqErr
 	}
 
-	// Set auth header per API type
-	switch apiType {
-	case "anthropic-messages":
-		req.Header.Set("x-api-key", apiKey)
-		req.Header.Set("anthropic-version", "2023-06-01")
-	case "google-generative-ai":
-		req.Header.Set("x-goog-api-key", apiKey)
-	default:
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
+	// Set auth and probe headers via API type abstraction
+	at := llmgateway.GetAPIType(apiType)
+	at.SetAuthHeader(req, apiKey)
+	at.ProbeHeaders(req)
 
 	resp, doErr := catalogHTTPClient.Do(req)
 	if doErr != nil {
@@ -912,16 +906,8 @@ func TestProviderKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Determine probe path suffix per API type
-	var probePath string
-	switch body.APIType {
-	case "ollama":
-		probePath = "/api/tags"
-	case "bedrock-converse-stream":
-		probePath = ""
-	default:
-		probePath = "/v1/models"
-	}
+	at := llmgateway.GetAPIType(body.APIType)
+	probePath := strings.TrimPrefix(at.ProbeURL(body.BaseURL), strings.TrimRight(body.BaseURL, "/"))
 
 	statusCode, respBody, err := probeProviderURL(r.Context(), body.BaseURL, probePath, body.APIType, body.APIKey)
 	if err != nil {

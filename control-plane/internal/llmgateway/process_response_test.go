@@ -28,6 +28,7 @@ func runProcessResponseCase(t *testing.T, tc processResponseCase) {
 		rr,
 		strings.NewReader(tc.body),
 		tc.isStreaming,
+		GetAPIType(tc.apiType),
 		tc.apiType,
 		tc.statusCode,
 		nil, // no cost model needed for token assertions
@@ -203,7 +204,7 @@ func TestProcessResponse_OllamaStream(t *testing.T) {
 func TestProcessResponse_ErrorBodyCaptured(t *testing.T) {
 	errBody := `{"error":{"message":"invalid api key","type":"authentication_error"}}`
 	rr := httptest.NewRecorder()
-	_, _, _, _, errMsg := processResponse(rr, strings.NewReader(errBody), false, "openai-completions", 401, nil, "")
+	_, _, _, _, errMsg := processResponse(rr, strings.NewReader(errBody), false, GetAPIType("openai-completions"), "openai-completions", 401, nil, "")
 	if errMsg != errBody {
 		t.Errorf("errMsg: got %q, want %q", errMsg, errBody)
 	}
@@ -215,7 +216,7 @@ func TestProcessResponse_ErrorBodyCaptured(t *testing.T) {
 func TestProcessResponse_ErrorBodyTruncated(t *testing.T) {
 	errBody := strings.Repeat("x", 600)
 	rr := httptest.NewRecorder()
-	_, _, _, _, errMsg := processResponse(rr, strings.NewReader(errBody), false, "openai-completions", 500, nil, "")
+	_, _, _, _, errMsg := processResponse(rr, strings.NewReader(errBody), false, GetAPIType("openai-completions"), "openai-completions", 500, nil, "")
 	if len(errMsg) != 500 {
 		t.Errorf("errMsg len: got %d, want 500", len(errMsg))
 	}
@@ -229,7 +230,7 @@ func TestProcessResponse_CostCalculated(t *testing.T) {
 	}
 	body := `{"usage":{"prompt_tokens":1000000,"completion_tokens":500000,"prompt_tokens_details":{"cached_tokens":200000}}}`
 	rr := httptest.NewRecorder()
-	_, _, _, costUSD, _ := processResponse(rr, bytes.NewReader([]byte(body)), false, "openai-completions", 200, models, "gpt-4o")
+	_, _, _, costUSD, _ := processResponse(rr, bytes.NewReader([]byte(body)), false, GetAPIType("openai-completions"), "openai-completions", 200, models, "gpt-4o")
 	// non-cached input: 800000 * 2.5/1M = 2.0
 	// cached input: 200000 * 1.25/1M = 0.25
 	// output: 500000 * 10.0/1M = 5.0  → total = 7.25
