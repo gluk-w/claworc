@@ -888,7 +888,7 @@ func TestProviderKey(w http.ResponseWriter, r *http.Request) {
 		probePath = "/v1/models"
 	}
 
-	// Validate base URL and build safe probe URL
+	// Validate base URL and build safe probe URL (scheme, host, path validated)
 	probeURL, urlErr := utils.ValidateAndBuildURL(body.BaseURL, probePath)
 	if urlErr != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL"})
