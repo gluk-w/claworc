@@ -81,8 +81,6 @@ export default function SettingsPage() {
     onError: (err) => errorToast("Test request failed", err),
   });
 
-  const hasCatalogProviders = providers.some((p) => p.provider !== "");
-
   // Models are stored in the DB (populated on create and via Sync), so no
   // need to fetch catalog detail separately for display.
 

@@ -50,7 +50,7 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
   // (i.e. only data changed, not the path). This keeps the sidebar selection in sync.
   const panels = useMemo(() => [{ path: currentPath }], [currentPath]);
 
-  const { data: browseData, isLoading } = useBrowseFiles(
+  const { data: browseData } = useBrowseFiles(
     instanceId,
     realPath,
     true,

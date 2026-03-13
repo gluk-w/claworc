@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -326,7 +327,7 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 		settingKey := "api_key:" + strings.ReplaceAll(strings.ToUpper(body.Key), "-", "_") + "_API_KEY"
 		encrypted, err := utils.Encrypt(apiKey)
 		if err != nil {
-			log.Printf("failed to encrypt API key for provider %s: %v", body.Key, err)
+			log.Printf("failed to encrypt API key for provider %s: %v", utils.SanitizeForLog(body.Key), err)
 		} else {
 			database.SetSetting(settingKey, encrypted)
 		}
@@ -889,9 +890,16 @@ func TestProviderKey(w http.ResponseWriter, r *http.Request) {
 		probeURL = baseURL + "/v1/models"
 	}
 
+	// Validate the probe URL to prevent SSRF — only allow http(s) schemes
+	parsedURL, parseErr := url.Parse(probeURL)
+	if parseErr != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL"})
+		return
+	}
+
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, probeURL, nil)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL: " + err.Error()})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL"})
 		return
 	}
 
