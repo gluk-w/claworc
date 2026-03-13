@@ -7,6 +7,7 @@ import {
   LogOut,
   User,
   BarChart2,
+  BookOpen,
 } from "lucide-react";
 import { useHealth } from "@/hooks/useHealth";
 import { useAuth } from "@/contexts/AuthContext";
@@ -105,6 +106,12 @@ export default function Sidebar() {
               <BarChart2 size={18} className="shrink-0" />
               <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
                 Usage
+              </span>
+            </Link>
+            <Link to="/skills" className={navLinkClass("/skills")}>
+              <BookOpen size={18} className="shrink-0" />
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
+                Skills
               </span>
             </Link>
           </>

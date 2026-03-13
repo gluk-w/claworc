@@ -5,6 +5,15 @@ import (
 	"time"
 )
 
+type Skill struct {
+	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Slug      string    `gorm:"uniqueIndex;not null" json:"slug"`
+	Name      string    `gorm:"not null" json:"name"`
+	Summary   string    `json:"summary"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
 type Instance struct {
 	ID               uint      `gorm:"primaryKey;autoIncrement" json:"id"`
 	Name             string    `gorm:"uniqueIndex;not null" json:"name"`
