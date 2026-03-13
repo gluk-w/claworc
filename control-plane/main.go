@@ -274,6 +274,7 @@ func main() {
 				r.Get("/audit-logs", handlers.GetAuditLogs)
 
 				// LLM gateway providers and usage
+				r.Post("/llm/providers/test", handlers.TestProviderKey)
 				r.Post("/llm/providers/sync", handlers.SyncAllProviderModels)
 				r.Get("/llm/providers", handlers.ListProviders)
 				r.Post("/llm/providers", handlers.CreateProvider)

@@ -5,7 +5,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import { useProviders, useCreateProvider, useUpdateProvider, useDeleteProvider, useCatalogProviders, useCatalogProviderDetail } from "@/hooks/useProviders";
 import { fetchSSHFingerprint, rotateSSHKey } from "@/api/ssh";
-import { fetchCatalogProviderDetail, syncAllProviders } from "@/api/llm";
+import { fetchCatalogProviderDetail, syncAllProviders, testProviderKey } from "@/api/llm";
 import { successToast, errorToast } from "@/utils/toast";
 import type { LLMProvider, ProviderModel } from "@/types/instance";
 import type { CatalogProviderDetail } from "@/api/llm";
@@ -64,11 +64,23 @@ export default function SettingsPage() {
   const syncMutation = useMutation({
     mutationFn: syncAllProviders,
     onSuccess: () => {
-      successToast("Models synced");
+      successToast("Catalog synced");
       queryClient.invalidateQueries({ queryKey: ["llm-providers"] });
     },
     onError: (err) => errorToast("Sync failed", err),
   });
+  const testMutation = useMutation({
+    mutationFn: testProviderKey,
+    onSuccess: (result) => {
+      if (result.ok) {
+        successToast("API key is valid");
+      } else {
+        errorToast("API key test failed", result.error || "Unknown error");
+      }
+    },
+    onError: (err) => errorToast("Test request failed", err),
+  });
+
   const hasCatalogProviders = providers.some((p) => p.provider !== "");
 
   // Fetch catalog detail for each catalog provider (for model display in rows)
@@ -140,11 +152,11 @@ export default function SettingsPage() {
       setMName("");
       setMBaseURL("");
     } else if (val) {
-      const cat = catalogProviders.find((c) => c.key === val);
+      const cat = catalogProviders.find((c) => c.name === val);
       if (cat) {
-        setMProvider(cat.key);
+        setMProvider(cat.name);
         setMName(cat.label);
-        setMBaseURL("");
+        setMBaseURL(cat.base_url);
       }
     }
   };
@@ -184,10 +196,10 @@ export default function SettingsPage() {
     const key = effectiveKey;
     try {
       if (modalMode === "create") {
-        const catalogEntry = catalogProviders.find((c) => c.key === mCatalogKey);
+        const catalogEntry = catalogProviders.find((c) => c.name === mCatalogKey);
         const apiType = isCustomProvider ? mApiType : (catalogEntry?.api_format ?? "openai-completions");
         const models = isCustomProvider ? mModels : [];
-        await createProviderMutation.mutateAsync({ key, provider: mProvider, name: mName, base_url: mBaseURL, api_type: apiType, models });
+        await createProviderMutation.mutateAsync({ key, provider: mProvider, name: mName, base_url: mBaseURL, api_type: apiType, models, api_key: mApiKey.trim() || undefined });
       } else {
         const payload: { name: string; base_url: string; api_type?: string; models?: ProviderModel[] } = { name: mName, base_url: mBaseURL };
         if (isCustomProvider) {
@@ -195,9 +207,9 @@ export default function SettingsPage() {
           payload.models = mModels;
         }
         await updateProviderMutation.mutateAsync({ id: modalProvider!.id, payload });
-      }
-      if (mApiKey.trim()) {
-        updateMutation.mutate({ api_keys: { [settingsKeyName(key)]: mApiKey.trim() } });
+        if (mApiKey.trim()) {
+          updateMutation.mutate({ api_keys: { [settingsKeyName(key)]: mApiKey.trim() } });
+        }
       }
       setModalOpen(false);
     } catch {
@@ -272,6 +284,7 @@ export default function SettingsPage() {
     !!mName &&
     !!mBaseURL &&
     (!isCustomProvider || mModels.length > 0) &&
+    (modalMode === "edit" || isCustomProvider || !!mApiKey.trim()) &&
     !createProviderMutation.isPending &&
     !updateProviderMutation.isPending;
 
@@ -559,9 +572,9 @@ export default function SettingsPage() {
                       {catalogLoading ? "Loading providers..." : ""}
                     </option>
                     {catalogProviders.map((cat) => {
-                      const count = providers.filter((p) => p.key === cat.key || p.key.startsWith(`${cat.key}-`)).length;
+                      const count = providers.filter((p) => p.provider === cat.name).length;
                       return (
-                        <option key={cat.key} value={cat.key}>
+                        <option key={cat.name} value={cat.name}>
                           {cat.label}{count > 0 ? ` (${count} added)` : ""}
                         </option>
                       );
@@ -787,16 +800,32 @@ export default function SettingsPage() {
                   </button>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={handleModalSave}
-                disabled={!canSave}
-                className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
-              >
-                {createProviderMutation.isPending || updateProviderMutation.isPending
-                  ? "Saving..."
-                  : "Save"}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const catalogEntry = catalogProviders.find((c) => c.name === mCatalogKey);
+                    const apiType = isCustomProvider
+                      ? mApiType
+                      : (modalMode === "edit" ? modalProvider!.api_type : catalogEntry?.api_format) || "openai-completions";
+                    testMutation.mutate({ base_url: mBaseURL, api_key: mApiKey, api_type: apiType });
+                  }}
+                  disabled={!mBaseURL || !mApiKey.trim() || testMutation.isPending}
+                  className="px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {testMutation.isPending ? "Testing..." : "Test"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleModalSave}
+                  disabled={!canSave}
+                  className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {createProviderMutation.isPending || updateProviderMutation.isPending
+                    ? "Saving..."
+                    : "Save"}
+                </button>
+              </div>
             </div>
           </div>
         </div>

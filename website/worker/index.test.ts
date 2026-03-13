@@ -1,12 +1,68 @@
 import { vi, describe, it, expect } from "vitest";
 
-vi.mock("./models.csv", () => ({
+vi.mock("./models.json", () => ({
   default: [
-    "provider_key,provider_label,icon_key,api_format,base_url,model_id,model_name,reasoning,vision,context_window,max_tokens,input_cost,output_cost,cached_read_cost,cached_write_cost",
-    "anthropic,Anthropic,anthropic,anthropic,https://api.anthropic.com,claude-3-opus-20240229,Claude 3 Opus,FALSE,TRUE,200000,4096,5,25,0.5,",
-    "anthropic,Anthropic,anthropic,anthropic,https://api.anthropic.com,claude-3-sonnet-20240229,Claude 3 Sonnet,FALSE,TRUE,200000,4096,3,15,,",
-    "openai,OpenAI,openai,openai,https://api.openai.com,gpt-4o,GPT-4o,FALSE,TRUE,128000,4096,2.5,10,,",
-  ].join("\n"),
+    {
+      name: "anthropic",
+      label: "Anthropic",
+      icon_key: "anthropic",
+      api_format: "anthropic-messages",
+      base_url: "https://api.anthropic.com/",
+      models: [
+        {
+          model_id: "claude-3-opus-20240229",
+          model_name: "Claude 3 Opus",
+          reasoning: false,
+          vision: true,
+          context_window: 200000,
+          max_tokens: 4096,
+          input_cost: 5,
+          output_cost: 25,
+          cached_read_cost: 0.5,
+          cached_write_cost: null,
+          tag: "flagship",
+          description: "Most capable model",
+        },
+        {
+          model_id: "claude-3-sonnet-20240229",
+          model_name: "Claude 3 Sonnet",
+          reasoning: false,
+          vision: true,
+          context_window: 200000,
+          max_tokens: 4096,
+          input_cost: 3,
+          output_cost: 15,
+          cached_read_cost: null,
+          cached_write_cost: null,
+          tag: null,
+          description: null,
+        },
+      ],
+    },
+    {
+      name: "openai",
+      label: "OpenAI",
+      icon_key: "openai",
+      api_format: "openai",
+      base_url: "https://api.openai.com/",
+      models: [
+        {
+          model_id: "gpt-4o",
+          model_name: "GPT-4o",
+          reasoning: false,
+          vision: true,
+          context_window: 128000,
+          max_tokens: 4096,
+          input_cost: 2.5,
+          output_cost: 10,
+          cached_read_cost: null,
+          cached_write_cost: null,
+          tag: null,
+          description: null,
+        },
+      ],
+    },
+  ],
 }));
 
 import worker from "./index";
@@ -28,16 +84,14 @@ describe("Provider list", () => {
     expect(Array.isArray(data)).toBe(true);
   });
 
-  it("provider list has name, label, api_format, model_count but no slug/boolean caps", async () => {
+  it("response is array of providers with expected fields", async () => {
     const res = await get("/providers/");
     const data = (await res.json()) as Record<string, unknown>[];
     expect(data[0]).toHaveProperty("name");
     expect(data[0]).toHaveProperty("label");
     expect(data[0]).toHaveProperty("api_format");
-    expect(data[0]).toHaveProperty("model_count");
-    expect(data[0]).not.toHaveProperty("slug");
-    expect(data[0]).not.toHaveProperty("has_reasoning");
-    expect(data[0]).not.toHaveProperty("has_vision");
+    expect(data[0]).toHaveProperty("models");
+    expect(Array.isArray(data[0].models)).toBe(true);
   });
 
   it("providers are sorted alphabetically", async () => {
@@ -46,96 +100,32 @@ describe("Provider list", () => {
     expect(data.map((p) => p.name)).toEqual(["anthropic", "openai"]);
   });
 
-  it("model_count is correct per provider", async () => {
+  it("model count per provider is correct", async () => {
     const res = await get("/providers/");
-    const data = (await res.json()) as { name: string; model_count: number }[];
+    const data = (await res.json()) as { name: string; models: unknown[] }[];
     const anthropic = data.find((p) => p.name === "anthropic")!;
     const openai = data.find((p) => p.name === "openai")!;
-    expect(anthropic.model_count).toBe(2);
-    expect(openai.model_count).toBe(1);
-  });
-});
-
-describe("Provider detail", () => {
-  it("GET /providers/anthropic/ returns 200 with correct shape", async () => {
-    const res = await get("/providers/anthropic/");
-    expect(res.status).toBe(200);
-    const data = (await res.json()) as Record<string, unknown>;
-    expect(data).toMatchObject({
-      key: "anthropic",
-      label: "Anthropic",
-      api_format: "anthropic",
-      base_url: "https://api.anthropic.com",
-    });
-    expect(Array.isArray(data.models)).toBe(true);
-    expect((data.models as unknown[]).length).toBe(2);
+    expect(anthropic.models.length).toBe(2);
+    expect(openai.models.length).toBe(1);
   });
 
-  it("provider detail models omit base_url, api_format, slug", async () => {
-    const res = await get("/providers/anthropic/");
-    const data = (await res.json()) as { models: Record<string, unknown>[] };
-    const m = data.models[0];
-    expect(m).not.toHaveProperty("base_url");
-    expect(m).not.toHaveProperty("api_format");
-    expect(m).not.toHaveProperty("slug");
-  });
-
-  it("GET /providers/unknown returns 404 JSON", async () => {
-    const res = await get("/providers/unknown");
-    expect(res.status).toBe(404);
-    const data = (await res.json()) as { error: string };
-    expect(data).toHaveProperty("error");
-  });
-});
-
-describe("Model detail", () => {
-  it("GET /providers/anthropic/claude-3-opus-20240229 returns 200", async () => {
-    const res = await get("/providers/anthropic/claude-3-opus-20240229");
-    expect(res.status).toBe(200);
-    const data = (await res.json()) as Record<string, unknown>;
-    expect(data).toMatchObject({
-      provider_key: "anthropic",
-      provider_label: "Anthropic",
-      model_id: "claude-3-opus-20240229",
-    });
-  });
-
-  it("boolean fields normalized: uppercase TRUE → true, FALSE → false", async () => {
-    const res = await get("/providers/anthropic/claude-3-opus-20240229");
-    const data = (await res.json()) as { vision: boolean; reasoning: boolean };
-    expect(data.vision).toBe(true);
-    expect(data.reasoning).toBe(false);
-  });
-
-  it("numeric fields are integers", async () => {
-    const res = await get("/providers/anthropic/claude-3-opus-20240229");
-    const data = (await res.json()) as {
-      context_window: number;
-      max_tokens: number;
-    };
-    expect(data.context_window).toBe(200000);
-    expect(data.max_tokens).toBe(4096);
-  });
-
-  it("cost fields are floats or null", async () => {
-    const res = await get("/providers/anthropic/claude-3-opus-20240229");
-    const data = (await res.json()) as {
-      input_cost: number | null;
-      output_cost: number | null;
-      cached_read_cost: number | null;
-      cached_write_cost: number | null;
-    };
-    expect(data.input_cost).toBe(5);
-    expect(data.output_cost).toBe(25);
-    expect(data.cached_read_cost).toBe(0.5);
-    expect(data.cached_write_cost).toBeNull();
-  });
-
-  it("GET /providers/anthropic/no-such-model returns 404 JSON", async () => {
-    const res = await get("/providers/anthropic/no-such-model");
-    expect(res.status).toBe(404);
-    const data = (await res.json()) as { error: string };
-    expect(data).toHaveProperty("error");
+  it("models include cost and tag/description fields", async () => {
+    const res = await get("/providers/");
+    const data = (await res.json()) as { name: string; models: Record<string, unknown>[] }[];
+    const anthropic = data.find((p) => p.name === "anthropic")!;
+    const m = anthropic.models[0];
+    expect(m).toHaveProperty("input_cost");
+    expect(m).toHaveProperty("output_cost");
+    expect(m).toHaveProperty("cached_read_cost");
+    expect(m).toHaveProperty("cached_write_cost");
+    expect(m).toHaveProperty("tag");
+    expect(m).toHaveProperty("description");
+    expect(m.input_cost).toBe(5);
+    expect(m.output_cost).toBe(25);
+    expect(m.cached_read_cost).toBe(0.5);
+    expect(m.cached_write_cost).toBeNull();
+    expect(m.tag).toBe("flagship");
+    expect(m.description).toBe("Most capable model");
   });
 });
 
@@ -145,8 +135,13 @@ describe("404 routes", () => {
     expect(res.status).toBe(404);
   });
 
-  it("GET /providers/unknown/model returns 404", async () => {
-    const res = await get("/providers/unknown/model");
+  it("GET /providers/anthropic returns 404", async () => {
+    const res = await get("/providers/anthropic");
+    expect(res.status).toBe(404);
+  });
+
+  it("GET /providers/anthropic/model returns 404", async () => {
+    const res = await get("/providers/anthropic/model");
     expect(res.status).toBe(404);
   });
 });

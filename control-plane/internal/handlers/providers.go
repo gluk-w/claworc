@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -84,6 +85,83 @@ func GetCatalogProviderDetail(w http.ResponseWriter, r *http.Request) {
 	proxyCatalog(w, "/"+key+"/")
 }
 
+// catalogRootModel is one model entry from the catalog root response.
+type catalogRootModel struct {
+	ModelID         string  `json:"model_id"`
+	ModelName       string  `json:"model_name"`
+	Reasoning       bool    `json:"reasoning"`
+	Vision          bool    `json:"vision"`
+	ContextWindow   *int    `json:"context_window"`
+	MaxTokens       *int    `json:"max_tokens"`
+	InputCost       float64 `json:"input_cost"`
+	OutputCost      float64 `json:"output_cost"`
+	CachedReadCost  float64 `json:"cached_read_cost"`
+	CachedWriteCost float64 `json:"cached_write_cost"`
+	Tag             string  `json:"tag"`
+	Description     string  `json:"description"`
+}
+
+// catalogRootEntry is one provider entry from the catalog root response.
+type catalogRootEntry struct {
+	Name      string             `json:"name"`
+	Label     string             `json:"label"`
+	IconKey   string             `json:"icon_key"`
+	APIFormat string             `json:"api_format"`
+	BaseURL   string             `json:"base_url"`
+	Models    []catalogRootModel `json:"models"`
+}
+
+// catalogModelToProviderModel converts a catalogRootModel to a database.ProviderModel.
+func catalogModelToProviderModel(m catalogRootModel) database.ProviderModel {
+	pm := database.ProviderModel{
+		ID:            m.ModelID,
+		Name:          m.ModelName,
+		Reasoning:     m.Reasoning,
+		ContextWindow: m.ContextWindow,
+		MaxTokens:     m.MaxTokens,
+	}
+	if m.InputCost > 0 || m.OutputCost > 0 || m.CachedReadCost > 0 || m.CachedWriteCost > 0 {
+		pm.Cost = &database.ProviderModelCost{
+			Input:      m.InputCost,
+			Output:     m.OutputCost,
+			CacheRead:  m.CachedReadCost,
+			CacheWrite: m.CachedWriteCost,
+		}
+	}
+	return pm
+}
+
+// getCatalogRoot force-refreshes the "/" cache entry, fetches the full catalog root,
+// stores raw bytes in the cache, and returns the parsed entries.
+func getCatalogRoot() ([]catalogRootEntry, error) {
+	catalogCacheMu.Lock()
+	delete(catalogCache, "/")
+	catalogCacheMu.Unlock()
+
+	resp, err := catalogHTTPClient.Get(catalogBaseURL + "/")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("catalog returned status %d", resp.StatusCode)
+	}
+	entry := &catalogCacheEntry{body: body, expiresAt: time.Now().Add(time.Hour)}
+	catalogCacheMu.Lock()
+	catalogCache["/"] = entry
+	catalogCacheMu.Unlock()
+
+	var entries []catalogRootEntry
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
 // getCatalogProviderModels returns ProviderModel entries for a catalog provider,
 // using the in-process cache when available and fetching otherwise.
 // Returns nil on error.
@@ -115,39 +193,14 @@ var getCatalogModels = func(catalogKey string) []database.ProviderModel {
 	}
 
 	var detail struct {
-		Models []struct {
-			ModelID         string  `json:"model_id"`
-			ModelName       string  `json:"model_name"`
-			Reasoning       bool    `json:"reasoning"`
-			ContextWindow   *int    `json:"context_window"`
-			MaxTokens       *int    `json:"max_tokens"`
-			InputCost       float64 `json:"input_cost"`
-			OutputCost      float64 `json:"output_cost"`
-			CachedReadCost  float64 `json:"cached_read_cost"`
-			CachedWriteCost float64 `json:"cached_write_cost"`
-		} `json:"models"`
+		Models []catalogRootModel `json:"models"`
 	}
 	if err := json.Unmarshal(entry.body, &detail); err != nil {
 		return nil
 	}
 	result := make([]database.ProviderModel, len(detail.Models))
 	for i, m := range detail.Models {
-		pm := database.ProviderModel{
-			ID:            m.ModelID,
-			Name:          m.ModelName,
-			Reasoning:     m.Reasoning,
-			ContextWindow: m.ContextWindow,
-			MaxTokens:     m.MaxTokens,
-		}
-		if m.InputCost > 0 || m.OutputCost > 0 || m.CachedReadCost > 0 || m.CachedWriteCost > 0 {
-			pm.Cost = &database.ProviderModelCost{
-				Input:      m.InputCost,
-				Output:     m.OutputCost,
-				CacheRead:  m.CachedReadCost,
-				CacheWrite: m.CachedWriteCost,
-			}
-		}
-		result[i] = pm
+		result[i] = catalogModelToProviderModel(m)
 	}
 	return result
 }
@@ -161,6 +214,7 @@ type providerRequest struct {
 	BaseURL  string                   `json:"base_url"`
 	APIType  string                   `json:"api_type"`
 	Models   []database.ProviderModel `json:"models"`
+	APIKey   string                   `json:"api_key"`
 }
 
 type providerResp struct {
@@ -216,6 +270,10 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "key must be lowercase alphanumeric with hyphens (e.g. anthropic, my-ollama)")
 		return
 	}
+	if body.Provider != "" && strings.TrimSpace(body.APIKey) == "" {
+		writeError(w, http.StatusBadRequest, "api_key is required for catalog providers")
+		return
+	}
 
 	apiType := body.APIType
 	if apiType == "" {
@@ -237,6 +295,18 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "Provider key already exists")
 		return
 	}
+
+	// Store the API key in settings if provided
+	if apiKey := strings.TrimSpace(body.APIKey); apiKey != "" {
+		settingKey := "api_key:" + strings.ReplaceAll(strings.ToUpper(body.Key), "-", "_") + "_API_KEY"
+		encrypted, err := utils.Encrypt(apiKey)
+		if err != nil {
+			log.Printf("failed to encrypt API key for provider %s: %v", body.Key, err)
+		} else {
+			database.SetSetting(settingKey, encrypted)
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, toProviderResp(p))
 }
 
@@ -367,75 +437,92 @@ func SyncProviderModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toProviderResp(p))
 }
 
+type syncProviderChange struct {
+	Old string `json:"old"`
+	New string `json:"new"`
+}
+
 type syncProviderResult struct {
-	ID         uint         `json:"id"`
-	Key        string       `json:"key"`
-	Name       string       `json:"name"`
-	Skipped    bool         `json:"skipped"`
-	Success    bool         `json:"success"`
-	ModelCount int          `json:"model_count"`
-	Error      string       `json:"error,omitempty"`
-	Provider   providerResp `json:"provider"`
+	ID      uint                          `json:"id"`
+	Key     string                        `json:"key"`
+	Catalog string                        `json:"catalog"`
+	Skipped bool                          `json:"skipped"`
+	Updated bool                          `json:"updated"`
+	Changes map[string]syncProviderChange `json:"changes,omitempty"`
 }
 
 type syncAllResp struct {
-	TotalProviders  int                  `json:"total_providers"`
-	Synced          int                  `json:"synced"`
-	Skipped         int                  `json:"skipped"`
-	Failed          int                  `json:"failed"`
-	TotalModelCount int                  `json:"total_model_count"`
-	Results         []syncProviderResult `json:"results"`
+	Catalog []catalogRootEntry   `json:"catalog"`
+	Results []syncProviderResult `json:"results"`
 }
 
 func SyncAllProviderModels(w http.ResponseWriter, r *http.Request) {
+	catalogEntries, err := getCatalogRoot()
+	if err != nil {
+		log.Printf("SyncAllProviderModels: fetch catalog root: %v", err)
+		writeError(w, http.StatusBadGateway, "Failed to fetch provider catalog")
+		return
+	}
+
+	catalogByKey := make(map[string]catalogRootEntry, len(catalogEntries))
+	for _, e := range catalogEntries {
+		catalogByKey[e.Name] = e
+	}
+
 	var providers []database.LLMProvider
 	database.DB.Order("id ASC").Find(&providers)
 
-	log.Printf("Syncing models for all catalog providers (%d total)", len(providers))
-	resp := syncAllResp{
-		TotalProviders: len(providers),
-		Results:        []syncProviderResult{},
-	}
+	results := make([]syncProviderResult, 0, len(providers))
 	for _, p := range providers {
-		entry := syncProviderResult{
-			ID:       p.ID,
-			Key:      p.Provider,
-			Name:     p.Name,
-			Provider: toProviderResp(p),
-		}
+		res := syncProviderResult{ID: p.ID, Key: p.Key, Catalog: p.Provider}
 		if p.Provider == "" {
-			entry.Skipped = true
-			entry.Success = true
-			resp.Skipped++
-			resp.Results = append(resp.Results, entry)
+			res.Skipped = true
+			results = append(results, res)
 			continue
 		}
-		path := "/" + p.Provider + "/"
-		catalogCacheMu.Lock()
-		delete(catalogCache, path)
-		catalogCacheMu.Unlock()
+		catEntry, found := catalogByKey[p.Provider]
+		if !found {
+			res.Skipped = true
+			results = append(results, res)
+			continue
+		}
 
-		models := getCatalogModels(p.Provider)
-		if models == nil {
-			log.Printf("Failed to fetch catalog models for provider %d (%s)", p.ID, p.Provider)
-			entry.Success = false
-			entry.Error = "failed to fetch catalog models"
-			resp.Failed++
-			resp.Results = append(resp.Results, entry)
-			continue
+		changes := map[string]syncProviderChange{}
+
+		if p.Name != catEntry.Label {
+			changes["name"] = syncProviderChange{Old: p.Name, New: catEntry.Label}
+			p.Name = catEntry.Label
 		}
-		modelsJSON, _ := json.Marshal(models)
-		p.Models = string(modelsJSON)
-		database.DB.Save(&p)
-		log.Printf("Synced %d models for provider %d (%s)", len(models), p.ID, p.Provider)
-		entry.Success = true
-		entry.ModelCount = len(models)
-		entry.Provider = toProviderResp(p)
-		resp.Synced++
-		resp.TotalModelCount += len(models)
-		resp.Results = append(resp.Results, entry)
+		if p.BaseURL != catEntry.BaseURL {
+			changes["base_url"] = syncProviderChange{Old: p.BaseURL, New: catEntry.BaseURL}
+			p.BaseURL = catEntry.BaseURL
+		}
+		if p.APIType != catEntry.APIFormat {
+			changes["api_type"] = syncProviderChange{Old: p.APIType, New: catEntry.APIFormat}
+			p.APIType = catEntry.APIFormat
+		}
+
+		// Convert catalog models and compare serialized JSON
+		newModels := make([]database.ProviderModel, len(catEntry.Models))
+		for i, m := range catEntry.Models {
+			newModels[i] = catalogModelToProviderModel(m)
+		}
+		newModelsJSON, _ := json.Marshal(newModels)
+		if string(newModelsJSON) != p.Models {
+			changes["models"] = syncProviderChange{Old: p.Models, New: string(newModelsJSON)}
+			p.Models = string(newModelsJSON)
+		}
+
+		if len(changes) > 0 {
+			database.DB.Save(&p)
+			log.Printf("SyncAllProviderModels: updated provider %d (%s): %v", p.ID, p.Provider, changes)
+			res.Updated = true
+			res.Changes = changes
+		}
+		results = append(results, res)
 	}
-	writeJSON(w, http.StatusOK, resp)
+
+	writeJSON(w, http.StatusOK, syncAllResp{Catalog: catalogEntries, Results: results})
 }
 
 func DeleteProvider(w http.ResponseWriter, r *http.Request) {
@@ -747,6 +834,77 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 
 	resp.Granularity = granularity
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// TestProviderKey validates an API key by making a lightweight probe request
+// to the provider's API. No saved provider is required — credentials are passed inline.
+func TestProviderKey(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		BaseURL string `json:"base_url"`
+		APIKey  string `json:"api_key"`
+		APIType string `json:"api_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if body.BaseURL == "" || body.APIKey == "" || body.APIType == "" {
+		writeError(w, http.StatusBadRequest, "base_url, api_key, and api_type are required")
+		return
+	}
+
+	// Build probe URL per API type
+	var probeURL string
+	switch body.APIType {
+	case "openai-completions", "openai-responses":
+		probeURL = strings.TrimRight(body.BaseURL, "/") + "/v1/models"
+	case "anthropic-messages":
+		probeURL = strings.TrimRight(body.BaseURL, "/") + "/v1/models"
+	case "google-generative-ai":
+		probeURL = strings.TrimRight(body.BaseURL, "/") + "/v1/models"
+	case "ollama":
+		probeURL = strings.TrimRight(body.BaseURL, "/") + "/api/tags"
+	case "bedrock-converse-stream":
+		probeURL = strings.TrimRight(body.BaseURL, "/")
+	default:
+		probeURL = strings.TrimRight(body.BaseURL, "/") + "/v1/models"
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, probeURL, nil)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL: " + err.Error()})
+		return
+	}
+
+	// Set auth header per API type (same logic as gateway's buildUpstreamRequest)
+	switch body.APIType {
+	case "anthropic-messages":
+		req.Header.Set("x-api-key", body.APIKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+	case "google-generative-ai":
+		req.Header.Set("x-goog-api-key", body.APIKey)
+	default:
+		req.Header.Set("Authorization", "Bearer "+body.APIKey)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	ok := resp.StatusCode >= 200 && resp.StatusCode < 300
+	result := map[string]interface{}{"ok": ok, "status": resp.StatusCode}
+	if !ok {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		result["error"] = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func ResetUsageLogs(w http.ResponseWriter, r *http.Request) {

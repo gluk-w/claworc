@@ -6,13 +6,25 @@ import type { LLMProvider, ProviderModel } from "@/types/instance";
 // ---------------------------------------------------------------------------
 
 export interface CatalogProviderSummary {
-  key: string;
+  name: string;
   label: string;
   icon_key: string | null;
   api_format: string;
-  model_count: number;
-  has_reasoning: boolean;
-  has_vision: boolean;
+  base_url: string;
+  models: {
+    model_id: string;
+    model_name: string;
+    reasoning: boolean;
+    vision: boolean;
+    context_window: number | null;
+    max_tokens: number | null;
+    input_cost: number;
+    output_cost: number;
+    cached_read_cost: number;
+    cached_write_cost: number;
+    tag?: string | null;
+    description?: string | null;
+  }[];
 }
 
 export interface CatalogProviderDetail {
@@ -61,6 +73,7 @@ export async function createProvider(payload: {
   base_url: string;
   api_type?: string;
   models?: ProviderModel[];
+  api_key?: string;
 }): Promise<LLMProvider> {
   const { data } = await client.post<LLMProvider>("/llm/providers", payload);
   return data;
@@ -78,8 +91,32 @@ export async function deleteProvider(id: number): Promise<void> {
   await client.delete(`/llm/providers/${id}`);
 }
 
-export async function syncAllProviders(): Promise<LLMProvider[]> {
-  const { data } = await client.post<LLMProvider[]>("/llm/providers/sync");
+export interface SyncAllResponse {
+  catalog: CatalogProviderSummary[];
+  results: {
+    id: number;
+    key: string;
+    catalog: string;
+    skipped: boolean;
+    updated: boolean;
+    changes?: Record<string, { old: string; new: string }>;
+  }[];
+}
+
+export async function testProviderKey(payload: {
+  base_url: string;
+  api_key: string;
+  api_type: string;
+}): Promise<{ ok: boolean; status?: number; error?: string }> {
+  const { data } = await client.post<{ ok: boolean; status?: number; error?: string }>(
+    "/llm/providers/test",
+    payload,
+  );
+  return data;
+}
+
+export async function syncAllProviders(): Promise<SyncAllResponse> {
+  const { data } = await client.post<SyncAllResponse>("/llm/providers/sync");
   return data;
 }
 
