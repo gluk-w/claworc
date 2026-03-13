@@ -1,14 +1,14 @@
 import { useState, useEffect } from "react";
 import { AlertTriangle, Eye, EyeOff, Key, Pencil, Plus, RefreshCw } from "lucide-react";
 import ProviderIcon from "@/components/ProviderIcon";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import { useProviders, useCreateProvider, useUpdateProvider, useDeleteProvider, useCatalogProviders, useCatalogProviderDetail } from "@/hooks/useProviders";
 import { fetchSSHFingerprint, rotateSSHKey } from "@/api/ssh";
-import { fetchCatalogProviderDetail, syncAllProviders, testProviderKey } from "@/api/llm";
+import { syncAllProviders, testProviderKey } from "@/api/llm";
 import { successToast, errorToast } from "@/utils/toast";
 import type { LLMProvider, ProviderModel } from "@/types/instance";
-import type { CatalogProviderDetail } from "@/api/llm";
+
 import type { SettingsUpdatePayload } from "@/types/settings";
 
 const slugify = (s: string) =>
@@ -83,20 +83,8 @@ export default function SettingsPage() {
 
   const hasCatalogProviders = providers.some((p) => p.provider !== "");
 
-  // Fetch catalog detail for each catalog provider (for model display in rows)
-  const catalogKeys = [...new Set(providers.filter((p) => p.provider).map((p) => p.provider))];
-  const catalogDetailResults = useQueries({
-    queries: catalogKeys.map((key) => ({
-      queryKey: ["catalog-provider", key],
-      queryFn: () => fetchCatalogProviderDetail(key),
-      staleTime: 5 * 60 * 1000,
-    })),
-  });
-  const catalogDetailMap: Record<string, CatalogProviderDetail> = {};
-  catalogKeys.forEach((key, i) => {
-    const result = catalogDetailResults[i];
-    if (result?.data) catalogDetailMap[key] = result.data;
-  });
+  // Models are stored in the DB (populated on create and via Sync), so no
+  // need to fetch catalog detail separately for display.
 
   const fingerprint = useQuery({
     queryKey: ["ssh-fingerprint"],
@@ -197,7 +185,20 @@ export default function SettingsPage() {
     try {
       if (modalMode === "create") {
         const apiType = resolveApiType();
-        const models = isCustomProvider ? mModels : [];
+        const models = isCustomProvider ? mModels : (() => {
+          const cat = catalogProviders.find((c) => c.name === mCatalogKey);
+          if (!cat) return [];
+          return cat.models.map((m) => ({
+            id: m.model_id,
+            name: m.model_name,
+            reasoning: m.reasoning,
+            contextWindow: m.context_window ?? undefined,
+            maxTokens: m.max_tokens ?? undefined,
+            cost: (m.input_cost || m.output_cost || m.cached_read_cost || m.cached_write_cost)
+              ? { input: m.input_cost, output: m.output_cost, cacheRead: m.cached_read_cost, cacheWrite: m.cached_write_cost }
+              : undefined,
+          }));
+        })();
         await createProviderMutation.mutateAsync({ key, provider: mProvider, name: mName, base_url: mBaseURL, api_type: apiType, models, api_key: mApiKey.trim() || undefined });
       } else {
         const payload: { name: string; base_url: string; api_type?: string; models?: ProviderModel[] } = { name: mName, base_url: mBaseURL };
@@ -338,10 +339,7 @@ export default function SettingsPage() {
                 const skn = settingsKeyName(p.key);
                 const apiKeyValue = settings.api_keys?.[skn];
                 const apiKeyDisplay = apiKeyValue ? `****${apiKeyValue.slice(-4)}` : "not set";
-                const catalogModels = p.provider ? catalogDetailMap[p.provider]?.models : undefined;
-                const displayModels = catalogModels
-                  ? catalogModels.map((m) => m.model_id)
-                  : (p.models || []).map((m) => m.id);
+                const displayModels = (p.models || []).map((m) => m.id);
                 return (
                   <div key={p.id}>
                     <div className="flex items-center py-3 -mx-2 px-2 rounded transition-colors">

@@ -66,12 +66,12 @@ export default function SkillsPage() {
     }`;
 
   return (
-    <div className="max-w-5xl mx-auto px-6 py-8">
+    <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-gray-900">Skills</h1>
         <button
           onClick={() => setShowUpload(true)}
-          className={`flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors ${tab !== "library" ? "invisible" : ""}`}
+          className={`flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 ${tab !== "library" ? "invisible" : ""}`}
         >
           <Plus size={16} />
           Upload Skill

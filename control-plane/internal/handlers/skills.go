@@ -265,10 +265,17 @@ func UploadSkill(w http.ResponseWriter, r *http.Request) {
 
 	slug := fm.Name
 
+	overwrite := r.URL.Query().Get("overwrite") == "true"
+
 	var existing database.Skill
 	if err := database.DB.Where("slug = ?", slug).First(&existing).Error; err == nil {
-		writeError(w, http.StatusConflict, "Skill '"+slug+"' already exists")
-		return
+		if !overwrite {
+			writeError(w, http.StatusConflict, "Skill '"+slug+"' already exists")
+			return
+		}
+		// Remove existing files and DB record before re-creating
+		_ = os.RemoveAll(filepath.Join(config.Cfg.DataPath, "skills", slug))
+		database.DB.Delete(&existing)
 	}
 
 	destDir := filepath.Join(config.Cfg.DataPath, "skills", slug)

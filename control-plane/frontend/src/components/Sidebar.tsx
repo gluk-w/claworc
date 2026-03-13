@@ -96,6 +96,12 @@ export default function Sidebar() {
                 Settings
               </span>
             </Link>
+            <Link to="/skills" className={navLinkClass("/skills")}>
+              <BookOpen size={18} className="shrink-0" />
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
+                Skills
+              </span>
+            </Link>
             <Link to="/users" className={navLinkClass("/users")}>
               <Users size={18} className="shrink-0" />
               <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
@@ -106,12 +112,6 @@ export default function Sidebar() {
               <BarChart2 size={18} className="shrink-0" />
               <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
                 Usage
-              </span>
-            </Link>
-            <Link to="/skills" className={navLinkClass("/skills")}>
-              <BookOpen size={18} className="shrink-0" />
-              <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
-                Skills
               </span>
             </Link>
           </>

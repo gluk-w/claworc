@@ -10,10 +10,10 @@ export async function listSkills(): Promise<Skill[]> {
   return res.data;
 }
 
-export async function uploadSkill(file: File): Promise<Skill> {
+export async function uploadSkill(file: File, overwrite = false): Promise<Skill> {
   const form = new FormData();
   form.append("file", file);
-  const res = await client.post<Skill>("/skills", form, {
+  const res = await client.post<Skill>(`/skills${overwrite ? "?overwrite=true" : ""}`, form, {
     headers: { "Content-Type": "multipart/form-data" },
   });
   return res.data;

@@ -79,10 +79,53 @@ func GetCatalogProviders(w http.ResponseWriter, r *http.Request) {
 	proxyCatalog(w, "/")
 }
 
-// GetCatalogProviderDetail proxies GET /providers/{key}/ from the catalog API.
+// GetCatalogProviderDetail derives a single provider from the cached root catalog.
 func GetCatalogProviderDetail(w http.ResponseWriter, r *http.Request) {
 	key := strings.ToLower(chi.URLParam(r, "key"))
-	proxyCatalog(w, "/"+key+"/")
+	entry, err := getCatalogEntryByKey(key)
+	if err != nil {
+		http.Error(w, `{"error":"catalog unavailable"}`, http.StatusBadGateway)
+		return
+	}
+	if entry == nil {
+		writeError(w, http.StatusNotFound, "Provider not found in catalog")
+		return
+	}
+	body, _ := json.Marshal(entry)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
+// getCatalogEntryByKey looks up a provider by key from the cached root catalog.
+// Returns nil, nil if the key is not found. Returns nil, err on fetch failure.
+func getCatalogEntryByKey(key string) (*catalogRootEntry, error) {
+	entries, err := ensureRootCatalog()
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range entries {
+		if e.Name == key {
+			return &e, nil
+		}
+	}
+	return nil, nil
+}
+
+// ensureRootCatalog returns parsed root catalog entries, using cache if valid.
+func ensureRootCatalog() ([]catalogRootEntry, error) {
+	catalogCacheMu.RLock()
+	entry := catalogCache["/"]
+	catalogCacheMu.RUnlock()
+
+	if entry == nil || time.Now().After(entry.expiresAt) {
+		// Fetch and cache
+		return getCatalogRoot()
+	}
+	var entries []catalogRootEntry
+	if err := json.Unmarshal(entry.body, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
 
 // catalogRootModel is one model entry from the catalog root response.
@@ -162,44 +205,21 @@ func getCatalogRoot() ([]catalogRootEntry, error) {
 	return entries, nil
 }
 
-// getCatalogProviderModels returns ProviderModel entries for a catalog provider,
-// using the in-process cache when available and fetching otherwise.
-// Returns nil on error.
+// getCatalogModels returns ProviderModel entries for a catalog provider,
+// derived from the cached root catalog. Returns nil on error.
 var getCatalogModels = func(catalogKey string) []database.ProviderModel {
 	if catalogKey == "" {
 		return nil
 	}
-	path := "/" + strings.ToLower(catalogKey) + "/"
-
-	catalogCacheMu.RLock()
-	entry := catalogCache[path]
-	catalogCacheMu.RUnlock()
-
-	if entry == nil || time.Now().After(entry.expiresAt) {
-		resp, err := catalogHTTPClient.Get(catalogBaseURL + path)
+	entry, err := getCatalogEntryByKey(strings.ToLower(catalogKey))
+	if err != nil || entry == nil {
 		if err != nil {
-			log.Printf("getCatalogModels: fetch %s: %v", catalogKey, err)
-			return nil
+			log.Printf("getCatalogModels: %s: %v", catalogKey, err)
 		}
-		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			return nil
-		}
-		entry = &catalogCacheEntry{body: body, expiresAt: time.Now().Add(time.Hour)}
-		catalogCacheMu.Lock()
-		catalogCache[path] = entry
-		catalogCacheMu.Unlock()
-	}
-
-	var detail struct {
-		Models []catalogRootModel `json:"models"`
-	}
-	if err := json.Unmarshal(entry.body, &detail); err != nil {
 		return nil
 	}
-	result := make([]database.ProviderModel, len(detail.Models))
-	for i, m := range detail.Models {
+	result := make([]database.ProviderModel, len(entry.Models))
+	for i, m := range entry.Models {
 		result[i] = catalogModelToProviderModel(m)
 	}
 	return result
@@ -282,6 +302,11 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 	modelsJSON := []byte("[]")
 	if body.Models != nil {
 		modelsJSON, _ = json.Marshal(body.Models)
+	} else if body.Provider != "" {
+		// Auto-fetch models from catalog for catalog providers
+		if catalogModels := getCatalogModels(body.Provider); catalogModels != nil {
+			modelsJSON, _ = json.Marshal(catalogModels)
+		}
 	}
 	p := database.LLMProvider{
 		Key:      body.Key,
@@ -413,10 +438,9 @@ func SyncProviderModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Force-refresh the catalog cache by clearing the entry first
-	path := "/" + p.Provider + "/"
+	// Force-refresh the root catalog cache
 	catalogCacheMu.Lock()
-	delete(catalogCache, path)
+	delete(catalogCache, "/")
 	catalogCacheMu.Unlock()
 
 	log.Printf("Syncing models for provider %d (%s)", p.ID, p.Provider)

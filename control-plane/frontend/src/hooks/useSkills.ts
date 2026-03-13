@@ -18,12 +18,18 @@ export function useSkills() {
 export function useUploadSkill() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (file: File) => uploadSkill(file),
+    mutationFn: ({ file, overwrite = false }: { file: File; overwrite?: boolean }) =>
+      uploadSkill(file, overwrite),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["skills"] });
       successToast("Skill uploaded");
     },
-    onError: (error) => errorToast("Failed to upload skill", error),
+    onError: (error, _vars, _ctx) => {
+      // 409 conflicts are handled inline in the modal — suppress the toast
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((error as any)?.response?.status === 409) return;
+      errorToast("Failed to upload skill", error);
+    },
   });
 }
 
