@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -878,14 +877,7 @@ func TestProviderKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse and validate the base URL to prevent SSRF — only allow http(s) schemes
-	parsedBase, parseErr := url.Parse(strings.TrimRight(body.BaseURL, "/"))
-	if parseErr != nil || (parsedBase.Scheme != "http" && parsedBase.Scheme != "https") || parsedBase.Host == "" {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL"})
-		return
-	}
-
-	// Reconstruct probe URL from validated components to break taint chain
+	// Determine probe path suffix per API type
 	var probePath string
 	switch body.APIType {
 	case "ollama":
@@ -895,12 +887,13 @@ func TestProviderKey(w http.ResponseWriter, r *http.Request) {
 	default:
 		probePath = "/v1/models"
 	}
-	safeURL := url.URL{
-		Scheme: parsedBase.Scheme,
-		Host:   parsedBase.Host,
-		Path:   parsedBase.Path + probePath,
+
+	// Validate base URL and build safe probe URL
+	probeURL, urlErr := utils.ValidateAndBuildURL(body.BaseURL, probePath)
+	if urlErr != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL"})
+		return
 	}
-	probeURL := safeURL.String()
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, probeURL, nil)
 	if err != nil {

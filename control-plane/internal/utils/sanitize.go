@@ -1,6 +1,10 @@
 package utils
 
-import "strings"
+import (
+	"fmt"
+	"net/url"
+	"strings"
+)
 
 // SanitizeForLog removes newlines and control characters from user-provided
 // strings to prevent log injection attacks where attackers could inject
@@ -20,4 +24,40 @@ func SanitizeForLog(s string) string {
 		}
 	}
 	return result.String()
+}
+
+// ValidateAndBuildURL validates a user-provided base URL, ensures it uses http(s)
+// scheme and has a host, then appends the given path suffix. Returns an error if
+// validation fails. The returned URL string is constructed from validated parts.
+func ValidateAndBuildURL(rawBaseURL, pathSuffix string) (string, error) {
+	parsed, err := url.Parse(strings.TrimRight(rawBaseURL, "/"))
+	if err != nil {
+		return "", fmt.Errorf("invalid URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("URL scheme must be http or https")
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("URL must have a host")
+	}
+	// Reconstruct from validated components
+	safe := &url.URL{
+		Scheme: parsed.Scheme,
+		Host:   parsed.Host,
+		Path:   parsed.Path + pathSuffix,
+	}
+	return safe.String(), nil
+}
+
+// SanitizePath validates a path component to prevent directory traversal.
+// It returns the base name only, stripping any directory components.
+func SanitizePath(p string) string {
+	// Remove all path separators and parent references
+	cleaned := strings.ReplaceAll(p, "..", "")
+	cleaned = strings.ReplaceAll(cleaned, "/", "")
+	cleaned = strings.ReplaceAll(cleaned, "\\", "")
+	if cleaned == "" {
+		return "invalid"
+	}
+	return cleaned
 }

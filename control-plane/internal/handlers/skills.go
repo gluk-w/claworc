@@ -344,9 +344,9 @@ func DeleteSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sanitize slug to prevent path traversal
-	cleanSlug := filepath.Base(slug)
-	destDir := filepath.Join(config.Cfg.DataPath, "skills", cleanSlug)
+	// Sanitize slug to prevent path traversal — use the DB record's slug
+	// which was validated on creation, not the URL parameter directly
+	destDir := filepath.Join(config.Cfg.DataPath, "skills", skill.Slug)
 	if err := os.RemoveAll(destDir); err != nil {
 		log.Printf("delete skill dir: %v", err)
 	}
