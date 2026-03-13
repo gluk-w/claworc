@@ -84,6 +84,16 @@ func (s *SessionStore) DeleteByUserID(userID uint) {
 	s.mu.Unlock()
 }
 
+func (s *SessionStore) DeleteByUserIDExcept(userID uint, exceptSessionID string) {
+	s.mu.Lock()
+	for id, entry := range s.sessions {
+		if entry.UserID == userID && id != exceptSessionID {
+			delete(s.sessions, id)
+		}
+	}
+	s.mu.Unlock()
+}
+
 func (s *SessionStore) Cleanup() {
 	now := time.Now()
 	s.mu.Lock()

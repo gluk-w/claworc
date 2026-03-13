@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Fingerprint } from "lucide-react";
+import { isAxiosError } from "axios";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   checkSetupRequired,
@@ -10,6 +11,33 @@ import {
 } from "@/api/auth";
 import { startAuthentication } from "@simplewebauthn/browser";
 import type { PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/browser";
+
+function getLoginError(error: unknown): string {
+  if (isAxiosError(error)) {
+    if (!error.response) {
+      return "Unable to connect to the server. Please check your connection.";
+    }
+    const status = error.response.status;
+    if (status === 401) return "Invalid username or password";
+    if (status >= 500) return "Something went wrong. Please try again later.";
+    const detail = error.response.data?.detail;
+    if (typeof detail === "string") return detail;
+  }
+  return "Something went wrong. Please try again later.";
+}
+
+function getSetupError(error: unknown): string {
+  if (isAxiosError(error)) {
+    if (!error.response) {
+      return "Unable to connect to the server. Please check your connection.";
+    }
+    const status = error.response.status;
+    if (status >= 500) return "Something went wrong. Please try again later.";
+    const detail = error.response.data?.detail;
+    if (typeof detail === "string") return detail;
+  }
+  return "Failed to create admin account";
+}
 
 export default function LoginPage() {
   const { login, refetch } = useAuth();
@@ -50,12 +78,8 @@ export default function LoginPage() {
         await login({ username, password });
         navigate("/");
       }
-    } catch {
-      setError(
-        setupMode
-          ? "Failed to create admin account"
-          : "Invalid username or password",
-      );
+    } catch (err) {
+      setError(setupMode ? getSetupError(err) : getLoginError(err));
     } finally {
       setLoading(false);
     }
@@ -72,8 +96,12 @@ export default function LoginPage() {
       await webAuthnLoginFinish(result);
       refetch();
       navigate("/");
-    } catch {
-      setError("Passkey authentication failed");
+    } catch (err) {
+      if (isAxiosError(err) && !err.response) {
+        setError("Unable to connect to the server. Please check your connection.");
+      } else {
+        setError("Passkey authentication failed");
+      }
     } finally {
       setLoading(false);
     }

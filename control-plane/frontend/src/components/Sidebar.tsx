@@ -135,9 +135,9 @@ export default function Sidebar() {
       {/* User section */}
       <div className="px-3 pb-4 border-t border-gray-200 pt-3 shrink-0">
         <Link
-          to="/account"
+          to="/profile"
           className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-            isActive("/account")
+            isActive("/profile")
               ? "bg-blue-50 text-blue-700 font-medium"
               : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
           }`}

@@ -160,6 +160,58 @@ func SetupCreateAdmin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func ChangePassword(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	var body struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if body.CurrentPassword == "" || body.NewPassword == "" {
+		writeError(w, http.StatusBadRequest, "Current password and new password are required")
+		return
+	}
+
+	dbUser, err := database.GetUserByID(user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to load user")
+		return
+	}
+
+	if !auth.CheckPassword(body.CurrentPassword, dbUser.PasswordHash) {
+		writeError(w, http.StatusUnauthorized, "Current password is incorrect")
+		return
+	}
+
+	hash, err := auth.HashPassword(body.NewPassword)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to hash password")
+		return
+	}
+
+	if err := database.UpdateUserPassword(user.ID, hash); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to update password")
+		return
+	}
+
+	// Invalidate all other sessions for this user
+	cookie, err := r.Cookie(auth.SessionCookie)
+	if err == nil {
+		SessionStore.DeleteByUserIDExcept(user.ID, cookie.Value)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // WebAuthn handlers
 
 func WebAuthnRegisterBegin(w http.ResponseWriter, r *http.Request) {

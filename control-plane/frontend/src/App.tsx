@@ -55,7 +55,7 @@ export default function App() {
           }
         />
         <Route path="/instances/:id" element={<InstanceDetailPage />} />
-        <Route path="/account" element={<AccountPage />} />
+        <Route path="/profile" element={<AccountPage />} />
         <Route
           path="/settings"
           element={

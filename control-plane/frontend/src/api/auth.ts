@@ -62,3 +62,7 @@ export async function listWebAuthnCredentials(): Promise<WebAuthnCredential[]> {
 export async function deleteWebAuthnCredential(id: string): Promise<void> {
   await client.delete(`/auth/webauthn/credentials/${encodeURIComponent(id)}`);
 }
+
+export async function changePassword(data: { current_password: string; new_password: string }): Promise<void> {
+  await client.post("/auth/change-password", data);
+}

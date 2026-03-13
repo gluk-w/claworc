@@ -206,6 +206,7 @@ func main() {
 
 			r.Post("/auth/logout", handlers.Logout)
 			r.Get("/auth/me", handlers.GetCurrentUser)
+			r.Post("/auth/change-password", handlers.ChangePassword)
 			r.Post("/auth/webauthn/register/begin", handlers.WebAuthnRegisterBegin)
 			r.Post("/auth/webauthn/register/finish", handlers.WebAuthnRegisterFinish)
 			r.Get("/auth/webauthn/credentials", handlers.ListWebAuthnCredentials)
