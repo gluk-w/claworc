@@ -31,6 +31,7 @@ export function useCreateProvider() {
     onSuccess: () => {
       successToast("Provider created");
       queryClient.invalidateQueries({ queryKey: ["llm-providers"] });
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
     },
     onError: (err) => errorToast("Failed to create provider", err),
   });

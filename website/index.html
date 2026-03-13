@@ -130,7 +130,16 @@
                     <p class="text-slate-400 text-sm">Stream live logs to monitor what's happening inside an instance.</p>
                 </a>
 
-                <!-- Feature 6 -->
+                <!-- Feature 6 (Skills) -->
+                <a href="https://claworc.com/docs/skills" target="_blank" rel="noopener" class="feature-card bg-slate-800 rounded-xl p-6 border border-slate-700 block hover:border-slate-500 transition-colors">
+                    <div class="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center mb-4">
+                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                    </div>
+                    <h3 class="text-lg font-semibold mb-2">Skills Library</h3>
+                    <p class="text-slate-400 text-sm">Package reusable prompts as skills and deploy them to instances in one click. Discover community skills on Clawhub.</p>
+                </a>
+
+                <!-- Feature 7 -->
                 <a href="https://claworc.com/docs/models/overview" target="_blank" rel="noopener" class="feature-card bg-slate-800 rounded-xl p-6 border border-slate-700 block hover:border-slate-500 transition-colors">
                     <div class="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center mb-4">
                         <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
@@ -228,13 +237,56 @@
         </div>
     </section>
 
-    <!-- LLM Gateway -->
+    <!-- Skills Library -->
     <section class="py-16 sm:py-24 bg-slate-800/50">
         <div class="max-w-6xl mx-auto px-4 sm:px-6">
             <div class="grid lg:grid-cols-2 gap-12 items-center">
                 <div>
-                    <img src="images/usage.png" alt="LLM Usage dashboard showing request counts, token usage, and cost charts" class="screenshot w-full border border-slate-700">
+                    <h2 class="text-3xl sm:text-4xl font-bold mb-6">Skills Library</h2>
+                    <p class="text-slate-300 mb-6">
+                        Package reusable instructions and deploy them to any instance with one click. Skills are zip archives containing a <code class="text-blue-400 font-mono text-sm">SKILL.md</code> — a prompt that gets injected into the agent's context.
+                    </p>
+                    <div class="space-y-4">
+                        <div class="flex items-start gap-3">
+                            <div class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold">Upload your own</h3>
+                                <p class="text-slate-400 text-sm">Package any workflow as a skill and upload it to your private library.</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-3">
+                            <div class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold">Discover on Clawhub</h3>
+                                <p class="text-slate-400 text-sm">Search the Clawhub community registry and deploy skills directly from search results.</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-3">
+                            <div class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold">One-click deploy</h3>
+                                <p class="text-slate-400 text-sm">Select which instances should receive a skill and deploy to all of them simultaneously.</p>
+                            </div>
+                        </div>
+                    </div>
                 </div>
+                <div>
+                    <img src="images/skills_library.png" alt="Skills Library showing community skills from Clawhub" class="screenshot w-full border border-slate-700">
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- LLM Gateway -->
+    <section class="py-16 sm:py-24">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6">
+            <div class="grid lg:grid-cols-2 gap-12 items-center">
                 <div>
                     <h2 class="text-3xl sm:text-4xl font-bold mb-6">AI Gateway</h2>
                     <p class="text-slate-300 mb-6">
@@ -269,6 +321,9 @@
                             </div>
                         </div>
                     </div>
+                </div>
+                <div>
+                    <img src="images/usage.png" alt="LLM Usage dashboard showing request counts, token usage, and cost charts" class="screenshot w-full border border-slate-700">
                 </div>
             </div>
         </div>

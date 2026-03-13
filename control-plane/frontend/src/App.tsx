@@ -9,6 +9,7 @@ import UsersPage from "./pages/UsersPage";
 import UsagePage from "./pages/UsagePage";
 import AccountPage from "./pages/AccountPage";
 import VncPopupPage from "./pages/VncPopupPage";
+import SkillsPage from "./pages/SkillsPage";
 import { useAuth } from "./contexts/AuthContext";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -76,6 +77,14 @@ export default function App() {
           element={
             <AdminRoute>
               <UsagePage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="/skills"
+          element={
+            <AdminRoute>
+              <SkillsPage />
             </AdminRoute>
           }
         />

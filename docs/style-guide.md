@@ -18,6 +18,16 @@ modifying or creating UI must follow these conventions exactly. The Settings pag
 8. [Typography](#8-typography)
 9. [Loading and Disabled States](#9-loading-and-disabled-states)
 10. [Toasts](#10-toasts)
+11. [Page Header with Action Button](#11-page-header-with-action-button)
+12. [Tab Navigation](#12-tab-navigation)
+13. [Tables](#13-tables)
+14. [Card Grid](#14-card-grid)
+15. [Status Badges / Pills](#15-status-badges--pills)
+16. [Search Input](#16-search-input)
+17. [Icon-only Row Actions](#17-icon-only-row-actions)
+18. [Large Scrollable Modal](#18-large-scrollable-modal-separated-headerfooter)
+19. [Empty State (multi-line)](#19-empty-state-multi-line)
+20. [Checkbox / Radio Styling](#20-checkbox--radio-styling)
 
 ---
 
@@ -471,3 +481,222 @@ toast.custom(createElement(AppToast, { title: "Done", status: "success", toastId
 ```
 
 See `useCreationToast` in `src/hooks/useInstances.ts` for the canonical pattern.
+
+---
+
+## 11. Page Header with Action Button
+
+Used in `UsersPage.tsx` (Create User), `SkillsPage.tsx` (Upload Skill).
+
+```tsx
+<div className="flex items-center justify-between mb-6">
+  <h1 className="text-xl font-semibold text-gray-900">Page Title</h1>
+  <button className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">
+    Action
+  </button>
+</div>
+```
+
+- Action button uses `px-3 py-1.5 text-sm` (smaller than page-level save, no border).
+- If the button should be conditionally hidden but preserve layout, use `invisible` not conditional rendering.
+
+---
+
+## 12. Tab Navigation
+
+Used in `SkillsPage.tsx` (Library/Discover), `InstanceDetailPage.tsx` (Overview/Browser/Terminal/…).
+
+```tsx
+<div className="flex border-b border-gray-200 mb-6">
+  <button className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+    active ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"
+  }`}>
+    Tab Label
+  </button>
+</div>
+```
+
+- Container: `flex border-b border-gray-200 mb-6`
+- Active: `border-blue-600 text-blue-600`
+- Inactive: `border-transparent text-gray-500 hover:text-gray-700`
+
+---
+
+## 13. Tables
+
+Used in `UsersPage.tsx`, `ProviderTable.tsx`, `InstanceTable.tsx`.
+
+```tsx
+<div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+  <table className="w-full text-sm">
+    <thead className="bg-gray-50 border-b border-gray-200">
+      <tr>
+        <th className="text-left px-4 py-3 font-medium text-gray-600">Header</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr className="border-b border-gray-100 last:border-0">
+        <td className="px-4 py-3 text-gray-900">{value}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+```
+
+- Wrapper: `bg-white rounded-lg border border-gray-200 overflow-hidden`
+- `<thead>`: `bg-gray-50 border-b border-gray-200`
+- `<th>`: `text-left px-4 py-3 font-medium text-gray-600`
+- `<tr>`: `border-b border-gray-100 last:border-0`
+- `<td>`: `px-4 py-3`; primary column uses `text-gray-900`, secondary uses `text-gray-500`
+
+---
+
+## 14. Card Grid
+
+Used in `SkillsPage.tsx` (Library and Discover tabs).
+
+```tsx
+<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+  <div className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col gap-2 hover:shadow-sm hover:border-blue-300 hover:bg-blue-50 transition-all cursor-pointer">
+    {/* card content */}
+  </div>
+</div>
+```
+
+- Grid: `grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4`
+- Card: `bg-white border border-gray-200 rounded-xl p-4 flex flex-col gap-2 hover:shadow-sm hover:border-blue-300 hover:bg-blue-50 transition-all cursor-pointer`
+- Use `rounded-xl` (not `rounded-lg`) for cards.
+
+---
+
+## 15. Status Badges / Pills
+
+Used in `StatusBadge.tsx`, `UsersPage.tsx`, `SkillsPage.tsx`.
+
+**Colored status badge** (running/stopped/error):
+```tsx
+<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+  running
+</span>
+```
+Color map: `running → bg-green-100 text-green-800`, `stopped → bg-gray-100 text-gray-600`, `error → bg-red-100 text-red-800`, `pending → bg-yellow-100 text-yellow-800`.
+
+**Role / label badge**:
+```tsx
+<span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-purple-50 text-purple-700">
+  admin
+</span>
+```
+
+**Monospace version badge**:
+```tsx
+<span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">v1.2</span>
+```
+
+---
+
+## 16. Search Input
+
+Used in `SkillsPage.tsx`, `ModelCatalogPicker.tsx`.
+
+```tsx
+<div className="relative mb-6">
+  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+  <input
+    type="text"
+    placeholder="Search…"
+    className="w-full pl-9 pr-4 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+  />
+  {isFetching && (
+    <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-gray-400" />
+  )}
+</div>
+```
+
+- Left icon: `pl-9` input padding, icon at `left-3`.
+- Right async spinner: overlay at `right-3`.
+- Use `py-2.5` for standalone search bars (slightly taller than regular inputs `py-1.5`).
+- Use `rounded-lg` and `focus:border-transparent` for search inputs.
+
+---
+
+## 17. Icon-only Row Actions
+
+Used in `UsersPage.tsx`, `SkillCard.tsx`, `InstanceTable.tsx`.
+
+```tsx
+<button
+  onClick={handler}
+  className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+  title="Tooltip"
+>
+  <Icon size={14} />
+</button>
+```
+
+- For destructive actions: `hover:text-red-600`.
+- Always include a `title` attribute for accessibility.
+- Include `e.stopPropagation()` when the button is inside a clickable parent (e.g., a card row).
+
+---
+
+## 18. Large Scrollable Modal (separated header/footer)
+
+Used in `DeployModal.tsx`. Variant of the standard modal when the body may overflow.
+
+```tsx
+<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+  <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 flex flex-col max-h-[80vh]">
+    {/* Header */}
+    <div className="px-6 py-4 border-b border-gray-200">
+      <h2 className="text-base font-semibold text-gray-900">Title</h2>
+      {description && <p className="text-sm text-gray-500 mt-1">{description}</p>}
+    </div>
+    {/* Scrollable body */}
+    <div className="overflow-y-auto flex-1 px-6 py-4 flex flex-col gap-2">
+      {/* content */}
+    </div>
+    {/* Footer */}
+    <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3">
+      <button className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors">Cancel</button>
+      <button className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">Confirm</button>
+    </div>
+  </div>
+</div>
+```
+
+- `rounded-xl shadow-xl` (vs `rounded-lg` for standard modals).
+- `max-h-[80vh]` + `flex flex-col` + `overflow-y-auto flex-1` on body enables scroll.
+- Header/footer get `border-b`/`border-t` separators with `px-6 py-4`.
+- Footer buttons use `text-sm px-4 py-2` (same as page-level buttons, not `text-xs`).
+
+---
+
+## 19. Empty State (multi-line)
+
+Used in `SkillsPage.tsx`, `DashboardPage.tsx`.
+
+```tsx
+<div className="text-center py-16 text-gray-400">
+  <p className="text-sm">Primary empty message.</p>
+  <p className="text-xs mt-1">Secondary hint or call-to-action.</p>
+</div>
+```
+
+- `py-16` for generous vertical centering.
+- Primary line: `text-sm`; secondary line: `text-xs mt-1`.
+
+---
+
+## 20. Checkbox / Radio Styling
+
+Used in `DeployModal.tsx`, `ProviderTable.tsx`.
+
+```tsx
+<input
+  type="checkbox"
+  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+/>
+```
+
+Same classes apply to `type="radio"`.

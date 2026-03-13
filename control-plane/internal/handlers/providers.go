@@ -79,10 +79,53 @@ func GetCatalogProviders(w http.ResponseWriter, r *http.Request) {
 	proxyCatalog(w, "/")
 }
 
-// GetCatalogProviderDetail proxies GET /providers/{key}/ from the catalog API.
+// GetCatalogProviderDetail derives a single provider from the cached root catalog.
 func GetCatalogProviderDetail(w http.ResponseWriter, r *http.Request) {
 	key := strings.ToLower(chi.URLParam(r, "key"))
-	proxyCatalog(w, "/"+key+"/")
+	entry, err := getCatalogEntryByKey(key)
+	if err != nil {
+		http.Error(w, `{"error":"catalog unavailable"}`, http.StatusBadGateway)
+		return
+	}
+	if entry == nil {
+		writeError(w, http.StatusNotFound, "Provider not found in catalog")
+		return
+	}
+	body, _ := json.Marshal(entry)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
+// getCatalogEntryByKey looks up a provider by key from the cached root catalog.
+// Returns nil, nil if the key is not found. Returns nil, err on fetch failure.
+func getCatalogEntryByKey(key string) (*catalogRootEntry, error) {
+	entries, err := ensureRootCatalog()
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range entries {
+		if e.Name == key {
+			return &e, nil
+		}
+	}
+	return nil, nil
+}
+
+// ensureRootCatalog returns parsed root catalog entries, using cache if valid.
+func ensureRootCatalog() ([]catalogRootEntry, error) {
+	catalogCacheMu.RLock()
+	entry := catalogCache["/"]
+	catalogCacheMu.RUnlock()
+
+	if entry == nil || time.Now().After(entry.expiresAt) {
+		// Fetch and cache
+		return getCatalogRoot()
+	}
+	var entries []catalogRootEntry
+	if err := json.Unmarshal(entry.body, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
 
 // catalogRootModel is one model entry from the catalog root response.
@@ -162,44 +205,21 @@ func getCatalogRoot() ([]catalogRootEntry, error) {
 	return entries, nil
 }
 
-// getCatalogProviderModels returns ProviderModel entries for a catalog provider,
-// using the in-process cache when available and fetching otherwise.
-// Returns nil on error.
+// getCatalogModels returns ProviderModel entries for a catalog provider,
+// derived from the cached root catalog. Returns nil on error.
 var getCatalogModels = func(catalogKey string) []database.ProviderModel {
 	if catalogKey == "" {
 		return nil
 	}
-	path := "/" + strings.ToLower(catalogKey) + "/"
-
-	catalogCacheMu.RLock()
-	entry := catalogCache[path]
-	catalogCacheMu.RUnlock()
-
-	if entry == nil || time.Now().After(entry.expiresAt) {
-		resp, err := catalogHTTPClient.Get(catalogBaseURL + path)
+	entry, err := getCatalogEntryByKey(strings.ToLower(catalogKey))
+	if err != nil || entry == nil {
 		if err != nil {
-			log.Printf("getCatalogModels: fetch %s: %v", catalogKey, err)
-			return nil
+			log.Printf("getCatalogModels: %s: %v", utils.SanitizeForLog(catalogKey), err)
 		}
-		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			return nil
-		}
-		entry = &catalogCacheEntry{body: body, expiresAt: time.Now().Add(time.Hour)}
-		catalogCacheMu.Lock()
-		catalogCache[path] = entry
-		catalogCacheMu.Unlock()
-	}
-
-	var detail struct {
-		Models []catalogRootModel `json:"models"`
-	}
-	if err := json.Unmarshal(entry.body, &detail); err != nil {
 		return nil
 	}
-	result := make([]database.ProviderModel, len(detail.Models))
-	for i, m := range detail.Models {
+	result := make([]database.ProviderModel, len(entry.Models))
+	for i, m := range entry.Models {
 		result[i] = catalogModelToProviderModel(m)
 	}
 	return result
@@ -282,6 +302,11 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 	modelsJSON := []byte("[]")
 	if body.Models != nil {
 		modelsJSON, _ = json.Marshal(body.Models)
+	} else if body.Provider != "" {
+		// Auto-fetch models from catalog for catalog providers
+		if catalogModels := getCatalogModels(body.Provider); catalogModels != nil {
+			modelsJSON, _ = json.Marshal(catalogModels)
+		}
 	}
 	p := database.LLMProvider{
 		Key:      body.Key,
@@ -301,7 +326,7 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 		settingKey := "api_key:" + strings.ReplaceAll(strings.ToUpper(body.Key), "-", "_") + "_API_KEY"
 		encrypted, err := utils.Encrypt(apiKey)
 		if err != nil {
-			log.Printf("failed to encrypt API key for provider %s: %v", body.Key, err)
+			log.Printf("failed to encrypt API key for provider %s: %v", utils.SanitizeForLog(body.Key), err)
 		} else {
 			database.SetSetting(settingKey, encrypted)
 		}
@@ -413,10 +438,9 @@ func SyncProviderModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Force-refresh the catalog cache by clearing the entry first
-	path := "/" + p.Provider + "/"
+	// Force-refresh the root catalog cache
 	catalogCacheMu.Lock()
-	delete(catalogCache, path)
+	delete(catalogCache, "/")
 	catalogCacheMu.Unlock()
 
 	log.Printf("Syncing models for provider %d (%s)", p.ID, p.Provider)
@@ -836,6 +860,41 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// probeProviderURL makes a validated HTTP GET request to a provider URL and returns
+// the status code. The URL is validated and reconstructed from parsed components
+// to ensure only http(s) schemes with valid hosts are used.
+func probeProviderURL(ctx context.Context, baseURL, pathSuffix, apiType, apiKey string) (statusCode int, respBody string, err error) {
+	safeURL, urlErr := utils.ValidateAndBuildURL(baseURL, pathSuffix)
+	if urlErr != nil {
+		return 0, "", urlErr
+	}
+
+	req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, safeURL, nil)
+	if reqErr != nil {
+		return 0, "", reqErr
+	}
+
+	// Set auth header per API type
+	switch apiType {
+	case "anthropic-messages":
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+	case "google-generative-ai":
+		req.Header.Set("x-goog-api-key", apiKey)
+	default:
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, doErr := catalogHTTPClient.Do(req)
+	if doErr != nil {
+		return 0, "", doErr
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return resp.StatusCode, strings.TrimSpace(string(body)), nil
+}
+
 // TestProviderKey validates an API key by making a lightweight probe request
 // to the provider's API. No saved provider is required — credentials are passed inline.
 func TestProviderKey(w http.ResponseWriter, r *http.Request) {
@@ -853,56 +912,27 @@ func TestProviderKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build probe URL per API type
-	var probeURL string
+	// Determine probe path suffix per API type
+	var probePath string
 	switch body.APIType {
-	case "openai-completions", "openai-responses":
-		probeURL = strings.TrimRight(body.BaseURL, "/") + "/v1/models"
-	case "anthropic-messages":
-		probeURL = strings.TrimRight(body.BaseURL, "/") + "/v1/models"
-	case "google-generative-ai":
-		probeURL = strings.TrimRight(body.BaseURL, "/") + "/v1/models"
 	case "ollama":
-		probeURL = strings.TrimRight(body.BaseURL, "/") + "/api/tags"
+		probePath = "/api/tags"
 	case "bedrock-converse-stream":
-		probeURL = strings.TrimRight(body.BaseURL, "/")
+		probePath = ""
 	default:
-		probeURL = strings.TrimRight(body.BaseURL, "/") + "/v1/models"
+		probePath = "/v1/models"
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, probeURL, nil)
+	statusCode, respBody, err := probeProviderURL(r.Context(), body.BaseURL, probePath, body.APIType, body.APIKey)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL: " + err.Error()})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL or connection failed"})
 		return
 	}
 
-	// Set auth header per API type (same logic as gateway's buildUpstreamRequest)
-	switch body.APIType {
-	case "anthropic-messages":
-		req.Header.Set("x-api-key", body.APIKey)
-		req.Header.Set("anthropic-version", "2023-06-01")
-	case "google-generative-ai":
-		req.Header.Set("x-goog-api-key", body.APIKey)
-	default:
-		req.Header.Set("Authorization", "Bearer "+body.APIKey)
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": err.Error()})
-		return
-	}
-	defer resp.Body.Close()
-
-	ok := resp.StatusCode >= 200 && resp.StatusCode < 300
-	result := map[string]interface{}{"ok": ok, "status": resp.StatusCode}
+	ok := statusCode >= 200 && statusCode < 300
+	result := map[string]interface{}{"ok": ok, "status": statusCode}
 	if !ok {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		result["error"] = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		result["error"] = fmt.Sprintf("HTTP %d: %s", statusCode, respBody)
 	}
 	writeJSON(w, http.StatusOK, result)
 }

@@ -289,6 +289,13 @@ func main() {
 				r.Get("/llm/catalog", handlers.GetCatalogProviders)
 				r.Get("/llm/catalog/{key}", handlers.GetCatalogProviderDetail)
 
+				// Skills
+				r.Get("/skills", handlers.ListSkills)
+				r.Post("/skills", handlers.UploadSkill)
+				r.Delete("/skills/{slug}", handlers.DeleteSkill)
+				r.Get("/skills/clawhub/search", handlers.ClawhubSearch)
+				r.Post("/skills/{slug}/deploy", handlers.DeploySkill)
+
 				// User management
 				r.Get("/users", handlers.ListUsers)
 				r.Post("/users", handlers.CreateUser)
