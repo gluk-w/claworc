@@ -456,6 +456,7 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": params.Name, "managed-by": "claworc"}},
 				Spec: corev1.PodSpec{
+					Hostname:   strings.TrimPrefix(params.Name, "bot-"),
 					Containers: []corev1.Container{{
 						Name:            "claworc-instance",
 						Image:           params.ContainerImage,

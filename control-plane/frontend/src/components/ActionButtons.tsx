@@ -39,7 +39,8 @@ export default function ActionButtons({
   const isUnavailable = !isRunning;
 
   const controlUrl = (() => {
-    const gwUrl = `ws://${window.location.host}/openclaw/${instance.id}/`;
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const gwUrl = `${wsProtocol}//${window.location.host}/openclaw/${instance.id}/`;
     const params = new URLSearchParams({
       gatewayUrl: gwUrl,
       token: instance.gateway_token,

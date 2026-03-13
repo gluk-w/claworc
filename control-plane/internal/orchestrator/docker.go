@@ -207,8 +207,9 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	shmSize, _ := units.RAMInBytes("2g")
 
 	containerCfg := &container.Config{
-		Image:  params.ContainerImage,
-		Env:    env,
+		Image:    params.ContainerImage,
+		Hostname: strings.TrimPrefix(params.Name, "bot-"),
+		Env:      env,
 		Labels: map[string]string{"managed-by": labelManagedBy, "instance": params.Name},
 		ExposedPorts: nat.PortSet{
 			"22/tcp": struct{}{},

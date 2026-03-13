@@ -61,8 +61,10 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
-        navigateFallback: "/index.html",
-        navigateFallbackDenylist: [/^\/api\//, /^\/health/, /^\/openclaw\//],
+        // No navigateFallback — server handles SPA routing.
+        // This prevents the SW from intercepting navigation to /openclaw/.
+        // Must be explicitly null to override VitePWA's default of "index.html".
+        navigateFallback: null,
         runtimeCaching: [
           {
             urlPattern: /^https?:\/\/.*\/(api|openclaw)\//,
