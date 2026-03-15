@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, createElement } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, X, Maximize, ExternalLink } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import StatusBadge from "@/components/StatusBadge";
 import ActionButtons from "@/components/ActionButtons";
@@ -41,7 +41,7 @@ import { useChat } from "@/hooks/useChat";
 import type { InstanceUpdatePayload } from "@/types/instance";
 import { buildSSHTooltip } from "@/utils/sshTooltip";
 
-type Tab = "overview" | "chrome" | "terminal" | "files" | "config" | "logs";
+type Tab = "chat" | "terminal" | "files" | "config" | "logs" | "settings";
 
 export default function InstanceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -83,13 +83,19 @@ export default function InstanceDetailPage() {
   // Get initial tab from URL hash (supports #files:///path pattern)
   const getTabFromHash = (): Tab => {
     const hash = location.hash.slice(1); // Remove '#'
-    if (hash === "chrome" || hash === "terminal" || hash === "config" || hash === "logs") {
+    if (hash === "terminal" || hash === "config" || hash === "logs" || hash === "settings") {
       return hash;
+    }
+    if (hash === "chat" || hash === "chrome") {
+      return "chat";
+    }
+    if (hash === "overview") {
+      return "settings";
     }
     if (hash === "files" || hash.startsWith("files://")) {
       return "files";
     }
-    return "overview";
+    return "chat";
   };
 
   const getFilesPathFromHash = (): string => {
@@ -103,9 +109,11 @@ export default function InstanceDetailPage() {
 
   const [activeTab, setActiveTab] = useState<Tab>(getTabFromHash());
   const [editedConfig, setEditedConfig] = useState<string | null>(null);
-  // Terminal/Chrome are mounted once the user first visits the tab, then stay mounted
+  // Terminal/Chat are mounted once the user first visits the tab, then stay mounted
   const [terminalActivated, setTerminalActivated] = useState(getTabFromHash() === "terminal");
-  const [chromeActivated, setChromeActivated] = useState(getTabFromHash() === "chrome");
+  const [chatActivated, setChatActivated] = useState(getTabFromHash() === "chat");
+  const [chatViewMode, setChatViewMode] = useState<"chat-browser" | "chat-only">("chat-browser");
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
   // SSH troubleshoot dialog
   const [troubleshootOpen, setTroubleshootOpen] = useState(false);
@@ -131,7 +139,7 @@ export default function InstanceDetailPage() {
     const tab = getTabFromHash();
     setActiveTab(tab);
     if (tab === "terminal") setTerminalActivated(true);
-    if (tab === "chrome") setChromeActivated(true);
+    if (tab === "chat") setChatActivated(true);
     if (tab === "config") qc.invalidateQueries({ queryKey: ["instances", instanceId, "config"] });
   }, [location.hash]);
 
@@ -144,37 +152,40 @@ export default function InstanceDetailPage() {
   const handleTabChange = (tab: Tab) => {
     setActiveTab(tab);
     if (tab === "terminal") setTerminalActivated(true);
-    if (tab === "chrome") setChromeActivated(true);
+    if (tab === "chat") setChatActivated(true);
     if (tab === "config") qc.invalidateQueries({ queryKey: ["instances", instanceId, "config"] });
     navigate(`#${tab}`, { replace: true });
   };
 
-  const [chatOpen, _setChatOpen] = useState(false);
   const chatInitSentRef = useRef(false);
 
   const logsHook = useInstanceLogs(instanceId, activeTab === "logs");
   const termHook = useTerminal(instanceId, terminalActivated && instance?.status === "running");
-  const desktopHook = useDesktop(instanceId, chromeActivated && instance?.status === "running");
-  const chatHook = useChat(instanceId, chatOpen && chromeActivated && instance?.status === "running");
+  const desktopHook = useDesktop(instanceId, chatActivated && chatViewMode === "chat-browser" && instance?.status === "running");
+  const chatHook = useChat(instanceId, chatActivated && instance?.status === "running");
 
   // Auto-send initial messages when chat connects (delayed to survive StrictMode double-mount)
   useEffect(() => {
-    if (chatHook.connectionState !== "connected" || !chatOpen || chatInitSentRef.current) return;
+    if (chatHook.connectionState !== "connected" || chatInitSentRef.current) return;
     const timer = setTimeout(() => {
       chatInitSentRef.current = true;
       chatHook.clearMessages();
       chatHook.sendMessage("/new");
-      chatHook.sendMessage("You need to interact with the current tab in the Browser");
+      if (chatViewMode === "chat-browser") {
+        chatHook.sendMessage(
+          "You have a browser open that I can see. When I ask you to visit websites, search for information online, or interact with web pages, use the built-in Chromium browser (via computer/browser tools) — do NOT use the web_search skill. Navigate directly in the browser instead."
+        );
+      }
     }, 300);
     return () => clearTimeout(timer);
-  }, [chatHook.connectionState, chatOpen, chatHook.sendMessage, chatHook.clearMessages]);
+  }, [chatHook.connectionState, chatHook.sendMessage, chatHook.clearMessages, chatViewMode]);
 
-  // Reset init flag when chat is closed so re-opening starts fresh
+  // Reset init flag when switching away from chat tab so re-entering starts fresh
   useEffect(() => {
-    if (!chatOpen) {
+    if (activeTab !== "chat") {
       chatInitSentRef.current = false;
     }
-  }, [chatOpen]);
+  }, [activeTab]);
 
   if (isLoading) {
     return <div className="text-center py-12 text-gray-500">Loading...</div>;
@@ -323,12 +334,12 @@ export default function InstanceDetailPage() {
   };
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: "overview", label: "Overview" },
-    { key: "chrome", label: "Browser" },
+    { key: "chat", label: "Chat" },
     { key: "terminal", label: "Terminal" },
     { key: "files", label: "Files" },
     { key: "config", label: "Config" },
     { key: "logs", label: "Logs" },
+    { key: "settings", label: "Settings" },
   ];
 
   return (
@@ -375,7 +386,7 @@ export default function InstanceDetailPage() {
         </nav>
       </div>
 
-      {activeTab === "overview" && (
+      {activeTab === "settings" && (
         <div className="space-y-8">
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <h3 className="text-sm font-medium text-gray-900 mb-4">Instance Details</h3>
@@ -713,40 +724,81 @@ export default function InstanceDetailPage() {
         </div>
       )}
 
-      {chromeActivated && (
+      {chatActivated && (
         <div
-          className="bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-142px)] min-h-[400px] flex"
-          style={activeTab !== "chrome" ? { display: "none" } : undefined}
+          ref={chatContainerRef}
+          className="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden h-[calc(100vh-142px)] min-h-[400px] flex flex-col"
+          style={activeTab !== "chat" ? { display: "none" } : undefined}
         >
           {instance.status === "running" ? (
             <>
-              {chatOpen && (
-                <div className="w-96 flex-shrink-0 border-r border-gray-700">
+              {/* Fullscreen / New Window bar */}
+              <div className="flex items-center justify-end gap-2 px-3 py-1 bg-gray-800 border-b border-gray-700">
+                <button
+                  onClick={() => {
+                    const popup = window.open(`/instances/${instanceId}/chat`, "_blank");
+                    if (popup) {
+                      const handler = (e: MessageEvent) => {
+                        if (e.source === popup && e.data?.type === "chat-history-request" && e.data?.instanceId === instanceId) {
+                          popup.postMessage({ type: "chat-history", messages: chatHook.messages }, window.location.origin);
+                          window.removeEventListener("message", handler);
+                        }
+                      };
+                      window.addEventListener("message", handler);
+                    }
+                  }}
+                  className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded"
+                  title="Open in new window"
+                >
+                  <ExternalLink size={14} /> New Window
+                </button>
+                <button
+                  onClick={() => {
+                    if (document.fullscreenElement) {
+                      document.exitFullscreen();
+                    } else {
+                      chatContainerRef.current?.requestFullscreen();
+                    }
+                  }}
+                  className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded"
+                  title="Toggle fullscreen"
+                >
+                  <Maximize size={14} /> Full Screen
+                </button>
+              </div>
+              <div className="flex flex-1 min-h-0">
+                <div className={chatViewMode === "chat-browser" ? "w-[400px] flex-shrink-0 border-r border-gray-700" : "flex-1"}>
                   <ChatPanel
                     messages={chatHook.messages}
                     connectionState={chatHook.connectionState}
+                    thinkingLabel={chatHook.thinkingLabel}
                     onSend={chatHook.sendMessage}
-                    onClear={chatHook.clearMessages}
+                    onStop={chatHook.stopResponse}
+                    onNewChat={chatHook.newChat}
                     onReconnect={chatHook.reconnect}
+                    viewMode={chatViewMode}
+                    onViewModeChange={setChatViewMode}
                   />
                 </div>
-              )}
-              <div className="flex-1 min-w-0">
-                <VncPanel
-                  instanceId={instanceId}
-                  connectionState={desktopHook.connectionState}
-                  containerRef={desktopHook.containerRef}
-                  reconnect={desktopHook.reconnect}
-                  copyFromRemote={desktopHook.copyFromRemote}
-                  pasteToRemote={desktopHook.pasteToRemote}
-                  chatOpen={false}
-                  showNewWindow={false}
-                />
+                {chatViewMode === "chat-browser" && (
+                  <div className="flex-1 min-w-0">
+                    <VncPanel
+                      instanceId={instanceId}
+                      connectionState={desktopHook.connectionState}
+                      containerRef={desktopHook.containerRef}
+                      reconnect={desktopHook.reconnect}
+                      copyFromRemote={desktopHook.copyFromRemote}
+                      pasteToRemote={desktopHook.pasteToRemote}
+                      showNewWindow={false}
+                      showFullscreen={false}
+                    />
+                  </div>
+                )}
               </div>
             </>
           ) : (
             <div className="flex items-center justify-center h-full w-full text-gray-500 text-sm">
-              Instance must be running to view Browser.
+              Instance must be running to use Chat.
             </div>
           )}
         </div>

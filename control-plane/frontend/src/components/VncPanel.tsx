@@ -1,5 +1,5 @@
 import { useCallback, useRef, type Ref } from "react";
-import { Wifi, WifiOff, Loader2, RefreshCw, Maximize, ExternalLink, MessageSquare, Copy, ClipboardPaste } from "lucide-react";
+import { Wifi, WifiOff, Loader2, RefreshCw, Maximize, ExternalLink, Copy, ClipboardPaste } from "lucide-react";
 import type { DesktopConnectionState } from "@/hooks/useDesktop";
 
 interface VncPanelProps {
@@ -9,9 +9,8 @@ interface VncPanelProps {
   reconnect: () => void;
   copyFromRemote: () => void;
   pasteToRemote: () => void;
-  chatOpen?: boolean;
-  onChatToggle?: () => void;
   showNewWindow?: boolean;
+  showFullscreen?: boolean;
 }
 
 function ConnectionIndicator({ state }: { state: DesktopConnectionState }) {
@@ -51,9 +50,8 @@ export default function VncPanel({
   reconnect,
   copyFromRemote,
   pasteToRemote,
-  chatOpen,
-  onChatToggle,
   showNewWindow = true,
+  showFullscreen = true,
 }: VncPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -69,15 +67,6 @@ export default function VncPanel({
   return (
     <div ref={panelRef} className="flex flex-col h-full">
       <div className="flex items-center gap-2 px-3 py-2 bg-gray-800 border-b border-gray-700">
-        {onChatToggle && (
-          <button
-            onClick={onChatToggle}
-            className={`flex items-center gap-1 px-1.5 py-1 text-xs rounded ${chatOpen ? "text-blue-400" : "text-gray-400 hover:text-white"}`}
-            title="Toggle chat"
-          >
-            <MessageSquare size={14} /> Chat
-          </button>
-        )}
         {(connectionState === "disconnected" || connectionState === "error") && (
           <button
             onClick={reconnect}
@@ -115,13 +104,15 @@ export default function VncPanel({
             <ExternalLink size={14} /> New Window
           </button>
         )}
-        <button
-          onClick={toggleFullscreen}
-          className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded"
-          title="Toggle fullscreen"
-        >
-          <Maximize size={14} /> Full Screen
-        </button>
+        {showFullscreen && (
+          <button
+            onClick={toggleFullscreen}
+            className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded"
+            title="Toggle fullscreen"
+          >
+            <Maximize size={14} /> Full Screen
+          </button>
+        )}
         <ConnectionIndicator state={connectionState} />
       </div>
       <div

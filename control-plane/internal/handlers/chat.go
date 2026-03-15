@@ -18,7 +18,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const chatSessionKey = "agent:main:main"
+const chatSessionKey = "browser"
 
 func ChatProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
@@ -77,8 +77,16 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
+	// Set Origin to loopback so the gateway's local-loopback bypass accepts the
+	// connection (the gateway enforces an origin check when client.id is
+	// "openclaw-control-ui" or mode is "webchat").
+	gwOrigin := fmt.Sprintf("http://127.0.0.1:%d", port)
 	log.Printf("[chat] Connecting to gateway via tunnel: %s", gwURL)
-	gwConn, _, err := websocket.Dial(dialCtx, gwURL, nil)
+	gwConn, _, err := websocket.Dial(dialCtx, gwURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Origin": []string{gwOrigin},
+		},
+	})
 	if err != nil {
 		log.Printf("[chat] Failed to connect to gateway at %s: %v", gwURL, err)
 		clientConn.Close(4502, "Cannot connect to gateway")
@@ -203,13 +211,23 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 			reqCounter++
 			var gwFrame map[string]interface{}
 
-			if strings.TrimSpace(content) == "/new" || strings.TrimSpace(content) == "/reset" {
+			trimmedContent := strings.TrimSpace(content)
+			if trimmedContent == "/new" || trimmedContent == "/reset" {
 				gwFrame = map[string]interface{}{
 					"type":   "req",
 					"id":     fmt.Sprintf("reset-%d", reqCounter),
 					"method": "sessions.reset",
 					"params": map[string]interface{}{
 						"key": chatSessionKey,
+					},
+				}
+			} else if trimmedContent == "/stop" {
+				gwFrame = map[string]interface{}{
+					"type":   "req",
+					"id":     fmt.Sprintf("abort-%d", reqCounter),
+					"method": "chat.abort",
+					"params": map[string]interface{}{
+						"sessionKey": chatSessionKey,
 					},
 				}
 			} else {

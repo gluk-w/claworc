@@ -9,6 +9,7 @@ import UsersPage from "./pages/UsersPage";
 import UsagePage from "./pages/UsagePage";
 import AccountPage from "./pages/AccountPage";
 import VncPopupPage from "./pages/VncPopupPage";
+import ChatPopupPage from "./pages/ChatPopupPage";
 import SkillsPage from "./pages/SkillsPage";
 import { useAuth } from "./contexts/AuthContext";
 
@@ -35,6 +36,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <VncPopupPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/instances/:id/chat"
+        element={
+          <ProtectedRoute>
+            <ChatPopupPage />
           </ProtectedRoute>
         }
       />

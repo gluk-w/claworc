@@ -10,16 +10,37 @@ const BACKOFF_INITIAL = 1000;
 const BACKOFF_MAX = 30000;
 const MAX_RETRIES = 5;
 
-export function useChat(instanceId: number, enabled: boolean) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+/** Extract text from a gateway chat message content field (array of blocks or string). */
+function extractText(content: unknown): string | undefined {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const block of content) {
+      if (typeof block === "string") parts.push(block);
+      else if (block && typeof block === "object" && typeof (block as any).text === "string") {
+        parts.push((block as any).text);
+      }
+    }
+    return parts.length > 0 ? parts.join("") : undefined;
+  }
+  return undefined;
+}
+
+export function useChat(instanceId: number, enabled: boolean, initialMessages?: ChatMessage[]) {
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages ?? []);
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("disconnected");
+  const [thinkingLabel, setThinkingLabel] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const retriesRef = useRef(0);
   const backoffRef = useRef(BACKOFF_INITIAL);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stableTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const enabledRef = useRef(enabled);
+  // Track the current streaming run so we can update the message in-place
+  const streamingRunRef = useRef<{ runId: string; msgId: string } | null>(null);
+  // Track completed run IDs so chat snapshots arriving after lifecycle end don't create duplicates
+  const completedRunsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     enabledRef.current = enabled;
@@ -114,12 +135,9 @@ export function useChat(instanceId: number, enabled: boolean) {
         case "agent": {
           const eventName = frame.event;
           if (eventName === "thinking") {
-            addSystemMessage("Agent is thinking...");
+            setThinkingLabel("Thinking...");
           } else if (eventName === "tool_use") {
-            const toolData = frame.data as { name?: string } | undefined;
-            addSystemMessage(
-              `Agent using tool: ${toolData?.name ?? "unknown"}`,
-            );
+            setThinkingLabel("Working...");
           }
           break;
         }
@@ -132,21 +150,89 @@ export function useChat(instanceId: number, enabled: boolean) {
         case "event": {
           const ev = frame.event;
           const payload = frame.payload as Record<string, unknown> | undefined;
-          // Skip heartbeat ticks and presence events
-          if (ev === "tick" || ev === "presence") break;
-          // Try to extract chat message content from event payload
-          const content = (payload?.message ?? payload?.content ?? payload?.text) as string | undefined;
-          if (content) {
-            const role = (payload?.role === "user") ? "user" as const : "agent" as const;
-            setMessages((prev) => [
-              ...prev,
-              { id: nextId(), role, content, timestamp: Date.now() },
-            ]);
-          } else {
-            // Log unknown events for debugging (sanitize to prevent log injection)
-            const sanitizedEv = String(ev).replace(/[\n\r]/g, ' ');
-            console.log("[chat] gateway event:", sanitizedEv, payload);
+          if (!payload) break;
+
+          // Skip heartbeat ticks, presence, and health events
+          if (ev === "tick" || ev === "presence" || ev === "health") break;
+
+          if (ev === "agent") {
+            const stream = payload.stream as string | undefined;
+            const data = payload.data as Record<string, unknown> | undefined;
+            const runId = payload.runId as string | undefined;
+
+            if (stream === "assistant" && data && runId) {
+              const text = data.text as string | undefined;
+              if (!text) break;
+
+              setThinkingLabel(null);
+
+              const current = streamingRunRef.current;
+              if (current && current.runId === runId) {
+                // Update existing streaming message in-place
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === current.msgId ? { ...m, content: text } : m,
+                  ),
+                );
+              } else {
+                // New run — create a new agent message
+                const msgId = nextId();
+                streamingRunRef.current = { runId, msgId };
+                setMessages((prev) => [
+                  ...prev,
+                  { id: msgId, role: "agent", content: text, timestamp: Date.now() },
+                ]);
+              }
+            } else if (stream === "lifecycle") {
+              const phase = (data as any)?.phase as string | undefined;
+              if (phase === "start") {
+                setThinkingLabel("Thinking...");
+              } else if (phase === "end") {
+                setThinkingLabel(null);
+                const cur = streamingRunRef.current;
+                if (cur) completedRunsRef.current.add(cur.runId);
+                streamingRunRef.current = null;
+              }
+            }
+            break;
           }
+
+          if (ev === "chat") {
+            // Chat events are periodic snapshots — use them as fallback
+            // if we missed the agent stream events
+            const msg = payload.message as Record<string, unknown> | undefined;
+            if (!msg) break;
+            const runId = payload.runId as string | undefined;
+            const text = extractText(msg.content);
+            if (!text) break;
+            const role = msg.role === "user" ? "user" as const : "agent" as const;
+
+            // Skip if this run was already completed via agent stream events
+            if (runId && completedRunsRef.current.has(runId)) break;
+
+            const current = streamingRunRef.current;
+            if (current && runId && current.runId === runId) {
+              // Already tracking this run via agent events — update with snapshot
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === current.msgId ? { ...m, content: text } : m,
+                ),
+              );
+            } else if (!current || (runId && current.runId !== runId)) {
+              // Not tracking — create a new message
+              setThinkingLabel(null);
+              const msgId = nextId();
+              if (runId) {
+                streamingRunRef.current = { runId, msgId };
+              }
+              setMessages((prev) => [
+                ...prev,
+                { id: msgId, role, content: text, timestamp: Date.now() },
+              ]);
+            }
+            break;
+          }
+
           break;
         }
 
@@ -225,6 +311,28 @@ export function useChat(instanceId: number, enabled: boolean) {
 
   const clearMessages = useCallback(() => setMessages([]), []);
 
+  /** Send /stop to abort any in-flight agent run */
+  const sendCommand = useCallback((cmd: string) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: "chat", role: "user", content: cmd }));
+  }, []);
+
+  const stopResponse = useCallback(() => {
+    sendCommand("/stop");
+    setThinkingLabel(null);
+    streamingRunRef.current = null;
+  }, [sendCommand]);
+
+  /** Abort current run, reset session, and clear local history */
+  const newChat = useCallback(() => {
+    sendCommand("/stop");
+    sendCommand("/new");
+    setThinkingLabel(null);
+    streamingRunRef.current = null;
+    completedRunsRef.current.clear();
+    setMessages([]);
+  }, [sendCommand]);
+
   const reconnect = useCallback(() => {
     retriesRef.current = 0;
     backoffRef.current = BACKOFF_INITIAL;
@@ -234,8 +342,11 @@ export function useChat(instanceId: number, enabled: boolean) {
   return {
     messages,
     connectionState,
+    thinkingLabel,
     sendMessage,
     clearMessages,
+    stopResponse,
+    newChat,
     reconnect,
   };
 }

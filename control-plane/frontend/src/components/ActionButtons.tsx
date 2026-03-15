@@ -44,7 +44,7 @@ export default function ActionButtons({
     const params = new URLSearchParams({
       gatewayUrl: gwUrl,
       token: instance.gateway_token,
-      session: "agent:main:main",
+      session: "browser",
     });
     return `/openclaw/${instance.id}/?${params}`;
   })();
