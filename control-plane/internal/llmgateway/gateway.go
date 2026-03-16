@@ -157,25 +157,6 @@ func resolveRealAPIKey(instanceID uint, providerKey string) string {
 		}
 	}
 
-	// Fallback: check for Anthropic OAuth token
-	normalizedKey := strings.ToLower(strings.ReplaceAll(providerKey, "-", ""))
-	if strings.HasPrefix(normalizedKey, "anthropic") {
-		oauthKeyName := "ANTHROPIC_OAUTH_TOKEN"
-		// Instance-level OAuth token
-		var oauthKey database.InstanceAPIKey
-		if database.DB.Where("instance_id = ? AND key_name = ?", instanceID, oauthKeyName).First(&oauthKey).Error == nil {
-			if decrypted, err := utils.Decrypt(oauthKey.KeyValue); err == nil {
-				return decrypted
-			}
-		}
-		// Global OAuth token
-		if val, err := database.GetSetting("api_key:" + oauthKeyName); err == nil && val != "" {
-			if decrypted, err := utils.Decrypt(val); err == nil {
-				return decrypted
-			}
-		}
-	}
-
 	return ""
 }
 
