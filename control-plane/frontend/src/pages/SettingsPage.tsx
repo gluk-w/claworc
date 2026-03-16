@@ -303,7 +303,7 @@ export default function SettingsPage() {
     !!mName &&
     !!mBaseURL &&
     (!isCustomProvider || mModels.length > 0) &&
-    (modalMode === "edit" || isCustomProvider || !!mApiKey.trim()) &&
+    (modalMode === "edit" || isCustomProvider || !!mApiKey.trim() || !!mOAuthToken.trim()) &&
     !createProviderMutation.isPending &&
     !updateProviderMutation.isPending;
 
