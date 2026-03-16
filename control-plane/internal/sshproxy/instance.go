@@ -28,6 +28,9 @@ func ShellQuote(s string) string {
 type SSHInstance struct{ client *gossh.Client }
 
 // NewSSHInstance wraps an established SSH client as an Instance.
+// Client returns the underlying SSH client.
+func (i *SSHInstance) Client() *gossh.Client { return i.client }
+
 func NewSSHInstance(client *gossh.Client) *SSHInstance {
 	return &SSHInstance{client: client}
 }
