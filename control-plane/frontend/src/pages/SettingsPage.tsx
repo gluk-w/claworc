@@ -777,7 +777,7 @@ export default function SettingsPage() {
                     <input
                       type={mShowApiKey ? "text" : "password"}
                       value={mApiKey}
-                      onChange={(e) => { setMApiKey(e.target.value); if (e.target.value.trim()) setMOAuthToken(); }}
+                      onChange={(e) => { setMApiKey(e.target.value); if (e.target.value.trim()) setMOAuthToken(""); }}
                       placeholder={modalMode === "edit" ? "Enter new key to update" : "Enter API key"}
                       className="w-full px-3 py-1.5 pr-10 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
@@ -796,7 +796,7 @@ export default function SettingsPage() {
               {showForm && ((modalMode === "create" && mCatalogKey === "anthropic") || (modalMode === "edit" && modalProvider?.provider === "anthropic")) && (
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">
-                    OAuth Token (optional){" "}
+                    OAuth Token{" "}
                     {modalMode === "edit" && settings.api_keys?.ANTHROPIC_OAUTH_TOKEN && (
                       <span className="text-gray-400">
                         (current: ****{settings.api_keys.ANTHROPIC_OAUTH_TOKEN.slice(-4)})
@@ -807,8 +807,8 @@ export default function SettingsPage() {
                     <input
                       type={mShowOAuthToken ? "text" : "password"}
                       value={mOAuthToken}
-                      onChange={(e) => { setMOAuthToken(e.target.value); if (e.target.value.trim()) setMApiKey(); }}
-                      placeholder={modalMode === "edit" ? "Enter new token to update" : "Enter OAuth token (optional)"}
+                      onChange={(e) => { setMOAuthToken(e.target.value); if (e.target.value.trim()) setMApiKey(""); }}
+                      placeholder={modalMode === "edit" ? "Enter new token to update" : "Enter OAuth token"}
                       className="w-full px-3 py-1.5 pr-10 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     <button
