@@ -612,6 +612,10 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		if gatewayTokenPlain != "" {
 			envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
 		}
+		// Pass Anthropic OAuth token as env var if configured
+		if oauthToken := resolveOAuthToken(inst.ID); oauthToken != "" {
+			envVars["ANTHROPIC_OAUTH_TOKEN"] = oauthToken
+		}
 
 		err := orch.CreateInstance(ctx, orchestrator.CreateParams{
 			Name:            name,
@@ -1321,6 +1325,10 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		envVars := map[string]string{}
 		if gatewayTokenPlain != "" {
 			envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
+		}
+		// Pass Anthropic OAuth token as env var if configured
+		if oauthToken := resolveOAuthToken(inst.ID); oauthToken != "" {
+			envVars["ANTHROPIC_OAUTH_TOKEN"] = oauthToken
 		}
 
 		// Create container/deployment with empty volumes
