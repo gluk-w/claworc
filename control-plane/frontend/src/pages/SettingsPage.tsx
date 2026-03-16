@@ -106,6 +106,10 @@ export default function SettingsPage() {
   const [braveValue, setBraveValue] = useState("");
   const [showBrave, setShowBrave] = useState(false);
 
+  const [editingOAuthToken, setEditingOAuthToken] = useState(false);
+  const [oauthTokenValue, setOauthTokenValue] = useState("");
+  const [showOAuthToken, setShowOAuthToken] = useState(false);
+
   // When catalog detail loads for the selected provider, fill in the base_url
   useEffect(() => {
     if (!catalogDetail || mCatalogKey === "__custom__" || !mCatalogKey) return;
@@ -387,6 +391,82 @@ export default function SettingsPage() {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="text-sm font-medium text-gray-900 mb-4">Anthropic OAuth Token</h3>
+          <p className="text-xs text-gray-500 mb-3">Used for Anthropic OAuth authentication (not an LLM provider key).</p>
+          {editingOAuthToken ? (
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type={showOAuthToken ? "text" : "password"}
+                    value={oauthTokenValue}
+                    onChange={(e) => setOauthTokenValue(e.target.value)}
+                    className="w-full px-3 py-1.5 pr-10 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Enter Anthropic OAuth token"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowOAuthToken(!showOAuthToken)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showOAuthToken ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setEditingOAuthToken(false); setOauthTokenValue(""); }}
+                  className="px-3 py-1.5 text-xs text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    updateMutation.mutate(
+                      { api_keys: { ANTHROPIC_OAUTH_TOKEN: oauthTokenValue } },
+                      {
+                        onSuccess: () => {
+                          setEditingOAuthToken(false);
+                          setOauthTokenValue("");
+                        },
+                      },
+                    );
+                  }}
+                  disabled={!oauthTokenValue.trim() || updateMutation.isPending}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {updateMutation.isPending ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500 font-mono">
+                {settings.api_keys?.ANTHROPIC_OAUTH_TOKEN
+                  ? "****" + settings.api_keys.ANTHROPIC_OAUTH_TOKEN.slice(-4)
+                  : "(not set)"}
+              </span>
+              <button type="button" onClick={() => setEditingOAuthToken(true)} className="text-xs text-blue-600 hover:text-blue-800">
+                Change
+              </button>
+              {settings.api_keys?.ANTHROPIC_OAUTH_TOKEN && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    updateMutation.mutate({ delete_api_keys: ["ANTHROPIC_OAUTH_TOKEN"] });
+                  }}
+                  className="text-xs text-red-500 hover:text-red-700"
+                >
+                  Delete
+                </button>
+              )}
             </div>
           )}
         </div>

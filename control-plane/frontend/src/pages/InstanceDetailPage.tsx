@@ -41,6 +41,8 @@ import { useDesktop } from "@/hooks/useDesktop";
 import { useChat } from "@/hooks/useChat";
 import type { InstanceUpdatePayload } from "@/types/instance";
 import { buildSSHTooltip } from "@/utils/sshTooltip";
+import ProviderTable from "@/components/ProviderTable";
+import { useSettings } from "@/hooks/useSettings";
 
 type Tab = "overview" | "chrome" | "terminal" | "files" | "config" | "logs";
 
@@ -54,6 +56,7 @@ export default function InstanceDetailPage() {
   const { isAdmin } = useAuth();
   const { data: instance, isLoading } = useInstance(instanceId);
   const { data: allProviders = [] } = useProviders();
+  const { data: settingsData } = useSettings();
 
   // Fetch catalog model lists for all catalog providers (used in edit mode)
   const catalogKeys = [...new Set(allProviders.filter((p) => p.provider).map((p) => p.provider))];
@@ -131,6 +134,11 @@ export default function InstanceDetailPage() {
   const [pendingProviders, setPendingProviders] = useState<number[] | null>(null);
   const [pendingProviderModels, setPendingProviderModels] = useState<Record<number, string[]> | null>(null);
   const [pendingDefaultModel, setPendingDefaultModel] = useState<string>("");
+
+  // API Key Overrides state
+  const [editingApiKeys, setEditingApiKeys] = useState(false);
+  const [pendingNewKeys, setPendingNewKeys] = useState<Record<string, string>>({});
+  const [pendingRemovals, setPendingRemovals] = useState<Record<string, true>>({});
 
   // Update tab when hash changes
   useEffect(() => {
@@ -634,6 +642,104 @@ export default function InstanceDetailPage() {
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* API Key Overrides */}
+          {isAdmin && (
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-sm font-medium text-gray-900">API Key Overrides</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Override global API keys for this instance.
+                  </p>
+                </div>
+                {editingApiKeys ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingApiKeys(false);
+                        setPendingNewKeys({});
+                        setPendingRemovals({});
+                      }}
+                      className="text-xs text-gray-600 hover:text-gray-800"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const apiKeys: Record<string, string | null> = {};
+                        for (const [k, v] of Object.entries(pendingNewKeys)) {
+                          apiKeys[k] = v;
+                        }
+                        for (const k of Object.keys(pendingRemovals)) {
+                          apiKeys[k] = null;
+                        }
+                        if (Object.keys(apiKeys).length === 0) {
+                          setEditingApiKeys(false);
+                          return;
+                        }
+                        updateMutation.mutate(
+                          { id: instanceId, payload: { api_keys: apiKeys } },
+                          {
+                            onSuccess: () => {
+                              setEditingApiKeys(false);
+                              setPendingNewKeys({});
+                              setPendingRemovals({});
+                            },
+                          },
+                        );
+                      }}
+                      disabled={updateMutation.isPending}
+                      className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {updateMutation.isPending ? "Saving..." : "Save"}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setEditingApiKeys(true)}
+                    className="text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+              <ProviderTable
+                globalApiKeys={settingsData?.api_keys ?? {}}
+                instanceOverrides={instance.api_key_overrides ?? []}
+                disabledProviders={[]}
+                defaultModel={instance.default_model ?? ""}
+                pendingNewKeys={pendingNewKeys}
+                pendingRemovals={pendingRemovals}
+                onToggleEnabled={() => {}}
+                onDefaultModelChange={() => {}}
+                onAddKey={(key, value) => {
+                  setPendingNewKeys((prev) => ({ ...prev, [key]: value }));
+                }}
+                onRemoveKey={(key) => {
+                  setPendingRemovals((prev) => ({ ...prev, [key]: true as const }));
+                }}
+                onUndoRemove={(key) => {
+                  setPendingRemovals((prev) => {
+                    const next = { ...prev };
+                    delete next[key];
+                    return next;
+                  });
+                }}
+                onUndoAdd={(key) => {
+                  setPendingNewKeys((prev) => {
+                    const next = { ...prev };
+                    delete next[key];
+                    return next;
+                  });
+                }}
+                editable={editingApiKeys}
+              />
             </div>
           )}
 
