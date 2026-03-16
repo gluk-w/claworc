@@ -74,6 +74,7 @@ export async function createProvider(payload: {
   api_type?: string;
   models?: ProviderModel[];
   api_key?: string;
+  oauth_token?: string;
 }): Promise<LLMProvider> {
   const { data } = await client.post<LLMProvider>("/llm/providers", payload);
   return data;

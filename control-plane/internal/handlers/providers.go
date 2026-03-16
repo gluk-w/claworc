@@ -234,7 +234,8 @@ type providerRequest struct {
 	BaseURL  string                   `json:"base_url"`
 	APIType  string                   `json:"api_type"`
 	Models   []database.ProviderModel `json:"models"`
-	APIKey   string                   `json:"api_key"`
+	APIKey     string                   `json:"api_key"`
+	OAuthToken string                   `json:"oauth_token"`
 }
 
 type providerResp struct {
@@ -290,8 +291,8 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "key must be lowercase alphanumeric with hyphens (e.g. anthropic, my-ollama)")
 		return
 	}
-	if body.Provider != "" && strings.TrimSpace(body.APIKey) == "" {
-		writeError(w, http.StatusBadRequest, "api_key is required for catalog providers")
+	if body.Provider != "" && strings.TrimSpace(body.APIKey) == "" && strings.TrimSpace(body.OAuthToken) == "" {
+		writeError(w, http.StatusBadRequest, "api_key or oauth_token is required for catalog providers")
 		return
 	}
 
@@ -329,6 +330,16 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 			log.Printf("failed to encrypt API key for provider %s: %v", utils.SanitizeForLog(body.Key), err)
 		} else {
 			database.SetSetting(settingKey, encrypted)
+		}
+	}
+
+	// Store OAuth token if provided
+	if oauthToken := strings.TrimSpace(body.OAuthToken); oauthToken != "" {
+		encrypted, err := utils.Encrypt(oauthToken)
+		if err != nil {
+			log.Printf("failed to encrypt OAuth token for provider %s: %v", utils.SanitizeForLog(body.Key), err)
+		} else {
+			database.SetSetting("api_key:ANTHROPIC_OAUTH_TOKEN", encrypted)
 		}
 	}
 

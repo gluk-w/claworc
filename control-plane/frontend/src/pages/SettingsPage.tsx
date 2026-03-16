@@ -204,10 +204,7 @@ export default function SettingsPage() {
               : undefined,
           }));
         })();
-        await createProviderMutation.mutateAsync({ key, provider: mProvider, name: mName, base_url: mBaseURL, api_type: apiType, models, api_key: mApiKey.trim() || undefined });
-        if (mOAuthToken.trim()) {
-          updateMutation.mutate({ api_keys: { ANTHROPIC_OAUTH_TOKEN: mOAuthToken.trim() } });
-        }
+        await createProviderMutation.mutateAsync({ key, provider: mProvider, name: mName, base_url: mBaseURL, api_type: apiType, models, api_key: mApiKey.trim() || undefined, oauth_token: mOAuthToken.trim() || undefined });
       } else {
         const payload: { name: string; base_url: string; api_type?: string; models?: ProviderModel[] } = { name: mName, base_url: mBaseURL };
         if (isCustomProvider) {
@@ -780,7 +777,7 @@ export default function SettingsPage() {
                     <input
                       type={mShowApiKey ? "text" : "password"}
                       value={mApiKey}
-                      onChange={(e) => setMApiKey(e.target.value)}
+                      onChange={(e) => { setMApiKey(e.target.value); if (e.target.value.trim()) setMOAuthToken(); }}
                       placeholder={modalMode === "edit" ? "Enter new key to update" : "Enter API key"}
                       className="w-full px-3 py-1.5 pr-10 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
@@ -810,7 +807,7 @@ export default function SettingsPage() {
                     <input
                       type={mShowOAuthToken ? "text" : "password"}
                       value={mOAuthToken}
-                      onChange={(e) => setMOAuthToken(e.target.value)}
+                      onChange={(e) => { setMOAuthToken(e.target.value); if (e.target.value.trim()) setMApiKey(); }}
                       placeholder={modalMode === "edit" ? "Enter new token to update" : "Enter OAuth token (optional)"}
                       className="w-full px-3 py-1.5 pr-10 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
@@ -849,8 +846,8 @@ export default function SettingsPage() {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => testMutation.mutate({ base_url: mBaseURL, api_key: mApiKey, api_type: resolveApiType() })}
-                  disabled={!mBaseURL || !mApiKey.trim() || testMutation.isPending}
+                  onClick={() => testMutation.mutate({ base_url: mBaseURL, api_key: mApiKey.trim() || mOAuthToken.trim(), api_type: resolveApiType() })}
+                  disabled={!mBaseURL || (!mApiKey.trim() && !mOAuthToken.trim()) || testMutation.isPending}
                   className="px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {testMutation.isPending ? "Testing..." : "Test"}
