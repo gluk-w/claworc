@@ -500,3 +500,7 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 		},
 	}
 }
+
+func (k *KubernetesOrchestrator) RecreateInstance(ctx context.Context, name string, newImage string, onProgress func(string)) error {
+	return fmt.Errorf("RecreateInstance is not yet supported on Kubernetes")
+}

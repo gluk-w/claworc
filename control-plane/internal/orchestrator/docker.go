@@ -389,7 +389,7 @@ func (d *DockerOrchestrator) RecreateInstance(ctx context.Context, name string, 
 			}
 		}
 	} else {
-		endpointsCfg[networkName] = {}
+		endpointsCfg[networkName] = &network.EndpointSettings{}
 	}
 	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: endpointsCfg,
