@@ -342,6 +342,74 @@ func (d *DockerOrchestrator) RestartInstance(ctx context.Context, name string) e
 	return d.client.ContainerRestart(ctx, name, container.StopOptions{Timeout: &timeout})
 }
 
+func (d *DockerOrchestrator) RecreateInstance(ctx context.Context, name string, newImage string, onProgress func(string)) error {
+	if onProgress == nil {
+		onProgress = func(string) {}
+	}
+
+	// 1. Inspect current container to capture its configuration
+	onProgress("Inspecting current container...")
+	inspect, err := d.client.ContainerInspect(ctx, name)
+	if err != nil {
+		return fmt.Errorf("inspect container %s: %w", name, err)
+	}
+
+	// 2. Pull the new image
+	onProgress("Pulling new image...")
+	if err := d.ensureImage(ctx, newImage); err != nil {
+		return fmt.Errorf("pull image: %w", err)
+	}
+
+	// 3. Stop the container
+	onProgress("Stopping container...")
+	timeout := 30
+	if err := d.client.ContainerStop(ctx, name, container.StopOptions{Timeout: &timeout}); err != nil {
+		log.Printf("Stop container %s during recreate: %v", utils.SanitizeForLog(name), err)
+	}
+
+	// 4. Remove the container (volumes are preserved since they are named volumes)
+	onProgress("Removing old container...")
+	if err := d.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true}); err != nil {
+		return fmt.Errorf("remove container %s: %w", name, err)
+	}
+
+	// 5. Recreate the container with the new image but same config
+	onProgress("Creating container with new image...")
+	containerCfg := inspect.Config
+	containerCfg.Image = newImage
+
+	hostCfg := inspect.HostConfig
+
+	// Preserve the original container's network settings
+	endpointsCfg := make(map[string]*network.EndpointSettings)
+	if inspect.NetworkSettings != nil && len(inspect.NetworkSettings.Networks) > 0 {
+		for netName, netSettings := range inspect.NetworkSettings.Networks {
+			endpointsCfg[netName] = &network.EndpointSettings{
+				Aliases: netSettings.Aliases,
+			}
+		}
+	} else {
+		endpointsCfg[networkName] = {}
+	}
+	netCfg := &network.NetworkingConfig{
+		EndpointsConfig: endpointsCfg,
+	}
+
+	resp, err := d.client.ContainerCreate(ctx, containerCfg, hostCfg, netCfg, nil, name)
+	if err != nil {
+		return fmt.Errorf("recreate container %s: %w", name, err)
+	}
+
+	// 6. Start the new container
+	onProgress("Starting container...")
+	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return fmt.Errorf("start recreated container: %w", err)
+	}
+
+	onProgress("Container recreated successfully")
+	return nil
+}
+
 func (d *DockerOrchestrator) GetInstanceStatus(ctx context.Context, name string) (string, error) {
 	inspect, err := d.client.ContainerInspect(ctx, name)
 	if err != nil {
