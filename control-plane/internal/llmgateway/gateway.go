@@ -99,7 +99,7 @@ func extractGatewayToken(r *http.Request) string {
 }
 
 // authAndResolve validates the gateway token and returns provider info, real API key, API type, and provider models.
-func authAndResolve(r *http.Request) (instanceID, providerID uint, providerKey, baseURL, apiKey, apiType string, providerModels []database.ProviderModel, err error) {
+func authAndResolve(r *http.Request) (instanceID, providerID uint, providerKey, baseURL, apiKey, apiType string, isOAuthToken bool, providerModels []database.ProviderModel, err error) {
 	token := extractGatewayToken(r)
 	if token == "" {
 		err = fmt.Errorf("missing or invalid gateway auth token")
@@ -116,7 +116,7 @@ func authAndResolve(r *http.Request) (instanceID, providerID uint, providerKey, 
 	providerID = key.ProviderID
 	providerKey = key.Provider.Key
 	baseURL = strings.TrimRight(key.Provider.BaseURL, "/")
-	apiKey = resolveRealAPIKey(instanceID, key.Provider.Key)
+	apiKey, isOAuthToken = resolveRealAPIKey(instanceID, key.Provider.Key)
 	apiType = key.Provider.APIType
 	if apiType == "" {
 		apiType = "openai-completions"
@@ -139,21 +139,21 @@ func findModelCost(models []database.ProviderModel, modelID string) *database.Pr
 // Checks per-instance overrides first (using PROVIDER_API_KEY naming convention),
 // then falls back to the global api_key:PROVIDER_API_KEY setting.
 // For Anthropic providers, also checks ANTHROPIC_OAUTH_TOKEN as a final fallback.
-func resolveRealAPIKey(instanceID uint, providerKey string) string {
+func resolveRealAPIKey(instanceID uint, providerKey string) (string, bool) {
 	keyName := strings.ToUpper(strings.ReplaceAll(providerKey, "-", "_")) + "_API_KEY"
 
 	// Instance-level override
 	var instKey database.InstanceAPIKey
 	if database.DB.Where("instance_id = ? AND key_name = ?", instanceID, keyName).First(&instKey).Error == nil {
 		if decrypted, err := utils.Decrypt(instKey.KeyValue); err == nil {
-			return decrypted
+			return decrypted, false
 		}
 	}
 
 	// Global setting
 	if val, err := database.GetSetting("api_key:" + keyName); err == nil && val != "" {
 		if decrypted, err := utils.Decrypt(val); err == nil {
-			return decrypted
+			return decrypted, false
 		}
 	}
 
@@ -165,18 +165,18 @@ func resolveRealAPIKey(instanceID uint, providerKey string) string {
 		var oauthKey database.InstanceAPIKey
 		if database.DB.Where("instance_id = ? AND key_name = ?", instanceID, oauthKeyName).First(&oauthKey).Error == nil {
 			if decrypted, err := utils.Decrypt(oauthKey.KeyValue); err == nil {
-				return decrypted
+				return decrypted, true
 			}
 		}
 		// Global OAuth token
 		if val, err := database.GetSetting("api_key:" + oauthKeyName); err == nil && val != "" {
 			if decrypted, err := utils.Decrypt(val); err == nil {
-				return decrypted
+				return decrypted, true
 			}
 		}
 	}
 
-	return ""
+	return "", false
 }
 
 // buildTargetURL constructs the upstream URL from the provider base URL and the request path/query.
@@ -239,7 +239,7 @@ func calculateCost(models []database.ProviderModel, modelID string, inputTokens,
 func handleProxy(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	instanceID, providerID, providerKey, baseURL, apiKey, apiType, providerModels, err := authAndResolve(r)
+	instanceID, providerID, providerKey, baseURL, apiKey, apiType, isOAuthToken, providerModels, err := authAndResolve(r)
 	if err != nil {
 		log.Printf("[gateway] auth failed: %s path=%s", err, safeLog(r.URL.Path))
 		w.Header().Set("Content-Type", "application/json")
@@ -278,6 +278,12 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, `{"error":{"message":"failed to build upstream request"}}`, http.StatusInternalServerError)
 		return
+	}
+
+	// OAuth tokens use Authorization: Bearer instead of x-api-key
+	if isOAuthToken {
+		upstreamReq.Header.Del("x-api-key")
+		upstreamReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
 	client := &http.Client{Timeout: 300 * time.Second}
