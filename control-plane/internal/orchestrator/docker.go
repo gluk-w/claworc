@@ -179,6 +179,9 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
 		env = append(env, fmt.Sprintf("OPENCLAW_GATEWAY_TOKEN=%s", token))
 	}
+	if token, ok := params.EnvVars["ANTHROPIC_OAUTH_TOKEN"]; ok && token != "" {
+		env = append(env, fmt.Sprintf("ANTHROPIC_OAUTH_TOKEN=%s", token))
+	}
 	if params.Timezone != "" {
 		env = append(env, fmt.Sprintf("TZ=%s", params.Timezone))
 	}
