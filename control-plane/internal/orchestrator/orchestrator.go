@@ -18,6 +18,7 @@ type ContainerOrchestrator interface {
 	StartInstance(ctx context.Context, name string) error
 	StopInstance(ctx context.Context, name string) error
 	RestartInstance(ctx context.Context, name string) error
+	RecreateInstance(ctx context.Context, name string, newImage string, onProgress func(string)) error
 	GetInstanceStatus(ctx context.Context, name string) (string, error)
 	GetInstanceImageInfo(ctx context.Context, name string) (string, error)
 

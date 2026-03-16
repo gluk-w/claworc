@@ -21,6 +21,7 @@ import {
   useCloneInstance,
   useDeleteInstance,
   useUpdateInstance,
+  useUpdateInstanceImage,
   useInstanceConfig,
   useUpdateInstanceConfig,
   useRestartedToast,
@@ -78,6 +79,7 @@ export default function InstanceDetailPage() {
   const cloneMutation = useCloneInstance();
   const deleteMutation = useDeleteInstance();
   const updateMutation = useUpdateInstance();
+  const updateImageMutation = useUpdateInstanceImage();
   const updateConfigMutation = useUpdateInstanceConfig();
 
   // Get initial tab from URL hash (supports #files:///path pattern)
@@ -119,6 +121,10 @@ export default function InstanceDetailPage() {
   // User-Agent override editing state
   const [editingUserAgent, setEditingUserAgent] = useState(false);
   const [pendingUserAgent, setPendingUserAgent] = useState<string | null>(null);
+
+  // Image update editing state
+  const [editingImage, setEditingImage] = useState(false);
+  const [pendingImage, setPendingImage] = useState("");
 
   // Gateway providers editing state
   const [editingGatewayProviders, setEditingGatewayProviders] = useState(false);
@@ -435,6 +441,81 @@ export default function InstanceDetailPage() {
               ))}
             </div>
           </div>
+
+          {/* Update Agent Image (admin only) */}
+          {isAdmin && (
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-medium text-gray-900">Update Agent Image</h3>
+                {!editingImage && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingImage(instance.container_image ?? "");
+                      setEditingImage(true);
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+
+              {editingImage ? (
+                <div className="space-y-3">
+                  <input
+                    type="text"
+                    value={pendingImage}
+                    onChange={(e) => setPendingImage(e.target.value)}
+                    placeholder="e.g., glukw/openclaw-vnc-chromium:latest"
+                    className="w-full text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && pendingImage.trim()) {
+                        updateImageMutation.mutate(
+                          { id: instanceId, containerImage: pendingImage.trim() },
+                          { onSuccess: () => { setEditingImage(false); setPendingImage(""); } },
+                        );
+                      }
+                      if (e.key === "Escape") { setEditingImage(false); setPendingImage(""); }
+                    }}
+                  />
+                  <p className="text-xs text-gray-500">
+                    Enter a new container image tag to update. The instance will be stopped, recreated with the new image, and restarted. All data is preserved.
+                  </p>
+                  <div className="flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={() => { setEditingImage(false); setPendingImage(""); }}
+                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!pendingImage.trim()) return;
+                        updateImageMutation.mutate(
+                          { id: instanceId, containerImage: pendingImage.trim() },
+                          { onSuccess: () => { setEditingImage(false); setPendingImage(""); } },
+                        );
+                      }}
+                      disabled={updateImageMutation.isPending || !pendingImage.trim()}
+                      className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {updateImageMutation.isPending ? "Updating..." : "Update Image"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">
+                  {instance.live_image_info
+                    ? instance.live_image_info
+                    : instance.has_image_override
+                      ? instance.container_image
+                      : "Using global default"}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* LLM Gateway Providers (admin only) */}
           {isAdmin && (

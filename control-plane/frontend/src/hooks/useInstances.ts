@@ -8,6 +8,7 @@ import {
   fetchInstance,
   createInstance,
   updateInstance,
+  updateInstanceImage,
   deleteInstance,
   startInstance,
   stopInstance,
@@ -57,6 +58,22 @@ export function useUpdateInstance() {
     },
     onError: (error: any) => {
       errorToast("Failed to update instance", error);
+    },
+  });
+}
+
+export function useUpdateInstanceImage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, containerImage }: { id: number; containerImage: string }) =>
+      updateInstanceImage(id, containerImage),
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: ["instances", id] });
+      qc.invalidateQueries({ queryKey: ["instances"] });
+      infoToast("Image update started", "The instance is being recreated with the new image.");
+    },
+    onError: (error: any) => {
+      errorToast("Failed to update image", error);
     },
   });
 }

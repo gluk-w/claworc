@@ -1012,6 +1012,109 @@ func RestartInstance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "restarting"})
 }
 
+type updateImageRequest struct {
+	ContainerImage string `json:"container_image"`
+}
+
+func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	var body updateImageRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if body.ContainerImage == "" {
+		writeError(w, http.StatusBadRequest, "container_image is required")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	// Stop SSH tunnels and close connection before recreate
+	if SSHMgr != nil {
+		SSHMgr.CancelReconnection(inst.ID)
+	}
+	if TunnelMgr != nil {
+		if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
+			log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)
+		}
+	}
+
+	// Update the container image in DB
+	database.DB.Model(&inst).Updates(map[string]interface{}{
+		"container_image": body.ContainerImage,
+		"status":          "creating",
+		"updated_at":      time.Now().UTC(),
+	})
+
+	instID := inst.ID
+	instName := inst.Name
+	newImage := body.ContainerImage
+
+	// Recreate the container asynchronously
+	go func() {
+		setStatusMessage(instID, "Updating container image...")
+		bgCtx := context.Background()
+		err := orch.RecreateInstance(bgCtx, instName, newImage, func(msg string) {
+			setStatusMessage(instID, msg)
+		})
+		if err != nil {
+			log.Printf("Failed to update image for instance %d: %v", instID, err)
+			database.DB.Model(&database.Instance{}).Where("id = ?", instID).Update("status", "error")
+			setStatusMessage(instID, fmt.Sprintf("Image update failed: %v", err))
+			return
+		}
+		database.DB.Model(&database.Instance{}).Where("id = ?", instID).Update("status", "running")
+		clearStatusMessage(instID)
+
+		// Reconfigure SSH access and instance
+		if SSHMgr != nil {
+			setStatusMessage(instID, "Configuring SSH access...")
+			if err := orch.ConfigureSSHAccess(bgCtx, instID, SSHMgr.GetPublicKey()); err != nil {
+				log.Printf("Failed to configure SSH for instance %d after image update: %v", instID, err)
+			}
+
+			setStatusMessage(instID, "Configuring models and providers...")
+			var freshInst database.Instance
+			database.DB.First(&freshInst, instID)
+			models := resolveInstanceModels(freshInst)
+			gatewayProviders := resolveGatewayProviders(freshInst)
+			sshClient, err := SSHMgr.WaitForSSH(bgCtx, instID, 60*time.Second)
+			if err != nil {
+				log.Printf("Failed to get SSH connection for instance %d after image update: %v", instID, err)
+				clearStatusMessage(instID)
+				return
+			}
+			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort)
+		}
+		clearStatusMessage(instID)
+		log.Printf("Instance %d image updated to %s", instID, utils.SanitizeForLog(newImage))
+	}()
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "creating"})
+}
+
 func GetInstanceConfig(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {

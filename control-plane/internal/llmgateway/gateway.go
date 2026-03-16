@@ -138,6 +138,7 @@ func findModelCost(models []database.ProviderModel, modelID string) *database.Pr
 // resolveRealAPIKey finds the real API key for the given provider.
 // Checks per-instance overrides first (using PROVIDER_API_KEY naming convention),
 // then falls back to the global api_key:PROVIDER_API_KEY setting.
+// For Anthropic providers, also checks ANTHROPIC_OAUTH_TOKEN as a final fallback.
 func resolveRealAPIKey(instanceID uint, providerKey string) string {
 	keyName := strings.ToUpper(strings.ReplaceAll(providerKey, "-", "_")) + "_API_KEY"
 
@@ -153,6 +154,25 @@ func resolveRealAPIKey(instanceID uint, providerKey string) string {
 	if val, err := database.GetSetting("api_key:" + keyName); err == nil && val != "" {
 		if decrypted, err := utils.Decrypt(val); err == nil {
 			return decrypted
+		}
+	}
+
+	// Fallback: check for Anthropic OAuth token
+	normalizedKey := strings.ToLower(strings.ReplaceAll(providerKey, "-", ""))
+	if strings.HasPrefix(normalizedKey, "anthropic") {
+		oauthKeyName := "ANTHROPIC_OAUTH_TOKEN"
+		// Instance-level OAuth token
+		var oauthKey database.InstanceAPIKey
+		if database.DB.Where("instance_id = ? AND key_name = ?", instanceID, oauthKeyName).First(&oauthKey).Error == nil {
+			if decrypted, err := utils.Decrypt(oauthKey.KeyValue); err == nil {
+				return decrypted
+			}
+		}
+		// Global OAuth token
+		if val, err := database.GetSetting("api_key:" + oauthKeyName); err == nil && val != "" {
+			if decrypted, err := utils.Decrypt(val); err == nil {
+				return decrypted
+			}
 		}
 	}
 

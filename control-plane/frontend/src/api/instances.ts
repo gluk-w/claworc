@@ -82,6 +82,17 @@ export async function updateInstanceConfig(
   return data;
 }
 
+export async function updateInstanceImage(
+  id: number,
+  containerImage: string,
+): Promise<{ status: string }> {
+  const { data } = await client.post<{ status: string }>(
+    `/instances/${id}/update-image`,
+    { container_image: containerImage },
+  );
+  return data;
+}
+
 export async function cloneInstance(
   id: number,
 ): Promise<InstanceDetail> {
