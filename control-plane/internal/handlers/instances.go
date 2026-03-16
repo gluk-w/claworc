@@ -652,7 +652,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Failed to get SSH connection for instance %d during configure: %v", inst.ID, err)
 			return
 		}
-		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), name, models, gatewayProviders, config.Cfg.LLMGatewayPort)
+		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), name, models, gatewayProviders, config.Cfg.LLMGatewayPort, resolveOAuthToken(inst.ID))
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -846,7 +846,7 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Failed to get SSH connection for instance %d during configure: %v", instID, err)
 				return
 			}
-			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort)
+			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort, resolveOAuthToken(instID))
 		}()
 	}
 
@@ -1106,7 +1106,7 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 				clearStatusMessage(instID)
 				return
 			}
-			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort)
+			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort, resolveOAuthToken(instID))
 		}
 		clearStatusMessage(instID)
 		log.Printf("Instance %d image updated to %s", instID, utils.SanitizeForLog(newImage))
@@ -1369,7 +1369,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Failed to get SSH connection for clone %d during configure: %v", inst.ID, err)
 			return
 		}
-		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.LLMGatewayPort)
+		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.LLMGatewayPort, resolveOAuthToken(inst.ID))
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -1406,7 +1406,27 @@ func ReorderInstances(w http.ResponseWriter, r *http.Request) {
 // gatewayProviders (optional) maps provider key → gateway auth key for configuring
 // models.providers in OpenClaw to route through the internal LLM gateway.
 // gatewayPort is the port the LLM gateway listens on (typically 40001).
-func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, inst sshproxy.Instance, name string, models []string, gatewayProviders map[string]GatewayProvider, gatewayPort int) {
+// resolveOAuthToken returns the decrypted Anthropic OAuth token for the given instance,
+// checking per-instance override first, then global setting.
+func resolveOAuthToken(instanceID uint) string {
+	oauthKeyName := "ANTHROPIC_OAUTH_TOKEN"
+	// Per-instance override
+	var instKey database.InstanceAPIKey
+	if database.DB.Where("instance_id = ? AND key_name = ?", instanceID, oauthKeyName).First(&instKey).Error == nil {
+		if decrypted, err := utils.Decrypt(instKey.KeyValue); err == nil {
+			return decrypted
+		}
+	}
+	// Global setting
+	if val, err := database.GetSetting("api_key:" + oauthKeyName); err == nil && val != "" {
+		if decrypted, err := utils.Decrypt(val); err == nil {
+			return decrypted
+		}
+	}
+	return ""
+}
+
+func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, inst sshproxy.Instance, name string, models []string, gatewayProviders map[string]GatewayProvider, gatewayPort int, oauthToken string) {
 	if len(models) == 0 && len(gatewayProviders) == 0 {
 		return
 	}
@@ -1504,6 +1524,23 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 				log.Printf("Failed to set gateway providers for %s: stdout=%q stderr=%q",
 					utils.SanitizeForLog(name), utils.SanitizeForLog(stdout), utils.SanitizeForLog(stderr))
 			}
+		}
+	}
+
+	// Inject Anthropic OAuth setup-token if configured
+	if oauthToken != "" {
+		// Pipe the token into openclaw models auth paste-token
+		// ExecOpenclaw doesn't support stdin, so we use a shell pipe
+		stdin := fmt.Sprintf("echo %s | openclaw models auth paste-token --provider anthropic --profile-id anthropic:oauth",
+			sshproxy.ShellQuote(oauthToken))
+		cmd := "su - claworc -c " + sshproxy.ShellQuote(stdin)
+		_, oaStderr, oaCode, oaErr := sshproxy.RunCommand(inst.(*sshproxy.SSHInstance).Client(), cmd)
+		if oaErr != nil {
+			log.Printf("Error injecting OAuth token for %s: %v", utils.SanitizeForLog(name), oaErr)
+		} else if oaCode != 0 {
+			log.Printf("Failed to inject OAuth token for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(oaStderr))
+		} else {
+			log.Printf("Anthropic OAuth token injected for %s", utils.SanitizeForLog(name))
 		}
 	}
 
