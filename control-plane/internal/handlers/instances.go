@@ -1480,6 +1480,10 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 
 		providers := make(map[string]providerCfg, len(gatewayProviders))
 		for providerKey, gp := range gatewayProviders {
+			// Skip Anthropic from gateway when using OAuth token (OpenClaw will use paste-token auth directly)
+			if oauthToken != "" && strings.HasPrefix(strings.ToLower(strings.ReplaceAll(providerKey, "-", "")), "anthropic") {
+				continue
+			}
 			apiType := gp.APIType
 			if apiType == "" {
 				apiType = "openai-completions"
