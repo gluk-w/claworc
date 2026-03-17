@@ -245,6 +245,8 @@ export function useUpdateOpenClaw() {
     onSuccess: (_data, id) => {
       qc.invalidateQueries({ queryKey: ["instances", id] });
       qc.invalidateQueries({ queryKey: ["instances"] });
+      // Invalidate version after container restart settles
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["instances", id, "openclaw-version"] }), 15_000);
       successToast("OpenClaw updated successfully");
     },
     onError: (error: any) => {
