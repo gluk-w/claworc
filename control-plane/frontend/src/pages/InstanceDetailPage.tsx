@@ -26,6 +26,7 @@ import {
   useInstanceConfig,
   useUpdateInstanceConfig,
   useRestartedToast,
+  useOpenClawVersion,
 } from "@/hooks/useInstances";
 import { useProviders } from "@/hooks/useProviders";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
@@ -86,6 +87,7 @@ export default function InstanceDetailPage() {
   const updateImageMutation = useUpdateInstanceImage();
   const updateOpenClawMutation = useUpdateOpenClaw();
   const updateConfigMutation = useUpdateInstanceConfig();
+  const openclawVersion = useOpenClawVersion(instanceId, instance?.status === "running");
 
   // Get initial tab from URL hash (supports #files:///path pattern)
   const getTabFromHash = (): Tab => {
@@ -553,12 +555,21 @@ export default function InstanceDetailPage() {
                 <div>
                   <h3 className="text-sm font-medium text-gray-900">Update OpenClaw</h3>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Install the latest version of OpenClaw inside this instance.
+                    {openclawVersion.data
+                      ? openclawVersion.data.installed === openclawVersion.data.latest
+                        ? `Running latest version (${openclawVersion.data.installed})`
+                        : `Installed: ${openclawVersion.data.installed} \u2192 Latest: ${openclawVersion.data.latest}`
+                      : "Install the latest version of OpenClaw inside this instance."}
                   </p>
                 </div>
                 <button
-                  onClick={() => updateOpenClawMutation.mutate(instanceId)}
-                  disabled={updateOpenClawMutation.isPending}
+                  onClick={() => updateOpenClawMutation.mutate(instanceId, {
+                    onSuccess: () => openclawVersion.refetch(),
+                  })}
+                  disabled={
+                    updateOpenClawMutation.isPending ||
+                    (openclawVersion.data != null && openclawVersion.data.installed === openclawVersion.data.latest)
+                  }
                   className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {updateOpenClawMutation.isPending ? "Updating..." : "Update OpenClaw"}
