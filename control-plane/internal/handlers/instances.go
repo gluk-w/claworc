@@ -1621,10 +1621,7 @@ func UpdateOpenClaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Restart the OpenClaw gateway so it picks up the new version
-	sshClient, sshErr := SSHMgr.WaitForSSH(r.Context(), uint(id), 10*time.Second)
-	if sshErr == nil {
-		sshproxy.NewSSHInstance(sshClient).ExecOpenclaw(r.Context(), "gateway", "stop")
-	}
+	// Kill openclaw processes so s6-supervise restarts them with the new version
+	orch.ExecInInstanceAsRoot(r.Context(), inst.Name, []string{"killall", "openclaw", "openclaw-gateway"})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "output": stdout})
 }
