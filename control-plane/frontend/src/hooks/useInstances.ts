@@ -18,6 +18,7 @@ import {
   updateInstanceConfig,
   reorderInstances,
   updateOpenClaw,
+  fetchOpenClawVersion,
 } from "@/api/instances";
 import type { Instance, InstanceCreatePayload, InstanceUpdatePayload } from "@/types/instance";
 
@@ -249,5 +250,14 @@ export function useUpdateOpenClaw() {
     onError: (error: any) => {
       errorToast("Failed to update OpenClaw", error);
     },
+  });
+}
+
+export function useOpenClawVersion(id: number, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ["instances", id, "openclaw-version"],
+    queryFn: () => fetchOpenClawVersion(id),
+    enabled,
+    staleTime: 30_000,
   });
 }

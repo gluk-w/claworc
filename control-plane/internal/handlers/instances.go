@@ -1654,3 +1654,43 @@ func UpdateOpenClaw(w http.ResponseWriter, r *http.Request) {
 	orch.RestartInstance(r.Context(), inst.Name)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "output": stdout})
 }
+func GetOpenClawVersion(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	status, err := orch.GetInstanceStatus(r.Context(), inst.Name)
+	if err != nil || status != "running" {
+		writeError(w, http.StatusBadRequest, "Instance must be running")
+		return
+	}
+
+	installed := ""
+	stdout, _, code, err := orch.ExecInInstance(r.Context(), inst.Name, []string{"openclaw", "--version"})
+	if err == nil && code == 0 {
+		installed = strings.TrimSpace(stdout)
+	}
+
+	latest := ""
+	stdout, _, code, err = orch.ExecInInstance(r.Context(), inst.Name, []string{"npm", "view", "openclaw", "version"})
+	if err == nil && code == 0 {
+		latest = strings.TrimSpace(stdout)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"installed": installed, "latest": latest})
+}
+

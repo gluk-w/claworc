@@ -114,3 +114,12 @@ export async function updateOpenClaw(
   );
   return data;
 }
+
+export async function fetchOpenClawVersion(
+  id: number,
+): Promise<{ installed: string; latest: string }> {
+  const { data } = await client.get<{ installed: string; latest: string }>(
+    `/instances/${id}/openclaw-version`,
+  );
+  return data;
+}
