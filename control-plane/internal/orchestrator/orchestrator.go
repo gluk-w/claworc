@@ -34,6 +34,7 @@ type ContainerOrchestrator interface {
 
 	// Exec
 	ExecInInstance(ctx context.Context, name string, cmd []string) (stdout string, stderr string, exitCode int, err error)
+	ExecInInstanceAsRoot(ctx context.Context, name string, cmd []string) (stdout string, stderr string, exitCode int, err error)
 }
 
 type CreateParams struct {

@@ -17,6 +17,7 @@ import {
   fetchInstanceConfig,
   updateInstanceConfig,
   reorderInstances,
+  updateOpenClaw,
 } from "@/api/instances";
 import type { Instance, InstanceCreatePayload, InstanceUpdatePayload } from "@/types/instance";
 
@@ -232,6 +233,21 @@ export function useUpdateInstanceConfig() {
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ["instances", variables.id, "config"] });
       qc.invalidateQueries({ queryKey: ["instances"] });
+    },
+  });
+}
+
+export function useUpdateOpenClaw() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => updateOpenClaw(id),
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: ["instances", id] });
+      qc.invalidateQueries({ queryKey: ["instances"] });
+      successToast("OpenClaw updated successfully");
+    },
+    onError: (error: any) => {
+      errorToast("Failed to update OpenClaw", error);
     },
   });
 }

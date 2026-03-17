@@ -105,3 +105,12 @@ export async function cloneInstance(
 export async function reorderInstances(orderedIds: number[]): Promise<void> {
   await client.put("/instances/reorder", { ordered_ids: orderedIds });
 }
+
+export async function updateOpenClaw(
+  id: number,
+): Promise<{ status: string; output: string }> {
+  const { data } = await client.post<{ status: string; output: string }>(
+    `/instances/${id}/update-openclaw`,
+  );
+  return data;
+}
