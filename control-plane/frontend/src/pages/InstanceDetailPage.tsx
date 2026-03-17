@@ -574,9 +574,7 @@ export default function InstanceDetailPage() {
                   </p>
                 </div>
                 <button
-                  onClick={() => updateOpenClawMutation.mutate(instanceId, {
-                    onSuccess: () => openclawVersion.refetch(),
-                  })}
+                  onClick={() => updateOpenClawMutation.mutate(instanceId)}
                   disabled={
                     updateOpenClawMutation.isPending ||
                     (openclawVersion.data != null && openclawVersion.data.installed === openclawVersion.data.latest)
