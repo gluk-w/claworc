@@ -264,6 +264,7 @@ func main() {
 				r.Post("/instances", handlers.CreateInstance)
 				r.Post("/instances/{id}/clone", handlers.CloneInstance)
 				r.Post("/instances/{id}/update-image", handlers.UpdateInstanceImage)
+					r.Post("/instances/{id}/update-openclaw", handlers.UpdateOpenClaw)
 				r.Delete("/instances/{id}", handlers.DeleteInstance)
 
 				// Settings

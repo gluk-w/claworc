@@ -1584,3 +1584,42 @@ func waitForRunning(ctx context.Context, ops orchestrator.ContainerOrchestrator,
 	}
 	return false
 }
+
+func UpdateOpenClaw(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	status, err := orch.GetInstanceStatus(r.Context(), inst.Name)
+	if err != nil || status != "running" {
+		writeError(w, http.StatusBadRequest, "Instance must be running to update OpenClaw")
+		return
+	}
+
+	// Run npm update as root
+	stdout, stderr, code, err := orch.ExecInInstanceAsRoot(r.Context(), inst.Name, []string{"npm", "i", "-g", "openclaw@latest"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to update: %v", err))
+		return
+	}
+	if code != 0 {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Update failed (exit %d): %s", code, stderr))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "output": stdout})
+}

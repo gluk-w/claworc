@@ -579,3 +579,36 @@ func (d *DockerOrchestrator) ExecInInstance(ctx context.Context, name string, cm
 
 // Ensure DockerOrchestrator implements ContainerOrchestrator
 var _ ContainerOrchestrator = (*DockerOrchestrator)(nil)
+
+func (d *DockerOrchestrator) ExecInInstanceAsRoot(ctx context.Context, name string, cmd []string) (string, string, int, error) {
+	execCfg := container.ExecOptions{
+		Cmd:          cmd,
+		User:         "root",
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+
+	execID, err := d.client.ContainerExecCreate(ctx, name, execCfg)
+	if err != nil {
+		return "", "", -1, fmt.Errorf("exec create: %w", err)
+	}
+
+	resp, err := d.client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return "", "", -1, fmt.Errorf("exec attach: %w", err)
+	}
+	defer resp.Close()
+
+	output, err := io.ReadAll(resp.Reader)
+	if err != nil {
+		return "", "", -1, fmt.Errorf("read exec output: %w", err)
+	}
+
+	inspectResp, err := d.client.ContainerExecInspect(ctx, execID.ID)
+	if err != nil {
+		return string(output), "", -1, fmt.Errorf("exec inspect: %w", err)
+	}
+
+	cleaned := stripDockerLogHeaders(output)
+	return cleaned, "", inspectResp.ExitCode, nil
+}

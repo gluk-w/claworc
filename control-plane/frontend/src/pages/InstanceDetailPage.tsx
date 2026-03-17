@@ -22,6 +22,7 @@ import {
   useDeleteInstance,
   useUpdateInstance,
   useUpdateInstanceImage,
+  useUpdateOpenClaw,
   useInstanceConfig,
   useUpdateInstanceConfig,
   useRestartedToast,
@@ -83,6 +84,7 @@ export default function InstanceDetailPage() {
   const deleteMutation = useDeleteInstance();
   const updateMutation = useUpdateInstance();
   const updateImageMutation = useUpdateInstanceImage();
+  const updateOpenClawMutation = useUpdateOpenClaw();
   const updateConfigMutation = useUpdateInstanceConfig();
 
   // Get initial tab from URL hash (supports #files:///path pattern)
@@ -533,6 +535,28 @@ export default function InstanceDetailPage() {
                       : "Using global default"}
                 </p>
               )}
+            </div>
+          )}
+
+
+          {/* Update OpenClaw (admin only, running instances) */}
+          {isAdmin && instance.status === "running" && (
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-medium text-gray-900">Update OpenClaw</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Install the latest version of OpenClaw inside this instance.
+                  </p>
+                </div>
+                <button
+                  onClick={() => updateOpenClawMutation.mutate(instanceId)}
+                  disabled={updateOpenClawMutation.isPending}
+                  className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {updateOpenClawMutation.isPending ? "Updating..." : "Update OpenClaw"}
+                </button>
+              </div>
             </div>
           )}
 
