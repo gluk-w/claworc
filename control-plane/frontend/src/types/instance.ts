@@ -4,6 +4,12 @@ export interface InstanceModels {
   extra: string[];
 }
 
+export interface BindMount {
+  host_path: string;
+  container_path: string;
+  read_only: boolean;
+}
+
 export interface Instance {
   id: number;
   name: string;
@@ -33,6 +39,7 @@ export interface Instance {
   enabled_providers: number[];
   control_url: string;
   gateway_token: string;
+  bind_mounts: BindMount[];
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -58,6 +65,7 @@ export interface InstanceCreatePayload {
   timezone?: string | null;
   user_agent?: string | null;
   enabled_providers?: number[];
+  bind_mounts?: BindMount[];
 }
 
 export interface InstanceUpdatePayload {
@@ -69,6 +77,7 @@ export interface InstanceUpdatePayload {
   user_agent?: string;
   allowed_source_ips?: string;
   enabled_providers?: number[];
+  bind_mounts?: BindMount[];
 }
 
 export interface ProviderModelCost {

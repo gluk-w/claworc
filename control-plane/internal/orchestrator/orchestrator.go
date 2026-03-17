@@ -37,6 +37,12 @@ type ContainerOrchestrator interface {
 	ExecInInstanceAsRoot(ctx context.Context, name string, cmd []string) (stdout string, stderr string, exitCode int, err error)
 }
 
+type BindMount struct {
+	HostPath      string `json:"host_path"`
+	ContainerPath string `json:"container_path"`
+	ReadOnly      bool   `json:"read_only"`
+}
+
 type CreateParams struct {
 	Name            string
 	CPURequest      string
@@ -49,6 +55,7 @@ type CreateParams struct {
 	VNCResolution   string
 	Timezone        string
 	UserAgent       string
+	BindMounts      []BindMount
 	EnvVars         map[string]string
 	OnProgress      func(string)
 }

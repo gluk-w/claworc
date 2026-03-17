@@ -194,6 +194,15 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "homebrew"), Target: "/home/linuxbrew/.linuxbrew"},
 		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "home"), Target: "/home/claworc"},
 	}
+	// Add user-defined bind mounts
+	for _, bm := range params.BindMounts {
+		mounts = append(mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   bm.HostPath,
+			Target:   bm.ContainerPath,
+			ReadOnly: bm.ReadOnly,
+		})
+	}
 
 	// Resource limits
 	var nanoCPUs int64
@@ -431,7 +440,7 @@ func (d *DockerOrchestrator) GetInstanceStatus(ctx context.Context, name string)
 	switch status {
 	case "running":
 		switch health {
-		case "healthy":
+		case "healthy", "":
 			return "running", nil
 		case "unhealthy":
 			return "error", nil

@@ -5,7 +5,7 @@ import { useProviders } from "@/hooks/useProviders";
 import { fetchCatalogProviderDetail } from "@/api/llm";
 import type { CatalogProviderDetail } from "@/api/llm";
 import ProviderModelSelector from "@/components/ProviderModelSelector";
-import type { InstanceCreatePayload } from "@/types/instance";
+import type { InstanceCreatePayload, BindMount } from "@/types/instance";
 
 interface InstanceFormProps {
   onSubmit: (payload: InstanceCreatePayload) => void;
@@ -56,6 +56,11 @@ export default function InstanceForm({
   // Brave key
   const [braveKey, setBraveKey] = useState("");
 
+  // Bind mounts
+  const [bindMounts, setBindMounts] = useState<BindMount[]>([
+    { host_path: "/home/papatinga81/Unity/Hub/Editor/6000.2.7f2", container_path: "/unity", read_only: true },
+  ]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!displayName.trim()) return;
@@ -93,6 +98,10 @@ export default function InstanceForm({
     }
     if (defaultModel) {
       payload.default_model = defaultModel;
+    }
+
+    if (bindMounts.length > 0) {
+      payload.bind_mounts = bindMounts.filter(m => m.host_path && m.container_path);
     }
 
     onSubmit(payload);
@@ -208,6 +217,64 @@ export default function InstanceForm({
             placeholder="Leave empty to use global key"
             className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+        </div>
+      </div>
+
+      {/* Bind Mounts */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="text-sm font-medium text-gray-900 mb-1">Host Bind Mounts</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Mount directories from the host into the container.
+        </p>
+        <div className="space-y-3">
+          {bindMounts.map((m, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input
+                type="text"
+                value={m.host_path}
+                onChange={(e) => {
+                  setBindMounts(bindMounts.map((bm, j) => j === i ? { host_path: e.target.value, container_path: bm.container_path, read_only: bm.read_only } : bm));
+                }}
+                placeholder="Host path"
+                className="flex-1 px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <span className="text-gray-400 text-sm">&#8594;</span>
+              <input
+                type="text"
+                value={m.container_path}
+                onChange={(e) => {
+                  setBindMounts(bindMounts.map((bm, j) => j === i ? { host_path: bm.host_path, container_path: e.target.value, read_only: bm.read_only } : bm));
+                }}
+                placeholder="Container path"
+                className="flex-1 px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <label className="flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap">
+                <input
+                  type="checkbox"
+                  checked={m.read_only}
+                  onChange={(e) => {
+                    setBindMounts(bindMounts.map((bm, j) => j === i ? { host_path: bm.host_path, container_path: bm.container_path, read_only: e.target.checked } : bm));
+                  }}
+                  className="rounded border-gray-300"
+                />
+                RO
+              </label>
+              <button
+                type="button"
+                onClick={() => setBindMounts(bindMounts.filter((_, j) => j !== i))}
+                className="text-red-400 hover:text-red-600 text-sm px-1"
+              >
+                &times;
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => setBindMounts([...bindMounts, { host_path: "", container_path: "", read_only: false }])}
+            className="text-sm text-blue-600 hover:text-blue-700"
+          >
+            + Add mount
+          </button>
         </div>
       </div>
 
