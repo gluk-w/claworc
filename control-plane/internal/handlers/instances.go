@@ -1682,7 +1682,13 @@ func GetOpenClawVersion(w http.ResponseWriter, r *http.Request) {
 	installed := ""
 	stdout, _, code, err := orch.ExecInInstance(r.Context(), inst.Name, []string{"openclaw", "--version"})
 	if err == nil && code == 0 {
-		installed = strings.TrimSpace(stdout)
+		// Output is "OpenClaw X.Y.Z (hash)" — extract just the version
+		parts := strings.Fields(strings.TrimSpace(stdout))
+		if len(parts) >= 2 {
+			installed = parts[1]
+		} else {
+			installed = strings.TrimSpace(stdout)
+		}
 	}
 
 	latest := ""
