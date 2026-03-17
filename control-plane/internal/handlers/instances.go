@@ -58,6 +58,7 @@ type instanceCreateRequest struct {
 	Timezone         *string           `json:"timezone"`
 	UserAgent        *string           `json:"user_agent"`
 	EnabledProviders []uint            `json:"enabled_providers"`
+	BindMounts       []orchestrator.BindMount `json:"bind_mounts"`
 }
 
 type modelsResponse struct {
@@ -95,6 +96,7 @@ type instanceResponse struct {
 	EnabledProviders      []uint          `json:"enabled_providers"`
 	ControlURL            string          `json:"control_url"`
 	GatewayToken          string          `json:"gateway_token"`
+	BindMounts            []orchestrator.BindMount `json:"bind_mounts"`
 	SortOrder             int             `json:"sort_order"`
 	CreatedAt             string          `json:"created_at"`
 	UpdatedAt             string          `json:"updated_at"`
@@ -227,6 +229,18 @@ func resolveInstanceModels(inst database.Instance) []string {
 	return models
 }
 
+func parseBindMounts(raw string) []orchestrator.BindMount {
+	if raw == "" || raw == "[]" {
+		return []orchestrator.BindMount{}
+	}
+	var mounts []orchestrator.BindMount
+	json.Unmarshal([]byte(raw), &mounts)
+	if mounts == nil {
+		return []orchestrator.BindMount{}
+	}
+	return mounts
+}
+
 func parseEnabledProviders(raw string) []uint {
 	if raw == "" || raw == "[]" {
 		return []uint{}
@@ -295,6 +309,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		EnabledProviders:      enabledProviders,
 		ControlURL:            fmt.Sprintf("/openclaw/%d/", inst.ID),
 		GatewayToken:          gatewayToken,
+		BindMounts:            parseBindMounts(inst.BindMounts),
 		SortOrder:             inst.SortOrder,
 		CreatedAt:             formatTimestamp(inst.CreatedAt),
 		UpdatedAt:             formatTimestamp(inst.UpdatedAt),
@@ -550,6 +565,10 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		enabledProviders = []uint{}
 	}
 	enabledProvidersJSON, _ := json.Marshal(enabledProviders)
+	bindMountsJSON, _ := json.Marshal(body.BindMounts)
+	if body.BindMounts == nil {
+		bindMountsJSON = []byte("[]")
+	}
 
 	// Compute next sort_order
 	var maxSortOrder int
@@ -574,6 +593,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		ModelsConfig:     modelsConfigJSON,
 		DefaultModel:     body.DefaultModel,
 		EnabledProviders: string(enabledProvidersJSON),
+		BindMounts:       string(bindMountsJSON),
 		SortOrder:        maxSortOrder + 1,
 	}
 
@@ -630,6 +650,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			Timezone:        effectiveTimezone,
 			UserAgent:       effectiveUserAgent,
 			EnvVars:         envVars,
+			BindMounts:      parseBindMounts(inst.BindMounts),
 			OnProgress:      func(msg string) { setStatusMessage(inst.ID, msg) },
 		})
 		if err != nil {
@@ -704,6 +725,7 @@ type instanceUpdateRequest struct {
 	UserAgent        *string            `json:"user_agent"`
 	AllowedSourceIPs *string            `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
 	EnabledProviders *[]uint            `json:"enabled_providers"`  // admin only: LLM gateway provider IDs
+	BindMounts       *[]orchestrator.BindMount `json:"bind_mounts"`
 }
 
 func UpdateInstance(w http.ResponseWriter, r *http.Request) {
@@ -827,6 +849,12 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		if err := llmgateway.EnsureKeysForInstance(inst.ID, *body.EnabledProviders); err != nil {
 			log.Printf("Failed to ensure LLM gateway keys for instance %d: %s", inst.ID, utils.SanitizeForLog(err.Error()))
 		}
+	}
+
+	// Update bind mounts
+	if body.BindMounts != nil {
+		b, _ := json.Marshal(*body.BindMounts)
+		database.DB.Model(&inst).Update("bind_mounts", string(b))
 	}
 
 	// Re-fetch
@@ -1345,6 +1373,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			Timezone:        effectiveTimezone,
 			UserAgent:       effectiveUserAgent,
 			EnvVars:         envVars,
+			BindMounts:      parseBindMounts(inst.BindMounts),
 			OnProgress:      func(msg string) { setStatusMessage(inst.ID, msg) },
 		})
 		if err != nil {
@@ -1622,6 +1651,6 @@ func UpdateOpenClaw(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Kill openclaw processes so s6-supervise restarts them with the new version
-	orch.ExecInInstanceAsRoot(r.Context(), inst.Name, []string{"killall", "openclaw", "openclaw-gateway"})
+	orch.RestartInstance(r.Context(), inst.Name)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "output": stdout})
 }

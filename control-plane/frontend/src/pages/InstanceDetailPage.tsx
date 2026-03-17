@@ -40,7 +40,7 @@ import { useInstanceLogs } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useDesktop } from "@/hooks/useDesktop";
 import { useChat } from "@/hooks/useChat";
-import type { InstanceUpdatePayload } from "@/types/instance";
+import type { InstanceUpdatePayload, BindMount } from "@/types/instance";
 import { buildSSHTooltip } from "@/utils/sshTooltip";
 import ProviderTable from "@/components/ProviderTable";
 import { useSettings } from "@/hooks/useSettings";
@@ -134,6 +134,10 @@ export default function InstanceDetailPage() {
   // User-Agent override editing state
   const [editingUserAgent, setEditingUserAgent] = useState(false);
   const [pendingUserAgent, setPendingUserAgent] = useState<string | null>(null);
+
+  // Bind mounts editing state
+  const [editingBindMounts, setEditingBindMounts] = useState(false);
+  const [pendingBindMounts, setPendingBindMounts] = useState<BindMount[]>([]);
 
   // Image update editing state
   const [editingImage, setEditingImage] = useState(false);
@@ -263,6 +267,20 @@ export default function InstanceDetailPage() {
     );
   };
 
+
+  const handleSaveBindMounts = () => {
+    const filtered = pendingBindMounts.filter(m => m.host_path && m.container_path);
+    updateMutation.mutate(
+      { id: instanceId, payload: { bind_mounts: filtered } },
+      {
+        onSuccess: () => {
+          setEditingBindMounts(false);
+          setPendingBindMounts([]);
+          qc.invalidateQueries({ queryKey: ["instance", instanceId] });
+        },
+      }
+    );
+  };
   const handleSaveUserAgent = () => {
     if (pendingUserAgent === null) return;
     updateMutation.mutate(
@@ -931,6 +949,115 @@ export default function InstanceDetailPage() {
               </p>
             )}
           </div>
+
+          {/* Host Bind Mounts */}
+          {isAdmin && (
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-gray-900">
+                Host Bind Mounts
+              </h3>
+              {!editingBindMounts && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingBindMounts(instance.bind_mounts ?? []);
+                    setEditingBindMounts(true);
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+
+            {editingBindMounts ? (
+              <div className="space-y-3">
+                {pendingBindMounts.map((m, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={m.host_path}
+                      onChange={(e) => {
+                        setPendingBindMounts(pendingBindMounts.map((bm, j) => j === i ? { host_path: e.target.value, container_path: bm.container_path, read_only: bm.read_only } : bm));
+                      }}
+                      placeholder="Host path"
+                      className="flex-1 px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <span className="text-gray-400 text-xs">&#8594;</span>
+                    <input
+                      type="text"
+                      value={m.container_path}
+                      onChange={(e) => {
+                        setPendingBindMounts(pendingBindMounts.map((bm, j) => j === i ? { host_path: bm.host_path, container_path: e.target.value, read_only: bm.read_only } : bm));
+                      }}
+                      placeholder="Container path"
+                      className="flex-1 px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <label className="flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={m.read_only}
+                        onChange={(e) => {
+                          setPendingBindMounts(pendingBindMounts.map((bm, j) => j === i ? { host_path: bm.host_path, container_path: bm.container_path, read_only: e.target.checked } : bm));
+                        }}
+                        className="rounded border-gray-300"
+                      />
+                      RO
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setPendingBindMounts(pendingBindMounts.filter((_, j) => j !== i))}
+                      className="text-red-400 hover:text-red-600 text-sm px-1"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setPendingBindMounts([...pendingBindMounts, { host_path: "", container_path: "", read_only: false }])}
+                  className="text-sm text-blue-600 hover:text-blue-700"
+                >
+                  + Add mount
+                </button>
+                <p className="text-xs text-gray-500">
+                  Changes to bind mounts require a container recreate to take effect.
+                </p>
+                <div className="flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { setEditingBindMounts(false); setPendingBindMounts([]); }}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveBindMounts}
+                    disabled={updateMutation.isPending}
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {updateMutation.isPending ? "Saving..." : "Save"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                {(instance.bind_mounts ?? []).length === 0 ? (
+                  <p className="text-sm text-gray-500">No bind mounts configured.</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {instance.bind_mounts.map((m, i) => (
+                      <li key={i} className="text-sm text-gray-700 font-mono">
+                        {m.host_path} &#8594; {m.container_path}{m.read_only ? " (ro)" : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+          )}
 
         </div>
       )}
