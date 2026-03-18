@@ -656,6 +656,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			UserAgent:       effectiveUserAgent,
 			EnvVars:         envVars,
 			BindMounts:      parseBindMounts(inst.BindMounts),
+			UseHostDisplay:  inst.UseHostDisplay,
 			OnProgress:      func(msg string) { setStatusMessage(inst.ID, msg) },
 		})
 		if err != nil {
@@ -1379,6 +1380,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			UserAgent:       effectiveUserAgent,
 			EnvVars:         envVars,
 			BindMounts:      parseBindMounts(inst.BindMounts),
+			UseHostDisplay:  inst.UseHostDisplay,
 			OnProgress:      func(msg string) { setStatusMessage(inst.ID, msg) },
 		})
 		if err != nil {
