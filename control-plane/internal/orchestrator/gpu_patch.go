@@ -29,7 +29,7 @@ if [ -f "$XAUTHORITY" ]; then
 fi
 
 # Wait for host X server
-while ! xdpyinfo -display :0 >/dev/null 2>&1; do sleep 0.5; done
+while ! xdpyinfo >/dev/null 2>&1; do sleep 0.5; done
 
 # Start openbox window manager
 s6-setuidgid claworc openbox &
