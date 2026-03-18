@@ -426,7 +426,7 @@ func pushProviderUpdateToInstances(providerID uint) {
 			ConfigureInstance(
 				bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName,
 				models, gatewayProviders,
-				config.Cfg.LLMGatewayPort, resolveOAuthToken(instID),
+				config.Cfg.LLMGatewayPort, resolveOAuthToken(instID), resolveBraveAPIKey(inst),
 			)
 		}()
 	}

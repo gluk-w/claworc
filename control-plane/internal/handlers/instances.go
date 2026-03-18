@@ -677,7 +677,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Failed to get SSH connection for instance %d during configure: %v", inst.ID, err)
 			return
 		}
-		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), name, models, gatewayProviders, config.Cfg.LLMGatewayPort, resolveOAuthToken(inst.ID))
+		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), name, models, gatewayProviders, config.Cfg.LLMGatewayPort, resolveOAuthToken(inst.ID), resolveBraveAPIKey(inst))
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -878,7 +878,7 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Failed to get SSH connection for instance %d during configure: %v", instID, err)
 				return
 			}
-			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort, resolveOAuthToken(instID))
+			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort, resolveOAuthToken(instID), resolveBraveAPIKey(inst))
 		}()
 	}
 
@@ -1138,7 +1138,7 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 				clearStatusMessage(instID)
 				return
 			}
-			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort, resolveOAuthToken(instID))
+			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort, resolveOAuthToken(instID), resolveBraveAPIKey(inst))
 		}
 		clearStatusMessage(instID)
 		log.Printf("Instance %d image updated to %s", instID, utils.SanitizeForLog(newImage))
@@ -1406,7 +1406,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Failed to get SSH connection for clone %d during configure: %v", inst.ID, err)
 			return
 		}
-		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.LLMGatewayPort, resolveOAuthToken(inst.ID))
+		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.LLMGatewayPort, resolveOAuthToken(inst.ID), resolveBraveAPIKey(inst))
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -1463,8 +1463,27 @@ func resolveOAuthToken(instanceID uint) string {
 	return ""
 }
 
-func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, inst sshproxy.Instance, name string, models []string, gatewayProviders map[string]GatewayProvider, gatewayPort int, oauthToken string) {
-	if len(models) == 0 && len(gatewayProviders) == 0 {
+func resolveBraveAPIKey(inst database.Instance) string {
+	// Instance override first
+	if inst.BraveAPIKey != "" {
+		decrypted, err := utils.Decrypt(inst.BraveAPIKey)
+		if err == nil && decrypted != "" {
+			return decrypted
+		}
+	}
+	// Fall back to global setting
+	val, err := database.GetSetting("brave_api_key")
+	if err == nil && val != "" {
+		decrypted, err := utils.Decrypt(val)
+		if err == nil {
+			return decrypted
+		}
+	}
+	return ""
+}
+
+func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, inst sshproxy.Instance, name string, models []string, gatewayProviders map[string]GatewayProvider, gatewayPort int, oauthToken string, braveAPIKey string) {
+	if len(models) == 0 && len(gatewayProviders) == 0 && braveAPIKey == "" {
 		return
 	}
 
@@ -1582,6 +1601,16 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 			log.Printf("Failed to inject OAuth token for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(oaStderr))
 		} else {
 			log.Printf("Anthropic OAuth token injected for %s", utils.SanitizeForLog(name))
+		}
+	}
+
+	// Set Brave API key for web search
+	if braveAPIKey != "" {
+		_, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "tools.web.search.apiKey", braveAPIKey)
+		if err != nil {
+			log.Printf("Error setting Brave API key for %s: %v", utils.SanitizeForLog(name), err)
+		} else if code != 0 {
+			log.Printf("Failed to set Brave API key for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(stderr))
 		}
 	}
 
