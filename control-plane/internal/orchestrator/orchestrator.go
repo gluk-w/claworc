@@ -56,6 +56,7 @@ type CreateParams struct {
 	Timezone        string
 	UserAgent       string
 	BindMounts      []BindMount
+	UseHostDisplay  bool
 	EnvVars         map[string]string
 	OnProgress      func(string)
 }

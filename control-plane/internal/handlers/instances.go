@@ -59,6 +59,7 @@ type instanceCreateRequest struct {
 	UserAgent        *string           `json:"user_agent"`
 	EnabledProviders []uint            `json:"enabled_providers"`
 	BindMounts       []orchestrator.BindMount `json:"bind_mounts"`
+	UseHostDisplay   *bool                    `json:"use_host_display"`
 }
 
 type modelsResponse struct {
@@ -96,6 +97,7 @@ type instanceResponse struct {
 	EnabledProviders      []uint          `json:"enabled_providers"`
 	ControlURL            string          `json:"control_url"`
 	GatewayToken          string          `json:"gateway_token"`
+	UseHostDisplay        bool                     `json:"use_host_display"`
 	BindMounts            []orchestrator.BindMount `json:"bind_mounts"`
 	SortOrder             int             `json:"sort_order"`
 	CreatedAt             string          `json:"created_at"`
@@ -309,6 +311,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		EnabledProviders:      enabledProviders,
 		ControlURL:            fmt.Sprintf("/openclaw/%d/", inst.ID),
 		GatewayToken:          gatewayToken,
+		UseHostDisplay:        inst.UseHostDisplay,
 		BindMounts:            parseBindMounts(inst.BindMounts),
 		SortOrder:             inst.SortOrder,
 		CreatedAt:             formatTimestamp(inst.CreatedAt),
@@ -594,6 +597,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		ModelsConfig:     modelsConfigJSON,
 		DefaultModel:     body.DefaultModel,
 		EnabledProviders: string(enabledProvidersJSON),
+		UseHostDisplay:   body.UseHostDisplay != nil && *body.UseHostDisplay,
 		BindMounts:       string(bindMountsJSON),
 		SortOrder:        maxSortOrder + 1,
 	}

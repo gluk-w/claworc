@@ -188,6 +188,9 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	if params.UserAgent != "" {
 		env = append(env, fmt.Sprintf("CHROMIUM_USER_AGENT=%s", params.UserAgent))
 	}
+	if params.UseHostDisplay {
+		env = append(env, "DISPLAY=:0", "USE_HOST_GPU=1")
+	}
 
 	// Mounts
 	mounts := []mount.Mount{
@@ -201,6 +204,16 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 			Source:   bm.HostPath,
 			Target:   bm.ContainerPath,
 			ReadOnly: bm.ReadOnly,
+		})
+	}
+
+	// Mount host X11 socket for GPU browser
+	if params.UseHostDisplay {
+		mounts = append(mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   "/tmp/.X11-unix",
+			Target:   "/tmp/.X11-unix",
+			ReadOnly: true,
 		})
 	}
 
