@@ -438,6 +438,7 @@ func ListInstances(w http.ResponseWriter, r *http.Request) {
 
 func saveInstanceAPIKeys(instanceID uint, apiKeys map[string]string) error {
 	for keyName, keyValue := range apiKeys {
+		keyValue = strings.Join(strings.Fields(keyValue), "")
 		if keyValue == "" {
 			// Delete the key
 			database.DB.Where("instance_id = ? AND key_name = ?", instanceID, keyName).Delete(&database.InstanceAPIKey{})
@@ -512,7 +513,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	var encBraveKey string
 	if body.BraveAPIKey != nil && *body.BraveAPIKey != "" {
 		var err error
-		encBraveKey, err = utils.Encrypt(*body.BraveAPIKey)
+		encBraveKey, err = utils.Encrypt(strings.Join(strings.Fields(*body.BraveAPIKey), ""))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
 			return
@@ -759,7 +760,7 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 				// Delete
 				database.DB.Where("instance_id = ? AND key_name = ?", inst.ID, keyName).Delete(&database.InstanceAPIKey{})
 			} else {
-				encrypted, err := utils.Encrypt(*keyVal)
+				encrypted, err := utils.Encrypt(strings.Join(strings.Fields(*keyVal), ""))
 				if err != nil {
 					writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
 					return
@@ -782,7 +783,7 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	// Update Brave API key
 	if body.BraveAPIKey != nil {
 		if *body.BraveAPIKey != "" {
-			encrypted, err := utils.Encrypt(*body.BraveAPIKey)
+			encrypted, err := utils.Encrypt(strings.Join(strings.Fields(*body.BraveAPIKey), ""))
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
 				return
@@ -1451,13 +1452,13 @@ func resolveOAuthToken(instanceID uint) string {
 	var instKey database.InstanceAPIKey
 	if database.DB.Where("instance_id = ? AND key_name = ?", instanceID, oauthKeyName).First(&instKey).Error == nil {
 		if decrypted, err := utils.Decrypt(instKey.KeyValue); err == nil {
-			return decrypted
+			return strings.Join(strings.Fields(decrypted), "")
 		}
 	}
 	// Global setting
 	if val, err := database.GetSetting("api_key:" + oauthKeyName); err == nil && val != "" {
 		if decrypted, err := utils.Decrypt(val); err == nil {
-			return decrypted
+			return strings.Join(strings.Fields(decrypted), "")
 		}
 	}
 	return ""
@@ -1468,7 +1469,7 @@ func resolveBraveAPIKey(inst database.Instance) string {
 	if inst.BraveAPIKey != "" {
 		decrypted, err := utils.Decrypt(inst.BraveAPIKey)
 		if err == nil && decrypted != "" {
-			return decrypted
+			return strings.Join(strings.Fields(decrypted), "")
 		}
 	}
 	// Fall back to global setting
@@ -1476,7 +1477,7 @@ func resolveBraveAPIKey(inst database.Instance) string {
 	if err == nil && val != "" {
 		decrypted, err := utils.Decrypt(val)
 		if err == nil {
-			return decrypted
+			return strings.Join(strings.Fields(decrypted), "")
 		}
 	}
 	return ""
