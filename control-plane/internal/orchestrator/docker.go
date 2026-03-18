@@ -189,7 +189,11 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 		env = append(env, fmt.Sprintf("CHROMIUM_USER_AGENT=%s", params.UserAgent))
 	}
 	if params.UseHostDisplay {
-		env = append(env, "DISPLAY=:0", "USE_HOST_GPU=1")
+		display := findUserDisplay()
+		if display == "" {
+			display = ":0"
+		}
+		env = append(env, "DISPLAY="+display, "USE_HOST_GPU=1")
 	}
 
 	// Mounts
@@ -648,6 +652,32 @@ func (d *DockerOrchestrator) ExecInInstanceAsRoot(ctx context.Context, name stri
 
 	cleaned := stripDockerLogHeaders(output)
 	return cleaned, "", inspectResp.ExitCode, nil
+}
+
+func findUserDisplay() string {
+	// Find Xwayland running under user session (not sddm)
+	entries, _ := os.ReadDir("/proc")
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		cmdline, err := os.ReadFile("/proc/" + e.Name() + "/cmdline")
+		if err != nil {
+			continue
+		}
+		s := string(cmdline)
+		if !strings.Contains(s, "Xwayland") {
+			continue
+		}
+		// Parse display number from "Xwayland :N ..."
+		parts := strings.Split(s, string([]byte{0}))
+		for _, p := range parts {
+			if strings.HasPrefix(p, ":") && len(p) <= 3 {
+				return p
+			}
+		}
+	}
+	return ""
 }
 
 func findXauthority() string {
