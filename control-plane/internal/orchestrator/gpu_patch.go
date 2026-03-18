@@ -31,44 +31,38 @@ fi
 # Wait for host X server
 while ! xdpyinfo >/dev/null 2>&1; do sleep 0.5; done
 
-# Start openbox window manager
-s6-setuidgid claworc openbox &
-
 EXTRA_ARGS=()
 if [ -n "$CHROMIUM_USER_AGENT" ]; then
   EXTRA_ARGS+=("--user-agent=$CHROMIUM_USER_AGENT")
 fi
 
-if command -v google-chrome-stable >/dev/null 2>&1; then
-  BROWSER=google-chrome-stable
-elif command -v brave-browser >/dev/null 2>&1; then
-  BROWSER=brave-browser
-else
-  BROWSER=/usr/bin/chromium
-fi
+# Use host's Chromium via nsenter to get native GPU/Mesa support.
+# The container is privileged so nsenter to PID 1 (host) works.
+# user-data-dir points to the container volume (mounted on host too).
+CONTAINER_HOME=$(readlink -f /home/claworc)
 
 while true; do
-  s6-setuidgid claworc $BROWSER \
+  nsenter -t 1 -m -u -i -n -p -- \
+    env DISPLAY=$DISPLAY XAUTHORITY=/tmp/.claworc-Xauthority HOME=$CONTAINER_HOME \
+    chromium \
     --no-first-run \
     --password-store=basic \
     --simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT' \
     --start-maximized \
-    --user-data-dir=/home/claworc/chrome-data \
+    --user-data-dir=$CONTAINER_HOME/chrome-data \
     --remote-debugging-port=9222 \
-    --remote-debugging-address=127.0.0.1 \
+    --remote-debugging-address=0.0.0.0 \
+    --remote-allow-origins=* \
     --disable-default-apps \
     --disable-features=CloseWindowWithLastTab \
     --disable-blink-features=AutomationControlled \
     --disable-infobars \
     --disable-component-update \
-    --load-extension=/opt/stealth-extension \
     --no-sandbox \
     --enable-gpu \
-    --use-gl=egl \
     --ignore-gpu-blocklist \
-    --enable-features=Vulkan,VaapiVideoDecoder \
     --enable-gpu-rasterization \
-    "${EXTRA_ARGS[@]}" > /dev/null 2>&1
+    "${EXTRA_ARGS[@]}" 2>/dev/null
   sleep 1
 done
 `)
