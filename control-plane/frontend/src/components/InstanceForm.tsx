@@ -54,6 +54,7 @@ export default function InstanceForm({
   const [defaultModel, setDefaultModel] = useState<string>("");
 
   // Brave key
+  const [useHostDisplay, setUseHostDisplay] = useState(false);
   const [braveKey, setBraveKey] = useState("");
 
   // Bind mounts
@@ -100,6 +101,9 @@ export default function InstanceForm({
       payload.default_model = defaultModel;
     }
 
+    if (useHostDisplay) {
+      payload.use_host_display = true;
+    }
     if (bindMounts.length > 0) {
       payload.bind_mounts = bindMounts.filter(m => m.host_path && m.container_path);
     }
@@ -151,6 +155,20 @@ export default function InstanceForm({
               placeholder={settings?.default_vnc_resolution ?? "1920x1080"}
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+          </div>
+          <div>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={useHostDisplay}
+                onChange={(e) => setUseHostDisplay(e.target.checked)}
+                className="rounded border-gray-300"
+              />
+              GPU Browser (host X display)
+            </label>
+            <p className="text-xs text-gray-500 ml-6">
+              Routes Chromium to the host display for hardware-accelerated WebGL. The VNC desktop will not show the browser.
+            </p>
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">

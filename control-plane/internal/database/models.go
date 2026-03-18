@@ -28,6 +28,7 @@ type Instance struct {
 	BraveAPIKey      string    `json:"-"`
 	ContainerImage   string    `json:"container_image"`
 	VNCResolution    string    `json:"vnc_resolution"`
+	UseHostDisplay   bool      `gorm:"default:false" json:"use_host_display"`
 	GatewayToken     string    `json:"-"`
 	ModelsConfig     string    `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
 	DefaultModel     string    `gorm:"default:''" json:"-"`

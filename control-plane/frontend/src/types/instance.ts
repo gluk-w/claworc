@@ -39,6 +39,7 @@ export interface Instance {
   enabled_providers: number[];
   control_url: string;
   gateway_token: string;
+  use_host_display: boolean;
   bind_mounts: BindMount[];
   sort_order: number;
   created_at: string;
@@ -65,6 +66,7 @@ export interface InstanceCreatePayload {
   timezone?: string | null;
   user_agent?: string | null;
   enabled_providers?: number[];
+  use_host_display?: boolean;
   bind_mounts?: BindMount[];
 }
 
