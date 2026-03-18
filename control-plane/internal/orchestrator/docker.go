@@ -277,7 +277,75 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 		return err
 	}
 
+	// Patch s6 scripts for GPU browser mode (host X display)
+	if params.UseHostDisplay {
+		d.patchForHostDisplay(ctx, resp.ID)
+	}
+
 	return nil
+}
+
+// patchForHostDisplay overwrites s6 service scripts so Xtigervnc does not
+// start (the host X display is used instead) and Chromium launches with GPU flags.
+func (d *DockerOrchestrator) patchForHostDisplay(ctx context.Context, containerID string) {
+	// Make svc-xvnc a no-op (host provides DISPLAY=:0)
+	xvncScript := `#!/command/with-contenv bash
+# GPU mode: host provides DISPLAY=:0, skip Xtigervnc
+exec sleep infinity
+`
+	d.writeFileInContainer(ctx, containerID, "/etc/s6-overlay/s6-rc.d/svc-xvnc/run", xvncScript)
+
+	// Patch svc-desktop to add GPU flags to Chromium
+	desktopScript := `#!/command/with-contenv bash
+
+export HOME=/home/claworc
+export LANG=en_US.UTF-8
+
+# Wait for host X server
+while ! xdpyinfo -display :0 >/dev/null 2>&1; do sleep 0.5; done
+
+# Start openbox window manager
+s6-setuidgid claworc openbox &
+
+EXTRA_ARGS=()
+if [ -n "$CHROMIUM_USER_AGENT" ]; then
+  EXTRA_ARGS+=("--user-agent=$CHROMIUM_USER_AGENT")
+fi
+
+if command -v google-chrome-stable >/dev/null 2>&1; then
+  BROWSER=google-chrome-stable
+elif command -v brave-browser >/dev/null 2>&1; then
+  BROWSER=brave-browser
+else
+  BROWSER=/usr/bin/chromium
+fi
+
+while true; do
+  s6-setuidgid claworc $BROWSER     --no-first-run     --password-store=basic     --simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT'     --start-maximized     --user-data-dir=/home/claworc/chrome-data     --remote-debugging-port=9222     --remote-debugging-address=127.0.0.1     --disable-default-apps     --disable-features=CloseWindowWithLastTab     --disable-blink-features=AutomationControlled     --disable-infobars     --disable-component-update     --load-extension=/opt/stealth-extension     --no-sandbox     --enable-gpu     --use-gl=egl     --ignore-gpu-blocklist     --enable-features=Vulkan,VaapiVideoDecoder     --enable-gpu-rasterization     "${EXTRA_ARGS[@]}" > /dev/null 2>&1
+  sleep 1
+done
+`
+	d.writeFileInContainer(ctx, containerID, "/etc/s6-overlay/s6-rc.d/svc-desktop/run", desktopScript)
+}
+
+func (d *DockerOrchestrator) writeFileInContainer(ctx context.Context, containerID, filePath, content string) {
+	cmd := fmt.Sprintf("cat > %s << 'GPUSCRIPTEOF'\n%sGPUSCRIPTEOF", filePath, content)
+	execCfg := container.ExecOptions{
+		Cmd: []string{"bash", "-c", cmd},
+		User: "root",
+	}
+	execID, err := d.client.ContainerExecCreate(ctx, containerID, execCfg)
+	if err != nil {
+		log.Printf("Failed to create exec for writing %s: %v", filePath, err)
+		return
+	}
+	resp, err := d.client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{})
+	if err != nil {
+		log.Printf("Failed to attach exec for writing %s: %v", filePath, err)
+		return
+	}
+	defer resp.Close()
+	io.Copy(io.Discard, resp.Reader)
 }
 
 func (d *DockerOrchestrator) CloneVolumes(ctx context.Context, srcName, dstName string) error {
