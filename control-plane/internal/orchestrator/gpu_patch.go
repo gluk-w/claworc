@@ -42,7 +42,7 @@ fi
 CONTAINER_HOME=$(readlink -f /home/claworc)
 
 while true; do
-  nsenter -t 1 -m -u -i -n -p -- \
+  nsenter -t 1 -m -u -i -p -- \
     env DISPLAY=$DISPLAY XAUTHORITY=/tmp/.claworc-Xauthority HOME=$CONTAINER_HOME \
     chromium \
     --no-first-run \
@@ -51,7 +51,7 @@ while true; do
     --start-maximized \
     --user-data-dir=$CONTAINER_HOME/chrome-data \
     --remote-debugging-port=9222 \
-    --remote-debugging-address=0.0.0.0 \
+    --remote-debugging-address=127.0.0.1 \
     --remote-allow-origins=* \
     --disable-default-apps \
     --disable-features=CloseWindowWithLastTab \
