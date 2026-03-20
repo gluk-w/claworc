@@ -857,10 +857,12 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Update bind mounts
+	// Update bind mounts — requires container recreate since Docker mounts are set at creation time
+	bindMountsChanged := false
 	if body.BindMounts != nil {
 		b, _ := json.Marshal(*body.BindMounts)
 		database.DB.Model(&inst).Update("bind_mounts", string(b))
+		bindMountsChanged = true
 	}
 
 	// Re-fetch
@@ -888,7 +890,89 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 
-	status := resolveStatus(&inst, orchStatus)
+		// If bind mounts changed on a running instance, recreate the container
+	if bindMountsChanged && orch != nil && orchStatus == "running" {
+		if SSHMgr != nil {
+			SSHMgr.CancelReconnection(inst.ID)
+		}
+		if TunnelMgr != nil {
+			TunnelMgr.StopTunnelsForInstance(inst.ID)
+		}
+		database.DB.Model(&inst).Update("status", "creating")
+
+		instID := inst.ID
+		instName := inst.Name
+		go func() {
+			bgCtx := context.Background()
+			setStatusMessage(instID, "Recreating container with new mounts...")
+
+			// Stop and remove container (named volumes are preserved)
+			timeout := 30
+			orch.StopInstance(bgCtx, instName)
+			_ = timeout
+			// Use Docker client directly to remove without deleting volumes
+			orch.(*orchestrator.DockerOrchestrator).RemoveContainerOnly(bgCtx, instName)
+
+			// Re-fetch instance from DB for latest config
+			var freshInst database.Instance
+			database.DB.First(&freshInst, instID)
+
+			effectiveImage := getEffectiveImage(freshInst)
+			effectiveResolution := getEffectiveResolution(freshInst)
+			effectiveTimezone := getEffectiveTimezone(freshInst)
+			effectiveUserAgent := getEffectiveUserAgent(freshInst)
+
+			envVars := map[string]string{}
+			if token, _ := utils.Decrypt(freshInst.GatewayToken); token != "" {
+				envVars["OPENCLAW_GATEWAY_TOKEN"] = token
+			}
+			if oauthToken := resolveOAuthToken(freshInst.ID); oauthToken != "" {
+				envVars["ANTHROPIC_OAUTH_TOKEN"] = oauthToken
+			}
+
+			err := orch.CreateInstance(bgCtx, orchestrator.CreateParams{
+				Name:            instName,
+				CPURequest:      freshInst.CPURequest,
+				CPULimit:        freshInst.CPULimit,
+				MemoryRequest:   freshInst.MemoryRequest,
+				MemoryLimit:     freshInst.MemoryLimit,
+				StorageHomebrew: freshInst.StorageHomebrew,
+				StorageHome:     freshInst.StorageHome,
+				ContainerImage:  effectiveImage,
+				VNCResolution:   effectiveResolution,
+				Timezone:        effectiveTimezone,
+				UserAgent:       effectiveUserAgent,
+				BindMounts:      parseBindMounts(freshInst.BindMounts),
+				UseHostDisplay:  freshInst.UseHostDisplay,
+				EnvVars:         envVars,
+				OnProgress:      func(msg string) { setStatusMessage(instID, msg) },
+			})
+			if err != nil {
+				log.Printf("Failed to recreate container for bind mount update %s: %v", utils.SanitizeForLog(instName), err)
+				setStatusMessage(instID, fmt.Sprintf("Failed: %v", err))
+				database.DB.Model(&database.Instance{}).Where("id = ?", instID).Update("status", "error")
+				return
+			}
+			database.DB.Model(&database.Instance{}).Where("id = ?", instID).Updates(map[string]interface{}{
+				"status": "running", "updated_at": time.Now().UTC(),
+			})
+			clearStatusMessage(instID)
+
+			// Reconfigure instance
+			if SSHMgr != nil {
+				orch.ConfigureSSHAccess(bgCtx, instID, SSHMgr.GetPublicKey())
+				models := resolveInstanceModels(freshInst)
+				gatewayProviders := resolveGatewayProviders(freshInst)
+				if sshClient, err := SSHMgr.WaitForSSH(bgCtx, instID, 120*time.Second); err == nil {
+					ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort, resolveOAuthToken(instID), resolveBraveAPIKey(freshInst))
+				}
+			}
+			log.Printf("Instance %s recreated with updated bind mounts", utils.SanitizeForLog(instName))
+		}()
+		orchStatus = "creating"
+	}
+
+status := resolveStatus(&inst, orchStatus)
 	resp := instanceToResponse(inst, status)
 	if orch != nil {
 		if info, err := orch.GetInstanceImageInfo(r.Context(), inst.Name); err == nil && info != "" {
