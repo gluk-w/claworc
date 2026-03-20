@@ -355,6 +355,13 @@ func (d *DockerOrchestrator) copyVolume(ctx context.Context, srcVol, dstVol stri
 	return nil
 }
 
+func (d *DockerOrchestrator) RemoveContainerOnly(ctx context.Context, name string) {
+	err := d.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
+	if err != nil && !dockerclient.IsErrNotFound(err) {
+		log.Printf("Remove container %s: %v", utils.SanitizeForLog(name), err)
+	}
+}
+
 func (d *DockerOrchestrator) DeleteInstance(ctx context.Context, name string) error {
 	// Remove container
 	err := d.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
