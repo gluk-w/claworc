@@ -82,6 +82,17 @@ export async function updateInstanceConfig(
   return data;
 }
 
+export async function updateInstanceImage(
+  id: number,
+  containerImage: string,
+): Promise<{ status: string }> {
+  const { data } = await client.post<{ status: string }>(
+    `/instances/${id}/update-image`,
+    { container_image: containerImage },
+  );
+  return data;
+}
+
 export async function cloneInstance(
   id: number,
 ): Promise<InstanceDetail> {
@@ -93,4 +104,22 @@ export async function cloneInstance(
 
 export async function reorderInstances(orderedIds: number[]): Promise<void> {
   await client.put("/instances/reorder", { ordered_ids: orderedIds });
+}
+
+export async function updateOpenClaw(
+  id: number,
+): Promise<{ status: string; output: string }> {
+  const { data } = await client.post<{ status: string; output: string }>(
+    `/instances/${id}/update-openclaw`,
+  );
+  return data;
+}
+
+export async function fetchOpenClawVersion(
+  id: number,
+): Promise<{ installed: string; latest: string }> {
+  const { data } = await client.get<{ installed: string; latest: string }>(
+    `/instances/${id}/openclaw-version`,
+  );
+  return data;
 }

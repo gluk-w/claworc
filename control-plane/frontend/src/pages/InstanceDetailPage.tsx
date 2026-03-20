@@ -21,9 +21,12 @@ import {
   useCloneInstance,
   useDeleteInstance,
   useUpdateInstance,
+  useUpdateInstanceImage,
+  useUpdateOpenClaw,
   useInstanceConfig,
   useUpdateInstanceConfig,
   useRestartedToast,
+  useOpenClawVersion,
 } from "@/hooks/useInstances";
 import { useProviders } from "@/hooks/useProviders";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
@@ -38,8 +41,10 @@ import { useInstanceLogs } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useDesktop } from "@/hooks/useDesktop";
 import { useChat } from "@/hooks/useChat";
-import type { InstanceUpdatePayload } from "@/types/instance";
+import type { InstanceUpdatePayload, BindMount } from "@/types/instance";
 import { buildSSHTooltip } from "@/utils/sshTooltip";
+import ProviderTable from "@/components/ProviderTable";
+import { useSettings } from "@/hooks/useSettings";
 
 type Tab = "chat" | "terminal" | "files" | "config" | "logs" | "settings";
 
@@ -53,6 +58,7 @@ export default function InstanceDetailPage() {
   const { isAdmin } = useAuth();
   const { data: instance, isLoading } = useInstance(instanceId);
   const { data: allProviders = [] } = useProviders();
+  const { data: settingsData } = useSettings();
 
   // Fetch catalog model lists for all catalog providers (used in edit mode)
   const catalogKeys = [...new Set(allProviders.filter((p) => p.provider).map((p) => p.provider))];
@@ -78,7 +84,10 @@ export default function InstanceDetailPage() {
   const cloneMutation = useCloneInstance();
   const deleteMutation = useDeleteInstance();
   const updateMutation = useUpdateInstance();
+  const updateImageMutation = useUpdateInstanceImage();
+  const updateOpenClawMutation = useUpdateOpenClaw();
   const updateConfigMutation = useUpdateInstanceConfig();
+  const openclawVersion = useOpenClawVersion(instanceId, instance?.status === "running");
 
   // Get initial tab from URL hash (supports #files:///path pattern)
   const getTabFromHash = (): Tab => {
@@ -128,11 +137,24 @@ export default function InstanceDetailPage() {
   const [editingUserAgent, setEditingUserAgent] = useState(false);
   const [pendingUserAgent, setPendingUserAgent] = useState<string | null>(null);
 
+  // Bind mounts editing state
+  const [editingBindMounts, setEditingBindMounts] = useState(false);
+  const [pendingBindMounts, setPendingBindMounts] = useState<BindMount[]>([]);
+
+  // Image update editing state
+  const [editingImage, setEditingImage] = useState(false);
+  const [pendingImage, setPendingImage] = useState("");
+
   // Gateway providers editing state
   const [editingGatewayProviders, setEditingGatewayProviders] = useState(false);
   const [pendingProviders, setPendingProviders] = useState<number[] | null>(null);
   const [pendingProviderModels, setPendingProviderModels] = useState<Record<number, string[]> | null>(null);
   const [pendingDefaultModel, setPendingDefaultModel] = useState<string>("");
+
+  // API Key Overrides state
+  const [editingApiKeys, setEditingApiKeys] = useState(false);
+  const [pendingNewKeys, setPendingNewKeys] = useState<Record<string, string>>({});
+  const [pendingRemovals, setPendingRemovals] = useState<Record<string, true>>({});
 
   // Update tab when hash changes
   useEffect(() => {
@@ -247,6 +269,20 @@ export default function InstanceDetailPage() {
     );
   };
 
+
+  const handleSaveBindMounts = () => {
+    const filtered = pendingBindMounts.filter(m => m.host_path && m.container_path);
+    updateMutation.mutate(
+      { id: instanceId, payload: { bind_mounts: filtered } },
+      {
+        onSuccess: () => {
+          setEditingBindMounts(false);
+          setPendingBindMounts([]);
+          qc.invalidateQueries({ queryKey: ["instance", instanceId] });
+        },
+      }
+    );
+  };
   const handleSaveUserAgent = () => {
     if (pendingUserAgent === null) return;
     updateMutation.mutate(
@@ -447,6 +483,110 @@ export default function InstanceDetailPage() {
             </div>
           </div>
 
+          {/* Update Agent Image (admin only) */}
+          {isAdmin && (
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-medium text-gray-900">Update Agent Image</h3>
+                {!editingImage && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingImage(instance.container_image ?? "");
+                      setEditingImage(true);
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+
+              {editingImage ? (
+                <div className="space-y-3">
+                  <input
+                    type="text"
+                    value={pendingImage}
+                    onChange={(e) => setPendingImage(e.target.value)}
+                    placeholder="e.g., glukw/openclaw-vnc-chromium:latest"
+                    className="w-full text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && pendingImage.trim()) {
+                        updateImageMutation.mutate(
+                          { id: instanceId, containerImage: pendingImage.trim() },
+                          { onSuccess: () => { setEditingImage(false); setPendingImage(""); } },
+                        );
+                      }
+                      if (e.key === "Escape") { setEditingImage(false); setPendingImage(""); }
+                    }}
+                  />
+                  <p className="text-xs text-gray-500">
+                    Enter a new container image tag to update. The instance will be stopped, recreated with the new image, and restarted. All data is preserved.
+                  </p>
+                  <div className="flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={() => { setEditingImage(false); setPendingImage(""); }}
+                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!pendingImage.trim()) return;
+                        updateImageMutation.mutate(
+                          { id: instanceId, containerImage: pendingImage.trim() },
+                          { onSuccess: () => { setEditingImage(false); setPendingImage(""); } },
+                        );
+                      }}
+                      disabled={updateImageMutation.isPending || !pendingImage.trim()}
+                      className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {updateImageMutation.isPending ? "Updating..." : "Update Image"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">
+                  {instance.live_image_info
+                    ? instance.live_image_info
+                    : instance.has_image_override
+                      ? instance.container_image
+                      : "Using global default"}
+                </p>
+              )}
+            </div>
+          )}
+
+
+          {/* Update OpenClaw (admin only, running instances) */}
+          {isAdmin && instance.status === "running" && (
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-medium text-gray-900">Update OpenClaw</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {openclawVersion.data
+                      ? openclawVersion.data.installed === openclawVersion.data.latest
+                        ? `Running latest version (${openclawVersion.data.installed})`
+                        : `Installed: ${openclawVersion.data.installed} \u2192 Latest: ${openclawVersion.data.latest}`
+                      : "Install the latest version of OpenClaw inside this instance."}
+                  </p>
+                </div>
+                <button
+                  onClick={() => updateOpenClawMutation.mutate(instanceId)}
+                  disabled={
+                    updateOpenClawMutation.isPending ||
+                    (openclawVersion.data != null && openclawVersion.data.installed === openclawVersion.data.latest)
+                  }
+                  className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {updateOpenClawMutation.isPending ? "Updating..." : "Update OpenClaw"}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* LLM Gateway Providers (admin only) */}
           {isAdmin && (
             <div className="bg-white rounded-lg border border-gray-200 p-6">
@@ -564,6 +704,104 @@ export default function InstanceDetailPage() {
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* API Key Overrides */}
+          {isAdmin && (
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-sm font-medium text-gray-900">API Key Overrides</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Override global API keys for this instance.
+                  </p>
+                </div>
+                {editingApiKeys ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingApiKeys(false);
+                        setPendingNewKeys({});
+                        setPendingRemovals({});
+                      }}
+                      className="text-xs text-gray-600 hover:text-gray-800"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const apiKeys: Record<string, string | null> = {};
+                        for (const [k, v] of Object.entries(pendingNewKeys)) {
+                          apiKeys[k] = v;
+                        }
+                        for (const k of Object.keys(pendingRemovals)) {
+                          apiKeys[k] = null;
+                        }
+                        if (Object.keys(apiKeys).length === 0) {
+                          setEditingApiKeys(false);
+                          return;
+                        }
+                        updateMutation.mutate(
+                          { id: instanceId, payload: { api_keys: apiKeys } },
+                          {
+                            onSuccess: () => {
+                              setEditingApiKeys(false);
+                              setPendingNewKeys({});
+                              setPendingRemovals({});
+                            },
+                          },
+                        );
+                      }}
+                      disabled={updateMutation.isPending}
+                      className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {updateMutation.isPending ? "Saving..." : "Save"}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setEditingApiKeys(true)}
+                    className="text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+              <ProviderTable
+                globalApiKeys={settingsData?.api_keys ?? {}}
+                instanceOverrides={instance.api_key_overrides ?? []}
+                disabledProviders={[]}
+                defaultModel={instance.default_model ?? ""}
+                pendingNewKeys={pendingNewKeys}
+                pendingRemovals={pendingRemovals}
+                onToggleEnabled={() => {}}
+                onDefaultModelChange={() => {}}
+                onAddKey={(key, value) => {
+                  setPendingNewKeys((prev) => ({ ...prev, [key]: value }));
+                }}
+                onRemoveKey={(key) => {
+                  setPendingRemovals((prev) => ({ ...prev, [key]: true as const }));
+                }}
+                onUndoRemove={(key) => {
+                  setPendingRemovals((prev) => {
+                    const next = { ...prev };
+                    delete next[key];
+                    return next;
+                  });
+                }}
+                onUndoAdd={(key) => {
+                  setPendingNewKeys((prev) => {
+                    const next = { ...prev };
+                    delete next[key];
+                    return next;
+                  });
+                }}
+                editable={editingApiKeys}
+              />
             </div>
           )}
 
@@ -720,6 +958,115 @@ export default function InstanceDetailPage() {
               </p>
             )}
           </div>
+
+          {/* Host Bind Mounts */}
+          {isAdmin && (
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-gray-900">
+                Host Bind Mounts
+              </h3>
+              {!editingBindMounts && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingBindMounts(instance.bind_mounts ?? []);
+                    setEditingBindMounts(true);
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+
+            {editingBindMounts ? (
+              <div className="space-y-3">
+                {pendingBindMounts.map((m, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={m.host_path}
+                      onChange={(e) => {
+                        setPendingBindMounts(pendingBindMounts.map((bm, j) => j === i ? { host_path: e.target.value, container_path: bm.container_path, read_only: bm.read_only } : bm));
+                      }}
+                      placeholder="Host path"
+                      className="flex-1 px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <span className="text-gray-400 text-xs">&#8594;</span>
+                    <input
+                      type="text"
+                      value={m.container_path}
+                      onChange={(e) => {
+                        setPendingBindMounts(pendingBindMounts.map((bm, j) => j === i ? { host_path: bm.host_path, container_path: e.target.value, read_only: bm.read_only } : bm));
+                      }}
+                      placeholder="Container path"
+                      className="flex-1 px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <label className="flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={m.read_only}
+                        onChange={(e) => {
+                          setPendingBindMounts(pendingBindMounts.map((bm, j) => j === i ? { host_path: bm.host_path, container_path: bm.container_path, read_only: e.target.checked } : bm));
+                        }}
+                        className="rounded border-gray-300"
+                      />
+                      RO
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setPendingBindMounts(pendingBindMounts.filter((_, j) => j !== i))}
+                      className="text-red-400 hover:text-red-600 text-sm px-1"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setPendingBindMounts([...pendingBindMounts, { host_path: "", container_path: "", read_only: false }])}
+                  className="text-sm text-blue-600 hover:text-blue-700"
+                >
+                  + Add mount
+                </button>
+                <p className="text-xs text-gray-500">
+                  Changes to bind mounts require a container recreate to take effect.
+                </p>
+                <div className="flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { setEditingBindMounts(false); setPendingBindMounts([]); }}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveBindMounts}
+                    disabled={updateMutation.isPending}
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {updateMutation.isPending ? "Saving..." : "Save"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                {(instance.bind_mounts ?? []).length === 0 ? (
+                  <p className="text-sm text-gray-500">No bind mounts configured.</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {instance.bind_mounts.map((m, i) => (
+                      <li key={i} className="text-sm text-gray-700 font-mono">
+                        {m.host_path} &#8594; {m.container_path}{m.read_only ? " (ro)" : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+          )}
 
         </div>
       )}

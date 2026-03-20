@@ -28,6 +28,7 @@ type Instance struct {
 	BraveAPIKey      string    `json:"-"`
 	ContainerImage   string    `json:"container_image"`
 	VNCResolution    string    `json:"vnc_resolution"`
+	UseHostDisplay   bool      `gorm:"default:false" json:"use_host_display"`
 	GatewayToken     string    `json:"-"`
 	ModelsConfig     string    `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
 	DefaultModel     string    `gorm:"default:''" json:"-"`
@@ -36,6 +37,7 @@ type Instance struct {
 	EnabledProviders string    `gorm:"type:text;default:'[]'" json:"-"`                // JSON array of LLMProvider IDs enabled for this instance
 	Timezone         string    `gorm:"default:''" json:"timezone"`
 	UserAgent        string    `gorm:"default:''" json:"user_agent"`
+	BindMounts       string    `gorm:"type:text;default:'[]'" json:"bind_mounts"` // JSON: [{"host_path":"/x","container_path":"/y","read_only":true}]
 	SortOrder        int       `gorm:"not null;default:0" json:"sort_order"`
 	CreatedAt        time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt        time.Time `gorm:"autoUpdateTime" json:"updated_at"`

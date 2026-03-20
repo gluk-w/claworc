@@ -3,6 +3,7 @@ import { Eye, EyeOff, X, Plus } from "lucide-react";
 
 export const LLM_API_KEY_OPTIONS = [
   { value: "ANTHROPIC_API_KEY", label: "Anthropic" },
+  { value: "ANTHROPIC_OAUTH_TOKEN", label: "Anthropic (OAuth Token)" },
   { value: "OPENAI_API_KEY", label: "OpenAI" },
   { value: "GOOGLE_API_KEY", label: "Google (Gemini)" },
   { value: "MISTRAL_API_KEY", label: "Mistral" },

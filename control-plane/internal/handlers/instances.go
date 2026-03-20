@@ -58,6 +58,8 @@ type instanceCreateRequest struct {
 	Timezone         *string           `json:"timezone"`
 	UserAgent        *string           `json:"user_agent"`
 	EnabledProviders []uint            `json:"enabled_providers"`
+	BindMounts       []orchestrator.BindMount `json:"bind_mounts"`
+	UseHostDisplay   *bool                    `json:"use_host_display"`
 }
 
 type modelsResponse struct {
@@ -95,6 +97,8 @@ type instanceResponse struct {
 	EnabledProviders      []uint          `json:"enabled_providers"`
 	ControlURL            string          `json:"control_url"`
 	GatewayToken          string          `json:"gateway_token"`
+	UseHostDisplay        bool                     `json:"use_host_display"`
+	BindMounts            []orchestrator.BindMount `json:"bind_mounts"`
 	SortOrder             int             `json:"sort_order"`
 	CreatedAt             string          `json:"created_at"`
 	UpdatedAt             string          `json:"updated_at"`
@@ -227,6 +231,18 @@ func resolveInstanceModels(inst database.Instance) []string {
 	return models
 }
 
+func parseBindMounts(raw string) []orchestrator.BindMount {
+	if raw == "" || raw == "[]" {
+		return []orchestrator.BindMount{}
+	}
+	var mounts []orchestrator.BindMount
+	json.Unmarshal([]byte(raw), &mounts)
+	if mounts == nil {
+		return []orchestrator.BindMount{}
+	}
+	return mounts
+}
+
 func parseEnabledProviders(raw string) []uint {
 	if raw == "" || raw == "[]" {
 		return []uint{}
@@ -295,6 +311,8 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		EnabledProviders:      enabledProviders,
 		ControlURL:            fmt.Sprintf("/openclaw/%d/", inst.ID),
 		GatewayToken:          gatewayToken,
+		UseHostDisplay:        inst.UseHostDisplay,
+		BindMounts:            parseBindMounts(inst.BindMounts),
 		SortOrder:             inst.SortOrder,
 		CreatedAt:             formatTimestamp(inst.CreatedAt),
 		UpdatedAt:             formatTimestamp(inst.UpdatedAt),
@@ -423,6 +441,7 @@ func ListInstances(w http.ResponseWriter, r *http.Request) {
 
 func saveInstanceAPIKeys(instanceID uint, apiKeys map[string]string) error {
 	for keyName, keyValue := range apiKeys {
+		keyValue = strings.Join(strings.Fields(keyValue), "")
 		if keyValue == "" {
 			// Delete the key
 			database.DB.Where("instance_id = ? AND key_name = ?", instanceID, keyName).Delete(&database.InstanceAPIKey{})
@@ -497,7 +516,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	var encBraveKey string
 	if body.BraveAPIKey != nil && *body.BraveAPIKey != "" {
 		var err error
-		encBraveKey, err = utils.Encrypt(*body.BraveAPIKey)
+		encBraveKey, err = utils.Encrypt(strings.Join(strings.Fields(*body.BraveAPIKey), ""))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
 			return
@@ -550,6 +569,10 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		enabledProviders = []uint{}
 	}
 	enabledProvidersJSON, _ := json.Marshal(enabledProviders)
+	bindMountsJSON, _ := json.Marshal(body.BindMounts)
+	if body.BindMounts == nil {
+		bindMountsJSON = []byte("[]")
+	}
 
 	// Compute next sort_order
 	var maxSortOrder int
@@ -574,6 +597,8 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		ModelsConfig:     modelsConfigJSON,
 		DefaultModel:     body.DefaultModel,
 		EnabledProviders: string(enabledProvidersJSON),
+		UseHostDisplay:   body.UseHostDisplay != nil && *body.UseHostDisplay,
+		BindMounts:       string(bindMountsJSON),
 		SortOrder:        maxSortOrder + 1,
 	}
 
@@ -612,6 +637,10 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		if gatewayTokenPlain != "" {
 			envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
 		}
+		// Pass Anthropic OAuth token as env var if configured
+		if oauthToken := resolveOAuthToken(inst.ID); oauthToken != "" {
+			envVars["ANTHROPIC_OAUTH_TOKEN"] = oauthToken
+		}
 
 		err := orch.CreateInstance(ctx, orchestrator.CreateParams{
 			Name:            name,
@@ -626,6 +655,8 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			Timezone:        effectiveTimezone,
 			UserAgent:       effectiveUserAgent,
 			EnvVars:         envVars,
+			BindMounts:      parseBindMounts(inst.BindMounts),
+			UseHostDisplay:  inst.UseHostDisplay,
 			OnProgress:      func(msg string) { setStatusMessage(inst.ID, msg) },
 		})
 		if err != nil {
@@ -652,7 +683,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Failed to get SSH connection for instance %d during configure: %v", inst.ID, err)
 			return
 		}
-		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), name, models, gatewayProviders, config.Cfg.LLMGatewayPort)
+		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), name, models, gatewayProviders, config.Cfg.LLMGatewayPort, resolveOAuthToken(inst.ID), resolveBraveAPIKey(inst))
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -700,6 +731,7 @@ type instanceUpdateRequest struct {
 	UserAgent        *string            `json:"user_agent"`
 	AllowedSourceIPs *string            `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
 	EnabledProviders *[]uint            `json:"enabled_providers"`  // admin only: LLM gateway provider IDs
+	BindMounts       *[]orchestrator.BindMount `json:"bind_mounts"`
 }
 
 func UpdateInstance(w http.ResponseWriter, r *http.Request) {
@@ -733,7 +765,7 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 				// Delete
 				database.DB.Where("instance_id = ? AND key_name = ?", inst.ID, keyName).Delete(&database.InstanceAPIKey{})
 			} else {
-				encrypted, err := utils.Encrypt(*keyVal)
+				encrypted, err := utils.Encrypt(strings.Join(strings.Fields(*keyVal), ""))
 				if err != nil {
 					writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
 					return
@@ -756,7 +788,7 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	// Update Brave API key
 	if body.BraveAPIKey != nil {
 		if *body.BraveAPIKey != "" {
-			encrypted, err := utils.Encrypt(*body.BraveAPIKey)
+			encrypted, err := utils.Encrypt(strings.Join(strings.Fields(*body.BraveAPIKey), ""))
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
 				return
@@ -825,6 +857,14 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Update bind mounts — requires container recreate since Docker mounts are set at creation time
+	bindMountsChanged := false
+	if body.BindMounts != nil {
+		b, _ := json.Marshal(*body.BindMounts)
+		database.DB.Model(&inst).Update("bind_mounts", string(b))
+		bindMountsChanged = true
+	}
+
 	// Re-fetch
 	database.DB.First(&inst, inst.ID)
 
@@ -846,11 +886,93 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Failed to get SSH connection for instance %d during configure: %v", instID, err)
 				return
 			}
-			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort)
+			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort, resolveOAuthToken(instID), resolveBraveAPIKey(inst))
 		}()
 	}
 
-	status := resolveStatus(&inst, orchStatus)
+		// If bind mounts changed on a running instance, recreate the container
+	if bindMountsChanged && orch != nil && orchStatus == "running" {
+		if SSHMgr != nil {
+			SSHMgr.CancelReconnection(inst.ID)
+		}
+		if TunnelMgr != nil {
+			TunnelMgr.StopTunnelsForInstance(inst.ID)
+		}
+		database.DB.Model(&inst).Update("status", "creating")
+
+		instID := inst.ID
+		instName := inst.Name
+		go func() {
+			bgCtx := context.Background()
+			setStatusMessage(instID, "Recreating container with new mounts...")
+
+			// Stop and remove container (named volumes are preserved)
+			timeout := 30
+			orch.StopInstance(bgCtx, instName)
+			_ = timeout
+			// Use Docker client directly to remove without deleting volumes
+			orch.(*orchestrator.DockerOrchestrator).RemoveContainerOnly(bgCtx, instName)
+
+			// Re-fetch instance from DB for latest config
+			var freshInst database.Instance
+			database.DB.First(&freshInst, instID)
+
+			effectiveImage := getEffectiveImage(freshInst)
+			effectiveResolution := getEffectiveResolution(freshInst)
+			effectiveTimezone := getEffectiveTimezone(freshInst)
+			effectiveUserAgent := getEffectiveUserAgent(freshInst)
+
+			envVars := map[string]string{}
+			if token, _ := utils.Decrypt(freshInst.GatewayToken); token != "" {
+				envVars["OPENCLAW_GATEWAY_TOKEN"] = token
+			}
+			if oauthToken := resolveOAuthToken(freshInst.ID); oauthToken != "" {
+				envVars["ANTHROPIC_OAUTH_TOKEN"] = oauthToken
+			}
+
+			err := orch.CreateInstance(bgCtx, orchestrator.CreateParams{
+				Name:            instName,
+				CPURequest:      freshInst.CPURequest,
+				CPULimit:        freshInst.CPULimit,
+				MemoryRequest:   freshInst.MemoryRequest,
+				MemoryLimit:     freshInst.MemoryLimit,
+				StorageHomebrew: freshInst.StorageHomebrew,
+				StorageHome:     freshInst.StorageHome,
+				ContainerImage:  effectiveImage,
+				VNCResolution:   effectiveResolution,
+				Timezone:        effectiveTimezone,
+				UserAgent:       effectiveUserAgent,
+				BindMounts:      parseBindMounts(freshInst.BindMounts),
+				UseHostDisplay:  freshInst.UseHostDisplay,
+				EnvVars:         envVars,
+				OnProgress:      func(msg string) { setStatusMessage(instID, msg) },
+			})
+			if err != nil {
+				log.Printf("Failed to recreate container for bind mount update %s: %v", utils.SanitizeForLog(instName), err)
+				setStatusMessage(instID, fmt.Sprintf("Failed: %v", err))
+				database.DB.Model(&database.Instance{}).Where("id = ?", instID).Update("status", "error")
+				return
+			}
+			database.DB.Model(&database.Instance{}).Where("id = ?", instID).Updates(map[string]interface{}{
+				"status": "running", "updated_at": time.Now().UTC(),
+			})
+			clearStatusMessage(instID)
+
+			// Reconfigure instance
+			if SSHMgr != nil {
+				orch.ConfigureSSHAccess(bgCtx, instID, SSHMgr.GetPublicKey())
+				models := resolveInstanceModels(freshInst)
+				gatewayProviders := resolveGatewayProviders(freshInst)
+				if sshClient, err := SSHMgr.WaitForSSH(bgCtx, instID, 120*time.Second); err == nil {
+					ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort, resolveOAuthToken(instID), resolveBraveAPIKey(freshInst))
+				}
+			}
+			log.Printf("Instance %s recreated with updated bind mounts", utils.SanitizeForLog(instName))
+		}()
+		orchStatus = "creating"
+	}
+
+status := resolveStatus(&inst, orchStatus)
 	resp := instanceToResponse(inst, status)
 	if orch != nil {
 		if info, err := orch.GetInstanceImageInfo(r.Context(), inst.Name); err == nil && info != "" {
@@ -1010,6 +1132,109 @@ func RestartInstance(w http.ResponseWriter, r *http.Request) {
 		"updated_at": time.Now().UTC(),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "restarting"})
+}
+
+type updateImageRequest struct {
+	ContainerImage string `json:"container_image"`
+}
+
+func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	var body updateImageRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if body.ContainerImage == "" {
+		writeError(w, http.StatusBadRequest, "container_image is required")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	// Stop SSH tunnels and close connection before recreate
+	if SSHMgr != nil {
+		SSHMgr.CancelReconnection(inst.ID)
+	}
+	if TunnelMgr != nil {
+		if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
+			log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)
+		}
+	}
+
+	// Update the container image in DB
+	database.DB.Model(&inst).Updates(map[string]interface{}{
+		"container_image": body.ContainerImage,
+		"status":          "creating",
+		"updated_at":      time.Now().UTC(),
+	})
+
+	instID := inst.ID
+	instName := inst.Name
+	newImage := body.ContainerImage
+
+	// Recreate the container asynchronously
+	go func() {
+		setStatusMessage(instID, "Updating container image...")
+		bgCtx := context.Background()
+		err := orch.RecreateInstance(bgCtx, instName, newImage, func(msg string) {
+			setStatusMessage(instID, msg)
+		})
+		if err != nil {
+			log.Printf("Failed to update image for instance %d: %v", instID, err)
+			database.DB.Model(&database.Instance{}).Where("id = ?", instID).Update("status", "error")
+			setStatusMessage(instID, fmt.Sprintf("Image update failed: %v", err))
+			return
+		}
+		database.DB.Model(&database.Instance{}).Where("id = ?", instID).Update("status", "running")
+		clearStatusMessage(instID)
+
+		// Reconfigure SSH access and instance
+		if SSHMgr != nil {
+			setStatusMessage(instID, "Configuring SSH access...")
+			if err := orch.ConfigureSSHAccess(bgCtx, instID, SSHMgr.GetPublicKey()); err != nil {
+				log.Printf("Failed to configure SSH for instance %d after image update: %v", instID, err)
+			}
+
+			setStatusMessage(instID, "Configuring models and providers...")
+			var freshInst database.Instance
+			database.DB.First(&freshInst, instID)
+			models := resolveInstanceModels(freshInst)
+			gatewayProviders := resolveGatewayProviders(freshInst)
+			sshClient, err := SSHMgr.WaitForSSH(bgCtx, instID, 60*time.Second)
+			if err != nil {
+				log.Printf("Failed to get SSH connection for instance %d after image update: %v", instID, err)
+				clearStatusMessage(instID)
+				return
+			}
+			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort, resolveOAuthToken(instID), resolveBraveAPIKey(inst))
+		}
+		clearStatusMessage(instID)
+		log.Printf("Instance %d image updated to %s", instID, utils.SanitizeForLog(newImage))
+	}()
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "creating"})
 }
 
 func GetInstanceConfig(w http.ResponseWriter, r *http.Request) {
@@ -1219,6 +1444,10 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		if gatewayTokenPlain != "" {
 			envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
 		}
+		// Pass Anthropic OAuth token as env var if configured
+		if oauthToken := resolveOAuthToken(inst.ID); oauthToken != "" {
+			envVars["ANTHROPIC_OAUTH_TOKEN"] = oauthToken
+		}
 
 		// Create container/deployment with empty volumes
 		err := orch.CreateInstance(ctx, orchestrator.CreateParams{
@@ -1234,6 +1463,8 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			Timezone:        effectiveTimezone,
 			UserAgent:       effectiveUserAgent,
 			EnvVars:         envVars,
+			BindMounts:      parseBindMounts(inst.BindMounts),
+			UseHostDisplay:  inst.UseHostDisplay,
 			OnProgress:      func(msg string) { setStatusMessage(inst.ID, msg) },
 		})
 		if err != nil {
@@ -1266,7 +1497,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Failed to get SSH connection for clone %d during configure: %v", inst.ID, err)
 			return
 		}
-		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.LLMGatewayPort)
+		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.LLMGatewayPort, resolveOAuthToken(inst.ID), resolveBraveAPIKey(inst))
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -1303,8 +1534,47 @@ func ReorderInstances(w http.ResponseWriter, r *http.Request) {
 // gatewayProviders (optional) maps provider key → gateway auth key for configuring
 // models.providers in OpenClaw to route through the internal LLM gateway.
 // gatewayPort is the port the LLM gateway listens on (typically 40001).
-func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, inst sshproxy.Instance, name string, models []string, gatewayProviders map[string]GatewayProvider, gatewayPort int) {
-	if len(models) == 0 && len(gatewayProviders) == 0 {
+// resolveOAuthToken returns the decrypted Anthropic OAuth token for the given instance,
+// checking per-instance override first, then global setting.
+func resolveOAuthToken(instanceID uint) string {
+	oauthKeyName := "ANTHROPIC_OAUTH_TOKEN"
+	// Per-instance override
+	var instKey database.InstanceAPIKey
+	if database.DB.Where("instance_id = ? AND key_name = ?", instanceID, oauthKeyName).First(&instKey).Error == nil {
+		if decrypted, err := utils.Decrypt(instKey.KeyValue); err == nil {
+			return strings.Join(strings.Fields(decrypted), "")
+		}
+	}
+	// Global setting
+	if val, err := database.GetSetting("api_key:" + oauthKeyName); err == nil && val != "" {
+		if decrypted, err := utils.Decrypt(val); err == nil {
+			return strings.Join(strings.Fields(decrypted), "")
+		}
+	}
+	return ""
+}
+
+func resolveBraveAPIKey(inst database.Instance) string {
+	// Instance override first
+	if inst.BraveAPIKey != "" {
+		decrypted, err := utils.Decrypt(inst.BraveAPIKey)
+		if err == nil && decrypted != "" {
+			return strings.Join(strings.Fields(decrypted), "")
+		}
+	}
+	// Fall back to global setting
+	val, err := database.GetSetting("brave_api_key")
+	if err == nil && val != "" {
+		decrypted, err := utils.Decrypt(val)
+		if err == nil {
+			return strings.Join(strings.Fields(decrypted), "")
+		}
+	}
+	return ""
+}
+
+func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, inst sshproxy.Instance, name string, models []string, gatewayProviders map[string]GatewayProvider, gatewayPort int, oauthToken string, braveAPIKey string) {
+	if len(models) == 0 && len(gatewayProviders) == 0 && braveAPIKey == "" {
 		return
 	}
 
@@ -1357,6 +1627,10 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 
 		providers := make(map[string]providerCfg, len(gatewayProviders))
 		for providerKey, gp := range gatewayProviders {
+			// Skip Anthropic from gateway when using OAuth token (OpenClaw will use paste-token auth directly)
+			if oauthToken != "" && strings.HasPrefix(strings.ToLower(strings.ReplaceAll(providerKey, "-", "")), "anthropic") {
+				continue
+			}
 			apiType := gp.APIType
 			if apiType == "" {
 				apiType = "openai-completions"
@@ -1404,6 +1678,33 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 		}
 	}
 
+	// Inject Anthropic OAuth setup-token if configured
+	if oauthToken != "" {
+		// Pipe the token into openclaw models auth paste-token
+		// ExecOpenclaw doesn't support stdin, so we use a shell pipe
+		stdin := fmt.Sprintf("echo %s | openclaw models auth paste-token --provider anthropic --profile-id anthropic:oauth",
+			sshproxy.ShellQuote(oauthToken))
+		cmd := "su - claworc -c " + sshproxy.ShellQuote(stdin)
+		_, oaStderr, oaCode, oaErr := sshproxy.RunCommand(inst.(*sshproxy.SSHInstance).Client(), cmd)
+		if oaErr != nil {
+			log.Printf("Error injecting OAuth token for %s: %v", utils.SanitizeForLog(name), oaErr)
+		} else if oaCode != 0 {
+			log.Printf("Failed to inject OAuth token for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(oaStderr))
+		} else {
+			log.Printf("Anthropic OAuth token injected for %s", utils.SanitizeForLog(name))
+		}
+	}
+
+	// Set Brave API key for web search
+	if braveAPIKey != "" {
+		_, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "tools.web.search.apiKey", braveAPIKey)
+		if err != nil {
+			log.Printf("Error setting Brave API key for %s: %v", utils.SanitizeForLog(name), err)
+		} else if code != 0 {
+			log.Printf("Failed to set Brave API key for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(stderr))
+		}
+	}
+
 	// Restart gateway so it picks up new env vars and config
 	stdout, stderr, code, err := inst.ExecOpenclaw(ctx, "gateway", "stop")
 	if err != nil {
@@ -1432,3 +1733,90 @@ func waitForRunning(ctx context.Context, ops orchestrator.ContainerOrchestrator,
 	}
 	return false
 }
+
+func UpdateOpenClaw(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	status, err := orch.GetInstanceStatus(r.Context(), inst.Name)
+	if err != nil || status != "running" {
+		writeError(w, http.StatusBadRequest, "Instance must be running to update OpenClaw")
+		return
+	}
+
+	// Run npm update as root
+	stdout, stderr, code, err := orch.ExecInInstanceAsRoot(r.Context(), inst.Name, []string{"npm", "i", "-g", "openclaw@latest"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to update: %v", err))
+		return
+	}
+	if code != 0 {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Update failed (exit %d): %s", code, stderr))
+		return
+	}
+
+	// Kill openclaw processes so s6-supervise restarts them with the new version
+	orch.RestartInstance(r.Context(), inst.Name)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "output": stdout})
+}
+func GetOpenClawVersion(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	status, err := orch.GetInstanceStatus(r.Context(), inst.Name)
+	if err != nil || status != "running" {
+		writeError(w, http.StatusBadRequest, "Instance must be running")
+		return
+	}
+
+	installed := ""
+	stdout, _, code, err := orch.ExecInInstance(r.Context(), inst.Name, []string{"openclaw", "--version"})
+	if err == nil && code == 0 {
+		// Output is "OpenClaw X.Y.Z (hash)" — extract just the version
+		parts := strings.Fields(strings.TrimSpace(stdout))
+		if len(parts) >= 2 {
+			installed = parts[1]
+		} else {
+			installed = strings.TrimSpace(stdout)
+		}
+	}
+
+	latest := ""
+	stdout, _, code, err = orch.ExecInInstance(r.Context(), inst.Name, []string{"npm", "view", "openclaw", "version"})
+	if err == nil && code == 0 {
+		latest = strings.TrimSpace(stdout)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"installed": installed, "latest": latest})
+}
+

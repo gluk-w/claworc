@@ -134,7 +134,7 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			settingKey := "api_key:" + keyName
 			if strVal != "" {
-				encrypted, err := utils.Encrypt(strVal)
+				encrypted, err := utils.Encrypt(strings.Join(strings.Fields(strVal), ""))
 				if err != nil {
 					writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
 					return
@@ -162,12 +162,12 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if v, ok := raw["brave_api_key"]; ok {
 		if strVal, ok := v.(string); ok {
 			if strVal != "" {
-				encrypted, err := utils.Encrypt(strVal)
+				encrypted, err := utils.Encrypt(strings.Join(strings.Fields(strVal), ""))
 				if err != nil {
 					writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
 					return
 				}
-				database.SetSetting("brave_api_key", encrypted)
+				database.SetSetting("brave_api_key", encrypted)  // value already sanitized below
 			} else {
 				database.SetSetting("brave_api_key", "")
 			}
