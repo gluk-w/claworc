@@ -27,6 +27,7 @@ import {
   useUpdateInstanceConfig,
   useRestartedToast,
   useOpenClawVersion,
+  useOpenClawVersions,
 } from "@/hooks/useInstances";
 import { useProviders } from "@/hooks/useProviders";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
@@ -86,8 +87,10 @@ export default function InstanceDetailPage() {
   const updateMutation = useUpdateInstance();
   const updateImageMutation = useUpdateInstanceImage();
   const updateOpenClawMutation = useUpdateOpenClaw();
+  const [openclawTargetVersion, setOpenclawTargetVersion] = useState("");
   const updateConfigMutation = useUpdateInstanceConfig();
   const openclawVersion = useOpenClawVersion(instanceId, instance?.status === "running");
+  const openclawVersions = useOpenClawVersions(instanceId, instance?.status === "running");
 
   // Get initial tab from URL hash (supports #files:///path pattern)
   const getTabFromHash = (): Tab => {
@@ -573,16 +576,30 @@ export default function InstanceDetailPage() {
                       : "Install the latest version of OpenClaw inside this instance."}
                   </p>
                 </div>
-                <button
-                  onClick={() => updateOpenClawMutation.mutate(instanceId)}
-                  disabled={
-                    updateOpenClawMutation.isPending ||
-                    (openclawVersion.data != null && openclawVersion.data.installed === openclawVersion.data.latest)
-                  }
-                  className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {updateOpenClawMutation.isPending ? "Updating..." : "Update OpenClaw"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={openclawTargetVersion}
+                    onChange={(e) => setOpenclawTargetVersion(e.target.value)}
+                    className="px-3 py-2 text-sm border border-gray-300 rounded-md w-48 focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+                  >
+                    <option value="">Latest</option>
+                    {openclawVersions.data?.map((v) => (
+                      <option key={v} value={v}>
+                        {v}{openclawVersion.data?.installed === v ? " (installed)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => updateOpenClawMutation.mutate({ id: instanceId, version: openclawTargetVersion || undefined })}
+                    disabled={
+                      updateOpenClawMutation.isPending ||
+                      (openclawTargetVersion !== "" && openclawVersion.data?.installed === openclawTargetVersion)
+                    }
+                    className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    {updateOpenClawMutation.isPending ? "Updating..." : openclawTargetVersion ? `Update to ${openclawTargetVersion}` : "Update to Latest"}
+                  </button>
+                </div>
               </div>
             </div>
           )}

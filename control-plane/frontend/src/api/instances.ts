@@ -108,9 +108,11 @@ export async function reorderInstances(orderedIds: number[]): Promise<void> {
 
 export async function updateOpenClaw(
   id: number,
+  version?: string,
 ): Promise<{ status: string; output: string }> {
   const { data } = await client.post<{ status: string; output: string }>(
     `/instances/${id}/update-openclaw`,
+    version ? { version } : undefined,
   );
   return data;
 }
@@ -120,6 +122,15 @@ export async function fetchOpenClawVersion(
 ): Promise<{ installed: string; latest: string }> {
   const { data } = await client.get<{ installed: string; latest: string }>(
     `/instances/${id}/openclaw-version`,
+  );
+  return data;
+}
+
+export async function fetchOpenClawVersions(
+  id: number,
+): Promise<string[]> {
+  const { data } = await client.get<string[]>(
+    `/instances/${id}/openclaw-versions`,
   );
   return data;
 }

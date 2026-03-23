@@ -1760,7 +1760,11 @@ func UpdateOpenClaw(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Run npm update as root
-	stdout, stderr, code, err := orch.ExecInInstanceAsRoot(r.Context(), inst.Name, []string{"npm", "i", "-g", "openclaw@latest"})
+	var body struct { Version string `json:"version"` }
+	json.NewDecoder(r.Body).Decode(&body)
+	pkg := "openclaw@latest"
+	if body.Version != "" && body.Version != "latest" { pkg = "openclaw@" + body.Version }
+	stdout, stderr, code, err := orch.ExecInInstanceAsRoot(r.Context(), inst.Name, []string{"npm", "i", "-g", pkg})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to update: %v", err))
 		return
@@ -1818,5 +1822,52 @@ func GetOpenClawVersion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"installed": installed, "latest": latest})
+}
+
+func GetOpenClawVersions(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	status, err := orch.GetInstanceStatus(r.Context(), inst.Name)
+	if err != nil || status != "running" {
+		writeError(w, http.StatusBadRequest, "Instance must be running")
+		return
+	}
+
+	stdout, _, code, err := orch.ExecInInstance(r.Context(), inst.Name, []string{"npm", "view", "openclaw", "versions", "--json"})
+	if err != nil || code != 0 {
+		writeJSON(w, http.StatusOK, []string{})
+		return
+	}
+
+	var allVersions []string
+	if err := json.Unmarshal([]byte(stdout), &allVersions); err != nil {
+		writeJSON(w, http.StatusOK, []string{})
+		return
+	}
+
+	// Filter out beta versions and return in reverse order (newest first)
+	var stable []string
+	for i := len(allVersions) - 1; i >= 0; i-- {
+		if !strings.Contains(allVersions[i], "beta") {
+			stable = append(stable, allVersions[i])
+		}
+	}
+	writeJSON(w, http.StatusOK, stable)
 }
 

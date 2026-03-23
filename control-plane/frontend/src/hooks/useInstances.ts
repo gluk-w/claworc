@@ -19,6 +19,7 @@ import {
   reorderInstances,
   updateOpenClaw,
   fetchOpenClawVersion,
+  fetchOpenClawVersions,
 } from "@/api/instances";
 import type { Instance, InstanceCreatePayload, InstanceUpdatePayload } from "@/types/instance";
 
@@ -241,12 +242,12 @@ export function useUpdateInstanceConfig() {
 export function useUpdateOpenClaw() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) => updateOpenClaw(id),
-    onSuccess: (_data, id) => {
-      qc.invalidateQueries({ queryKey: ["instances", id] });
+    mutationFn: ({ id, version }: { id: number; version?: string }) => updateOpenClaw(id, version),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ["instances", variables.id] });
       qc.invalidateQueries({ queryKey: ["instances"] });
       // Invalidate version after container restart settles
-      setTimeout(() => qc.invalidateQueries({ queryKey: ["instances", id, "openclaw-version"] }), 15_000);
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["instances", variables.id, "openclaw-version"] }), 15_000);
       successToast("OpenClaw updated successfully");
     },
     onError: (error: any) => {
@@ -261,5 +262,14 @@ export function useOpenClawVersion(id: number, enabled: boolean = true) {
     queryFn: () => fetchOpenClawVersion(id),
     enabled,
     staleTime: 30_000,
+  });
+}
+
+export function useOpenClawVersions(id: number, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ["instances", id, "openclaw-versions"],
+    queryFn: () => fetchOpenClawVersions(id),
+    enabled,
+    staleTime: 60_000,
   });
 }

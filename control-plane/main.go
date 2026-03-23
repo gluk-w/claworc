@@ -266,6 +266,7 @@ func main() {
 				r.Post("/instances/{id}/update-image", handlers.UpdateInstanceImage)
 					r.Post("/instances/{id}/update-openclaw", handlers.UpdateOpenClaw)
 					r.Get("/instances/{id}/openclaw-version", handlers.GetOpenClawVersion)
+					r.Get("/instances/{id}/openclaw-versions", handlers.GetOpenClawVersions)
 				r.Delete("/instances/{id}", handlers.DeleteInstance)
 
 				// Settings
