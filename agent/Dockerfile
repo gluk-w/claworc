@@ -7,6 +7,9 @@ ARG TARGETARCH
 RUN useradd -m -u 1000 -s /bin/bash claworc && \
     mkdir -p /defaults
 
+# Use China mirrors for faster downloads
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+
 # Install all system packages + Node.js in one apt transaction
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates xz-utils gnupg && \
@@ -20,6 +23,7 @@ RUN apt-get update && \
       build-essential procps cron nodejs \
       sudo && \
     echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen && \
+    npm config set registry https://registry.npmmirror.com && \
     npm install -g openclaw@latest && \
     curl -sSL https://install.python-poetry.org | POETRY_HOME=/usr/local python3 - && \
     rm -rf /var/lib/apt/lists/*
