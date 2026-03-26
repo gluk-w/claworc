@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Trash2, ShieldCheck, Shield, Key } from "lucide-react";
+import { Trash2, ShieldCheck, Shield, Key, Server } from "lucide-react";
 import { successToast, errorToast } from "@/utils/toast";
 import {
   fetchUsers,
@@ -8,8 +8,11 @@ import {
   deleteUser,
   updateUserRole,
   resetUserPassword,
+  getUserInstances,
+  setUserInstances,
   type UserListItem,
 } from "@/api/users";
+import { fetchInstances } from "@/api/instances";
 
 export default function UsersPage() {
   const queryClient = useQueryClient();
@@ -20,6 +23,7 @@ export default function UsersPage() {
 
   const [showCreate, setShowCreate] = useState(false);
   const [resetTarget, setResetTarget] = useState<UserListItem | null>(null);
+  const [assignTarget, setAssignTarget] = useState<UserListItem | null>(null);
 
   if (isLoading) {
     return <div className="text-gray-500">Loading users...</div>;
@@ -61,6 +65,7 @@ export default function UsersPage() {
                 key={user.id}
                 user={user}
                 onResetPassword={() => setResetTarget(user)}
+                onAssignInstances={() => setAssignTarget(user)}
                 queryClient={queryClient}
               />
             ))}
@@ -82,6 +87,13 @@ export default function UsersPage() {
           queryClient={queryClient}
         />
       )}
+
+      {assignTarget && (
+        <AssignInstancesDialog
+          user={assignTarget}
+          onClose={() => setAssignTarget(null)}
+        />
+      )}
     </div>
   );
 }
@@ -89,10 +101,12 @@ export default function UsersPage() {
 function UserRow({
   user,
   onResetPassword,
+  onAssignInstances,
   queryClient,
 }: {
   user: UserListItem;
   onResetPassword: () => void;
+  onAssignInstances: () => void;
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const deleteMut = useMutation({
@@ -153,6 +167,15 @@ function UserRow({
               <ShieldCheck size={16} />
             )}
           </button>
+          {user.role === "user" && (
+            <button
+              onClick={onAssignInstances}
+              className="p-1.5 text-gray-400 hover:text-gray-600 rounded"
+              title="Assign instances"
+            >
+              <Server size={16} />
+            </button>
+          )}
           <button
             onClick={onResetPassword}
             className="p-1.5 text-gray-400 hover:text-gray-600 rounded"
@@ -174,6 +197,109 @@ function UserRow({
         </div>
       </td>
     </tr>
+  );
+}
+
+function AssignInstancesDialog({
+  user,
+  onClose,
+}: {
+  user: UserListItem;
+  onClose: () => void;
+}) {
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const { data: instances = [] } = useQuery({
+    queryKey: ["instances"],
+    queryFn: fetchInstances,
+  });
+
+  useEffect(() => {
+    getUserInstances(user.id)
+      .then((res) => {
+        setSelectedIds(res.instance_ids || []);
+      })
+      .catch(() => {
+        errorToast("Failed to load user instances");
+      })
+      .finally(() => setLoading(false));
+  }, [user.id]);
+
+  const mutation = useMutation({
+    mutationFn: () => setUserInstances(user.id, selectedIds),
+    onSuccess: () => {
+      successToast("Instances assigned");
+      onClose();
+    },
+    onError: (error) => errorToast("Failed to assign instances", error),
+  });
+
+  const toggleInstance = (id: number) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
+    );
+  };
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    mutation.mutate();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-sm p-6">
+        <h2 className="text-lg font-semibold mb-4">
+          Assign Instances: {user.username}
+        </h2>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          {loading ? (
+            <div className="text-gray-500 text-sm py-4 text-center">
+              Loading...
+            </div>
+          ) : instances.length === 0 ? (
+            <div className="text-gray-500 text-sm py-4 text-center">
+              No instances available
+            </div>
+          ) : (
+            <div className="max-h-64 overflow-y-auto space-y-1">
+              {instances.map((inst) => (
+                <label
+                  key={inst.id}
+                  className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(inst.id)}
+                    onChange={() => toggleInstance(inst.id)}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-gray-900">
+                    {inst.display_name || inst.name}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={mutation.isPending || loading}
+              className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+            >
+              Save
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
