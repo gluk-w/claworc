@@ -15,6 +15,12 @@ if [ ! -f "/home/claworc/.openclaw/openclaw.json" ]; then
     fi
 fi
 
+# Ensure workspace exists (setup creates it with default scaffold files)
+if [ ! -d "/home/claworc/.openclaw/workspace" ]; then
+    echo "Creating agent workspace..."
+    s6-setuidgid claworc openclaw setup --mode local --non-interactive || echo "Setup finished with exit code $?"
+fi
+
 # Always ensure gateway settings are correct (config may exist from a persisted volume
 # but be missing required gateway fields)
 s6-setuidgid claworc openclaw config set gateway.mode local
