@@ -24,8 +24,6 @@ Use `latest` to always pull the most recent build.
 
 When a new version of the agent image is published under the same tag (e.g. `:latest`), you can pull it without recreating the instance. Open the instance **Settings** tab, find the **Agent Image** field, and click **Update**. Claworc pulls the latest version of the tag, stops the container, and restarts it with the new image. Persistent volumes (home directory, Homebrew packages) are preserved.
 
-Progress is shown via toast notifications. If the pull or restart fails, the instance status changes to **Error** with a message describing what went wrong.
-
 <Note>
   The **Update** button only appears for admins, only when the instance is running, and only for tag-based images (e.g. `:latest`). Digest-pinned images (`@sha256:...`) cannot be updated this way — change the image reference in the instance settings instead.
 </Note>
