@@ -225,7 +225,6 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 
 	hostCfg := &container.HostConfig{
 		Privileged: false,
-		SecurityOpt: []string{"no-new-privileges"},
 		Mounts:     mounts,
 		ShmSize:    shmSize,
 		Resources: container.Resources{
