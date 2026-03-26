@@ -17,12 +17,16 @@ RUN apt-get update && \
       fonts-noto-color-emoji fonts-noto-cjk fonts-dejavu-core fonts-freefont-ttf \
       tzdata locales \
       openssh-server git python3 python3-pip python3-venv python3-numpy \
-      build-essential procps cron nodejs && \
+      build-essential procps cron nodejs \
+      sudo && \
     echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen && \
     npm install -g openclaw@latest && \
     curl -sSL https://install.python-poetry.org | POETRY_HOME=/usr/local python3 - && \
     rm -rf /var/lib/apt/lists/*
 
+# Grant claworc user passwordless apt access (limited to package management only)
+RUN echo 'claworc ALL=(ALL) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dpkg' > /etc/sudoers.d/claworc-apt && \
+    chmod 0440 /etc/sudoers.d/claworc-apt
 
 # Install s6-overlay
 RUN S6_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") && \
