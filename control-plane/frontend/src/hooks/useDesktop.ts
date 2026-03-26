@@ -95,19 +95,24 @@ export function useDesktop(instanceId: number, enabled: boolean) {
   }, []);
 
   const pasteToRemote = useCallback(async () => {
+    const rfb = rfbRef.current;
+    if (!rfb) return;
+
+    let text: string | null = null;
     try {
-      const text = await navigator.clipboard.readText();
-      const rfb = rfbRef.current;
-      if (!rfb || !text) return;
-      rfb.clipboardPasteFrom(text);
-      // Simulate Ctrl+V to actually paste in the remote desktop
-      rfb.sendKey(0xFFE3, "ControlLeft", true);
-      rfb.sendKey(0x0076, "KeyV", true);
-      rfb.sendKey(0x0076, "KeyV", false);
-      rfb.sendKey(0xFFE3, "ControlLeft", false);
+      text = await navigator.clipboard.readText();
     } catch {
-      // Clipboard read permission denied or not available
+      // Clipboard API denied or unavailable – fall back to prompt
+      text = window.prompt("Paste your text here:");
     }
+
+    if (!text) return;
+    rfb.clipboardPasteFrom(text);
+    // Simulate Ctrl+V to actually paste in the remote desktop
+    rfb.sendKey(0xFFE3, "ControlLeft", true);
+    rfb.sendKey(0x0076, "KeyV", true);
+    rfb.sendKey(0x0076, "KeyV", false);
+    rfb.sendKey(0xFFE3, "ControlLeft", false);
   }, []);
 
   return {

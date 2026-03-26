@@ -138,6 +138,7 @@ func findModelCost(models []database.ProviderModel, modelID string) *database.Pr
 // resolveRealAPIKey finds the real API key for the given provider.
 // Checks per-instance overrides first (using PROVIDER_API_KEY naming convention),
 // then falls back to the global api_key:PROVIDER_API_KEY setting.
+// For Anthropic providers, also checks ANTHROPIC_OAUTH_TOKEN as a final fallback.
 func resolveRealAPIKey(instanceID uint, providerKey string) string {
 	keyName := strings.ToUpper(strings.ReplaceAll(providerKey, "-", "_")) + "_API_KEY"
 
@@ -259,6 +260,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":{"message":"failed to build upstream request"}}`, http.StatusInternalServerError)
 		return
 	}
+
 
 	client := &http.Client{Timeout: 300 * time.Second}
 	resp, err := client.Do(upstreamReq)

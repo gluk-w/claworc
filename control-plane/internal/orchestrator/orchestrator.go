@@ -18,6 +18,7 @@ type ContainerOrchestrator interface {
 	StartInstance(ctx context.Context, name string) error
 	StopInstance(ctx context.Context, name string) error
 	RestartInstance(ctx context.Context, name string) error
+	RecreateInstance(ctx context.Context, name string, newImage string, onProgress func(string)) error
 	GetInstanceStatus(ctx context.Context, name string) (string, error)
 	GetInstanceImageInfo(ctx context.Context, name string) (string, error)
 
@@ -33,6 +34,13 @@ type ContainerOrchestrator interface {
 
 	// Exec
 	ExecInInstance(ctx context.Context, name string, cmd []string) (stdout string, stderr string, exitCode int, err error)
+	ExecInInstanceAsRoot(ctx context.Context, name string, cmd []string) (stdout string, stderr string, exitCode int, err error)
+}
+
+type BindMount struct {
+	HostPath      string `json:"host_path"`
+	ContainerPath string `json:"container_path"`
+	ReadOnly      bool   `json:"read_only"`
 }
 
 type CreateParams struct {
@@ -47,6 +55,8 @@ type CreateParams struct {
 	VNCResolution   string
 	Timezone        string
 	UserAgent       string
+	BindMounts      []BindMount
+	UseHostDisplay  bool
 	EnvVars         map[string]string
 	OnProgress      func(string)
 }

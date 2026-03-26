@@ -4,6 +4,7 @@ import { GripVertical } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import ActionButtons from "./ActionButtons";
 import { useSSHStatus } from "@/hooks/useSSHStatus";
+import { useOpenClawVersion } from "@/hooks/useInstances";
 import { buildSSHTooltip } from "@/utils/sshTooltip";
 import type { Instance } from "@/types/instance";
 import type { SyntheticListenerMap } from "@dnd-kit/core/dist/hooks/utilities";
@@ -32,6 +33,7 @@ export default function InstanceRow({
   dragHandleAttributes,
 }: InstanceRowProps) {
   const sshStatus = useSSHStatus(instance.id, instance.status === "running");
+  const openclawVersion = useOpenClawVersion(instance.id, instance.status === "running");
 
   const createdAt = instance.created_at
     ? formatDistanceToNow(new Date(instance.created_at), { addSuffix: true })
@@ -66,6 +68,18 @@ export default function InstanceRow({
               : buildSSHTooltip(sshStatus.data)
           }
         />
+      </td>
+      <td className="px-4 py-3 text-sm text-gray-500">
+        {instance.status === "running" && openclawVersion.data ? (
+          <span className={openclawVersion.data.installed !== openclawVersion.data.latest ? "text-amber-600" : ""}>
+            {openclawVersion.data.installed}
+            {openclawVersion.data.installed !== openclawVersion.data.latest && (
+              <span className="text-xs ml-1" title={`Latest: ${openclawVersion.data.latest}`}>&#x26A0;</span>
+            )}
+          </span>
+        ) : instance.status === "running" ? (
+          <span className="text-gray-300">...</span>
+        ) : null}
       </td>
       <td className="px-4 py-3 text-sm text-gray-500">{createdAt}</td>
       <td className="px-4 py-3">

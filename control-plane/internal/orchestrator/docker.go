@@ -179,17 +179,57 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
 		env = append(env, fmt.Sprintf("OPENCLAW_GATEWAY_TOKEN=%s", token))
 	}
+	if token, ok := params.EnvVars["ANTHROPIC_OAUTH_TOKEN"]; ok && token != "" {
+		env = append(env, fmt.Sprintf("ANTHROPIC_OAUTH_TOKEN=%s", token))
+	}
 	if params.Timezone != "" {
 		env = append(env, fmt.Sprintf("TZ=%s", params.Timezone))
 	}
 	if params.UserAgent != "" {
 		env = append(env, fmt.Sprintf("CHROMIUM_USER_AGENT=%s", params.UserAgent))
 	}
+	if params.UseHostDisplay {
+		display := findUserDisplay()
+		if display == "" {
+			display = ":0"
+		}
+		env = append(env, "DISPLAY="+display, "USE_HOST_GPU=1")
+	}
 
 	// Mounts
 	mounts := []mount.Mount{
 		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "homebrew"), Target: "/home/linuxbrew/.linuxbrew"},
 		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "home"), Target: "/home/claworc"},
+	}
+	// Add user-defined bind mounts
+	for _, bm := range params.BindMounts {
+		mounts = append(mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   bm.HostPath,
+			Target:   bm.ContainerPath,
+			ReadOnly: bm.ReadOnly,
+		})
+	}
+
+	// Mount host X11 socket and Xauthority for GPU browser
+	if params.UseHostDisplay {
+		mounts = append(mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   "/tmp/.X11-unix",
+			Target:   "/tmp/.X11-unix",
+			ReadOnly: true,
+		})
+		// Find sddm Xauthority for X11 auth
+		xauthFile := findXauthority()
+		if xauthFile != "" {
+			mounts = append(mounts, mount.Mount{
+				Type:     mount.TypeBind,
+				Source:   xauthFile,
+				Target:   "/tmp/.host-Xauthority",
+				ReadOnly: true,
+			})
+			env = append(env, "XAUTHORITY=/tmp/.host-Xauthority")
+		}
 	}
 
 	// Resource limits
@@ -248,13 +288,17 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 		return fmt.Errorf("create container: %w", err)
 	}
 
+	// Patch s6 scripts for GPU browser mode BEFORE starting (host X display)
+	if params.UseHostDisplay {
+		d.patchForHostDisplay(ctx, resp.ID)
+	}
+
 	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return err
 	}
 
 	return nil
 }
-
 func (d *DockerOrchestrator) CloneVolumes(ctx context.Context, srcName, dstName string) error {
 	// Stop destination container while we copy data into its volumes
 	timeout := 30
@@ -311,6 +355,13 @@ func (d *DockerOrchestrator) copyVolume(ctx context.Context, srcVol, dstVol stri
 	return nil
 }
 
+func (d *DockerOrchestrator) RemoveContainerOnly(ctx context.Context, name string) {
+	err := d.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
+	if err != nil && !dockerclient.IsErrNotFound(err) {
+		log.Printf("Remove container %s: %v", utils.SanitizeForLog(name), err)
+	}
+}
+
 func (d *DockerOrchestrator) DeleteInstance(ctx context.Context, name string) error {
 	// Remove container
 	err := d.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
@@ -342,6 +393,74 @@ func (d *DockerOrchestrator) RestartInstance(ctx context.Context, name string) e
 	return d.client.ContainerRestart(ctx, name, container.StopOptions{Timeout: &timeout})
 }
 
+func (d *DockerOrchestrator) RecreateInstance(ctx context.Context, name string, newImage string, onProgress func(string)) error {
+	if onProgress == nil {
+		onProgress = func(string) {}
+	}
+
+	// 1. Inspect current container to capture its configuration
+	onProgress("Inspecting current container...")
+	inspect, err := d.client.ContainerInspect(ctx, name)
+	if err != nil {
+		return fmt.Errorf("inspect container %s: %w", name, err)
+	}
+
+	// 2. Pull the new image
+	onProgress("Pulling new image...")
+	if err := d.ensureImage(ctx, newImage); err != nil {
+		return fmt.Errorf("pull image: %w", err)
+	}
+
+	// 3. Stop the container
+	onProgress("Stopping container...")
+	timeout := 30
+	if err := d.client.ContainerStop(ctx, name, container.StopOptions{Timeout: &timeout}); err != nil {
+		log.Printf("Stop container %s during recreate: %v", utils.SanitizeForLog(name), err)
+	}
+
+	// 4. Remove the container (volumes are preserved since they are named volumes)
+	onProgress("Removing old container...")
+	if err := d.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true}); err != nil {
+		return fmt.Errorf("remove container %s: %w", name, err)
+	}
+
+	// 5. Recreate the container with the new image but same config
+	onProgress("Creating container with new image...")
+	containerCfg := inspect.Config
+	containerCfg.Image = newImage
+
+	hostCfg := inspect.HostConfig
+
+	// Preserve the original container's network settings
+	endpointsCfg := make(map[string]*network.EndpointSettings)
+	if inspect.NetworkSettings != nil && len(inspect.NetworkSettings.Networks) > 0 {
+		for netName, netSettings := range inspect.NetworkSettings.Networks {
+			endpointsCfg[netName] = &network.EndpointSettings{
+				Aliases: netSettings.Aliases,
+			}
+		}
+	} else {
+		endpointsCfg[networkName] = &network.EndpointSettings{}
+	}
+	netCfg := &network.NetworkingConfig{
+		EndpointsConfig: endpointsCfg,
+	}
+
+	resp, err := d.client.ContainerCreate(ctx, containerCfg, hostCfg, netCfg, nil, name)
+	if err != nil {
+		return fmt.Errorf("recreate container %s: %w", name, err)
+	}
+
+	// 6. Start the new container
+	onProgress("Starting container...")
+	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return fmt.Errorf("start recreated container: %w", err)
+	}
+
+	onProgress("Container recreated successfully")
+	return nil
+}
+
 func (d *DockerOrchestrator) GetInstanceStatus(ctx context.Context, name string) (string, error) {
 	inspect, err := d.client.ContainerInspect(ctx, name)
 	if err != nil {
@@ -360,7 +479,7 @@ func (d *DockerOrchestrator) GetInstanceStatus(ctx context.Context, name string)
 	switch status {
 	case "running":
 		switch health {
-		case "healthy":
+		case "healthy", "":
 			return "running", nil
 		case "unhealthy":
 			return "error", nil
@@ -508,3 +627,87 @@ func (d *DockerOrchestrator) ExecInInstance(ctx context.Context, name string, cm
 
 // Ensure DockerOrchestrator implements ContainerOrchestrator
 var _ ContainerOrchestrator = (*DockerOrchestrator)(nil)
+
+func (d *DockerOrchestrator) ExecInInstanceAsRoot(ctx context.Context, name string, cmd []string) (string, string, int, error) {
+	execCfg := container.ExecOptions{
+		Cmd:          cmd,
+		User:         "root",
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+
+	execID, err := d.client.ContainerExecCreate(ctx, name, execCfg)
+	if err != nil {
+		return "", "", -1, fmt.Errorf("exec create: %w", err)
+	}
+
+	resp, err := d.client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return "", "", -1, fmt.Errorf("exec attach: %w", err)
+	}
+	defer resp.Close()
+
+	output, err := io.ReadAll(resp.Reader)
+	if err != nil {
+		return "", "", -1, fmt.Errorf("read exec output: %w", err)
+	}
+
+	inspectResp, err := d.client.ContainerExecInspect(ctx, execID.ID)
+	if err != nil {
+		return string(output), "", -1, fmt.Errorf("exec inspect: %w", err)
+	}
+
+	cleaned := stripDockerLogHeaders(output)
+	return cleaned, "", inspectResp.ExitCode, nil
+}
+
+func findUserDisplay() string {
+	// Find Xwayland running under user session (not sddm)
+	entries, _ := os.ReadDir("/proc")
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		cmdline, err := os.ReadFile("/proc/" + e.Name() + "/cmdline")
+		if err != nil {
+			continue
+		}
+		s := string(cmdline)
+		if !strings.Contains(s, "Xwayland") {
+			continue
+		}
+		// Parse display number from "Xwayland :N ..."
+		parts := strings.Split(s, string([]byte{0}))
+		for _, p := range parts {
+			if strings.HasPrefix(p, ":") && len(p) <= 3 {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+func findXauthority() string {
+	// Parse -auth flag from running Xorg process
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		cmdline, err := os.ReadFile("/proc/" + e.Name() + "/cmdline")
+		if err != nil {
+			continue
+		}
+		parts := strings.Split(string(cmdline), string([]byte{0}))
+		for i, p := range parts {
+			if p == "-auth" && i+1 < len(parts) && parts[i+1] != "" {
+				path := parts[i+1]
+				return path
+			}
+		}
+	}
+	return ""
+}

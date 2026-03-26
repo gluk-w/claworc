@@ -8,6 +8,7 @@ import {
   fetchInstance,
   createInstance,
   updateInstance,
+  updateInstanceImage,
   deleteInstance,
   startInstance,
   stopInstance,
@@ -16,6 +17,9 @@ import {
   fetchInstanceConfig,
   updateInstanceConfig,
   reorderInstances,
+  updateOpenClaw,
+  fetchOpenClawVersion,
+  fetchOpenClawVersions,
 } from "@/api/instances";
 import type { Instance, InstanceCreatePayload, InstanceUpdatePayload } from "@/types/instance";
 
@@ -57,6 +61,22 @@ export function useUpdateInstance() {
     },
     onError: (error: any) => {
       errorToast("Failed to update instance", error);
+    },
+  });
+}
+
+export function useUpdateInstanceImage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, containerImage }: { id: number; containerImage: string }) =>
+      updateInstanceImage(id, containerImage),
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: ["instances", id] });
+      qc.invalidateQueries({ queryKey: ["instances"] });
+      infoToast("Image update started", "The instance is being recreated with the new image.");
+    },
+    onError: (error: any) => {
+      errorToast("Failed to update image", error);
     },
   });
 }
@@ -216,5 +236,40 @@ export function useUpdateInstanceConfig() {
       qc.invalidateQueries({ queryKey: ["instances", variables.id, "config"] });
       qc.invalidateQueries({ queryKey: ["instances"] });
     },
+  });
+}
+
+export function useUpdateOpenClaw() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, version }: { id: number; version?: string }) => updateOpenClaw(id, version),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ["instances", variables.id] });
+      qc.invalidateQueries({ queryKey: ["instances"] });
+      // Invalidate version after container restart settles
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["instances", variables.id, "openclaw-version"] }), 15_000);
+      successToast("OpenClaw updated successfully");
+    },
+    onError: (error: any) => {
+      errorToast("Failed to update OpenClaw", error);
+    },
+  });
+}
+
+export function useOpenClawVersion(id: number, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ["instances", id, "openclaw-version"],
+    queryFn: () => fetchOpenClawVersion(id),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+export function useOpenClawVersions(id: number, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ["instances", id, "openclaw-versions"],
+    queryFn: () => fetchOpenClawVersions(id),
+    enabled,
+    staleTime: 60_000,
   });
 }
