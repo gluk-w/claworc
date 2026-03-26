@@ -461,7 +461,8 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 						Name:            "claworc-instance",
 						Image:           params.ContainerImage,
 						ImagePullPolicy: corev1.PullAlways,
-						SecurityContext: &corev1.SecurityContext{Privileged: &privileged},
+						allowPrivEsc := false
+						SecurityContext: &corev1.SecurityContext{Privileged: &privileged, AllowPrivilegeEscalation: &allowPrivEsc},
 						Env:             envVars,
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{
