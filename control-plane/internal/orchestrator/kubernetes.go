@@ -422,7 +422,7 @@ func buildPVC(name, ns, storage string) *corev1.PersistentVolumeClaim {
 
 func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 	replicas := int32(1)
-	privileged := true
+	privileged := false
 
 	var envVars []corev1.EnvVar
 	if parts := strings.SplitN(params.VNCResolution, "x", 2); len(parts) == 2 {
