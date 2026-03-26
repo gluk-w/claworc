@@ -69,6 +69,19 @@ export interface InstanceUpdatePayload {
   user_agent?: string;
   allowed_source_ips?: string;
   enabled_providers?: number[];
+  display_name?: string;
+  cpu_request?: string;
+  cpu_limit?: string;
+  memory_request?: string;
+  memory_limit?: string;
+  vnc_resolution?: string;
+}
+
+export interface InstanceStats {
+  cpu_usage_millicores: number;
+  cpu_usage_percent: number;
+  memory_usage_bytes: number;
+  memory_limit_bytes: number;
 }
 
 export interface ProviderModelCost {

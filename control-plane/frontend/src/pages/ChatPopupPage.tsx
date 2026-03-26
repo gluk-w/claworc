@@ -55,7 +55,7 @@ function ChatPopupInner({ instanceId, initialMessages }: { instanceId: number; i
 
   return (
     <div className="h-screen flex">
-      <div className={chatViewMode === "chat-browser" ? "w-[400px] flex-shrink-0 border-r border-gray-700" : "flex-1"}>
+      <div className={chatViewMode === "chat-browser" ? "w-[400px] flex-shrink-0 border-r border-gray-700 relative" : "flex-1 relative"}>
         <ChatPanel
           messages={chatHook.messages}
           connectionState={chatHook.connectionState}
@@ -69,7 +69,7 @@ function ChatPopupInner({ instanceId, initialMessages }: { instanceId: number; i
         />
       </div>
       {chatViewMode === "chat-browser" && (
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 relative">
           <VncPanel
             instanceId={instanceId}
             connectionState={desktopHook.connectionState}

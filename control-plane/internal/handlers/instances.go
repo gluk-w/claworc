@@ -700,6 +700,39 @@ type instanceUpdateRequest struct {
 	UserAgent        *string            `json:"user_agent"`
 	AllowedSourceIPs *string            `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
 	EnabledProviders *[]uint            `json:"enabled_providers"`  // admin only: LLM gateway provider IDs
+	DisplayName      *string            `json:"display_name"`      // admin only
+	CPURequest       *string            `json:"cpu_request"`       // admin only
+	CPULimit         *string            `json:"cpu_limit"`         // admin only
+	MemoryRequest    *string            `json:"memory_request"`    // admin only
+	MemoryLimit      *string            `json:"memory_limit"`      // admin only
+	VNCResolution    *string            `json:"vnc_resolution"`    // admin only
+}
+
+var (
+	cpuRegex        = regexp.MustCompile(`^(\d+m|\d+(\.\d+)?)$`)
+	memoryRegex     = regexp.MustCompile(`^\d+(Ki|Mi|Gi)$`)
+	resolutionRegex = regexp.MustCompile(`^\d+x\d+$`)
+)
+
+func cpuToMillicores(s string) int64 {
+	if strings.HasSuffix(s, "m") {
+		n, _ := strconv.ParseInt(s[:len(s)-1], 10, 64)
+		return n
+	}
+	f, _ := strconv.ParseFloat(s, 64)
+	return int64(f * 1000)
+}
+
+func memoryToBytes(s string) int64 {
+	unitMap := map[string]int64{"Ki": 1024, "Mi": 1024 * 1024, "Gi": 1024 * 1024 * 1024}
+	for suffix, multiplier := range unitMap {
+		if strings.HasSuffix(s, suffix) {
+			n, _ := strconv.ParseInt(s[:len(s)-len(suffix)], 10, 64)
+			return n * multiplier
+		}
+	}
+	n, _ := strconv.ParseInt(s, 10, 64)
+	return n
 }
 
 func UpdateInstance(w http.ResponseWriter, r *http.Request) {
@@ -825,6 +858,96 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Update display name (admin only)
+	if body.DisplayName != nil {
+		user := middleware.GetUser(r)
+		if user == nil || user.Role != "admin" {
+			writeError(w, http.StatusForbidden, "Only admins can rename instances")
+			return
+		}
+		trimmed := strings.TrimSpace(*body.DisplayName)
+		if trimmed == "" {
+			writeError(w, http.StatusBadRequest, "Display name cannot be empty")
+			return
+		}
+		database.DB.Model(&inst).Update("display_name", trimmed)
+	}
+
+	// Update CPU/memory resources (admin only)
+	resourcesChanged := false
+	if body.CPURequest != nil || body.CPULimit != nil || body.MemoryRequest != nil || body.MemoryLimit != nil {
+		user := middleware.GetUser(r)
+		if user == nil || user.Role != "admin" {
+			writeError(w, http.StatusForbidden, "Only admins can change resource limits")
+			return
+		}
+
+		cpuReq := inst.CPURequest
+		cpuLim := inst.CPULimit
+		memReq := inst.MemoryRequest
+		memLim := inst.MemoryLimit
+
+		if body.CPURequest != nil {
+			if !cpuRegex.MatchString(*body.CPURequest) {
+				writeError(w, http.StatusBadRequest, "Invalid CPU request format (e.g., 500m or 0.5)")
+				return
+			}
+			cpuReq = *body.CPURequest
+		}
+		if body.CPULimit != nil {
+			if !cpuRegex.MatchString(*body.CPULimit) {
+				writeError(w, http.StatusBadRequest, "Invalid CPU limit format (e.g., 2000m or 2)")
+				return
+			}
+			cpuLim = *body.CPULimit
+		}
+		if body.MemoryRequest != nil {
+			if !memoryRegex.MatchString(*body.MemoryRequest) {
+				writeError(w, http.StatusBadRequest, "Invalid memory request format (e.g., 1Gi or 512Mi)")
+				return
+			}
+			memReq = *body.MemoryRequest
+		}
+		if body.MemoryLimit != nil {
+			if !memoryRegex.MatchString(*body.MemoryLimit) {
+				writeError(w, http.StatusBadRequest, "Invalid memory limit format (e.g., 4Gi or 2048Mi)")
+				return
+			}
+			memLim = *body.MemoryLimit
+		}
+
+		if cpuToMillicores(cpuReq) > cpuToMillicores(cpuLim) {
+			writeError(w, http.StatusBadRequest, "CPU request cannot exceed CPU limit")
+			return
+		}
+		if memoryToBytes(memReq) > memoryToBytes(memLim) {
+			writeError(w, http.StatusBadRequest, "Memory request cannot exceed memory limit")
+			return
+		}
+
+		database.DB.Model(&inst).Updates(map[string]interface{}{
+			"cpu_request":    cpuReq,
+			"cpu_limit":      cpuLim,
+			"memory_request": memReq,
+			"memory_limit":   memLim,
+		})
+		resourcesChanged = true
+	}
+
+	// Update VNC resolution (admin only)
+	if body.VNCResolution != nil {
+		user := middleware.GetUser(r)
+		if user == nil || user.Role != "admin" {
+			writeError(w, http.StatusForbidden, "Only admins can change VNC resolution")
+			return
+		}
+		if *body.VNCResolution != "" && !resolutionRegex.MatchString(*body.VNCResolution) {
+			writeError(w, http.StatusBadRequest, "Invalid resolution format (e.g., 1920x1080)")
+			return
+		}
+		database.DB.Model(&inst).Update("vnc_resolution", *body.VNCResolution)
+	}
+
 	// Re-fetch
 	database.DB.First(&inst, inst.ID)
 
@@ -833,6 +956,18 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	orchStatus := "stopped"
 	if orch != nil {
 		orchStatus, _ = orch.GetInstanceStatus(r.Context(), inst.Name)
+	}
+
+	// Apply resource changes to running container
+	if resourcesChanged && orch != nil && orchStatus == "running" {
+		if err := orch.UpdateResources(r.Context(), inst.Name, orchestrator.UpdateResourcesParams{
+			CPURequest:    inst.CPURequest,
+			CPULimit:      inst.CPULimit,
+			MemoryRequest: inst.MemoryRequest,
+			MemoryLimit:   inst.MemoryLimit,
+		}); err != nil {
+			log.Printf("Failed to update resources for instance %d: %v", inst.ID, err)
+		}
 	}
 	if orch != nil && orchStatus == "running" {
 		models := resolveInstanceModels(inst)
@@ -858,6 +993,148 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func GetInstanceStats(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	stats, err := orch.GetContainerStats(r.Context(), inst.Name)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Stats unavailable")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	if user == nil || user.Role != "admin" {
+		writeError(w, http.StatusForbidden, "Only admins can update instance images")
+		return
+	}
+
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	orchStatus, _ := orch.GetInstanceStatus(r.Context(), inst.Name)
+	if orchStatus != "running" {
+		writeError(w, http.StatusBadRequest, "Instance must be running to update image")
+		return
+	}
+
+	effectiveImage := getEffectiveImage(inst)
+	if effectiveImage == "" {
+		writeError(w, http.StatusBadRequest, "No container image configured")
+		return
+	}
+	if strings.Contains(effectiveImage, "@sha256:") {
+		writeError(w, http.StatusBadRequest, "Cannot update a digest-pinned image; use a tag-based image instead")
+		return
+	}
+
+	// Set status to restarting
+	database.DB.Model(&inst).Updates(map[string]interface{}{
+		"status":     "restarting",
+		"updated_at": time.Now().UTC(),
+	})
+
+	// Stop SSH tunnels before update; they will be recreated by the background manager
+	if SSHMgr != nil {
+		SSHMgr.CancelReconnection(inst.ID)
+	}
+	if TunnelMgr != nil {
+		if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
+			log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)
+		}
+	}
+
+	effectiveResolution := getEffectiveResolution(inst)
+	effectiveTimezone := getEffectiveTimezone(inst)
+	effectiveUserAgent := getEffectiveUserAgent(inst)
+
+	// Decrypt gateway token for env vars
+	envVars := map[string]string{}
+	if inst.GatewayToken != "" {
+		if plain, err := utils.Decrypt(inst.GatewayToken); err == nil {
+			envVars["OPENCLAW_GATEWAY_TOKEN"] = plain
+		}
+	}
+
+	instID := inst.ID
+	instName := inst.Name
+	go func() {
+		ctx := context.Background()
+		err := orch.UpdateImage(ctx, instName, orchestrator.CreateParams{
+			Name:           instName,
+			CPURequest:     inst.CPURequest,
+			CPULimit:       inst.CPULimit,
+			MemoryRequest:  inst.MemoryRequest,
+			MemoryLimit:    inst.MemoryLimit,
+			ContainerImage: effectiveImage,
+			VNCResolution:  effectiveResolution,
+			Timezone:       effectiveTimezone,
+			UserAgent:      effectiveUserAgent,
+			EnvVars:        envVars,
+		})
+		if err != nil {
+			log.Printf("Failed to update image for instance %d: %v", instID, err)
+			database.DB.Model(&database.Instance{}).Where("id = ?", instID).Updates(map[string]interface{}{
+				"status":         "error",
+				"status_message": fmt.Sprintf("Image update failed: %v", err),
+				"updated_at":     time.Now().UTC(),
+			})
+			return
+		}
+		log.Printf("Image updated successfully for instance %d", instID)
+		database.DB.Model(&database.Instance{}).Where("id = ?", instID).Updates(map[string]interface{}{
+			"status":     "running",
+			"updated_at": time.Now().UTC(),
+		})
+	}()
+
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "restarting"})
 }
 
 func DeleteInstance(w http.ResponseWriter, r *http.Request) {

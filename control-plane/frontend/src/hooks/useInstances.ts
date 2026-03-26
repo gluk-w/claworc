@@ -16,6 +16,8 @@ import {
   fetchInstanceConfig,
   updateInstanceConfig,
   reorderInstances,
+  fetchInstanceStats,
+  updateInstanceImage,
 } from "@/api/instances";
 import type { Instance, InstanceCreatePayload, InstanceUpdatePayload } from "@/types/instance";
 
@@ -125,6 +127,20 @@ export function useRestartInstance() {
   });
 }
 
+export function useUpdateInstanceImage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => updateInstanceImage(id),
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: ["instances", id] });
+      qc.invalidateQueries({ queryKey: ["instances"] });
+    },
+    onError: (error: any) => {
+      errorToast("Failed to update image", error);
+    },
+  });
+}
+
 /** Show a "Restarted <name>" toast when any instance transitions from "restarting" → "running". */
 export function useRestartedToast(instances: Instance[] | undefined) {
   const prevRef = useRef<Map<number, string>>(new Map());
@@ -204,6 +220,17 @@ export function useReorderInstances() {
       qc.invalidateQueries({ queryKey: ["instances"] });
       errorToast("Failed to reorder instances");
     },
+  });
+}
+
+export function useInstanceStats(id: number, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ["instance-stats", id],
+    queryFn: () => fetchInstanceStats(id),
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: false,
+    enabled,
+    retry: false,
   });
 }
 

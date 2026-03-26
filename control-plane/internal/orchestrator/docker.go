@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -171,88 +172,8 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 		}
 	}
 
-	// Environment
-	var env []string
-	if parts := strings.SplitN(params.VNCResolution, "x", 2); len(parts) == 2 {
-		env = append(env, "DISPLAY_WIDTH="+parts[0], "DISPLAY_HEIGHT="+parts[1])
-	}
-	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
-		env = append(env, fmt.Sprintf("OPENCLAW_GATEWAY_TOKEN=%s", token))
-	}
-	if params.Timezone != "" {
-		env = append(env, fmt.Sprintf("TZ=%s", params.Timezone))
-	}
-	if params.UserAgent != "" {
-		env = append(env, fmt.Sprintf("CHROMIUM_USER_AGENT=%s", params.UserAgent))
-	}
-
-	// Mounts
-	mounts := []mount.Mount{
-		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "homebrew"), Target: "/home/linuxbrew/.linuxbrew"},
-		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "home"), Target: "/home/claworc"},
-	}
-
-	// Resource limits
-	var nanoCPUs int64
-	var memLimit int64
-	if params.CPULimit != "" {
-		nanoCPUs = parseCPUToNanoCPUs(params.CPULimit)
-	}
-	if params.MemoryLimit != "" {
-		memLimit = parseMemoryToBytes(params.MemoryLimit)
-	}
-
 	progress("Creating container...")
-
-	shmSize, _ := units.RAMInBytes("2g")
-
-	containerCfg := &container.Config{
-		Image:    params.ContainerImage,
-		Hostname: strings.TrimPrefix(params.Name, "bot-"),
-		Env:      env,
-		Labels: map[string]string{"managed-by": labelManagedBy, "instance": params.Name},
-		ExposedPorts: nat.PortSet{
-			"22/tcp": struct{}{},
-		},
-		Healthcheck: &container.HealthConfig{
-			Test:          []string{"CMD-SHELL", "bash -c '>/dev/tcp/127.0.0.1/22'"},
-			Interval:      30_000_000_000,
-			Timeout:       10_000_000_000,
-			Retries:       3,
-			StartInterval: 60_000_000_000,
-		},
-	}
-
-	hostCfg := &container.HostConfig{
-		Privileged: true,
-		Mounts:     mounts,
-		ShmSize:    shmSize,
-		Resources: container.Resources{
-			NanoCPUs: nanoCPUs,
-			Memory:   memLimit,
-		},
-		PortBindings: nat.PortMap{
-			"22/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: ""}},
-		},
-		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
-	}
-
-	netCfg := &network.NetworkingConfig{
-		EndpointsConfig: map[string]*network.EndpointSettings{
-			networkName: {},
-		},
-	}
-
-	resp, err := d.client.ContainerCreate(ctx, containerCfg, hostCfg, netCfg, nil, params.Name)
-	if err != nil {
-		return fmt.Errorf("create container: %w", err)
-	}
-
-	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return err
-	}
-
-	return nil
+	return d.createContainer(ctx, params)
 }
 
 func (d *DockerOrchestrator) CloneVolumes(ctx context.Context, srcName, dstName string) error {
@@ -340,6 +261,109 @@ func (d *DockerOrchestrator) StopInstance(ctx context.Context, name string) erro
 func (d *DockerOrchestrator) RestartInstance(ctx context.Context, name string) error {
 	timeout := 30
 	return d.client.ContainerRestart(ctx, name, container.StopOptions{Timeout: &timeout})
+}
+
+func (d *DockerOrchestrator) UpdateImage(ctx context.Context, name string, params CreateParams) error {
+	// Force-pull the latest image (bypass local cache)
+	log.Printf("Force-pulling image %s for instance %s", params.ContainerImage, utils.SanitizeForLog(name))
+	reader, err := d.client.ImagePull(ctx, params.ContainerImage, image.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("pull image %s: %w", params.ContainerImage, err)
+	}
+	defer reader.Close()
+	io.Copy(io.Discard, reader)
+	log.Printf("Image %s pulled successfully", params.ContainerImage)
+
+	// Stop and remove the old container (volumes are preserved)
+	timeout := 30
+	d.client.ContainerStop(ctx, name, container.StopOptions{Timeout: &timeout})
+	if err := d.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true}); err != nil && !dockerclient.IsErrNotFound(err) {
+		return fmt.Errorf("remove container %s: %w", name, err)
+	}
+
+	// Recreate the container with the same config but fresh image
+	return d.createContainer(ctx, params)
+}
+
+// createContainer builds and starts a container from CreateParams (without pulling or creating volumes).
+func (d *DockerOrchestrator) createContainer(ctx context.Context, params CreateParams) error {
+	var env []string
+	if parts := strings.SplitN(params.VNCResolution, "x", 2); len(parts) == 2 {
+		env = append(env, "DISPLAY_WIDTH="+parts[0], "DISPLAY_HEIGHT="+parts[1])
+	}
+	for k, v := range params.EnvVars {
+		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	}
+	if params.Timezone != "" {
+		env = append(env, fmt.Sprintf("TZ=%s", params.Timezone))
+	}
+	if params.UserAgent != "" {
+		env = append(env, fmt.Sprintf("CHROMIUM_USER_AGENT=%s", params.UserAgent))
+	}
+
+	mounts := []mount.Mount{
+		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "homebrew"), Target: "/home/linuxbrew/.linuxbrew"},
+		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "home"), Target: "/home/claworc"},
+	}
+
+	var nanoCPUs int64
+	var memLimit int64
+	if params.CPULimit != "" {
+		nanoCPUs = parseCPUToNanoCPUs(params.CPULimit)
+	}
+	if params.MemoryLimit != "" {
+		memLimit = parseMemoryToBytes(params.MemoryLimit)
+	}
+
+	shmSize, _ := units.RAMInBytes("2g")
+
+	containerCfg := &container.Config{
+		Image:    params.ContainerImage,
+		Hostname: strings.TrimPrefix(params.Name, "bot-"),
+		Env:      env,
+		Labels:   map[string]string{"managed-by": labelManagedBy, "instance": params.Name},
+		ExposedPorts: nat.PortSet{
+			"22/tcp": struct{}{},
+		},
+		Healthcheck: &container.HealthConfig{
+			Test:          []string{"CMD-SHELL", "bash -c '>/dev/tcp/127.0.0.1/22'"},
+			Interval:      30_000_000_000,
+			Timeout:       10_000_000_000,
+			Retries:       3,
+			StartInterval: 60_000_000_000,
+		},
+	}
+
+	hostCfg := &container.HostConfig{
+		Privileged: true,
+		Mounts:     mounts,
+		ShmSize:    shmSize,
+		Resources: container.Resources{
+			NanoCPUs: nanoCPUs,
+			Memory:   memLimit,
+		},
+		PortBindings: nat.PortMap{
+			"22/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: ""}},
+		},
+		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+	}
+
+	netCfg := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			networkName: {},
+		},
+	}
+
+	resp, err := d.client.ContainerCreate(ctx, containerCfg, hostCfg, netCfg, nil, params.Name)
+	if err != nil {
+		return fmt.Errorf("create container: %w", err)
+	}
+
+	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (d *DockerOrchestrator) GetInstanceStatus(ctx context.Context, name string) (string, error) {
@@ -442,6 +466,85 @@ func (d *DockerOrchestrator) GetSSHAddress(ctx context.Context, instanceID uint)
 	}
 
 	return "", 0, fmt.Errorf("cannot determine SSH address for instance %d", instanceID)
+}
+
+func (d *DockerOrchestrator) UpdateResources(ctx context.Context, name string, params UpdateResourcesParams) error {
+	updateCfg := container.UpdateConfig{
+		Resources: container.Resources{
+			NanoCPUs: parseCPUToNanoCPUs(params.CPULimit),
+			Memory:   parseMemoryToBytes(params.MemoryLimit),
+		},
+	}
+	_, err := d.client.ContainerUpdate(ctx, name, updateCfg)
+	return err
+}
+
+func (d *DockerOrchestrator) GetContainerStats(ctx context.Context, name string) (*ContainerStats, error) {
+	resp, err := d.client.ContainerStatsOneShot(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("container stats: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var statsJSON dockerStatsJSON
+	if err := json.NewDecoder(resp.Body).Decode(&statsJSON); err != nil {
+		return nil, fmt.Errorf("decode stats: %w", err)
+	}
+
+	// CPU usage calculation (same formula as docker stats CLI)
+	cpuDelta := float64(statsJSON.CPUStats.CPUUsage.TotalUsage - statsJSON.PreCPUStats.CPUUsage.TotalUsage)
+	systemDelta := float64(statsJSON.CPUStats.SystemCPUUsage - statsJSON.PreCPUStats.SystemCPUUsage)
+	numCPUs := float64(statsJSON.CPUStats.OnlineCPUs)
+	if numCPUs == 0 {
+		numCPUs = float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage))
+	}
+
+	var cpuCores float64
+	if systemDelta > 0 && numCPUs > 0 {
+		cpuCores = (cpuDelta / systemDelta) * numCPUs
+	}
+	cpuMillicores := int64(cpuCores * 1000)
+
+	memUsage := statsJSON.MemoryStats.Usage
+	memLimit := statsJSON.MemoryStats.Limit
+
+	var cpuPercent float64
+	if memLimit > 0 && statsJSON.CPUStats.CPUUsage.TotalUsage > 0 {
+		// Calculate CPU % of limit using NanoCPUs from container config
+		inspect, err := d.client.ContainerInspect(ctx, name)
+		if err == nil && inspect.HostConfig.NanoCPUs > 0 {
+			limitCores := float64(inspect.HostConfig.NanoCPUs) / 1e9
+			cpuPercent = (cpuCores / limitCores) * 100
+		}
+	}
+
+	return &ContainerStats{
+		CPUUsageMillicores: cpuMillicores,
+		CPUUsagePercent:    cpuPercent,
+		MemoryUsageBytes:   int64(memUsage),
+		MemoryLimitBytes:   int64(memLimit),
+	}, nil
+}
+
+type dockerStatsJSON struct {
+	CPUStats struct {
+		CPUUsage struct {
+			TotalUsage  uint64   `json:"total_usage"`
+			PercpuUsage []uint64 `json:"percpu_usage"`
+		} `json:"cpu_usage"`
+		SystemCPUUsage uint64 `json:"system_cpu_usage"`
+		OnlineCPUs     uint32 `json:"online_cpus"`
+	} `json:"cpu_stats"`
+	PreCPUStats struct {
+		CPUUsage struct {
+			TotalUsage uint64 `json:"total_usage"`
+		} `json:"cpu_usage"`
+		SystemCPUUsage uint64 `json:"system_cpu_usage"`
+	} `json:"precpu_stats"`
+	MemoryStats struct {
+		Usage uint64 `json:"usage"`
+		Limit uint64 `json:"limit"`
+	} `json:"memory_stats"`
 }
 
 func (d *DockerOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {

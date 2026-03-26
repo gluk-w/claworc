@@ -168,7 +168,7 @@ export default function ChatPanel({
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col absolute inset-0">
       {/* Header bar — matches LogViewer */}
       <div className="flex items-center gap-2 px-3 py-2 bg-gray-800 border-b border-gray-700">
         <button
@@ -201,7 +201,7 @@ export default function ChatPanel({
       </div>
 
       {/* Messages area */}
-      <div className="flex-1 overflow-auto bg-gray-900 p-3 min-h-[300px]">
+      <div className="flex-1 overflow-auto bg-gray-900 p-3 min-h-0">
         {messages.length === 0 ? (
           <div className="text-gray-500 text-sm">
             {connectionState === "connected"

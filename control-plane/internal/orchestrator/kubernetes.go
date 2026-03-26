@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -239,6 +240,11 @@ func (k *KubernetesOrchestrator) RestartInstance(ctx context.Context, name strin
 	return err
 }
 
+func (k *KubernetesOrchestrator) UpdateImage(ctx context.Context, name string, params CreateParams) error {
+	// With ImagePullPolicy: Always, a rollout restart pulls the latest image
+	return k.RestartInstance(ctx, name)
+}
+
 func (k *KubernetesOrchestrator) GetInstanceStatus(ctx context.Context, name string) (string, error) {
 	pods, err := k.clientset.CoreV1().Pods(k.ns()).List(ctx, metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("app=%s", name),
@@ -326,6 +332,97 @@ func (k *KubernetesOrchestrator) GetSSHAddress(ctx context.Context, instanceID u
 		return "", 0, fmt.Errorf("pod %s has no IP assigned (instance %d)", pod.Name, instanceID)
 	}
 	return pod.Status.PodIP, 22, nil
+}
+
+func (k *KubernetesOrchestrator) UpdateResources(ctx context.Context, name string, params UpdateResourcesParams) error {
+	dep, err := k.clientset.AppsV1().Deployments(k.ns()).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get deployment: %w", err)
+	}
+
+	if len(dep.Spec.Template.Spec.Containers) == 0 {
+		return fmt.Errorf("deployment %s has no containers", name)
+	}
+
+	c := &dep.Spec.Template.Spec.Containers[0]
+	c.Resources = corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse(params.CPURequest),
+			corev1.ResourceMemory: resource.MustParse(params.MemoryRequest),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse(params.CPULimit),
+			corev1.ResourceMemory: resource.MustParse(params.MemoryLimit),
+		},
+	}
+
+	_, err = k.clientset.AppsV1().Deployments(k.ns()).Update(ctx, dep, metav1.UpdateOptions{})
+	return err
+}
+
+func (k *KubernetesOrchestrator) GetContainerStats(ctx context.Context, name string) (*ContainerStats, error) {
+	// Use the metrics API (requires metrics-server)
+	podName, err := k.getPodName(ctx, name)
+	if err != nil || podName == "" {
+		return nil, fmt.Errorf("no running pod for %s", name)
+	}
+
+	// Call metrics API via REST client
+	result := k.clientset.CoreV1().RESTClient().Get().
+		AbsPath(fmt.Sprintf("/apis/metrics.k8s.io/v1beta1/namespaces/%s/pods/%s", k.ns(), podName)).
+		Do(ctx)
+
+	if err := result.Error(); err != nil {
+		return nil, fmt.Errorf("metrics API: %w", err)
+	}
+
+	raw, err := result.Raw()
+	if err != nil {
+		return nil, fmt.Errorf("read metrics: %w", err)
+	}
+
+	var podMetrics struct {
+		Containers []struct {
+			Usage struct {
+				CPU    string `json:"cpu"`
+				Memory string `json:"memory"`
+			} `json:"usage"`
+		} `json:"containers"`
+	}
+	if err := json.Unmarshal(raw, &podMetrics); err != nil {
+		return nil, fmt.Errorf("parse metrics: %w", err)
+	}
+
+	if len(podMetrics.Containers) == 0 {
+		return nil, fmt.Errorf("no container metrics for %s", name)
+	}
+
+	cpuQuantity := resource.MustParse(podMetrics.Containers[0].Usage.CPU)
+	memQuantity := resource.MustParse(podMetrics.Containers[0].Usage.Memory)
+
+	cpuMillicores := cpuQuantity.MilliValue()
+	memBytes := memQuantity.Value()
+
+	// Get limit from deployment for percent calculation
+	dep, err := k.clientset.AppsV1().Deployments(k.ns()).Get(ctx, name, metav1.GetOptions{})
+	var cpuPercent float64
+	var memLimit int64
+	if err == nil && len(dep.Spec.Template.Spec.Containers) > 0 {
+		c := dep.Spec.Template.Spec.Containers[0]
+		if cpuLim, ok := c.Resources.Limits[corev1.ResourceCPU]; ok {
+			cpuPercent = float64(cpuMillicores) / float64(cpuLim.MilliValue()) * 100
+		}
+		if memLim, ok := c.Resources.Limits[corev1.ResourceMemory]; ok {
+			memLimit = memLim.Value()
+		}
+	}
+
+	return &ContainerStats{
+		CPUUsageMillicores: cpuMillicores,
+		CPUUsagePercent:    cpuPercent,
+		MemoryUsageBytes:   memBytes,
+		MemoryLimitBytes:   memLimit,
+	}, nil
 }
 
 func (k *KubernetesOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {
