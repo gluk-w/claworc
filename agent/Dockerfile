@@ -25,7 +25,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Grant claworc user passwordless apt access (limited to package management only)
-RUN echo 'claworc ALL=(ALL) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dpkg' > /etc/sudoers.d/claworc-apt && \
+RUN echo 'claworc ALL=(ALL) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt' > /etc/sudoers.d/claworc-apt && \
     chmod 0440 /etc/sudoers.d/claworc-apt
 
 # Install s6-overlay
@@ -54,5 +54,11 @@ RUN chmod +x /etc/s6-overlay/s6-rc.d/init-setup/up \
     /etc/s6-overlay/s6-rc.d/svc-openclaw/run \
     /etc/s6-overlay/s6-rc.d/svc-sshd/run \
     /etc/s6-overlay/s6-rc.d/svc-cron/run
+
+
+# Remove unnecessary SUID bits to reduce local privilege escalation surface
+RUN chmod u-s /usr/bin/su /usr/bin/mount /usr/bin/umount /usr/bin/newgrp \
+    /usr/bin/chsh /usr/bin/chfn /usr/bin/gpasswd /usr/bin/chage \
+    /usr/bin/crontab /usr/lib/openssh/ssh-keysign
 
 ENTRYPOINT ["/init"]
