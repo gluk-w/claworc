@@ -4,7 +4,7 @@ import "@svar-ui/react-filemanager/all.css";
 import { useQueryClient } from "@tanstack/react-query";
 import { successToast, errorToast } from "@/utils/toast";
 import { useBrowseFiles, useReadFile } from "@/hooks/useFiles";
-import { createFile, uploadFile, deleteFile, renameFile } from "@/api/files";
+import { createFile, createDirectory, uploadFile, deleteFile, renameFile } from "@/api/files";
 import type { FileEntry } from "@/types/files";
 
 interface FileBrowserProps {
@@ -174,13 +174,18 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
       try {
         const filePath = `${ev.parent === "/" ? ROOT_PATH : ROOT_PATH + ev.parent}/${ev.file.name}`;
 
-        await createFile(instanceId, filePath, "");
-        successToast("File created");
+        if (ev.file.type === "folder") {
+          await createDirectory(instanceId, filePath);
+          successToast("Folder created");
+        } else {
+          await createFile(instanceId, filePath, "");
+          successToast("File created");
+        }
 
         refreshCurrentPathRef.current();
         return false;
       } catch (error: any) {
-        errorToast("Failed to create file", error);
+        errorToast(ev.file.type === "folder" ? "Failed to create folder" : "Failed to create file", error);
         return false;
       }
     });

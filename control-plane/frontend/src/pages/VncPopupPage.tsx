@@ -22,7 +22,7 @@ export default function VncPopupPage() {
   }
 
   return (
-    <div className="h-screen">
+    <div className="h-screen relative">
       <VncPanel
         instanceId={instanceId}
         connectionState={desktopHook.connectionState}

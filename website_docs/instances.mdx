@@ -20,6 +20,14 @@ Each instance runs one of three official agent images, differing only in which b
 All images except `glukw/openclaw-vnc-chrome` support **AMD64** and **ARM64** architectures.
 Use `latest` to always pull the most recent build.
 
+### Updating the agent image
+
+When a new version of the agent image is published under the same tag (e.g. `:latest`), you can pull it without recreating the instance. Open the instance **Settings** tab, find the **Agent Image** field, and click **Update**. Claworc pulls the latest version of the tag, stops the container, and restarts it with the new image. Persistent volumes (home directory, Homebrew packages) are preserved.
+
+<Note>
+  The **Update** button only appears for admins, only when the instance is running, and only for tag-based images (e.g. `:latest`). Digest-pinned images (`@sha256:...`) cannot be updated this way — change the image reference in the instance settings instead.
+</Note>
+
 ## Creating an instance
 
 Click **New instance** on the dashboard and fill in the form:
@@ -46,6 +54,8 @@ A rough guide based on typical workloads:
 | Light (simple tasks, browser will be slow) | 500m | 1Gi |
 | Moderate (collaboration with the browser) | 1.0 | 2Gi |
 | Heavy (multiple tabs, data analysis) | 2.0 | 4Gi |
+
+You can adjust CPU and memory after creation on the instance **Settings** tab. See [Resources](#resources) for details.
 
 ## Instance status
 
@@ -108,7 +118,46 @@ Each instance row shows a small colored dot indicating whether Claworc can reach
 
 Open an instance to view full connection health and event history on the **Overview** tab.
 
-## Configuration
+## Instance settings
+
+Open any instance and switch to the **Settings** tab to view and edit its configuration. Settings are organized into two cards: **Instance Details** and **Resources**.
+
+### Instance details
+
+The Instance Details card shows the display name, agent image, VNC resolution, timezone, user-agent, and timestamps. Many of these fields are editable inline — click **Edit** next to a field, make your change, and click **Save**.
+
+| Field | Who can edit | Notes |
+|-------|-------------|-------|
+| **Display Name** | Admins | Renaming does not affect the underlying container or Kubernetes resource names. |
+| **Agent Image** | Read-only (use **Update** to pull latest) | See [Updating the agent image](#updating-the-agent-image). |
+| **VNC Resolution** | Admins | Format: `WIDTHxHEIGHT` (e.g. `1920x1080`). Leave empty for the global default. Requires a restart to take effect. |
+| **Timezone** | All users | IANA timezone string (e.g. `America/New_York`). Leave empty for the global default. Requires a restart to take effect. |
+| **User-Agent** | All users | Custom Chromium User-Agent string. Leave empty for the global default. Requires a restart to take effect. |
+
+### Resources
+
+The Resources card displays CPU and memory requests and limits, plus storage sizes. Admins can click **Edit** to change CPU and memory values for a running instance.
+
+| Field | Format | Example |
+|-------|--------|---------|
+| **CPU Request** | Millicores or decimal cores | `500m` or `0.5` |
+| **CPU Limit** | Millicores or decimal cores | `2000m` or `2` |
+| **Memory Request** | Mebibytes or gibibytes | `512Mi` or `1Gi` |
+| **Memory Limit** | Mebibytes or gibibytes | `4Gi` |
+
+Requests must not exceed their corresponding limits. Claworc validates this before saving.
+
+Resource changes are applied immediately to the running container — no restart is needed. Storage sizes (Homebrew and Home) are set at creation time and cannot be changed afterward.
+
+### Live resource usage
+
+When viewing the **Settings** tab of a running instance, Claworc displays live CPU and memory usage next to the limit values. Usage is shown as an absolute value and a percentage of the configured limit (e.g. `using 312m / 16%`). Stats refresh automatically every 10 seconds.
+
+<Note>
+  In Kubernetes mode, live resource stats require the [metrics-server](https://github.com/kubernetes-sigs/metrics-server) to be installed in the cluster. Without it, usage data is unavailable.
+</Note>
+
+### Configuration hierarchy
 
 Claworc separates configuration into two levels: **global defaults** that apply to every instance, and **per-instance overrides** that apply to one instance only. Anything not overridden at the instance level is inherited from the global defaults automatically.
 

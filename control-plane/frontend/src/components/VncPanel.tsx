@@ -65,7 +65,7 @@ export default function VncPanel({
   }, []);
 
   return (
-    <div ref={panelRef} className="flex flex-col h-full">
+    <div ref={panelRef} className="flex flex-col absolute inset-0">
       <div className="flex items-center gap-2 px-3 py-2 bg-gray-800 border-b border-gray-700">
         {(connectionState === "disconnected" || connectionState === "error") && (
           <button
@@ -117,7 +117,7 @@ export default function VncPanel({
       </div>
       <div
         ref={containerRef}
-        className="flex-1 w-full bg-gray-900"
+        className="flex-1 w-full bg-gray-900 min-h-0 overflow-hidden"
       />
     </div>
   );

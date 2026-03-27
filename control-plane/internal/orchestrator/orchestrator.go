@@ -24,6 +24,13 @@ type ContainerOrchestrator interface {
 	// Config
 	UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error
 
+	// Resources
+	UpdateResources(ctx context.Context, name string, params UpdateResourcesParams) error
+	GetContainerStats(ctx context.Context, name string) (*ContainerStats, error)
+
+	// Image
+	UpdateImage(ctx context.Context, name string, params CreateParams) error
+
 	// Clone
 	CloneVolumes(ctx context.Context, srcName, dstName string) error
 
@@ -49,6 +56,20 @@ type CreateParams struct {
 	UserAgent       string
 	EnvVars         map[string]string
 	OnProgress      func(string)
+}
+
+type UpdateResourcesParams struct {
+	CPURequest    string
+	CPULimit      string
+	MemoryRequest string
+	MemoryLimit   string
+}
+
+type ContainerStats struct {
+	CPUUsageMillicores int64   `json:"cpu_usage_millicores"`
+	CPUUsagePercent    float64 `json:"cpu_usage_percent"`  // percentage of CPU limit
+	MemoryUsageBytes   int64   `json:"memory_usage_bytes"`
+	MemoryLimitBytes   int64   `json:"memory_limit_bytes"` // from container runtime
 }
 
 // FileEntry is a type alias for sshproxy.FileEntry, kept for backward compatibility.
