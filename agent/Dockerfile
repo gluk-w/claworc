@@ -2,13 +2,16 @@ FROM debian:bookworm-slim AS base
 
 ARG S6_OVERLAY_VERSION=3.2.0.2
 ARG TARGETARCH
+ARG USE_CHINA_MIRRORS=false
 
 # Create claworc user (UID 1000)
 RUN useradd -m -u 1000 -s /bin/bash claworc && \
     mkdir -p /defaults
 
-# Use China mirrors for faster downloads
-RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+# Optionally use China mirrors for faster downloads in CN regions
+RUN if [ "$USE_CHINA_MIRRORS" = "true" ]; then \
+      sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; \
+    fi
 
 # Install all system packages + Node.js in one apt transaction
 RUN apt-get update && \
@@ -23,7 +26,7 @@ RUN apt-get update && \
       build-essential procps cron nodejs \
       sudo && \
     echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen && \
-    npm config set registry https://registry.npmmirror.com && \
+    if [ "$USE_CHINA_MIRRORS" = "true" ]; then npm config set registry https://registry.npmmirror.com; fi && \
     npm install -g openclaw@latest && \
     curl -sSL https://install.python-poetry.org | POETRY_HOME=/usr/local python3 - && \
     rm -rf /var/lib/apt/lists/*
