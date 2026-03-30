@@ -378,17 +378,15 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 
 	// For instance-specific providers, ensure gateway keys and reconfigure
 	if p.InstanceID != nil {
-		instID := *p.InstanceID
-		enabledIDs := parseEnabledProviders("")
 		var inst database.Instance
-		if database.DB.First(&inst, instID).Error == nil {
-			enabledIDs = parseEnabledProviders(inst.EnabledProviders)
+		if database.DB.First(&inst, *p.InstanceID).Error == nil {
+			enabledIDs := parseEnabledProviders(inst.EnabledProviders)
+			allIDs := allProviderIDsForInstance(inst.ID, enabledIDs)
+			if err := llmgateway.EnsureKeysForInstance(inst.ID, allIDs); err != nil {
+				log.Printf("Failed to ensure gateway keys for instance %d after provider create: %s", inst.ID, utils.SanitizeForLog(err.Error()))
+			}
+			reconfigureInstanceAsync(inst.ID)
 		}
-		allIDs := allProviderIDsForInstance(instID, enabledIDs)
-		if err := llmgateway.EnsureKeysForInstance(instID, allIDs); err != nil {
-			log.Printf("Failed to ensure gateway keys for instance %d after provider create: %s", instID, utils.SanitizeForLog(err.Error()))
-		}
-		reconfigureInstanceAsync(instID)
 	}
 
 	writeJSON(w, http.StatusCreated, toProviderResp(p))
@@ -533,11 +531,12 @@ func reconfigureInstanceAsync(instID uint) {
 	models := resolveInstanceModels(inst)
 	gatewayProviders := resolveGatewayProviders(inst)
 	instName := inst.Name
+	safeID := inst.ID
 	go func() {
 		bgCtx := context.Background()
-		sshClient, err := SSHMgr.WaitForSSH(bgCtx, instID, 30*time.Second)
+		sshClient, err := SSHMgr.WaitForSSH(bgCtx, safeID, 30*time.Second)
 		if err != nil {
-			log.Printf("Failed to get SSH connection for instance %d during reconfigure: %s", instID, utils.SanitizeForLog(err.Error()))
+			log.Printf("Failed to get SSH connection for instance %d during reconfigure: %s", safeID, utils.SanitizeForLog(err.Error()))
 			return
 		}
 		ConfigureInstance(
