@@ -386,7 +386,7 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 		}
 		allIDs := allProviderIDsForInstance(instID, enabledIDs)
 		if err := llmgateway.EnsureKeysForInstance(instID, allIDs); err != nil {
-			log.Printf("Failed to ensure gateway keys for instance %d after provider create: %v", instID, err)
+			log.Printf("Failed to ensure gateway keys for instance %d after provider create: %s", instID, utils.SanitizeForLog(err.Error()))
 		}
 		reconfigureInstanceAsync(instID)
 	}
@@ -499,7 +499,7 @@ func pushProviderUpdateToInstances(providerID uint) {
 			bgCtx := context.Background()
 			sshClient, err := SSHMgr.WaitForSSH(bgCtx, instID, 30*time.Second)
 			if err != nil {
-				log.Printf("Failed to get SSH connection for instance %d during provider update: %v", instID, err)
+				log.Printf("Failed to get SSH connection for instance %d during provider update: %s", instID, utils.SanitizeForLog(err.Error()))
 				return
 			}
 			ConfigureInstance(
@@ -537,7 +537,7 @@ func reconfigureInstanceAsync(instID uint) {
 		bgCtx := context.Background()
 		sshClient, err := SSHMgr.WaitForSSH(bgCtx, instID, 30*time.Second)
 		if err != nil {
-			log.Printf("Failed to get SSH connection for instance %d during reconfigure: %v", instID, err)
+			log.Printf("Failed to get SSH connection for instance %d during reconfigure: %s", instID, utils.SanitizeForLog(err.Error()))
 			return
 		}
 		ConfigureInstance(
