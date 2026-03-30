@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
@@ -70,23 +69,6 @@ func settingsToResponse(raw map[string]string) map[string]interface{} {
 		}
 	}
 
-	// Dynamic LLM API keys (api_key:* prefix)
-	apiKeys := make(map[string]string)
-	for k, v := range raw {
-		if strings.HasPrefix(k, "api_key:") {
-			keyName := strings.TrimPrefix(k, "api_key:")
-			if v != "" {
-				decrypted, err := utils.Decrypt(v)
-				if err != nil {
-					apiKeys[keyName] = ""
-				} else {
-					apiKeys[keyName] = utils.Mask(decrypted)
-				}
-			}
-		}
-	}
-	result["api_keys"] = apiKeys
-
 	return result
 }
 
@@ -97,8 +79,6 @@ func GetSettings(w http.ResponseWriter, r *http.Request) {
 
 type settingsUpdateRequest struct {
 	DefaultModels *json.RawMessage       `json:"default_models,omitempty"`
-	APIKeys       map[string]string      `json:"api_keys,omitempty"`
-	DeleteAPIKeys []string               `json:"delete_api_keys,omitempty"`
 	BraveAPIKey   *string                `json:"brave_api_key,omitempty"`
 	Plain         map[string]interface{} `json:"-"` // remaining plain fields
 }
@@ -120,44 +100,6 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		database.SetSetting("default_models", string(b))
 	}
 
-	// Handle dynamic LLM api_keys
-	if v, ok := raw["api_keys"]; ok {
-		keysMap, ok := v.(map[string]interface{})
-		if !ok {
-			writeError(w, http.StatusBadRequest, "api_keys must be an object")
-			return
-		}
-		for keyName, keyVal := range keysMap {
-			strVal, ok := keyVal.(string)
-			if !ok {
-				continue
-			}
-			settingKey := "api_key:" + keyName
-			if strVal != "" {
-				encrypted, err := utils.Encrypt(strVal)
-				if err != nil {
-					writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
-					return
-				}
-				database.SetSetting(settingKey, encrypted)
-			} else {
-				database.SetSetting(settingKey, "")
-			}
-		}
-	}
-
-	// Handle delete_api_keys
-	if v, ok := raw["delete_api_keys"]; ok {
-		arr, ok := v.([]interface{})
-		if ok {
-			for _, item := range arr {
-				if keyName, ok := item.(string); ok {
-					database.DeleteSetting("api_key:" + keyName)
-				}
-			}
-		}
-	}
-
 	// Handle brave_api_key (fixed encrypted)
 	if v, ok := raw["brave_api_key"]; ok {
 		if strVal, ok := v.(string); ok {
@@ -176,7 +118,7 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Handle remaining plain settings
 	for key, val := range raw {
-		if key == "default_models" || key == "api_keys" || key == "delete_api_keys" || key == "brave_api_key" {
+		if key == "default_models" || key == "brave_api_key" {
 			continue
 		}
 		if strVal, ok := val.(string); ok {

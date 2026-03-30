@@ -74,14 +74,20 @@ export async function createProvider(payload: {
   api_type?: string;
   models?: ProviderModel[];
   api_key?: string;
+  instance_id?: number;
 }): Promise<LLMProvider> {
   const { data } = await client.post<LLMProvider>("/llm/providers", payload);
   return data;
 }
 
+export async function fetchInstanceProviders(instanceId: number): Promise<LLMProvider[]> {
+  const { data } = await client.get<LLMProvider[]>(`/instances/${instanceId}/providers`);
+  return data;
+}
+
 export async function updateProvider(
   id: number,
-  payload: { name?: string; base_url?: string; api_type?: string; models?: ProviderModel[] },
+  payload: { name?: string; base_url?: string; api_type?: string; models?: ProviderModel[]; api_key?: string },
 ): Promise<LLMProvider> {
   const { data } = await client.put<LLMProvider>(`/llm/providers/${id}`, payload);
   return data;

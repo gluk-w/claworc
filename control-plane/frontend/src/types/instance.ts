@@ -17,7 +17,6 @@ export interface Instance {
   storage_homebrew: string;
   storage_home: string;
   has_brave_override: boolean;
-  api_key_overrides: string[];
   models: InstanceModels;
   default_model: string;
   container_image: string | null;
@@ -31,6 +30,7 @@ export interface Instance {
   live_image_info?: string;
   allowed_source_ips: string;
   enabled_providers: number[];
+  instance_providers: LLMProvider[];
   control_url: string;
   gateway_token: string;
   sort_order: number;
@@ -50,7 +50,6 @@ export interface InstanceCreatePayload {
   storage_homebrew?: string;
   storage_home?: string;
   brave_api_key?: string | null;
-  api_keys?: Record<string, string>;
   models?: { disabled: string[]; extra: string[] };
   default_model?: string;
   container_image?: string | null;
@@ -61,7 +60,6 @@ export interface InstanceCreatePayload {
 }
 
 export interface InstanceUpdatePayload {
-  api_keys?: Record<string, string | null>;
   brave_api_key?: string;
   models?: { disabled: string[]; extra: string[] };
   default_model?: string;
@@ -104,10 +102,12 @@ export interface ProviderModel {
 export interface LLMProvider {
   id: number;
   key: string;
+  instance_id?: number; // non-null = instance-specific provider
   provider: string; // catalog provider key, empty for custom
   name: string;
   base_url: string;
   api_type: string;
+  masked_api_key?: string;
   models: ProviderModel[] | null;
   created_at: string;
   updated_at: string;

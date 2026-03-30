@@ -1,4 +1,3 @@
-import { createElement } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchProviders,
@@ -13,8 +12,6 @@ import {
 import type { UsageStatsResponse } from "@/api/llm";
 import type { ProviderModel } from "@/types/instance";
 import { successToast, errorToast } from "@/utils/toast";
-import toast from "react-hot-toast";
-import AppToast from "@/components/AppToast";
 
 export function useProviders() {
   return useQuery({
@@ -25,63 +22,13 @@ export function useProviders() {
 }
 
 export function useCreateProvider() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: createProvider,
-    onSuccess: () => {
-      successToast("Provider created");
-      queryClient.invalidateQueries({ queryKey: ["llm-providers"] });
-      queryClient.invalidateQueries({ queryKey: ["settings"] });
-    },
-    onError: (err) => errorToast("Failed to create provider", err),
-  });
+  return useMutation({ mutationFn: createProvider });
 }
 
 export function useUpdateProvider() {
-  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, payload }: { id: number; payload: { name?: string; base_url?: string; api_type?: string; models?: ProviderModel[] } }) =>
+    mutationFn: ({ id, payload }: { id: number; payload: { name?: string; base_url?: string; api_type?: string; models?: ProviderModel[]; api_key?: string } }) =>
       updateProvider(id, payload),
-    onMutate: ({ id }) => {
-      const toastId = `provider-update-${id}`;
-      toast.custom(
-        createElement(AppToast, {
-          title: "Updating provider",
-          description: "Pushing config to instances...",
-          status: "loading",
-          toastId,
-        }),
-        { id: toastId, duration: Infinity },
-      );
-      return { toastId };
-    },
-    onSuccess: (_, __, context) => {
-      const toastId = context!.toastId;
-      toast.custom(
-        createElement(AppToast, {
-          title: "Provider updated",
-          status: "success",
-          toastId,
-        }),
-        { id: toastId, duration: 4000 },
-      );
-      queryClient.invalidateQueries({ queryKey: ["llm-providers"] });
-    },
-    onError: (err, { id }, context) => {
-      const toastId = context?.toastId ?? `provider-update-${id}`;
-      const detail =
-        (err as any)?.response?.data?.detail ??
-        (err instanceof Error ? err.message : undefined);
-      toast.custom(
-        createElement(AppToast, {
-          title: "Failed to update provider",
-          description: detail,
-          status: "error",
-          toastId,
-        }),
-        { id: toastId, duration: 8000 },
-      );
-    },
   });
 }
 
@@ -117,15 +64,7 @@ export function useUsageStats(params: {
 }
 
 export function useDeleteProvider() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: deleteProvider,
-    onSuccess: () => {
-      successToast("Provider deleted");
-      queryClient.invalidateQueries({ queryKey: ["llm-providers"] });
-    },
-    onError: (err) => errorToast("Failed to delete provider", err),
-  });
+  return useMutation({ mutationFn: deleteProvider });
 }
 
 export function useResetUsageLogs() {

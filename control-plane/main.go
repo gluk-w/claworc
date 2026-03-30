@@ -234,6 +234,7 @@ func main() {
 			r.Post("/instances/{id}/ssh-reconnect", handlers.SSHReconnect)
 			r.Get("/instances/{id}/tunnels", handlers.GetTunnelStatus)
 			r.Get("/instances/{id}/stats", handlers.GetInstanceStats)
+			r.Get("/instances/{id}/providers", handlers.ListInstanceProviders)
 			r.Post("/instances/{id}/update-image", handlers.UpdateInstanceImage)
 			r.Get("/ssh-fingerprint", handlers.GetSSHFingerprint)
 

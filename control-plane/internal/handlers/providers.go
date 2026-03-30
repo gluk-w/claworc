@@ -16,6 +16,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
+	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
@@ -228,45 +229,78 @@ var getCatalogModels = func(catalogKey string) []database.ProviderModel {
 var providerKeyRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9\-]*[a-z0-9]$|^[a-z0-9]$`)
 
 type providerRequest struct {
-	Key      string                   `json:"key"`
-	Provider string                   `json:"provider"` // catalog provider key, optional
-	Name     string                   `json:"name"`
-	BaseURL  string                   `json:"base_url"`
-	APIType  string                   `json:"api_type"`
-	Models   []database.ProviderModel `json:"models"`
-	APIKey   string                   `json:"api_key"`
+	Key        string                   `json:"key"`
+	Provider   string                   `json:"provider"` // catalog provider key, optional
+	Name       string                   `json:"name"`
+	BaseURL    string                   `json:"base_url"`
+	APIType    string                   `json:"api_type"`
+	Models     []database.ProviderModel `json:"models"`
+	APIKey     string                   `json:"api_key"`
+	InstanceID *uint                    `json:"instance_id,omitempty"` // non-nil = instance-specific provider
 }
 
 type providerResp struct {
-	ID        uint                     `json:"id"`
-	Key       string                   `json:"key"`
-	Provider  string                   `json:"provider"`
-	Name      string                   `json:"name"`
-	BaseURL   string                   `json:"base_url"`
-	APIType   string                   `json:"api_type"`
-	Models    []database.ProviderModel `json:"models"`
-	CreatedAt string                   `json:"created_at"`
-	UpdatedAt string                   `json:"updated_at"`
+	ID           uint                     `json:"id"`
+	Key          string                   `json:"key"`
+	InstanceID   *uint                    `json:"instance_id,omitempty"`
+	Provider     string                   `json:"provider"`
+	Name         string                   `json:"name"`
+	BaseURL      string                   `json:"base_url"`
+	APIType      string                   `json:"api_type"`
+	MaskedAPIKey string                   `json:"masked_api_key"`
+	Models       []database.ProviderModel `json:"models"`
+	CreatedAt    string                   `json:"created_at"`
+	UpdatedAt    string                   `json:"updated_at"`
 }
 
 func toProviderResp(p database.LLMProvider) providerResp {
+	var masked string
+	if p.APIKey != "" {
+		if decrypted, err := utils.Decrypt(p.APIKey); err == nil && decrypted != "" {
+			masked = utils.Mask(decrypted)
+		}
+	}
 	return providerResp{
-		ID:        p.ID,
-		Key:       p.Key,
-		Provider:  p.Provider,
-		Name:      p.Name,
-		BaseURL:   p.BaseURL,
-		APIType:   p.APIType,
-		Models:    database.ParseProviderModels(p.Models),
-		CreatedAt: formatTimestamp(p.CreatedAt),
-		UpdatedAt: formatTimestamp(p.UpdatedAt),
+		ID:           p.ID,
+		Key:          p.Key,
+		InstanceID:   p.InstanceID,
+		Provider:     p.Provider,
+		Name:         p.Name,
+		BaseURL:      p.BaseURL,
+		APIType:      p.APIType,
+		MaskedAPIKey: masked,
+		Models:       database.ParseProviderModels(p.Models),
+		CreatedAt:    formatTimestamp(p.CreatedAt),
+		UpdatedAt:    formatTimestamp(p.UpdatedAt),
 	}
 }
 
 func ListProviders(w http.ResponseWriter, r *http.Request) {
 	var providers []database.LLMProvider
-	if err := database.DB.Order("id ASC").Find(&providers).Error; err != nil {
+	if err := database.DB.Where("instance_id IS NULL").Order("id ASC").Find(&providers).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to list providers")
+		return
+	}
+	result := make([]providerResp, len(providers))
+	for i, p := range providers {
+		result[i] = toProviderResp(p)
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func ListInstanceProviders(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+	if !middleware.CanAccessInstance(r, uint(id)) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+	var providers []database.LLMProvider
+	if err := database.DB.Where("instance_id = ?", id).Order("id ASC").Find(&providers).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to list instance providers")
 		return
 	}
 	result := make([]providerResp, len(providers))
@@ -316,20 +350,45 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 		APIType:  apiType,
 		Models:   string(modelsJSON),
 	}
+	if apiKey := strings.TrimSpace(body.APIKey); apiKey != "" {
+		encrypted, err := utils.Encrypt(apiKey)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
+			return
+		}
+		p.APIKey = encrypted
+	}
+	if body.InstanceID != nil {
+		// Instance-specific provider — check access
+		if !middleware.CanAccessInstance(r, *body.InstanceID) {
+			writeError(w, http.StatusForbidden, "Access denied")
+			return
+		}
+		var inst database.Instance
+		if err := database.DB.First(&inst, *body.InstanceID).Error; err != nil {
+			writeError(w, http.StatusBadRequest, "Instance not found")
+			return
+		}
+		p.InstanceID = body.InstanceID
+	}
 	if err := database.DB.Create(&p).Error; err != nil {
 		writeError(w, http.StatusConflict, "Provider key already exists")
 		return
 	}
 
-	// Store the API key in settings if provided
-	if apiKey := strings.TrimSpace(body.APIKey); apiKey != "" {
-		settingKey := "api_key:" + strings.ReplaceAll(strings.ToUpper(body.Key), "-", "_") + "_API_KEY"
-		encrypted, err := utils.Encrypt(apiKey)
-		if err != nil {
-			log.Printf("failed to encrypt API key for provider %s: %v", utils.SanitizeForLog(body.Key), err)
-		} else {
-			database.SetSetting(settingKey, encrypted)
+	// For instance-specific providers, ensure gateway keys and reconfigure
+	if p.InstanceID != nil {
+		instID := *p.InstanceID
+		enabledIDs := parseEnabledProviders("")
+		var inst database.Instance
+		if database.DB.First(&inst, instID).Error == nil {
+			enabledIDs = parseEnabledProviders(inst.EnabledProviders)
 		}
+		allIDs := allProviderIDsForInstance(instID, enabledIDs)
+		if err := llmgateway.EnsureKeysForInstance(instID, allIDs); err != nil {
+			log.Printf("Failed to ensure gateway keys for instance %d after provider create: %v", instID, err)
+		}
+		reconfigureInstanceAsync(instID)
 	}
 
 	writeJSON(w, http.StatusCreated, toProviderResp(p))
@@ -346,6 +405,14 @@ func UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	if err := database.DB.First(&p, id).Error; err != nil {
 		writeError(w, http.StatusNotFound, "Provider not found")
 		return
+	}
+
+	// Access control for instance-specific providers
+	if p.InstanceID != nil {
+		if !middleware.CanAccessInstance(r, *p.InstanceID) {
+			writeError(w, http.StatusForbidden, "Access denied")
+			return
+		}
 	}
 
 	var body providerRequest
@@ -367,11 +434,20 @@ func UpdateProvider(w http.ResponseWriter, r *http.Request) {
 		modelsJSON, _ := json.Marshal(body.Models)
 		p.Models = string(modelsJSON)
 	}
+	if apiKey := strings.TrimSpace(body.APIKey); apiKey != "" {
+		encrypted, err := utils.Encrypt(apiKey)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
+			return
+		}
+		p.APIKey = encrypted
+	}
 	// Key is immutable once created
 	if err := database.DB.Save(&p).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to update provider")
 		return
 	}
+
 	pushProviderUpdateToInstances(uint(id))
 	writeJSON(w, http.StatusOK, toProviderResp(p))
 }
@@ -381,6 +457,19 @@ func pushProviderUpdateToInstances(providerID uint) {
 	if orch == nil {
 		return
 	}
+
+	// Check if this is an instance-specific provider
+	var provider database.LLMProvider
+	if err := database.DB.First(&provider, providerID).Error; err != nil {
+		return
+	}
+	if provider.InstanceID != nil {
+		// Instance-specific: only reconfigure the owning instance
+		reconfigureInstanceAsync(*provider.InstanceID)
+		return
+	}
+
+	// Global provider: reconfigure all instances that have it enabled
 	var instances []database.Instance
 	database.DB.Find(&instances)
 	for _, inst := range instances {
@@ -399,7 +488,8 @@ func pushProviderUpdateToInstances(providerID uint) {
 		if err != nil || status != "running" {
 			continue
 		}
-		llmgateway.EnsureKeysForInstance(inst.ID, ids)
+		allIDs := allProviderIDsForInstance(inst.ID, ids)
+		llmgateway.EnsureKeysForInstance(inst.ID, allIDs)
 		database.DB.First(&inst, inst.ID)
 		models := resolveInstanceModels(inst)
 		gatewayProviders := resolveGatewayProviders(inst)
@@ -419,6 +509,43 @@ func pushProviderUpdateToInstances(providerID uint) {
 			)
 		}()
 	}
+}
+
+// reconfigureInstanceAsync triggers a background reconfiguration of an instance's
+// models and gateway providers via SSH.
+func reconfigureInstanceAsync(instID uint) {
+	orch := orchestrator.Get()
+	if orch == nil {
+		return
+	}
+	var inst database.Instance
+	if err := database.DB.First(&inst, instID).Error; err != nil {
+		return
+	}
+	status, err := orch.GetInstanceStatus(context.Background(), inst.Name)
+	if err != nil || status != "running" {
+		return
+	}
+	enabledIDs := parseEnabledProviders(inst.EnabledProviders)
+	allIDs := allProviderIDsForInstance(inst.ID, enabledIDs)
+	llmgateway.EnsureKeysForInstance(inst.ID, allIDs)
+	database.DB.First(&inst, inst.ID)
+	models := resolveInstanceModels(inst)
+	gatewayProviders := resolveGatewayProviders(inst)
+	instName := inst.Name
+	go func() {
+		bgCtx := context.Background()
+		sshClient, err := SSHMgr.WaitForSSH(bgCtx, instID, 30*time.Second)
+		if err != nil {
+			log.Printf("Failed to get SSH connection for instance %d during reconfigure: %v", instID, err)
+			return
+		}
+		ConfigureInstance(
+			bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName,
+			models, gatewayProviders,
+			config.Cfg.LLMGatewayPort,
+		)
+	}()
 }
 
 func SyncProviderModels(w http.ResponseWriter, r *http.Request) {
@@ -562,9 +689,25 @@ func DeleteProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cascade-delete all gateway keys for this provider
+	// Access control for instance-specific providers
+	if p.InstanceID != nil {
+		if !middleware.CanAccessInstance(r, *p.InstanceID) {
+			writeError(w, http.StatusForbidden, "Access denied")
+			return
+		}
+	}
+
+	ownerInstanceID := p.InstanceID
+
+	// Cascade-delete gateway keys (API key is on the provider row itself)
 	database.DB.Where("provider_id = ?", id).Delete(&database.LLMGatewayKey{})
 	database.DB.Delete(&p)
+
+	// Reconfigure owning instance if this was instance-specific
+	if ownerInstanceID != nil {
+		reconfigureInstanceAsync(*ownerInstanceID)
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

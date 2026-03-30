@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, createElement } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { AlertTriangle, X, Maximize, ExternalLink } from "lucide-react";
+import { AlertTriangle, X, Maximize, ExternalLink, Plus } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import StatusBadge from "@/components/StatusBadge";
 import ActionButtons from "@/components/ActionButtons";
@@ -33,6 +33,7 @@ import { fetchCatalogProviderDetail } from "@/api/llm";
 import type { CatalogProviderDetail } from "@/api/llm";
 import ProviderIcon from "@/components/ProviderIcon";
 import ProviderModelSelector from "@/components/ProviderModelSelector";
+import ProviderModal from "@/components/ProviderModal";
 import AppToast from "@/components/AppToast";
 import toast from "react-hot-toast";
 import { useSSHStatus, useSSHEvents } from "@/hooks/useSSHStatus";
@@ -152,6 +153,10 @@ export default function InstanceDetailPage() {
   const [pendingProviders, setPendingProviders] = useState<number[] | null>(null);
   const [pendingProviderModels, setPendingProviderModels] = useState<Record<number, string[]> | null>(null);
   const [pendingDefaultModel, setPendingDefaultModel] = useState<string>("");
+
+  // Instance provider modal state
+  const [instanceProviderModalOpen, setInstanceProviderModalOpen] = useState(false);
+  const [editingInstanceProvider, setEditingInstanceProvider] = useState<import("@/types/instance").LLMProvider | undefined>(undefined);
 
   // Update tab when hash changes
   useEffect(() => {
@@ -354,6 +359,59 @@ export default function InstanceDetailPage() {
     if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}Gi`;
     if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)}Mi`;
     return `${bytes}B`;
+  };
+
+  const renderProviderCard = (p: import("@/types/instance").LLMProvider, isInstanceProvider: boolean) => {
+    const iconKey = p.provider ? catalogDetailMap[p.provider]?.icon_key ?? undefined : undefined;
+    const displayModels: string[] = (p.models ?? []).length > 0
+      ? (p.models ?? []).map((m) => m.id)
+      : (instance.models.extra ?? [])
+          .filter((m) => m.startsWith(`${p.key}/`))
+          .map((m) => m.slice(`${p.key}/`.length));
+    return (
+      <div key={`${isInstanceProvider ? "inst" : "global"}-${p.id}`} className="bg-white rounded-lg border border-gray-200 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
+            {iconKey ? (
+              <ProviderIcon provider={iconKey} size={18} />
+            ) : (
+              <span className="text-xs font-semibold text-gray-500">{p.name[0].toUpperCase()}</span>
+            )}
+          </div>
+          <span className="text-sm font-semibold text-gray-900">{p.name}</span>
+          {isInstanceProvider && (
+            <span className="px-1.5 py-0.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-full">Instance</span>
+          )}
+          {p.api_type && p.api_type !== "openai-completions" && (
+            <span className="px-1.5 py-0.5 text-xs font-mono text-gray-400 bg-gray-100 rounded">{p.api_type}</span>
+          )}
+          {isInstanceProvider && (
+            <button
+              type="button"
+              onClick={() => { setEditingInstanceProvider(p); setInstanceProviderModalOpen(true); }}
+              className="ml-auto text-xs text-gray-400 hover:text-gray-600"
+            >
+              Edit
+            </button>
+          )}
+        </div>
+        {displayModels.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {displayModels.map((m) => {
+              const isPrimary = instance.default_model === `${p.key}/${m}`;
+              return (
+                <span
+                  key={m}
+                  className={`px-2 py-0.5 text-xs rounded font-mono ${isPrimary ? "bg-blue-100 text-blue-700 ring-1 ring-blue-300" : "bg-gray-100 text-gray-600"}`}
+                >
+                  {m}{isPrimary && <span className="ml-1 font-sans not-italic">★</span>}
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const handleSaveGatewayProviders = () => {
@@ -748,31 +806,45 @@ export default function InstanceDetailPage() {
                     Pick among available model(s) for the agent.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (editingGatewayProviders) {
-                      setPendingProviders(null);
-                      setPendingProviderModels(null);
-                      setPendingDefaultModel("");
-                    } else {
-                      setPendingProviders(instance.enabled_providers ?? []);
-                      const initialModels: Record<number, string[]> = {};
-                      for (const p of allProviders) {
-                        const prefix = `${p.key}/`;
-                        initialModels[p.id] = (instance.models.extra ?? [])
-                          .filter((m) => m.startsWith(prefix))
-                          .map((m) => m.slice(prefix.length));
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingInstanceProvider(undefined);
+                      setInstanceProviderModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    <Plus size={12} />
+                    Add provider
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (editingGatewayProviders) {
+                        setPendingProviders(null);
+                        setPendingProviderModels(null);
+                        setPendingDefaultModel("");
+                      } else {
+                        const allProvidersForEdit = [...allProviders, ...(instance.instance_providers ?? [])];
+                        setPendingProviders(instance.enabled_providers ?? []);
+                        const initialModels: Record<number, string[]> = {};
+                        for (const p of allProvidersForEdit) {
+                          const prefix = `${p.key}/`;
+                          initialModels[p.id] = (instance.models.extra ?? [])
+                            .filter((m) => m.startsWith(prefix))
+                            .map((m) => m.slice(prefix.length));
+                        }
+                        setPendingProviderModels(initialModels);
+                        setPendingDefaultModel(instance.default_model ?? "");
                       }
-                      setPendingProviderModels(initialModels);
-                      setPendingDefaultModel(instance.default_model ?? "");
-                    }
-                    setEditingGatewayProviders(!editingGatewayProviders);
-                  }}
-                  className="text-xs text-blue-600 hover:text-blue-800"
-                >
-                  {editingGatewayProviders ? "Cancel" : "Edit"}
-                </button>
+                      setEditingGatewayProviders(!editingGatewayProviders);
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    {editingGatewayProviders ? "Cancel" : "Edit"}
+                  </button>
+                </div>
               </div>
 
               {editingGatewayProviders ? (
@@ -782,6 +854,7 @@ export default function InstanceDetailPage() {
                   ) : (
                     <ProviderModelSelector
                       providers={allProviders}
+                      instanceProviders={instance.instance_providers ?? []}
                       catalogDetailMap={catalogDetailMap}
                       enabledProviders={pendingProviders ?? []}
                       providerModels={pendingProviderModels ?? {}}
@@ -805,52 +878,20 @@ export default function InstanceDetailPage() {
                 </div>
               ) : (
                 <div>
-                  {(instance.enabled_providers ?? []).length === 0 ? (
+                  {(instance.enabled_providers ?? []).length === 0 && (instance.instance_providers ?? []).length === 0 ? (
                     <p className="text-sm text-gray-400 italic">No providers enabled.</p>
                   ) : (
                     <div className="space-y-2">
+                      {/* Global enabled providers */}
                       {(instance.enabled_providers ?? []).map((pid) => {
                         const p = allProviders.find((x) => x.id === pid);
                         if (!p) return null;
-                        const iconKey = p.provider ? catalogDetailMap[p.provider]?.icon_key ?? undefined : undefined;
-                        const displayModels: string[] = p.models.length > 0
-                          ? p.models.map((m) => m.id)
-                          : (instance.models.extra ?? [])
-                              .filter((m) => m.startsWith(`${p.key}/`))
-                              .map((m) => m.slice(`${p.key}/`.length));
-                        return (
-                          <div key={pid} className="bg-white rounded-lg border border-gray-200 px-4 py-3">
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
-                                {iconKey ? (
-                                  <ProviderIcon provider={iconKey} size={18} />
-                                ) : (
-                                  <span className="text-xs font-semibold text-gray-500">{p.name[0].toUpperCase()}</span>
-                                )}
-                              </div>
-                              <span className="text-sm font-semibold text-gray-900">{p.name}</span>
-                              {p.api_type && p.api_type !== "openai-completions" && (
-                                <span className="px-1.5 py-0.5 text-xs font-mono text-gray-400 bg-gray-100 rounded">{p.api_type}</span>
-                              )}
-                            </div>
-                            {displayModels.length > 0 && (
-                              <div className="mt-2 flex flex-wrap gap-1">
-                                {displayModels.map((m) => {
-                                  const isPrimary = instance.default_model === `${p.key}/${m}`;
-                                  return (
-                                    <span
-                                      key={m}
-                                      className={`px-2 py-0.5 text-xs rounded font-mono ${isPrimary ? "bg-blue-100 text-blue-700 ring-1 ring-blue-300" : "bg-gray-100 text-gray-600"}`}
-                                    >
-                                      {m}{isPrimary && <span className="ml-1 font-sans not-italic">★</span>}
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        );
+                        return renderProviderCard(p, false);
                       })}
+                      {/* Instance-specific providers */}
+                      {(instance.instance_providers ?? []).map((p) =>
+                        renderProviderCard(p, true)
+                      )}
                     </div>
                   )}
                 </div>
@@ -1066,6 +1107,16 @@ export default function InstanceDetailPage() {
           />
         </div>
       )}
+      <ProviderModal
+        open={instanceProviderModalOpen}
+        mode={editingInstanceProvider ? "edit" : "create"}
+        provider={editingInstanceProvider}
+        instanceId={instanceId}
+        existingKeys={[...allProviders.map((p) => p.key), ...(instance.instance_providers ?? []).map((p) => p.key)]}
+        onClose={() => { setInstanceProviderModalOpen(false); setEditingInstanceProvider(undefined); }}
+        onSaved={() => {}}
+        onDeleted={() => {}}
+      />
     </div>
   );
 }

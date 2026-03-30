@@ -39,8 +39,6 @@ type Instance struct {
 	SortOrder        int       `gorm:"not null;default:0" json:"sort_order"`
 	CreatedAt        time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt        time.Time `gorm:"autoUpdateTime" json:"updated_at"`
-
-	APIKeys []InstanceAPIKey `gorm:"foreignKey:InstanceID" json:"-"`
 }
 
 // ProviderModel represents a model entry in the OpenClaw provider config.
@@ -62,18 +60,29 @@ type ProviderModelCost struct {
 	CacheWrite float64 `json:"cacheWrite"`
 }
 
-// LLMProvider is admin-defined LLM provider config.
-// All providers are accessed via OpenAI-compat base URLs through the internal LLM gateway.
+// LLMProvider stores admin-defined LLM provider configuration. Each provider
+// represents an upstream LLM service (e.g. Anthropic, OpenAI, a self-hosted
+// Ollama instance) accessed via an OpenAI-compatible base URL through the
+// internal LLM gateway.
+//
+// Global providers (InstanceID == nil) are shared across all instances.
+// Instance-specific providers (InstanceID != nil) belong to a single instance.
+//
+// The APIKey field holds the Fernet-encrypted real API key for the upstream
+// service. It is tagged json:"-" so it is never serialized into API responses;
+// consumers that need a display value should decrypt and mask it explicitly.
 type LLMProvider struct {
-	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	Key       string    `gorm:"uniqueIndex;not null;size:100" json:"key"` // URL-safe key: "anthropic", "anthropic-2"
-	Provider  string    `gorm:"size:100" json:"provider"`                 // catalog provider key, empty for custom
-	Name      string    `gorm:"not null" json:"name"`                     // display name
-	BaseURL   string    `gorm:"not null" json:"base_url"`                 // OpenAI-compat base URL for this provider
-	APIType   string    `gorm:"size:100;default:'openai-completions'" json:"api_type"`
-	Models    string    `gorm:"type:text;default:'[]'" json:"-"` // JSON []ProviderModel
-	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	ID         uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Key        string    `gorm:"not null;size:100;uniqueIndex:idx_provider_key_instance" json:"key"` // URL-safe key: "anthropic", "anthropic-2"
+	InstanceID *uint     `gorm:"uniqueIndex:idx_provider_key_instance" json:"instance_id,omitempty"` // NULL = global, set = instance-specific
+	Provider   string    `gorm:"size:100" json:"provider"`                                           // catalog provider key, empty for custom
+	Name       string    `gorm:"not null" json:"name"`                                               // display name
+	BaseURL    string    `gorm:"not null" json:"base_url"`                                           // OpenAI-compat base URL for this provider
+	APIType    string    `gorm:"size:100;default:'openai-completions'" json:"api_type"`
+	APIKey     string    `gorm:"type:text;default:''" json:"-"` // Fernet-encrypted upstream API key
+	Models     string    `gorm:"type:text;default:'[]'" json:"-"` // JSON []ProviderModel
+	CreatedAt  time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt  time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 // ParseProviderModels deserializes the raw JSON models field.
@@ -113,13 +122,6 @@ type LLMRequestLog struct {
 	LatencyMs         int64     `gorm:"not null"`
 	ErrorMessage      string    `gorm:"type:text"`
 	RequestedAt       time.Time `gorm:"not null;index"`
-}
-
-type InstanceAPIKey struct {
-	ID         uint   `gorm:"primaryKey;autoIncrement"`
-	InstanceID uint   `gorm:"not null;uniqueIndex:idx_inst_key"`
-	KeyName    string `gorm:"not null;uniqueIndex:idx_inst_key"` // e.g. "ANTHROPIC_API_KEY"
-	KeyValue   string `json:"-"`                                 // Fernet-encrypted
 }
 
 type Setting struct {

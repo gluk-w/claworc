@@ -212,7 +212,7 @@ func setupTestDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
-	database.DB.AutoMigrate(&database.Instance{}, &database.Setting{}, &database.User{}, &database.UserInstance{}, &database.InstanceAPIKey{})
+	database.DB.AutoMigrate(&database.Instance{}, &database.Setting{}, &database.User{}, &database.UserInstance{})
 }
 
 func createTestInstance(t *testing.T, name, displayName string) database.Instance {
