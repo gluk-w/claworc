@@ -335,7 +335,7 @@ func (d *DockerOrchestrator) createContainer(ctx context.Context, params CreateP
 	}
 
 	hostCfg := &container.HostConfig{
-		Privileged: true,
+		Privileged: false,
 		Mounts:     mounts,
 		ShmSize:    shmSize,
 		Resources: container.Resources{

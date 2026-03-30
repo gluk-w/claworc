@@ -183,21 +183,8 @@ export default function InstanceDetailPage() {
   const desktopHook = useDesktop(instanceId, chatActivated && chatViewMode === "chat-browser" && instance?.status === "running");
   const chatHook = useChat(instanceId, chatActivated && instance?.status === "running");
 
-  // Auto-send initial messages when chat connects (delayed to survive StrictMode double-mount)
-  useEffect(() => {
-    if (chatHook.connectionState !== "connected" || chatInitSentRef.current) return;
-    const timer = setTimeout(() => {
-      chatInitSentRef.current = true;
-      chatHook.clearMessages();
-      chatHook.sendMessage("/new");
-      if (chatViewMode === "chat-browser") {
-        chatHook.sendMessage(
-          "You have a browser open that I can see. When I ask you to visit websites, search for information online, or interact with web pages, use the built-in Chromium browser (via computer/browser tools) — do NOT use the web_search skill. Navigate directly in the browser instead."
-        );
-      }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [chatHook.connectionState, chatHook.sendMessage, chatHook.clearMessages, chatViewMode]);
+  // Auto-send disabled — user sends first message manually
+  // useEffect(() => { ... }, []);
 
   // Reset init flag when switching away from chat tab so re-entering starts fresh
   useEffect(() => {
