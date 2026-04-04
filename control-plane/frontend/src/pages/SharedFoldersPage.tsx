@@ -11,11 +11,9 @@ import {
 } from "@/api/sharedFolders";
 import { fetchInstances } from "@/api/instances";
 import { successToast, errorToast } from "@/utils/toast";
-import { useAuth } from "@/contexts/AuthContext";
 
 export default function SharedFoldersPage() {
   const queryClient = useQueryClient();
-  const { isAdmin } = useAuth();
   const [editFolder, setEditFolder] = useState<SharedFolder | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<SharedFolder | null>(null);

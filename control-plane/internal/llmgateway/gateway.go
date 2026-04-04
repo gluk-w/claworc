@@ -211,9 +211,10 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[gateway] auth failed: %s path=%s", err, safeLog(r.URL.Path))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
+		// Use a fixed error message to avoid reflecting any user-supplied data in the response.
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{
-				"message": err.Error(),
+				"message": "authentication failed",
 				"type":    "authentication_error",
 			},
 		})

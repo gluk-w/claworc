@@ -16,6 +16,7 @@ function useHistoryFromOpener(instanceId: number): ChatMessage[] | undefined {
     if (!window.opener) return;
 
     const handler = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
       if (e.data?.type === "chat-history") {
         setHistory(e.data.messages ?? []);
       }

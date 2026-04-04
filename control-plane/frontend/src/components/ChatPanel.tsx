@@ -7,7 +7,6 @@ import {
   WifiOff,
   RefreshCw,
   Loader2,
-  Monitor,
   ToggleLeft,
   ToggleRight,
 } from "lucide-react";
