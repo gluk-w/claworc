@@ -305,9 +305,11 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer dstFile.Close()
 
 	_, err = io.Copy(dstFile, srcFile)
+	if closeErr := dstFile.Close(); closeErr != nil && err == nil {
+		err = closeErr
+	}
 	return err
 }
 
