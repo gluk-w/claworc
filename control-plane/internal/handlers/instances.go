@@ -42,22 +42,21 @@ type modelsConfig struct {
 }
 
 type instanceCreateRequest struct {
-	DisplayName      string            `json:"display_name"`
-	CPURequest       string            `json:"cpu_request"`
-	CPULimit         string            `json:"cpu_limit"`
-	MemoryRequest    string            `json:"memory_request"`
-	MemoryLimit      string            `json:"memory_limit"`
-	StorageHomebrew  string            `json:"storage_homebrew"`
-	StorageHome      string            `json:"storage_home"`
-	BraveAPIKey      *string           `json:"brave_api_key"`
-	APIKeys          map[string]string `json:"api_keys"`
-	Models           *modelsConfig     `json:"models"`
-	DefaultModel     string            `json:"default_model"`
-	ContainerImage   *string           `json:"container_image"`
-	VNCResolution    *string           `json:"vnc_resolution"`
-	Timezone         *string           `json:"timezone"`
-	UserAgent        *string           `json:"user_agent"`
-	EnabledProviders []uint            `json:"enabled_providers"`
+	DisplayName      string        `json:"display_name"`
+	CPURequest       string        `json:"cpu_request"`
+	CPULimit         string        `json:"cpu_limit"`
+	MemoryRequest    string        `json:"memory_request"`
+	MemoryLimit      string        `json:"memory_limit"`
+	StorageHomebrew  string        `json:"storage_homebrew"`
+	StorageHome      string        `json:"storage_home"`
+	BraveAPIKey      *string       `json:"brave_api_key"`
+	Models           *modelsConfig `json:"models"`
+	DefaultModel     string        `json:"default_model"`
+	ContainerImage   *string       `json:"container_image"`
+	VNCResolution    *string       `json:"vnc_resolution"`
+	Timezone         *string       `json:"timezone"`
+	UserAgent        *string       `json:"user_agent"`
+	EnabledProviders []uint        `json:"enabled_providers"`
 }
 
 type modelsResponse struct {
@@ -78,7 +77,6 @@ type instanceResponse struct {
 	StorageHomebrew       string          `json:"storage_homebrew"`
 	StorageHome           string          `json:"storage_home"`
 	HasBraveOverride      bool            `json:"has_brave_override"`
-	APIKeyOverrides       []string        `json:"api_key_overrides"`
 	Models                *modelsResponse `json:"models"`
 	DefaultModel          string          `json:"default_model"`
 	ContainerImage        *string         `json:"container_image"`
@@ -93,6 +91,7 @@ type instanceResponse struct {
 	StatusMessage         string          `json:"status_message,omitempty"`
 	AllowedSourceIPs      string          `json:"allowed_source_ips"`
 	EnabledProviders      []uint          `json:"enabled_providers"`
+	InstanceProviders     []providerResp  `json:"instance_providers"`
 	ControlURL            string          `json:"control_url"`
 	GatewayToken          string          `json:"gateway_token"`
 	SortOrder             int             `json:"sort_order"`
@@ -123,16 +122,6 @@ func formatTimestamp(t time.Time) string {
 		return ""
 	}
 	return t.UTC().Format("2006-01-02T15:04:05Z")
-}
-
-func getInstanceAPIKeyNames(instanceID uint) []string {
-	var keys []database.InstanceAPIKey
-	database.DB.Where("instance_id = ?", instanceID).Find(&keys)
-	names := make([]string, 0, len(keys))
-	for _, k := range keys {
-		names = append(names, k.KeyName)
-	}
-	return names
 }
 
 func parseModelsConfig(raw string) modelsConfig {
@@ -184,15 +173,25 @@ type GatewayProvider struct {
 }
 
 // resolveGatewayProviders builds the providerKey→GatewayProvider map for an instance's enabled
-// providers. Each entry includes the virtual auth key, API type, and stored model list.
+// providers (both global and instance-specific). Each entry includes the virtual auth key,
+// API type, and stored model list.
 func resolveGatewayProviders(inst database.Instance) map[string]GatewayProvider {
 	enabledIDs := parseEnabledProviders(inst.EnabledProviders)
-	if len(enabledIDs) == 0 {
+	gatewayKeys := llmgateway.GetInstanceGatewayKeys(inst.ID)
+
+	var providers []database.LLMProvider
+	if len(enabledIDs) > 0 {
+		database.DB.Where("id IN ?", enabledIDs).Find(&providers)
+	}
+
+	// Also load instance-specific providers
+	var instProviders []database.LLMProvider
+	database.DB.Where("instance_id = ?", inst.ID).Find(&instProviders)
+	providers = append(providers, instProviders...)
+
+	if len(providers) == 0 {
 		return nil
 	}
-	gatewayKeys := llmgateway.GetInstanceGatewayKeys(inst.ID)
-	var providers []database.LLMProvider
-	database.DB.Where("id IN ?", enabledIDs).Find(&providers)
 
 	result := make(map[string]GatewayProvider, len(providers))
 	for _, p := range providers {
@@ -239,6 +238,18 @@ func parseEnabledProviders(raw string) []uint {
 	return ids
 }
 
+// allProviderIDsForInstance returns the union of global enabled provider IDs
+// and instance-specific provider IDs.
+func allProviderIDsForInstance(instID uint, globalEnabledIDs []uint) []uint {
+	var instProviders []database.LLMProvider
+	database.DB.Where("instance_id = ?", instID).Select("id").Find(&instProviders)
+	all := append([]uint{}, globalEnabledIDs...)
+	for _, p := range instProviders {
+		all = append(all, p.ID)
+	}
+	return all
+}
+
 func instanceToResponse(inst database.Instance, status string) instanceResponse {
 	var containerImage *string
 	if inst.ContainerImage != "" {
@@ -261,8 +272,15 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		gatewayToken, _ = utils.Decrypt(inst.GatewayToken)
 	}
 
-	apiKeyOverrides := getInstanceAPIKeyNames(inst.ID)
 	enabledProviders := parseEnabledProviders(inst.EnabledProviders)
+
+	// Fetch instance-specific providers
+	var instProviders []database.LLMProvider
+	database.DB.Where("instance_id = ?", inst.ID).Order("id ASC").Find(&instProviders)
+	instProviderResps := make([]providerResp, len(instProviders))
+	for i, p := range instProviders {
+		instProviderResps[i] = toProviderResp(p)
+	}
 
 	mc := parseModelsConfig(inst.ModelsConfig)
 	effective := computeEffectiveModels(mc)
@@ -280,7 +298,6 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		StorageHomebrew:       inst.StorageHomebrew,
 		StorageHome:           inst.StorageHome,
 		HasBraveOverride:      inst.BraveAPIKey != "",
-		APIKeyOverrides:       apiKeyOverrides,
 		Models:                &modelsResponse{Effective: effective, DisabledDefaults: mc.Disabled, Extra: mc.Extra},
 		DefaultModel:          inst.DefaultModel,
 		ContainerImage:        containerImage,
@@ -293,6 +310,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		HasUserAgentOverride:  inst.UserAgent != "",
 		AllowedSourceIPs:      inst.AllowedSourceIPs,
 		EnabledProviders:      enabledProviders,
+		InstanceProviders:     instProviderResps,
 		ControlURL:            fmt.Sprintf("/openclaw/%d/", inst.ID),
 		GatewayToken:          gatewayToken,
 		SortOrder:             inst.SortOrder,
@@ -419,36 +437,6 @@ func ListInstances(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, responses)
-}
-
-func saveInstanceAPIKeys(instanceID uint, apiKeys map[string]string) error {
-	for keyName, keyValue := range apiKeys {
-		if keyValue == "" {
-			// Delete the key
-			database.DB.Where("instance_id = ? AND key_name = ?", instanceID, keyName).Delete(&database.InstanceAPIKey{})
-			continue
-		}
-		encrypted, err := utils.Encrypt(keyValue)
-		if err != nil {
-			return fmt.Errorf("encrypt key %s: %w", keyName, err)
-		}
-		var existing database.InstanceAPIKey
-		result := database.DB.Where("instance_id = ? AND key_name = ?", instanceID, keyName).First(&existing)
-		if result.Error != nil {
-			// Create new
-			if err := database.DB.Create(&database.InstanceAPIKey{
-				InstanceID: instanceID,
-				KeyName:    keyName,
-				KeyValue:   encrypted,
-			}).Error; err != nil {
-				return err
-			}
-		} else {
-			// Update existing
-			database.DB.Model(&existing).Update("key_value", encrypted)
-		}
-	}
-	return nil
 }
 
 func CreateInstance(w http.ResponseWriter, r *http.Request) {
@@ -582,17 +570,6 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save API keys to the new table
-	allAPIKeys := make(map[string]string)
-	for k, v := range body.APIKeys {
-		allAPIKeys[k] = v
-	}
-	if len(allAPIKeys) > 0 {
-		if err := saveInstanceAPIKeys(inst.ID, allAPIKeys); err != nil {
-			log.Printf("Failed to save API keys for instance %d: %v", inst.ID, err)
-		}
-	}
-
 	effectiveImage := getEffectiveImage(inst)
 	effectiveResolution := getEffectiveResolution(inst)
 	effectiveTimezone := getEffectiveTimezone(inst)
@@ -642,7 +619,8 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 
 		// Push models, API keys, and gateway providers to the instance (waits for container ready)
 		database.DB.First(&inst, inst.ID)
-		if err := llmgateway.EnsureKeysForInstance(inst.ID, enabledProviders); err != nil {
+		allIDs := allProviderIDsForInstance(inst.ID, enabledProviders)
+		if err := llmgateway.EnsureKeysForInstance(inst.ID, allIDs); err != nil {
 			log.Printf("Failed to ensure LLM gateway keys for instance %d: %s", inst.ID, utils.SanitizeForLog(err.Error()))
 		}
 		models := resolveInstanceModels(inst)
@@ -692,14 +670,46 @@ func GetInstance(w http.ResponseWriter, r *http.Request) {
 }
 
 type instanceUpdateRequest struct {
-	APIKeys          map[string]*string `json:"api_keys"` // null value = delete
-	BraveAPIKey      *string            `json:"brave_api_key"`
-	Models           *modelsConfig      `json:"models"`
-	DefaultModel     *string            `json:"default_model"`
-	Timezone         *string            `json:"timezone"`
-	UserAgent        *string            `json:"user_agent"`
-	AllowedSourceIPs *string            `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
-	EnabledProviders *[]uint            `json:"enabled_providers"`  // admin only: LLM gateway provider IDs
+	BraveAPIKey      *string       `json:"brave_api_key"`
+	Models           *modelsConfig `json:"models"`
+	DefaultModel     *string       `json:"default_model"`
+	Timezone         *string       `json:"timezone"`
+	UserAgent        *string       `json:"user_agent"`
+	AllowedSourceIPs *string       `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
+	EnabledProviders *[]uint       `json:"enabled_providers"`  // admin only: LLM gateway provider IDs
+	DisplayName      *string       `json:"display_name"`       // admin only
+	CPURequest       *string       `json:"cpu_request"`        // admin only
+	CPULimit         *string       `json:"cpu_limit"`          // admin only
+	MemoryRequest    *string       `json:"memory_request"`     // admin only
+	MemoryLimit      *string       `json:"memory_limit"`       // admin only
+	VNCResolution    *string       `json:"vnc_resolution"`     // admin only
+}
+
+var (
+	cpuRegex        = regexp.MustCompile(`^(\d+m|\d+(\.\d+)?)$`)
+	memoryRegex     = regexp.MustCompile(`^\d+(Ki|Mi|Gi)$`)
+	resolutionRegex = regexp.MustCompile(`^\d+x\d+$`)
+)
+
+func cpuToMillicores(s string) int64 {
+	if strings.HasSuffix(s, "m") {
+		n, _ := strconv.ParseInt(s[:len(s)-1], 10, 64)
+		return n
+	}
+	f, _ := strconv.ParseFloat(s, 64)
+	return int64(f * 1000)
+}
+
+func memoryToBytes(s string) int64 {
+	unitMap := map[string]int64{"Ki": 1024, "Mi": 1024 * 1024, "Gi": 1024 * 1024 * 1024}
+	for suffix, multiplier := range unitMap {
+		if strings.HasSuffix(s, suffix) {
+			n, _ := strconv.ParseInt(s[:len(s)-len(suffix)], 10, 64)
+			return n * multiplier
+		}
+	}
+	n, _ := strconv.ParseInt(s, 10, 64)
+	return n
 }
 
 func UpdateInstance(w http.ResponseWriter, r *http.Request) {
@@ -724,33 +734,6 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
-	}
-
-	// Update API keys
-	if body.APIKeys != nil {
-		for keyName, keyVal := range body.APIKeys {
-			if keyVal == nil || *keyVal == "" {
-				// Delete
-				database.DB.Where("instance_id = ? AND key_name = ?", inst.ID, keyName).Delete(&database.InstanceAPIKey{})
-			} else {
-				encrypted, err := utils.Encrypt(*keyVal)
-				if err != nil {
-					writeError(w, http.StatusInternalServerError, "Failed to encrypt API key")
-					return
-				}
-				var existing database.InstanceAPIKey
-				result := database.DB.Where("instance_id = ? AND key_name = ?", inst.ID, keyName).First(&existing)
-				if result.Error != nil {
-					database.DB.Create(&database.InstanceAPIKey{
-						InstanceID: inst.ID,
-						KeyName:    keyName,
-						KeyValue:   encrypted,
-					})
-				} else {
-					database.DB.Model(&existing).Update("key_value", encrypted)
-				}
-			}
-		}
 	}
 
 	// Update Brave API key
@@ -820,9 +803,100 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		}
 		b, _ := json.Marshal(*body.EnabledProviders)
 		database.DB.Model(&inst).Update("enabled_providers", string(b))
-		if err := llmgateway.EnsureKeysForInstance(inst.ID, *body.EnabledProviders); err != nil {
+		allIDs := allProviderIDsForInstance(inst.ID, *body.EnabledProviders)
+		if err := llmgateway.EnsureKeysForInstance(inst.ID, allIDs); err != nil {
 			log.Printf("Failed to ensure LLM gateway keys for instance %d: %s", inst.ID, utils.SanitizeForLog(err.Error()))
 		}
+	}
+
+	// Update display name (admin only)
+	if body.DisplayName != nil {
+		user := middleware.GetUser(r)
+		if user == nil || user.Role != "admin" {
+			writeError(w, http.StatusForbidden, "Only admins can rename instances")
+			return
+		}
+		trimmed := strings.TrimSpace(*body.DisplayName)
+		if trimmed == "" {
+			writeError(w, http.StatusBadRequest, "Display name cannot be empty")
+			return
+		}
+		database.DB.Model(&inst).Update("display_name", trimmed)
+	}
+
+	// Update CPU/memory resources (admin only)
+	resourcesChanged := false
+	if body.CPURequest != nil || body.CPULimit != nil || body.MemoryRequest != nil || body.MemoryLimit != nil {
+		user := middleware.GetUser(r)
+		if user == nil || user.Role != "admin" {
+			writeError(w, http.StatusForbidden, "Only admins can change resource limits")
+			return
+		}
+
+		cpuReq := inst.CPURequest
+		cpuLim := inst.CPULimit
+		memReq := inst.MemoryRequest
+		memLim := inst.MemoryLimit
+
+		if body.CPURequest != nil {
+			if !cpuRegex.MatchString(*body.CPURequest) {
+				writeError(w, http.StatusBadRequest, "Invalid CPU request format (e.g., 500m or 0.5)")
+				return
+			}
+			cpuReq = *body.CPURequest
+		}
+		if body.CPULimit != nil {
+			if !cpuRegex.MatchString(*body.CPULimit) {
+				writeError(w, http.StatusBadRequest, "Invalid CPU limit format (e.g., 2000m or 2)")
+				return
+			}
+			cpuLim = *body.CPULimit
+		}
+		if body.MemoryRequest != nil {
+			if !memoryRegex.MatchString(*body.MemoryRequest) {
+				writeError(w, http.StatusBadRequest, "Invalid memory request format (e.g., 1Gi or 512Mi)")
+				return
+			}
+			memReq = *body.MemoryRequest
+		}
+		if body.MemoryLimit != nil {
+			if !memoryRegex.MatchString(*body.MemoryLimit) {
+				writeError(w, http.StatusBadRequest, "Invalid memory limit format (e.g., 4Gi or 2048Mi)")
+				return
+			}
+			memLim = *body.MemoryLimit
+		}
+
+		if cpuToMillicores(cpuReq) > cpuToMillicores(cpuLim) {
+			writeError(w, http.StatusBadRequest, "CPU request cannot exceed CPU limit")
+			return
+		}
+		if memoryToBytes(memReq) > memoryToBytes(memLim) {
+			writeError(w, http.StatusBadRequest, "Memory request cannot exceed memory limit")
+			return
+		}
+
+		database.DB.Model(&inst).Updates(map[string]interface{}{
+			"cpu_request":    cpuReq,
+			"cpu_limit":      cpuLim,
+			"memory_request": memReq,
+			"memory_limit":   memLim,
+		})
+		resourcesChanged = true
+	}
+
+	// Update VNC resolution (admin only)
+	if body.VNCResolution != nil {
+		user := middleware.GetUser(r)
+		if user == nil || user.Role != "admin" {
+			writeError(w, http.StatusForbidden, "Only admins can change VNC resolution")
+			return
+		}
+		if *body.VNCResolution != "" && !resolutionRegex.MatchString(*body.VNCResolution) {
+			writeError(w, http.StatusBadRequest, "Invalid resolution format (e.g., 1920x1080)")
+			return
+		}
+		database.DB.Model(&inst).Update("vnc_resolution", *body.VNCResolution)
 	}
 
 	// Re-fetch
@@ -833,6 +907,18 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	orchStatus := "stopped"
 	if orch != nil {
 		orchStatus, _ = orch.GetInstanceStatus(r.Context(), inst.Name)
+	}
+
+	// Apply resource changes to running container
+	if resourcesChanged && orch != nil && orchStatus == "running" {
+		if err := orch.UpdateResources(r.Context(), inst.Name, orchestrator.UpdateResourcesParams{
+			CPURequest:    inst.CPURequest,
+			CPULimit:      inst.CPULimit,
+			MemoryRequest: inst.MemoryRequest,
+			MemoryLimit:   inst.MemoryLimit,
+		}); err != nil {
+			log.Printf("Failed to update resources for instance %d: %v", inst.ID, err)
+		}
 	}
 	if orch != nil && orchStatus == "running" {
 		models := resolveInstanceModels(inst)
@@ -858,6 +944,148 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func GetInstanceStats(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	stats, err := orch.GetContainerStats(r.Context(), inst.Name)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Stats unavailable")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	if user == nil || user.Role != "admin" {
+		writeError(w, http.StatusForbidden, "Only admins can update instance images")
+		return
+	}
+
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
+	orchStatus, _ := orch.GetInstanceStatus(r.Context(), inst.Name)
+	if orchStatus != "running" {
+		writeError(w, http.StatusBadRequest, "Instance must be running to update image")
+		return
+	}
+
+	effectiveImage := getEffectiveImage(inst)
+	if effectiveImage == "" {
+		writeError(w, http.StatusBadRequest, "No container image configured")
+		return
+	}
+	if strings.Contains(effectiveImage, "@sha256:") {
+		writeError(w, http.StatusBadRequest, "Cannot update a digest-pinned image; use a tag-based image instead")
+		return
+	}
+
+	// Set status to restarting
+	database.DB.Model(&inst).Updates(map[string]interface{}{
+		"status":     "restarting",
+		"updated_at": time.Now().UTC(),
+	})
+
+	// Stop SSH tunnels before update; they will be recreated by the background manager
+	if SSHMgr != nil {
+		SSHMgr.CancelReconnection(inst.ID)
+	}
+	if TunnelMgr != nil {
+		if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
+			log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)
+		}
+	}
+
+	effectiveResolution := getEffectiveResolution(inst)
+	effectiveTimezone := getEffectiveTimezone(inst)
+	effectiveUserAgent := getEffectiveUserAgent(inst)
+
+	// Decrypt gateway token for env vars
+	envVars := map[string]string{}
+	if inst.GatewayToken != "" {
+		if plain, err := utils.Decrypt(inst.GatewayToken); err == nil {
+			envVars["OPENCLAW_GATEWAY_TOKEN"] = plain
+		}
+	}
+
+	instID := inst.ID
+	instName := inst.Name
+	go func() {
+		ctx := context.Background()
+		err := orch.UpdateImage(ctx, instName, orchestrator.CreateParams{
+			Name:           instName,
+			CPURequest:     inst.CPURequest,
+			CPULimit:       inst.CPULimit,
+			MemoryRequest:  inst.MemoryRequest,
+			MemoryLimit:    inst.MemoryLimit,
+			ContainerImage: effectiveImage,
+			VNCResolution:  effectiveResolution,
+			Timezone:       effectiveTimezone,
+			UserAgent:      effectiveUserAgent,
+			EnvVars:        envVars,
+		})
+		if err != nil {
+			log.Printf("Failed to update image for instance %d: %v", instID, err)
+			database.DB.Model(&database.Instance{}).Where("id = ?", instID).Updates(map[string]interface{}{
+				"status":         "error",
+				"status_message": fmt.Sprintf("Image update failed: %v", err),
+				"updated_at":     time.Now().UTC(),
+			})
+			return
+		}
+		log.Printf("Image updated successfully for instance %d", instID)
+		database.DB.Model(&database.Instance{}).Where("id = ?", instID).Updates(map[string]interface{}{
+			"status":     "running",
+			"updated_at": time.Now().UTC(),
+		})
+	}()
+
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "restarting"})
 }
 
 func DeleteInstance(w http.ResponseWriter, r *http.Request) {
@@ -889,8 +1117,10 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Delete associated API keys and gateway keys
-	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.InstanceAPIKey{})
+	// Delete instance-specific providers (API key is on the provider row)
+	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.LLMProvider{})
+
+	// Delete associated gateway keys
 	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.LLMGatewayKey{})
 	database.DB.Delete(&inst)
 	w.WriteHeader(http.StatusNoContent)
@@ -1187,17 +1417,6 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 	if err := database.DB.Create(&inst).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to create cloned instance")
 		return
-	}
-
-	// Copy API keys from source instance
-	var srcKeys []database.InstanceAPIKey
-	database.DB.Where("instance_id = ?", src.ID).Find(&srcKeys)
-	for _, k := range srcKeys {
-		database.DB.Create(&database.InstanceAPIKey{
-			InstanceID: inst.ID,
-			KeyName:    k.KeyName,
-			KeyValue:   k.KeyValue,
-		})
 	}
 
 	// Run the full clone operation asynchronously

@@ -188,6 +188,15 @@ func (m *mockOrchestrator) GetSSHAddress(_ context.Context, _ uint) (string, int
 	}
 	return m.sshHost, m.sshPort, nil
 }
+func (m *mockOrchestrator) UpdateResources(_ context.Context, _ string, _ orchestrator.UpdateResourcesParams) error {
+	return nil
+}
+func (m *mockOrchestrator) GetContainerStats(_ context.Context, _ string) (*orchestrator.ContainerStats, error) {
+	return nil, nil
+}
+func (m *mockOrchestrator) UpdateImage(_ context.Context, _ string, _ orchestrator.CreateParams) error {
+	return nil
+}
 func (m *mockOrchestrator) ExecInInstance(_ context.Context, _ string, _ []string) (string, string, int, error) {
 	return "", "", 0, nil
 }
@@ -203,7 +212,7 @@ func setupTestDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
-	database.DB.AutoMigrate(&database.Instance{}, &database.Setting{}, &database.User{}, &database.UserInstance{}, &database.InstanceAPIKey{})
+	database.DB.AutoMigrate(&database.Instance{}, &database.Setting{}, &database.User{}, &database.UserInstance{})
 }
 
 func createTestInstance(t *testing.T, name, displayName string) database.Instance {

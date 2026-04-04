@@ -6,6 +6,7 @@ import type {
   InstanceUpdatePayload,
   InstanceConfig,
   InstanceConfigUpdate,
+  InstanceStats,
 } from "@/types/instance";
 
 export async function fetchInstances(): Promise<Instance[]> {
@@ -93,4 +94,15 @@ export async function cloneInstance(
 
 export async function reorderInstances(orderedIds: number[]): Promise<void> {
   await client.put("/instances/reorder", { ordered_ids: orderedIds });
+}
+
+export async function fetchInstanceStats(
+  id: number,
+): Promise<InstanceStats> {
+  const { data } = await client.get<InstanceStats>(`/instances/${id}/stats`);
+  return data;
+}
+
+export async function updateInstanceImage(id: number): Promise<void> {
+  await client.post(`/instances/${id}/update-image`);
 }

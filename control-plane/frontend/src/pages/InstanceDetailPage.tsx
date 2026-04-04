@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, createElement } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { AlertTriangle, X, Maximize, ExternalLink } from "lucide-react";
+import { AlertTriangle, X, Maximize, ExternalLink, Plus } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import StatusBadge from "@/components/StatusBadge";
 import ActionButtons from "@/components/ActionButtons";
@@ -24,6 +24,8 @@ import {
   useInstanceConfig,
   useUpdateInstanceConfig,
   useRestartedToast,
+  useInstanceStats,
+  useUpdateInstanceImage,
 } from "@/hooks/useInstances";
 import { useProviders } from "@/hooks/useProviders";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
@@ -31,6 +33,7 @@ import { fetchCatalogProviderDetail } from "@/api/llm";
 import type { CatalogProviderDetail } from "@/api/llm";
 import ProviderIcon from "@/components/ProviderIcon";
 import ProviderModelSelector from "@/components/ProviderModelSelector";
+import ProviderModal from "@/components/ProviderModal";
 import AppToast from "@/components/AppToast";
 import toast from "react-hot-toast";
 import { useSSHStatus, useSSHEvents } from "@/hooks/useSSHStatus";
@@ -79,6 +82,7 @@ export default function InstanceDetailPage() {
   const deleteMutation = useDeleteInstance();
   const updateMutation = useUpdateInstance();
   const updateConfigMutation = useUpdateInstanceConfig();
+  const updateImageMutation = useUpdateInstanceImage();
 
   // Get initial tab from URL hash (supports #files:///path pattern)
   const getTabFromHash = (): Tab => {
@@ -108,6 +112,7 @@ export default function InstanceDetailPage() {
   };
 
   const [activeTab, setActiveTab] = useState<Tab>(getTabFromHash());
+  const { data: stats } = useInstanceStats(instanceId, activeTab === "settings");
   const [editedConfig, setEditedConfig] = useState<string | null>(null);
   // Terminal/Chat are mounted once the user first visits the tab, then stay mounted
   const [terminalActivated, setTerminalActivated] = useState(getTabFromHash() === "terminal");
@@ -128,11 +133,30 @@ export default function InstanceDetailPage() {
   const [editingUserAgent, setEditingUserAgent] = useState(false);
   const [pendingUserAgent, setPendingUserAgent] = useState<string | null>(null);
 
+  // Display name editing state
+  const [editingDisplayName, setEditingDisplayName] = useState(false);
+  const [pendingDisplayName, setPendingDisplayName] = useState<string | null>(null);
+
+  // Resource limits editing state
+  const [editingResources, setEditingResources] = useState(false);
+  const [pendingCPURequest, setPendingCPURequest] = useState("");
+  const [pendingCPULimit, setPendingCPULimit] = useState("");
+  const [pendingMemoryRequest, setPendingMemoryRequest] = useState("");
+  const [pendingMemoryLimit, setPendingMemoryLimit] = useState("");
+
+  // VNC resolution editing state
+  const [editingResolution, setEditingResolution] = useState(false);
+  const [pendingResolution, setPendingResolution] = useState<string | null>(null);
+
   // Gateway providers editing state
   const [editingGatewayProviders, setEditingGatewayProviders] = useState(false);
   const [pendingProviders, setPendingProviders] = useState<number[] | null>(null);
   const [pendingProviderModels, setPendingProviderModels] = useState<Record<number, string[]> | null>(null);
   const [pendingDefaultModel, setPendingDefaultModel] = useState<string>("");
+
+  // Instance provider modal state
+  const [instanceProviderModalOpen, setInstanceProviderModalOpen] = useState(false);
+  const [editingInstanceProvider, setEditingInstanceProvider] = useState<import("@/types/instance").LLMProvider | undefined>(undefined);
 
   // Update tab when hash changes
   useEffect(() => {
@@ -164,21 +188,8 @@ export default function InstanceDetailPage() {
   const desktopHook = useDesktop(instanceId, chatActivated && chatViewMode === "chat-browser" && instance?.status === "running");
   const chatHook = useChat(instanceId, chatActivated && instance?.status === "running");
 
-  // Auto-send initial messages when chat connects (delayed to survive StrictMode double-mount)
-  useEffect(() => {
-    if (chatHook.connectionState !== "connected" || chatInitSentRef.current) return;
-    const timer = setTimeout(() => {
-      chatInitSentRef.current = true;
-      chatHook.clearMessages();
-      chatHook.sendMessage("/new");
-      if (chatViewMode === "chat-browser") {
-        chatHook.sendMessage(
-          "You have a browser open that I can see. When I ask you to visit websites, search for information online, or interact with web pages, use the built-in Chromium browser (via computer/browser tools) — do NOT use the web_search skill. Navigate directly in the browser instead."
-        );
-      }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [chatHook.connectionState, chatHook.sendMessage, chatHook.clearMessages, chatViewMode]);
+  // Auto-send disabled — user sends first message manually
+  // useEffect(() => { ... }, []);
 
   // Reset init flag when switching away from chat tab so re-entering starts fresh
   useEffect(() => {
@@ -257,6 +268,149 @@ export default function InstanceDetailPage() {
           setPendingUserAgent(null);
         },
       },
+    );
+  };
+
+  const handleSaveDisplayName = () => {
+    if (!pendingDisplayName?.trim()) return;
+    updateMutation.mutate(
+      { id: instanceId, payload: { display_name: pendingDisplayName.trim() } },
+      {
+        onSuccess: () => {
+          setEditingDisplayName(false);
+          setPendingDisplayName(null);
+        },
+      },
+    );
+  };
+
+  const isValidCPU = (v: string) => /^\d+m$/.test(v) || /^\d+(\.\d+)?$/.test(v);
+  const isValidMemory = (v: string) => /^\d+(Mi|Gi)$/.test(v);
+  const cpuToMillis = (v: string) => v.endsWith("m") ? parseInt(v) : parseFloat(v) * 1000;
+  const memToBytes = (v: string) => v.endsWith("Gi") ? parseInt(v) * 1024 : parseInt(v);
+  const isValidResolution = (v: string) => v === "" || /^\d+x\d+$/.test(v);
+
+  const resourcesValid =
+    isValidCPU(pendingCPURequest) &&
+    isValidCPU(pendingCPULimit) &&
+    isValidMemory(pendingMemoryRequest) &&
+    isValidMemory(pendingMemoryLimit) &&
+    cpuToMillis(pendingCPURequest) <= cpuToMillis(pendingCPULimit) &&
+    memToBytes(pendingMemoryRequest) <= memToBytes(pendingMemoryLimit);
+
+  const handleSaveResources = () => {
+    if (!resourcesValid) return;
+    updateMutation.mutate(
+      {
+        id: instanceId,
+        payload: {
+          cpu_request: pendingCPURequest,
+          cpu_limit: pendingCPULimit,
+          memory_request: pendingMemoryRequest,
+          memory_limit: pendingMemoryLimit,
+        },
+      },
+      {
+        onSuccess: () => {
+          setEditingResources(false);
+        },
+      },
+    );
+  };
+
+  const handleSaveResolution = () => {
+    if (pendingResolution === null) return;
+    updateMutation.mutate(
+      { id: instanceId, payload: { vnc_resolution: pendingResolution } },
+      {
+        onSuccess: () => {
+          setEditingResolution(false);
+          setPendingResolution(null);
+        },
+      },
+    );
+  };
+
+  const handleUpdateImage = () => {
+    const toastId = "image-update";
+    toast.custom(
+      createElement(AppToast, { title: "Updating image...", description: "Pulling latest and restarting", status: "loading", toastId }),
+      { id: toastId, duration: Infinity },
+    );
+    updateImageMutation.mutate(instanceId, {
+      onSuccess: () => {
+        toast.custom(
+          createElement(AppToast, { title: "Image update started", description: "Instance is restarting with the new image", status: "success", toastId }),
+          { id: toastId, duration: 3000 },
+        );
+      },
+      onError: (err: unknown) => {
+        const axiosMsg = (err as any)?.response?.data?.error ?? (err as any)?.response?.data?.detail;
+        const message = axiosMsg ?? (err instanceof Error ? err.message : "Unknown error");
+        toast.custom(
+          createElement(AppToast, { title: "Image update failed", description: message, status: "error", toastId }),
+          { id: toastId, duration: 5000 },
+        );
+      },
+    });
+  };
+
+  const formatBytes = (bytes: number): string => {
+    if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}Gi`;
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)}Mi`;
+    return `${bytes}B`;
+  };
+
+  const renderProviderCard = (p: import("@/types/instance").LLMProvider, isInstanceProvider: boolean) => {
+    const iconKey = p.provider ? catalogDetailMap[p.provider]?.icon_key ?? undefined : undefined;
+    const displayModels: string[] = (p.models ?? []).length > 0
+      ? (p.models ?? []).map((m) => m.id)
+      : (instance.models.extra ?? [])
+          .filter((m) => m.startsWith(`${p.key}/`))
+          .map((m) => m.slice(`${p.key}/`.length));
+    return (
+      <div key={`${isInstanceProvider ? "inst" : "global"}-${p.id}`} className="bg-white rounded-lg border border-gray-200 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
+            {iconKey ? (
+              <ProviderIcon provider={iconKey} size={18} />
+            ) : (
+              <span className="text-xs font-semibold text-gray-500">{p.name[0].toUpperCase()}</span>
+            )}
+          </div>
+          <span className="text-sm font-semibold text-gray-900">{p.name}</span>
+          {isInstanceProvider && (
+            <span className="px-1.5 py-0.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-full">Instance</span>
+          )}
+          {p.api_type && p.api_type !== "openai-completions" && (
+            <span className="px-1.5 py-0.5 text-xs font-mono text-gray-400 bg-gray-100 rounded">{p.api_type}</span>
+          )}
+          {isInstanceProvider && (
+            <button
+              type="button"
+              onClick={() => { setEditingInstanceProvider(p); setInstanceProviderModalOpen(true); }}
+              className="ml-auto text-xs text-gray-400 hover:text-gray-600"
+            >
+              Edit
+            </button>
+          )}
+        </div>
+        {displayModels.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {displayModels.map((m) => {
+              const isPrimary = instance.default_model === `${p.key}/${m}`;
+              return (
+                <span
+                  key={m}
+                  className={`px-2 py-0.5 text-xs rounded font-mono ${isPrimary ? "bg-blue-100 text-blue-700 ring-1 ring-blue-300" : "bg-gray-100 text-gray-600"}`}
+                >
+                  {m}{isPrimary && <span className="ml-1 font-sans not-italic">★</span>}
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -388,63 +542,258 @@ export default function InstanceDetailPage() {
 
       {activeTab === "settings" && (
         <div className="space-y-8">
+          {/* Instance Details — unified card */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <h3 className="text-sm font-medium text-gray-900 mb-4">Instance Details</h3>
             <div className="grid grid-cols-2 gap-y-4 gap-x-8">
-              {[
-                { label: "Display Name", value: instance.display_name },
-                {
-                  label: "Agent Image",
-                  value: instance.live_image_info
+              {/* Display Name — admin editable */}
+              <div>
+                <dt className="text-xs text-gray-500">Display Name</dt>
+                {isAdmin && editingDisplayName ? (
+                  <dd className="mt-0.5 flex gap-2">
+                    <input
+                      type="text"
+                      value={pendingDisplayName ?? ""}
+                      onChange={(e) => setPendingDisplayName(e.target.value)}
+                      className="flex-1 min-w-0 text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <button onClick={handleSaveDisplayName} disabled={updateMutation.isPending || !pendingDisplayName?.trim()} className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shrink-0">{updateMutation.isPending ? "Saving..." : "Save"}</button>
+                    <button type="button" onClick={() => { setEditingDisplayName(false); setPendingDisplayName(null); }} className="text-xs text-blue-600 hover:text-blue-800 shrink-0">Cancel</button>
+                  </dd>
+                ) : (
+                  <dd className="text-sm text-gray-900 mt-0.5">
+                    {instance.display_name}
+                    {isAdmin && (
+                      <button type="button" onClick={() => { setPendingDisplayName(instance.display_name); setEditingDisplayName(true); }} className="ml-2 text-xs text-blue-600 hover:text-blue-800">Edit</button>
+                    )}
+                  </dd>
+                )}
+              </div>
+
+              {/* Agent Image */}
+              <div>
+                <dt className="text-xs text-gray-500">Agent Image</dt>
+                <dd className="text-sm text-gray-900 mt-0.5 break-all">
+                  {instance.live_image_info
                     ? instance.live_image_info
                     : instance.has_image_override
                       ? instance.container_image ?? ""
-                      : "Default",
-                },
-                { label: "Instance Name", value: instance.name },
-                { label: "Status", value: instance.status },
-                {
-                  label: "CPU",
-                  value: `${instance.cpu_request} / ${instance.cpu_limit}`,
-                },
-                {
-                  label: "Memory",
-                  value: `${instance.memory_request} / ${instance.memory_limit}`,
-                },
-                {
-                  label: "Storage (Homebrew)",
-                  value: instance.storage_homebrew,
-                },
-                { label: "Storage (Home)", value: instance.storage_home },
-                {
-                  label: "VNC Resolution",
-                  value: instance.has_resolution_override
-                    ? instance.vnc_resolution ?? ""
-                    : "Default",
-                },
-                {
-                  label: "Timezone",
-                  value: instance.has_timezone_override
-                    ? instance.timezone ?? ""
-                    : "Default",
-                },
-                {
-                  label: "User-Agent",
-                  value: instance.has_user_agent_override
-                    ? instance.user_agent ?? ""
-                    : "Default",
-                },
-                { label: "Created", value: instance.created_at },
-                { label: "Updated", value: instance.updated_at },
-              ].map((field) => (
-                <div key={field.label}>
-                  <dt className="text-xs text-gray-500">{field.label}</dt>
-                  <dd className="text-sm text-gray-900 mt-0.5 break-all">
-                    {field.value}
+                      : "Default"}
+                  {isAdmin && instance.status === "running" && (() => {
+                    const img = instance.live_image_info ?? instance.container_image ?? "";
+                    return img && !img.includes("@sha256:");
+                  })() && (
+                    <button
+                      type="button"
+                      onClick={handleUpdateImage}
+                      disabled={updateImageMutation.isPending || instance.status !== "running"}
+                      className="ml-2 text-xs text-blue-600 hover:text-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {updateImageMutation.isPending ? "Updating..." : "Update"}
+                    </button>
+                  )}
+                </dd>
+              </div>
+
+              {/* Created / Updated */}
+              <div>
+                <dt className="text-xs text-gray-500">Created</dt>
+                <dd className="text-sm text-gray-900 mt-0.5">{instance.created_at}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-gray-500">Updated</dt>
+                <dd className="text-sm text-gray-900 mt-0.5">{instance.updated_at}</dd>
+              </div>
+
+              {/* VNC Resolution — admin editable */}
+              <div>
+                <dt className="text-xs text-gray-500">VNC Resolution</dt>
+                {isAdmin && editingResolution ? (
+                  <dd className="mt-0.5">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={pendingResolution ?? ""}
+                        onChange={(e) => setPendingResolution(e.target.value)}
+                        placeholder="e.g., 1920x1080 (empty = default)"
+                        className={`flex-1 min-w-0 text-sm border rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 ${pendingResolution && !isValidResolution(pendingResolution) ? "border-red-300" : "border-gray-300"}`}
+                      />
+                      <button onClick={handleSaveResolution} disabled={updateMutation.isPending || pendingResolution === null || (pendingResolution !== "" && !isValidResolution(pendingResolution))} className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shrink-0">{updateMutation.isPending ? "Saving..." : "Save"}</button>
+                      <button type="button" onClick={() => { setEditingResolution(false); setPendingResolution(null); }} className="text-xs text-blue-600 hover:text-blue-800 shrink-0">Cancel</button>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">WIDTHxHEIGHT. Empty = default. Requires restart.</p>
+                  </dd>
+                ) : (
+                  <dd className="text-sm text-gray-900 mt-0.5">
+                    {instance.has_resolution_override ? instance.vnc_resolution : "Default"}
+                    {isAdmin && (
+                      <button type="button" onClick={() => { setPendingResolution(instance.vnc_resolution ?? ""); setEditingResolution(true); }} className="ml-2 text-xs text-blue-600 hover:text-blue-800">Edit</button>
+                    )}
+                  </dd>
+                )}
+              </div>
+
+              {/* Timezone — editable by all */}
+              <div>
+                <dt className="text-xs text-gray-500">Timezone</dt>
+                {editingTimezone ? (
+                  <dd className="mt-0.5">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={pendingTimezone ?? ""}
+                        onChange={(e) => setPendingTimezone(e.target.value)}
+                        placeholder="e.g., America/New_York (empty = default)"
+                        className="flex-1 min-w-0 text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <button onClick={handleSaveTimezone} disabled={updateMutation.isPending || pendingTimezone === null} className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shrink-0">{updateMutation.isPending ? "Saving..." : "Save"}</button>
+                      <button type="button" onClick={() => { setEditingTimezone(false); setPendingTimezone(null); }} className="text-xs text-blue-600 hover:text-blue-800 shrink-0">Cancel</button>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">IANA timezone. Empty = global default. Requires restart.</p>
+                  </dd>
+                ) : (
+                  <dd className="text-sm text-gray-900 mt-0.5">
+                    {instance.has_timezone_override ? instance.timezone : "Default"}
+                    <button type="button" onClick={() => { setPendingTimezone(instance.timezone ?? ""); setEditingTimezone(true); }} className="ml-2 text-xs text-blue-600 hover:text-blue-800">Edit</button>
+                  </dd>
+                )}
+              </div>
+
+              {/* User-Agent — editable by all, single column */}
+              <div>
+                <dt className="text-xs text-gray-500">User-Agent</dt>
+                {editingUserAgent ? (
+                  <dd className="mt-0.5">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={pendingUserAgent ?? ""}
+                        onChange={(e) => setPendingUserAgent(e.target.value)}
+                        placeholder="Empty = default"
+                        className="flex-1 min-w-0 text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <button onClick={handleSaveUserAgent} disabled={updateMutation.isPending || pendingUserAgent === null} className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shrink-0">{updateMutation.isPending ? "Saving..." : "Save"}</button>
+                      <button type="button" onClick={() => { setEditingUserAgent(false); setPendingUserAgent(null); }} className="text-xs text-blue-600 hover:text-blue-800 shrink-0">Cancel</button>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">Custom Chromium User-Agent. Requires restart.</p>
+                  </dd>
+                ) : (
+                  <dd className="text-sm text-gray-900 mt-0.5">
+                    {instance.has_user_agent_override ? instance.user_agent : "Default"}
+                    <button type="button" onClick={() => { setPendingUserAgent(instance.user_agent ?? ""); setEditingUserAgent(true); }} className="ml-2 text-xs text-blue-600 hover:text-blue-800">Edit</button>
+                  </dd>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Resources card */}
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-gray-900">Resources</h3>
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (editingResources) {
+                      setEditingResources(false);
+                    } else {
+                      setPendingCPURequest(instance.cpu_request);
+                      setPendingCPULimit(instance.cpu_limit);
+                      setPendingMemoryRequest(instance.memory_request);
+                      setPendingMemoryLimit(instance.memory_limit);
+                      setEditingResources(true);
+                    }
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  {editingResources ? "Cancel" : "Edit"}
+                </button>
+              )}
+            </div>
+            {editingResources ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">CPU Request</label>
+                    <input type="text" value={pendingCPURequest} onChange={(e) => setPendingCPURequest(e.target.value)} placeholder="e.g., 500m"
+                      className={`w-full px-3 py-1.5 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${pendingCPURequest && !isValidCPU(pendingCPURequest) ? "border-red-300" : "border-gray-300"}`} />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">CPU Limit</label>
+                    <input type="text" value={pendingCPULimit} onChange={(e) => setPendingCPULimit(e.target.value)} placeholder="e.g., 2000m"
+                      className={`w-full px-3 py-1.5 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${pendingCPULimit && !isValidCPU(pendingCPULimit) ? "border-red-300" : "border-gray-300"}`} />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Memory Request</label>
+                    <input type="text" value={pendingMemoryRequest} onChange={(e) => setPendingMemoryRequest(e.target.value)} placeholder="e.g., 1Gi"
+                      className={`w-full px-3 py-1.5 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${pendingMemoryRequest && !isValidMemory(pendingMemoryRequest) ? "border-red-300" : "border-gray-300"}`} />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Memory Limit</label>
+                    <input type="text" value={pendingMemoryLimit} onChange={(e) => setPendingMemoryLimit(e.target.value)} placeholder="e.g., 4Gi"
+                      className={`w-full px-3 py-1.5 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${pendingMemoryLimit && !isValidMemory(pendingMemoryLimit) ? "border-red-300" : "border-gray-300"}`} />
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400">CPU in millicores (e.g., 500m). Memory in Mi or Gi (e.g., 1Gi). Request must not exceed limit.</p>
+                {pendingCPURequest && pendingCPULimit && isValidCPU(pendingCPURequest) && isValidCPU(pendingCPULimit) && cpuToMillis(pendingCPURequest) > cpuToMillis(pendingCPULimit) && (
+                  <p className="text-xs text-red-600">CPU request cannot exceed CPU limit.</p>
+                )}
+                {pendingMemoryRequest && pendingMemoryLimit && isValidMemory(pendingMemoryRequest) && isValidMemory(pendingMemoryLimit) && memToBytes(pendingMemoryRequest) > memToBytes(pendingMemoryLimit) && (
+                  <p className="text-xs text-red-600">Memory request cannot exceed memory limit.</p>
+                )}
+                <div className="flex justify-end pt-2">
+                  <button onClick={handleSaveResources} disabled={updateMutation.isPending || !resourcesValid} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">{updateMutation.isPending ? "Saving..." : "Save"}</button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-y-4 gap-x-8">
+                <div>
+                  <dt className="text-xs text-gray-500">CPU Request</dt>
+                  <dd className="text-sm text-gray-900 mt-0.5">{instance.cpu_request}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-gray-500">CPU Limit</dt>
+                  <dd className="text-sm text-gray-900 mt-0.5">
+                    {instance.cpu_limit}
+                    {stats && (
+                      <span className="ml-2 text-xs text-gray-400">
+                        (using {stats.cpu_usage_millicores}m / {stats.cpu_usage_percent.toFixed(0)}%)
+                      </span>
+                    )}
                   </dd>
                 </div>
-              ))}
-            </div>
+                <div>
+                  <dt className="text-xs text-gray-500">Memory Request</dt>
+                  <dd className="text-sm text-gray-900 mt-0.5">{instance.memory_request}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-gray-500">Memory Limit</dt>
+                  <dd className="text-sm text-gray-900 mt-0.5">
+                    {instance.memory_limit}
+                    {stats && (
+                      <span className="ml-2 text-xs text-gray-400">
+                        (using {formatBytes(stats.memory_usage_bytes)} / {stats.memory_limit_bytes > 0 ? ((stats.memory_usage_bytes / stats.memory_limit_bytes) * 100).toFixed(0) : "?"}%)
+                      </span>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-gray-500">Storage (Homebrew)</dt>
+                  <dd className="text-sm text-gray-900 mt-0.5">
+                    {instance.storage_homebrew}
+                    <span className="ml-1 text-xs text-gray-400">(set at creation)</span>
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-gray-500">Storage (Home)</dt>
+                  <dd className="text-sm text-gray-900 mt-0.5">
+                    {instance.storage_home}
+                    <span className="ml-1 text-xs text-gray-400">(set at creation)</span>
+                  </dd>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* LLM Gateway Providers (admin only) */}
@@ -457,31 +806,45 @@ export default function InstanceDetailPage() {
                     Pick among available model(s) for the agent.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (editingGatewayProviders) {
-                      setPendingProviders(null);
-                      setPendingProviderModels(null);
-                      setPendingDefaultModel("");
-                    } else {
-                      setPendingProviders(instance.enabled_providers ?? []);
-                      const initialModels: Record<number, string[]> = {};
-                      for (const p of allProviders) {
-                        const prefix = `${p.key}/`;
-                        initialModels[p.id] = (instance.models.extra ?? [])
-                          .filter((m) => m.startsWith(prefix))
-                          .map((m) => m.slice(prefix.length));
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingInstanceProvider(undefined);
+                      setInstanceProviderModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    <Plus size={12} />
+                    Add provider
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (editingGatewayProviders) {
+                        setPendingProviders(null);
+                        setPendingProviderModels(null);
+                        setPendingDefaultModel("");
+                      } else {
+                        const allProvidersForEdit = [...allProviders, ...(instance.instance_providers ?? [])];
+                        setPendingProviders(instance.enabled_providers ?? []);
+                        const initialModels: Record<number, string[]> = {};
+                        for (const p of allProvidersForEdit) {
+                          const prefix = `${p.key}/`;
+                          initialModels[p.id] = (instance.models.extra ?? [])
+                            .filter((m) => m.startsWith(prefix))
+                            .map((m) => m.slice(prefix.length));
+                        }
+                        setPendingProviderModels(initialModels);
+                        setPendingDefaultModel(instance.default_model ?? "");
                       }
-                      setPendingProviderModels(initialModels);
-                      setPendingDefaultModel(instance.default_model ?? "");
-                    }
-                    setEditingGatewayProviders(!editingGatewayProviders);
-                  }}
-                  className="text-xs text-blue-600 hover:text-blue-800"
-                >
-                  {editingGatewayProviders ? "Cancel" : "Edit"}
-                </button>
+                      setEditingGatewayProviders(!editingGatewayProviders);
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    {editingGatewayProviders ? "Cancel" : "Edit"}
+                  </button>
+                </div>
               </div>
 
               {editingGatewayProviders ? (
@@ -491,6 +854,7 @@ export default function InstanceDetailPage() {
                   ) : (
                     <ProviderModelSelector
                       providers={allProviders}
+                      instanceProviders={instance.instance_providers ?? []}
                       catalogDetailMap={catalogDetailMap}
                       enabledProviders={pendingProviders ?? []}
                       providerModels={pendingProviderModels ?? {}}
@@ -514,52 +878,20 @@ export default function InstanceDetailPage() {
                 </div>
               ) : (
                 <div>
-                  {(instance.enabled_providers ?? []).length === 0 ? (
+                  {(instance.enabled_providers ?? []).length === 0 && (instance.instance_providers ?? []).length === 0 ? (
                     <p className="text-sm text-gray-400 italic">No providers enabled.</p>
                   ) : (
                     <div className="space-y-2">
+                      {/* Global enabled providers */}
                       {(instance.enabled_providers ?? []).map((pid) => {
                         const p = allProviders.find((x) => x.id === pid);
                         if (!p) return null;
-                        const iconKey = p.provider ? catalogDetailMap[p.provider]?.icon_key ?? undefined : undefined;
-                        const displayModels: string[] = p.models.length > 0
-                          ? p.models.map((m) => m.id)
-                          : (instance.models.extra ?? [])
-                              .filter((m) => m.startsWith(`${p.key}/`))
-                              .map((m) => m.slice(`${p.key}/`.length));
-                        return (
-                          <div key={pid} className="bg-white rounded-lg border border-gray-200 px-4 py-3">
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
-                                {iconKey ? (
-                                  <ProviderIcon provider={iconKey} size={18} />
-                                ) : (
-                                  <span className="text-xs font-semibold text-gray-500">{p.name[0].toUpperCase()}</span>
-                                )}
-                              </div>
-                              <span className="text-sm font-semibold text-gray-900">{p.name}</span>
-                              {p.api_type && p.api_type !== "openai-completions" && (
-                                <span className="px-1.5 py-0.5 text-xs font-mono text-gray-400 bg-gray-100 rounded">{p.api_type}</span>
-                              )}
-                            </div>
-                            {displayModels.length > 0 && (
-                              <div className="mt-2 flex flex-wrap gap-1">
-                                {displayModels.map((m) => {
-                                  const isPrimary = instance.default_model === `${p.key}/${m}`;
-                                  return (
-                                    <span
-                                      key={m}
-                                      className={`px-2 py-0.5 text-xs rounded font-mono ${isPrimary ? "bg-blue-100 text-blue-700 ring-1 ring-blue-300" : "bg-gray-100 text-gray-600"}`}
-                                    >
-                                      {m}{isPrimary && <span className="ml-1 font-sans not-italic">★</span>}
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        );
+                        return renderProviderCard(p, false);
                       })}
+                      {/* Instance-specific providers */}
+                      {(instance.instance_providers ?? []).map((p) =>
+                        renderProviderCard(p, true)
+                      )}
                     </div>
                   )}
                 </div>
@@ -604,122 +936,6 @@ export default function InstanceDetailPage() {
               </div>
             </div>
           )}
-
-          {/* Timezone Override */}
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium text-gray-900">
-                Timezone Override
-              </h3>
-              {!editingTimezone && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPendingTimezone(instance.timezone ?? "");
-                    setEditingTimezone(true);
-                  }}
-                  className="text-xs text-blue-600 hover:text-blue-800"
-                >
-                  Edit
-                </button>
-              )}
-            </div>
-
-            {editingTimezone ? (
-              <div className="space-y-3">
-                <input
-                  type="text"
-                  value={pendingTimezone ?? ""}
-                  onChange={(e) => setPendingTimezone(e.target.value)}
-                  placeholder="e.g., America/New_York (empty = use global default)"
-                  className="w-full text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <p className="text-xs text-gray-500">
-                  Leave empty to use the global default timezone. Changing timezone requires a container restart to take effect.
-                </p>
-                <div className="flex justify-end gap-3">
-                  <button
-                    type="button"
-                    onClick={() => { setEditingTimezone(false); setPendingTimezone(null); }}
-                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleSaveTimezone}
-                    disabled={updateMutation.isPending || pendingTimezone === null}
-                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {updateMutation.isPending ? "Saving..." : "Save"}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-gray-500">
-                {instance.has_timezone_override
-                  ? instance.timezone
-                  : "Using global default"}
-              </p>
-            )}
-          </div>
-
-          {/* User-Agent Override */}
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium text-gray-900">
-                User-Agent Override
-              </h3>
-              {!editingUserAgent && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPendingUserAgent(instance.user_agent ?? "");
-                    setEditingUserAgent(true);
-                  }}
-                  className="text-xs text-blue-600 hover:text-blue-800"
-                >
-                  Edit
-                </button>
-              )}
-            </div>
-
-            {editingUserAgent ? (
-              <div className="space-y-3">
-                <input
-                  type="text"
-                  value={pendingUserAgent ?? ""}
-                  onChange={(e) => setPendingUserAgent(e.target.value)}
-                  placeholder="Leave empty to use global default or browser built-in"
-                  className="w-full text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <p className="text-xs text-gray-500">
-                  Custom User-Agent string for Chromium. Leave empty to use the global default (or browser built-in if no global default is set). Changing requires a container restart to take effect.
-                </p>
-                <div className="flex justify-end gap-3">
-                  <button
-                    type="button"
-                    onClick={() => { setEditingUserAgent(false); setPendingUserAgent(null); }}
-                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleSaveUserAgent}
-                    disabled={updateMutation.isPending || pendingUserAgent === null}
-                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {updateMutation.isPending ? "Saving..." : "Save"}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-gray-500">
-                {instance.has_user_agent_override
-                  ? instance.user_agent
-                  : "Using global default"}
-              </p>
-            )}
-          </div>
 
         </div>
       )}
@@ -767,7 +983,7 @@ export default function InstanceDetailPage() {
                 </button>
               </div>
               <div className="flex flex-1 min-h-0">
-                <div className={chatViewMode === "chat-browser" ? "w-[400px] flex-shrink-0 border-r border-gray-700" : "flex-1"}>
+                <div className={chatViewMode === "chat-browser" ? "w-[400px] flex-shrink-0 border-r border-gray-700 relative" : "flex-1 relative"}>
                   <ChatPanel
                     messages={chatHook.messages}
                     connectionState={chatHook.connectionState}
@@ -781,7 +997,7 @@ export default function InstanceDetailPage() {
                   />
                 </div>
                 {chatViewMode === "chat-browser" && (
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0 relative">
                     <VncPanel
                       instanceId={instanceId}
                       connectionState={desktopHook.connectionState}
@@ -891,6 +1107,16 @@ export default function InstanceDetailPage() {
           />
         </div>
       )}
+      <ProviderModal
+        open={instanceProviderModalOpen}
+        mode={editingInstanceProvider ? "edit" : "create"}
+        provider={editingInstanceProvider}
+        instanceId={instanceId}
+        existingKeys={[...allProviders.map((p) => p.key), ...(instance.instance_providers ?? []).map((p) => p.key)]}
+        onClose={() => { setInstanceProviderModalOpen(false); setEditingInstanceProvider(undefined); }}
+        onSaved={() => {}}
+        onDeleted={() => {}}
+      />
     </div>
   );
 }

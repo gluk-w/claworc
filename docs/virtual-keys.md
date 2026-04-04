@@ -80,12 +80,7 @@ keyName := strings.ToUpper(strings.ReplaceAll(providerKey, "-", "_")) + "_API_KE
 // e.g. provider key "anthropic" → "ANTHROPIC_API_KEY"
 //      provider key "my-ollama" → "MY_OLLAMA_API_KEY"
 
-// 1. Per-instance override (InstanceAPIKey table)
-if found in instance_api_keys WHERE instance_id = X AND key_name = keyName {
-    return decrypt(value)
-}
-
-// 2. Global setting (settings table, "api_key:" prefix)
+// Global setting (settings table, "api_key:" prefix)
 if found in settings WHERE key = "api_key:" + keyName {
     return decrypt(value)
 }
@@ -93,8 +88,7 @@ if found in settings WHERE key = "api_key:" + keyName {
 return ""  // no key found — request will be rejected by provider
 ```
 
-The lookup order is: **instance override → global setting**. Both are stored Fernet-encrypted
-at rest.
+The key is stored Fernet-encrypted at rest in the global settings table.
 
 
 ## How OpenClaw Receives the Config

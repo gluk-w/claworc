@@ -116,7 +116,7 @@ func authAndResolve(r *http.Request) (instanceID, providerID uint, providerKey, 
 	providerID = key.ProviderID
 	providerKey = key.Provider.Key
 	baseURL = strings.TrimRight(key.Provider.BaseURL, "/")
-	apiKey = resolveRealAPIKey(instanceID, key.Provider.Key)
+	apiKey = resolveRealAPIKey(key.Provider)
 	apiType = key.Provider.APIType
 	if apiType == "" {
 		apiType = "openai-completions"
@@ -135,27 +135,14 @@ func findModelCost(models []database.ProviderModel, modelID string) *database.Pr
 	return nil
 }
 
-// resolveRealAPIKey finds the real API key for the given provider.
-// Checks per-instance overrides first (using PROVIDER_API_KEY naming convention),
-// then falls back to the global api_key:PROVIDER_API_KEY setting.
-func resolveRealAPIKey(instanceID uint, providerKey string) string {
-	keyName := strings.ToUpper(strings.ReplaceAll(providerKey, "-", "_")) + "_API_KEY"
-
-	// Instance-level override
-	var instKey database.InstanceAPIKey
-	if database.DB.Where("instance_id = ? AND key_name = ?", instanceID, keyName).First(&instKey).Error == nil {
-		if decrypted, err := utils.Decrypt(instKey.KeyValue); err == nil {
-			return decrypted
-		}
+// resolveRealAPIKey decrypts and returns the real API key stored on the provider.
+func resolveRealAPIKey(provider database.LLMProvider) string {
+	if provider.APIKey == "" {
+		return ""
 	}
-
-	// Global setting
-	if val, err := database.GetSetting("api_key:" + keyName); err == nil && val != "" {
-		if decrypted, err := utils.Decrypt(val); err == nil {
-			return decrypted
-		}
+	if decrypted, err := utils.Decrypt(provider.APIKey); err == nil {
+		return decrypted
 	}
-
 	return ""
 }
 

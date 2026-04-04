@@ -55,6 +55,15 @@ func (mockOps) UpdateInstanceConfig(_ context.Context, _ string, _ string) error
 func (mockOps) CloneVolumes(_ context.Context, _, _ string) error                   { return nil }
 func (mockOps) ConfigureSSHAccess(_ context.Context, _ uint, _ string) error        { return nil }
 func (mockOps) GetSSHAddress(_ context.Context, _ uint) (string, int, error)        { return "", 0, nil }
+func (mockOps) UpdateResources(_ context.Context, _ string, _ orchestrator.UpdateResourcesParams) error {
+	return nil
+}
+func (mockOps) GetContainerStats(_ context.Context, _ string) (*orchestrator.ContainerStats, error) {
+	return nil, nil
+}
+func (mockOps) UpdateImage(_ context.Context, _ string, _ orchestrator.CreateParams) error {
+	return nil
+}
 func (mockOps) ExecInInstance(_ context.Context, _ string, _ []string) (string, string, int, error) {
 	return "", "", 0, nil
 }

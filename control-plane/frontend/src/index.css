@@ -86,3 +86,21 @@
 .wx-filemanager {
   max-width: 100% !important;
 }
+
+/* Fix: sidebar tree and content area scrolling */
+.wx-filemanager .wx-sidebar {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+}
+
+.wx-filemanager .wx-scroll {
+  flex: 1 !important;
+  overflow-y: auto !important;
+}
+
+/* Fix: force SVAR theme wrapper to fill parent height so children can scroll */
+.wx-theme.wx-willow-theme {
+  height: 100% !important;
+}

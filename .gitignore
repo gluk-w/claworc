@@ -28,3 +28,4 @@ playwright-report/
 /control-plane/claworc
 /control-plane/control-plane
 
+.DS_Store

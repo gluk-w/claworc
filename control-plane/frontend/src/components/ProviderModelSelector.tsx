@@ -6,6 +6,7 @@ import type { CatalogProviderDetail } from "@/api/llm";
 
 interface Props {
   providers: LLMProvider[];
+  instanceProviders?: LLMProvider[];
   catalogDetailMap: Record<string, CatalogProviderDetail>;
   enabledProviders: number[];
   providerModels: Record<number, string[]>;
@@ -28,12 +29,24 @@ const TAG_STYLES: Record<string, string> = {
 
 export default function ProviderModelSelector({
   providers,
+  instanceProviders = [],
   catalogDetailMap,
   enabledProviders,
   providerModels,
   defaultModel,
   onUpdate,
 }: Props) {
+  const allProvidersList = [...providers, ...instanceProviders];
+
+  const firstModel = (enabled: number[], pm: Record<number, string[]>): string => {
+    for (const p of allProvidersList) {
+      if (!enabled.includes(p.id) && !instanceProviders.some((ip) => ip.id === p.id)) continue;
+      const models = pm[p.id] ?? [];
+      if (models.length > 0) return `${p.key}/${models[0]}`;
+    }
+    return "";
+  };
+
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   const toggleExpanded = (id: number) => {
@@ -58,7 +71,8 @@ export default function ProviderModelSelector({
     } else if (next.length === 0 && newEnabled.includes(p.id)) {
       newEnabled = newEnabled.filter((id) => id !== p.id);
     }
-    const newDefault = defaultModel === `${p.key}/${modelId}` && !next.includes(modelId) ? "" : defaultModel;
+    let newDefault = defaultModel === `${p.key}/${modelId}` && !next.includes(modelId) ? "" : defaultModel;
+    if (!newDefault) newDefault = firstModel(newEnabled, newProviderModels);
     onUpdate(newEnabled, newProviderModels, newDefault);
   };
 
@@ -74,7 +88,8 @@ export default function ProviderModelSelector({
   const handleDeselectAll = (p: LLMProvider) => {
     const newProviderModels = { ...providerModels, [p.id]: [] };
     const newEnabled = enabledProviders.filter((id) => id !== p.id);
-    const newDefault = defaultModel.startsWith(`${p.key}/`) ? "" : defaultModel;
+    let newDefault = defaultModel.startsWith(`${p.key}/`) ? "" : defaultModel;
+    if (!newDefault) newDefault = firstModel(newEnabled, newProviderModels);
     onUpdate(newEnabled, newProviderModels, newDefault);
   };
 
@@ -85,12 +100,22 @@ export default function ProviderModelSelector({
     onUpdate(newEnabled, providerModels, defaultModel);
   };
 
-  const allSelectedModels = providers.flatMap((p) =>
-    (providerModels[p.id] ?? []).map((mid) => ({
-      value: `${p.key}/${mid}`,
-      label: `${p.key}/${mid}`,
-    }))
-  );
+  const allSelectedModels = [
+    ...providers.flatMap((p) =>
+      (providerModels[p.id] ?? []).map((mid) => ({
+        value: `${p.key}/${mid}`,
+        label: `${p.key}/${mid}`,
+      }))
+    ),
+    ...instanceProviders.flatMap((p) =>
+      (providerModels[p.id] ?? []).map((mid) => ({
+        value: `${p.key}/${mid}`,
+        label: `${p.key}/${mid} (instance)`,
+      }))
+    ),
+  ];
+
+  const effectiveDefault = defaultModel || (allSelectedModels.length > 0 ? allSelectedModels[0].value : "");
 
   return (
     <div className="space-y-2">
@@ -240,15 +265,90 @@ export default function ProviderModelSelector({
         );
       })}
 
+      {/* Instance-specific providers (always enabled, model selection only) */}
+      {instanceProviders.map((p) => {
+        const isOpen = expanded.has(p.id);
+        const availableModels: ModelEntry[] = (p.models ?? []).map((m) => ({ id: m.id, name: m.name }));
+        const selectedModels = providerModels[p.id] ?? [];
+        const iconKey = p.provider ? catalogDetailMap[p.provider]?.icon_key ?? undefined : undefined;
+
+        return (
+          <div key={`inst-${p.id}`} className="border border-amber-200 rounded-lg bg-amber-50/30">
+            <button
+              type="button"
+              onClick={() => toggleExpanded(p.id)}
+              className="w-full px-4 py-3 flex items-center justify-between"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-white border border-gray-200 flex items-center justify-center">
+                  {iconKey ? (
+                    <ProviderIcon provider={iconKey} size={18} />
+                  ) : (
+                    <span className="text-xs font-semibold text-gray-500">{p.name[0].toUpperCase()}</span>
+                  )}
+                </div>
+                <span className="text-sm font-semibold text-gray-900">{p.name}</span>
+                <span className="px-1.5 py-0.5 text-xs font-medium text-amber-700 bg-amber-100 border border-amber-200 rounded-full">Instance</span>
+                <span className="text-xs text-gray-400">{selectedModels.length} of {availableModels.length} models</span>
+              </div>
+              {isOpen ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+            </button>
+            {isOpen && availableModels.length > 0 && (
+              <div className="px-4 pb-3 space-y-1">
+                <div className="flex gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allIds = availableModels.map((m) => m.id);
+                      onUpdate(enabledProviders, { ...providerModels, [p.id]: allIds }, defaultModel);
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdate(enabledProviders, { ...providerModels, [p.id]: [] }, defaultModel);
+                    }}
+                    className="text-xs text-gray-500 hover:text-gray-700"
+                  >
+                    Deselect all
+                  </button>
+                </div>
+                {availableModels.map((m) => (
+                  <label key={m.id} className="flex items-start gap-3 py-1.5 px-2 rounded hover:bg-amber-50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedModels.includes(m.id)}
+                      onChange={() => {
+                        const current = providerModels[p.id] ?? [];
+                        const next = current.includes(m.id) ? current.filter((x) => x !== m.id) : [...current, m.id];
+                        onUpdate(enabledProviders, { ...providerModels, [p.id]: next }, defaultModel);
+                      }}
+                      className="mt-0.5"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <span className="text-sm text-gray-900">{m.name}</span>
+                    </div>
+                    <span className="text-xs font-mono text-gray-400 shrink-0 mt-0.5">{m.id}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
       {allSelectedModels.length > 0 && (
         <div className="pt-3 mt-1 border-t border-gray-200">
           <label className="block text-xs font-medium text-gray-700 mb-1.5">Default model</label>
           <select
-            value={defaultModel}
+            value={effectiveDefault}
             onChange={(e) => onUpdate(enabledProviders, providerModels, e.target.value)}
             className="w-full text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            required
           >
-            <option value="">No default (use system order)</option>
             {allSelectedModels.map((m) => (
               <option key={m.value} value={m.value}>{m.label}</option>
             ))}

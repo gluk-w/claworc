@@ -102,7 +102,7 @@ func (e *dockerTestEnv) startAgent(t *testing.T, name string) *agentInstance {
 	}
 
 	hostCfg := &container.HostConfig{
-		Privileged: true,
+		Privileged: false,
 		PortBindings: nat.PortMap{
 			"22/tcp": []nat.PortBinding{
 				{HostIP: "127.0.0.1", HostPort: "0"}, // random port

@@ -21,7 +21,7 @@ KUBECONFIG := ../kubeconfig
 HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
 
-.PHONY: agent agent-base agent-build agent-test agent-push agent-exec dashboard docker-prune release \
+.PHONY: agent agent-base agent-base-china agent-build agent-test agent-push agent-exec dashboard docker-prune release \
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-docs \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
 	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models scrape-models test \
@@ -32,6 +32,10 @@ agent: agent-base agent-build agent-test agent-push
 agent-base:
 	@echo "Building and pushing base image..."
 	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(AGENT_BASE_IMAGE):$(TAG) --push agent/
+
+agent-base-china:
+	@echo "Building and pushing base image (China mirrors)..."
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg USE_CHINA_MIRRORS=true -t $(AGENT_BASE_IMAGE):$(TAG) --push agent/
 
 agent-build:
 	@echo "Building agent images (chromium, chrome, brave) in parallel..."

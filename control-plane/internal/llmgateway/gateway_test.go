@@ -32,7 +32,6 @@ func setupDB(t *testing.T) {
 		&database.Setting{},
 		&database.LLMProvider{},
 		&database.LLMGatewayKey{},
-		&database.InstanceAPIKey{},
 	); err != nil {
 		t.Fatalf("auto-migrate: %v", err)
 	}
@@ -69,30 +68,15 @@ func mustGatewayKey(t *testing.T, instanceID, providerID uint) string {
 	return token
 }
 
-// mustAPIKey encrypts realKey and stores it as a per-instance override.
-func mustAPIKey(t *testing.T, instanceID uint, providerKey, realKey string) {
+// mustProviderAPIKey encrypts realKey and stores it on the LLMProvider.APIKey column.
+func mustProviderAPIKey(t *testing.T, providerID uint, realKey string) {
 	t.Helper()
-	keyName := strings.ToUpper(strings.ReplaceAll(providerKey, "-", "_")) + "_API_KEY"
 	enc, err := utils.Encrypt(realKey)
 	if err != nil {
 		t.Fatalf("encrypt API key: %v", err)
 	}
-	row := database.InstanceAPIKey{InstanceID: instanceID, KeyName: keyName, KeyValue: enc}
-	if err := database.DB.Create(&row).Error; err != nil {
-		t.Fatalf("create instance API key: %v", err)
-	}
-}
-
-// mustGlobalAPIKey encrypts realKey and stores it as a global setting.
-func mustGlobalAPIKey(t *testing.T, providerKey, realKey string) {
-	t.Helper()
-	keyName := strings.ToUpper(strings.ReplaceAll(providerKey, "-", "_")) + "_API_KEY"
-	enc, err := utils.Encrypt(realKey)
-	if err != nil {
-		t.Fatalf("encrypt global API key: %v", err)
-	}
-	if err := database.SetSetting("api_key:"+keyName, enc); err != nil {
-		t.Fatalf("set global API key setting: %v", err)
+	if err := database.DB.Model(&database.LLMProvider{}).Where("id = ?", providerID).Update("api_key", enc).Error; err != nil {
+		t.Fatalf("set API key on provider: %v", err)
 	}
 }
 
@@ -136,7 +120,7 @@ func TestAuthExtraction_AllFormats(t *testing.T) {
 			setupDB(t)
 			p := mustProvider(t, "test-provider", "openai-completions", upstream.URL)
 			token := mustGatewayKey(t, 1, p.ID)
-			mustAPIKey(t, 1, "test-provider", "real-key")
+			mustProviderAPIKey(t, p.ID, "real-key")
 			upstreamCalled = false
 
 			var req *http.Request
@@ -231,7 +215,7 @@ func TestOutgoingAuthHeader_ByAPIType(t *testing.T) {
 			}
 			p := mustProvider(t, "prov", apiType, upstream.URL)
 			token := mustGatewayKey(t, 1, p.ID)
-			mustAPIKey(t, 1, "prov", "real-key")
+			mustProviderAPIKey(t, p.ID, "real-key")
 
 			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -267,7 +251,7 @@ func TestIncomingAuthHeaders_Stripped(t *testing.T) {
 	setupDB(t)
 	p := mustProvider(t, "prov", "openai-completions", upstream.URL)
 	token := mustGatewayKey(t, 1, p.ID)
-	mustAPIKey(t, 1, "prov", "real-key")
+	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -315,7 +299,7 @@ func TestURL_V1Deduplication(t *testing.T) {
 		setupDB(t)
 		p := mustProvider(t, "prov", "openai-completions", upstream.URL+"/v1")
 		token := mustGatewayKey(t, 1, p.ID)
-		mustAPIKey(t, 1, "prov", "real-key")
+		mustProviderAPIKey(t, p.ID, "real-key")
 
 		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -348,7 +332,7 @@ func TestURL_V1Deduplication(t *testing.T) {
 		setupDB(t)
 		p := mustProvider(t, "prov", "openai-completions", upstream.URL)
 		token := mustGatewayKey(t, 1, p.ID)
-		mustAPIKey(t, 1, "prov", "real-key")
+		mustProviderAPIKey(t, p.ID, "real-key")
 
 		req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{}`))
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -383,7 +367,7 @@ func TestOpenAIResponses_PathPrefixed(t *testing.T) {
 		setupDB(t)
 		p := mustProvider(t, "openai", "openai-responses", upstream.URL)
 		token := mustGatewayKey(t, 1, p.ID)
-		mustAPIKey(t, 1, "openai", "real-key")
+		mustProviderAPIKey(t, p.ID, "real-key")
 
 		req := httptest.NewRequest("POST", "/responses", strings.NewReader(`{"model":"gpt-5"}`))
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -411,7 +395,7 @@ func TestOpenAIResponses_PathPrefixed(t *testing.T) {
 		setupDB(t)
 		p := mustProvider(t, "openai", "openai-responses", upstream.URL+"/v1")
 		token := mustGatewayKey(t, 1, p.ID)
-		mustAPIKey(t, 1, "openai", "real-key")
+		mustProviderAPIKey(t, p.ID, "real-key")
 
 		req := httptest.NewRequest("POST", "/responses", strings.NewReader(`{"model":"gpt-5"}`))
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -445,7 +429,7 @@ func TestQueryString_KeyStripped(t *testing.T) {
 	setupDB(t)
 	p := mustProvider(t, "prov", "openai-completions", upstream.URL)
 	token := mustGatewayKey(t, 1, p.ID)
-	mustAPIKey(t, 1, "prov", "real-key")
+	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions?key="+token+"&model=gpt-4", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -505,7 +489,7 @@ func TestTokenCount_AllFormats(t *testing.T) {
 			setupDB(t)
 			p := mustProvider(t, "prov", tc.apiType, upstream.URL)
 			token := mustGatewayKey(t, 1, p.ID)
-			mustAPIKey(t, 1, "prov", "real-key")
+			mustProviderAPIKey(t, p.ID, "real-key")
 
 			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -544,7 +528,7 @@ func TestStreaming_NoTokenCount(t *testing.T) {
 	setupDB(t)
 	p := mustProvider(t, "prov", "openai-completions", upstream.URL)
 	token := mustGatewayKey(t, 1, p.ID)
-	mustAPIKey(t, 1, "prov", "real-key")
+	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -587,7 +571,7 @@ func TestStreaming_Flushed(t *testing.T) {
 	setupDB(t)
 	p := mustProvider(t, "prov", "openai-completions", upstream.URL)
 	token := mustGatewayKey(t, 1, p.ID)
-	mustAPIKey(t, 1, "prov", "real-key")
+	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -622,7 +606,7 @@ func TestStreaming_XAccelBuffering(t *testing.T) {
 		setupDB(t)
 		p := mustProvider(t, "prov", "openai-completions", upstream.URL)
 		token := mustGatewayKey(t, 1, p.ID)
-		mustAPIKey(t, 1, "prov", "real-key")
+		mustProviderAPIKey(t, p.ID, "real-key")
 
 		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -642,7 +626,7 @@ func TestStreaming_XAccelBuffering(t *testing.T) {
 		setupDB(t)
 		p := mustProvider(t, "prov", "openai-completions", upstream.URL)
 		token := mustGatewayKey(t, 1, p.ID)
-		mustAPIKey(t, 1, "prov", "real-key")
+		mustProviderAPIKey(t, p.ID, "real-key")
 
 		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -674,7 +658,7 @@ func TestUpstreamError_502(t *testing.T) {
 	setupDB(t)
 	p := mustProvider(t, "prov", "openai-completions", upstream.URL)
 	token := mustGatewayKey(t, 1, p.ID)
-	mustAPIKey(t, 1, "prov", "real-key")
+	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -712,7 +696,7 @@ func TestUpstream4xx_ErrorBodyTruncated(t *testing.T) {
 	setupDB(t)
 	p := mustProvider(t, "prov", "openai-completions", upstream.URL)
 	token := mustGatewayKey(t, 1, p.ID)
-	mustAPIKey(t, 1, "prov", "real-key")
+	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -804,8 +788,7 @@ func TestResolveAPIKey_GlobalFallback(t *testing.T) {
 	setupDB(t)
 	p := mustProvider(t, "my-provider", "openai-completions", upstream.URL)
 	token := mustGatewayKey(t, 1, p.ID)
-	// No per-instance key; set global key only
-	mustGlobalAPIKey(t, "my-provider", "global-real-key")
+	mustProviderAPIKey(t, p.ID, "global-real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -818,37 +801,6 @@ func TestResolveAPIKey_GlobalFallback(t *testing.T) {
 	}
 	if capturedAuth != "Bearer global-real-key" {
 		t.Errorf("upstream auth: got %q, want \"Bearer global-real-key\"", capturedAuth)
-	}
-}
-
-// --- 13. resolveRealAPIKey — instance key takes precedence over global ---
-
-func TestResolveAPIKey_InstanceOverridesPrecedence(t *testing.T) {
-	var capturedAuth string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedAuth = r.Header.Get("Authorization")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{}`))
-	}))
-	defer upstream.Close()
-
-	setupDB(t)
-	p := mustProvider(t, "my-provider", "openai-completions", upstream.URL)
-	token := mustGatewayKey(t, 1, p.ID)
-	mustGlobalAPIKey(t, "my-provider", "global-real-key")
-	mustAPIKey(t, 1, "my-provider", "instance-real-key")
-
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	handleProxy(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-	if capturedAuth != "Bearer instance-real-key" {
-		t.Errorf("upstream auth: got %q, want \"Bearer instance-real-key\"", capturedAuth)
 	}
 }
 
@@ -901,7 +853,7 @@ func TestCachedTokenExtraction(t *testing.T) {
 			setupDB(t)
 			p := mustProvider(t, "prov", tc.apiType, upstream.URL)
 			token := mustGatewayKey(t, 1, p.ID)
-			mustAPIKey(t, 1, "prov", "real-key")
+			mustProviderAPIKey(t, p.ID, "real-key")
 
 			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -996,7 +948,7 @@ func TestCostCalculation(t *testing.T) {
 			}
 			p := mustProviderWithModels(t, "prov", "openai-completions", upstream.URL, models)
 			token := mustGatewayKey(t, 1, p.ID)
-			mustAPIKey(t, 1, "prov", "real-key")
+			mustProviderAPIKey(t, p.ID, "real-key")
 
 			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test-model"}`))
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -1342,7 +1294,7 @@ func TestStreamingDB_OpenAICompletions(t *testing.T) {
 	}
 	p := mustProviderWithModels(t, "prov", "openai-completions", upstream.URL, models)
 	token := mustGatewayKey(t, 1, p.ID)
-	mustAPIKey(t, 1, "prov", "real-key")
+	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test-model"}`))
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -1396,7 +1348,7 @@ func TestStreamingDB_AnthropicMessages(t *testing.T) {
 	setupDB(t)
 	p := mustProvider(t, "prov", "anthropic-messages", upstream.URL)
 	token := mustGatewayKey(t, 1, p.ID)
-	mustAPIKey(t, 1, "prov", "real-key")
+	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"claude-3-5-sonnet"}`))
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -1442,7 +1394,7 @@ func TestStreamingDB_OpenAIResponses(t *testing.T) {
 	setupDB(t)
 	p := mustProvider(t, "prov", "openai-responses", upstream.URL)
 	token := mustGatewayKey(t, 1, p.ID)
-	mustAPIKey(t, 1, "prov", "real-key")
+	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/responses", strings.NewReader(`{"model":"gpt-5"}`))
 	req.Header.Set("Authorization", "Bearer "+token)

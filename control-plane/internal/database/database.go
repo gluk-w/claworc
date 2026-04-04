@@ -2,8 +2,10 @@ package database
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/config"
@@ -44,7 +46,7 @@ func Init() error {
 		return fmt.Errorf("set busy timeout: %w", err)
 	}
 
-	if err := DB.AutoMigrate(&Instance{}, &Setting{}, &InstanceAPIKey{}, &User{}, &UserInstance{}, &WebAuthnCredential{}, &LLMProvider{}, &LLMGatewayKey{}, &Skill{}); err != nil {
+	if err := DB.AutoMigrate(&Instance{}, &Setting{}, &User{}, &UserInstance{}, &WebAuthnCredential{}, &LLMProvider{}, &LLMGatewayKey{}, &Skill{}); err != nil {
 		return fmt.Errorf("auto-migrate: %w", err)
 	}
 
@@ -52,7 +54,51 @@ func Init() error {
 		return fmt.Errorf("seed defaults: %w", err)
 	}
 
+	migrateProviderAPIKeys()
+
 	return nil
+}
+
+// migrateProviderAPIKeys moves API keys from the settings table into the
+// LLMProvider.APIKey column. Handles two legacy formats:
+//   - api_key:provider:<id>  (previous migration format)
+//   - api_key:<KEY>_API_KEY  (original format)
+//
+// Idempotent: providers that already have APIKey populated are skipped.
+func migrateProviderAPIKeys() {
+	var providers []LLMProvider
+	DB.Find(&providers)
+	for _, p := range providers {
+		if p.APIKey != "" {
+			continue // already migrated
+		}
+
+		// Try the newer settings format first: api_key:provider:<id>
+		settingKey := fmt.Sprintf("api_key:provider:%d", p.ID)
+		if val, err := GetSetting(settingKey); err == nil && val != "" {
+			if err := DB.Model(&p).Update("api_key", val).Error; err != nil {
+				log.Printf("migrate provider API key (provider:%d): %v", p.ID, err)
+				continue
+			}
+			DeleteSetting(settingKey)
+			log.Printf("Migrated provider API key: setting %s → LLMProvider.APIKey (id=%d)", settingKey, p.ID)
+			continue
+		}
+
+		// Try the legacy format: api_key:<KEY>_API_KEY (global providers only)
+		if p.InstanceID != nil {
+			continue
+		}
+		oldKey := "api_key:" + strings.ReplaceAll(strings.ToUpper(p.Key), "-", "_") + "_API_KEY"
+		if val, err := GetSetting(oldKey); err == nil && val != "" {
+			if err := DB.Model(&p).Update("api_key", val).Error; err != nil {
+				log.Printf("migrate provider API key %s → LLMProvider.APIKey (id=%d): %v", oldKey, p.ID, err)
+				continue
+			}
+			DeleteSetting(oldKey)
+			log.Printf("Migrated provider API key: setting %s → LLMProvider.APIKey (id=%d)", oldKey, p.ID)
+		}
+	}
 }
 
 func seedDefaults() error {
