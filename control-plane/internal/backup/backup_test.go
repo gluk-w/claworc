@@ -57,6 +57,7 @@ func (m *mockOrch) StreamExecInInstance(ctx context.Context, name string, cmd []
 	}
 	return "", 0, nil
 }
+func (m *mockOrch) DeleteSharedVolume(_ context.Context, _ uint) error { return nil }
 
 // --- test helpers ---
 
