@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -38,7 +39,39 @@ var (
 	catalogCacheMu    sync.RWMutex
 	catalogCache      = map[string]*catalogCacheEntry{}
 	catalogHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
+	// providerProbeClient is used for user-provided URLs and includes SSRF
+	// protection that rejects connections to private/loopback addresses.
+	providerProbeClient = &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			DialContext: ssrfSafeDialContext,
+		},
+	}
 )
+
+// ssrfSafeDialContext resolves the target host and rejects connections to
+// private, loopback, and link-local IP addresses to prevent SSRF attacks.
+func ssrfSafeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid address: %w", err)
+	}
+
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("DNS lookup failed: %w", err)
+	}
+
+	for _, ip := range ips {
+		if ip.IP.IsLoopback() || ip.IP.IsPrivate() || ip.IP.IsLinkLocalUnicast() || ip.IP.IsLinkLocalMulticast() || ip.IP.IsUnspecified() {
+			return nil, fmt.Errorf("connections to private/internal networks are not allowed")
+		}
+	}
+
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
+}
 
 func proxyCatalog(w http.ResponseWriter, path string) {
 	catalogCacheMu.RLock()
@@ -1021,7 +1054,7 @@ func probeProviderURL(ctx context.Context, baseURL, pathSuffix, apiType, apiKey 
 	at.SetAuthHeader(req, apiKey)
 	at.ProbeHeaders(req)
 
-	resp, doErr := catalogHTTPClient.Do(req)
+	resp, doErr := providerProbeClient.Do(req)
 	if doErr != nil {
 		return 0, "", doErr
 	}

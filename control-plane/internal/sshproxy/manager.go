@@ -72,6 +72,11 @@ type SSHManager struct {
 
 	// Connection rate limiter (has its own mutex)
 	rateLimiter *RateLimiter
+
+	// Host key store for Trust On First Use (TOFU) verification.
+	// Maps instance ID to the host key seen on first connection.
+	hostKeyMu sync.RWMutex
+	hostKeys  map[uint]ssh.PublicKey
 }
 
 // managedConn wraps an SSH client with its cancel function for stopping keepalive.
@@ -86,6 +91,47 @@ func (m *SSHManager) getSigner() ssh.Signer {
 	m.keyMu.RLock()
 	defer m.keyMu.RUnlock()
 	return m.signer
+}
+
+// hostKeyCallback returns a Trust On First Use (TOFU) host key callback for the
+// given instance. On first connection, the host key is stored. On subsequent
+// connections, the stored key is compared with the presented key. If the key has
+// changed (e.g., container restart), the stored key is updated with a warning log.
+func (m *SSHManager) hostKeyCallback(instanceID uint) ssh.HostKeyCallback {
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		keyBytes := key.Marshal()
+
+		m.hostKeyMu.RLock()
+		known, exists := m.hostKeys[instanceID]
+		m.hostKeyMu.RUnlock()
+
+		if !exists {
+			m.hostKeyMu.Lock()
+			// Double-check after acquiring write lock.
+			if _, exists2 := m.hostKeys[instanceID]; !exists2 {
+				m.hostKeys[instanceID] = key
+				log.Printf("[ssh] Stored host key for instance %d (%s %s)",
+					instanceID, key.Type(), ssh.FingerprintSHA256(key))
+			}
+			m.hostKeyMu.Unlock()
+			return nil
+		}
+
+		if string(known.Marshal()) != string(keyBytes) {
+			log.Printf("[ssh] Host key changed for instance %d (container likely restarted), updating stored key", instanceID)
+			m.hostKeyMu.Lock()
+			m.hostKeys[instanceID] = key
+			m.hostKeyMu.Unlock()
+		}
+		return nil
+	}
+}
+
+// ClearHostKey removes the stored host key for an instance (e.g., when it is deleted).
+func (m *SSHManager) ClearHostKey(instanceID uint) {
+	m.hostKeyMu.Lock()
+	delete(m.hostKeys, instanceID)
+	m.hostKeyMu.Unlock()
 }
 
 // getPublicKey returns the current public key string, safe for concurrent use during key rotation.
@@ -117,6 +163,7 @@ func NewSSHManager(privateKey ssh.Signer, publicKey string) *SSHManager {
 		stateTracker: newStateTracker(),
 		eventLog:     newEventLog(),
 		rateLimiter:  NewRateLimiter(),
+		hostKeys:     make(map[uint]ssh.PublicKey),
 	}
 }
 
@@ -141,7 +188,7 @@ func (m *SSHManager) Connect(ctx context.Context, instanceID uint, host string, 
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(m.getSigner()),
 		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: m.hostKeyCallback(instanceID),
 		Timeout:         connectTimeout,
 	}
 

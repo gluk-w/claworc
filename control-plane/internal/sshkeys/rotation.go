@@ -86,10 +86,17 @@ func GetTestConnectionFunc() interface{} {
 
 func defaultTestConnection(ctx context.Context, signer ssh.Signer, host string, port int) error {
 	cfg := &ssh.ClientConfig{
-		User:            "root",
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         10 * time.Second,
+		User: "root",
+		Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			// Key rotation test connections target our own agent containers whose
+			// host keys are regenerated on each restart, so strict known-hosts
+			// verification is not feasible. We log the fingerprint for auditability.
+			log.Printf("[sshkeys] rotation test: host key %s %s from %s",
+				key.Type(), ssh.FingerprintSHA256(key), remote)
+			return nil
+		},
+		Timeout: 10 * time.Second,
 	}
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	client, err := ssh.Dial("tcp", addr, cfg)

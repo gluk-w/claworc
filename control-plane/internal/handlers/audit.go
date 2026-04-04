@@ -25,7 +25,7 @@ func GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 	opts := sshaudit.QueryOptions{}
 
 	if idStr := r.URL.Query().Get("instance_id"); idStr != "" {
-		id, err := strconv.ParseUint(idStr, 10, 64)
+		id, err := strconv.ParseUint(idStr, 10, strconv.IntSize)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "Invalid instance_id")
 			return

@@ -30,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 )
@@ -196,7 +197,7 @@ func (sm *SessionManager) CloseSession(id string) error {
 	delete(sm.sessions, id)
 	sm.mu.Unlock()
 
-	log.Printf("Terminal session closed: session=%s instance=%d", id, ms.InstanceID)
+	log.Printf("Terminal session closed: session=%s instance=%d", utils.SanitizeForLog(id), ms.InstanceID)
 	return ms.close()
 }
 
