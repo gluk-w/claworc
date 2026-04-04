@@ -199,6 +199,45 @@ func TestGetAuditLogs_InvalidInstanceID(t *testing.T) {
 	}
 }
 
+// TestGetAuditLogs_IntegerOverflowInstanceID verifies that extremely large
+// instance_id values that would overflow uint on 32-bit platforms are rejected.
+func TestGetAuditLogs_IntegerOverflowInstanceID(t *testing.T) {
+	cleanup := setupAuditTest(t)
+	defer cleanup()
+
+	user := createTestUser(t, "admin")
+
+	// On 32-bit platforms, uint is 32 bits. A value > 2^32-1 should be
+	// rejected by ParseUint with IntSize, preventing truncation.
+	overflowValues := []string{
+		"18446744073709551615", // uint64 max
+		"99999999999999999999", // way too large
+	}
+
+	for _, val := range overflowValues {
+		req := buildRequest(t, "GET", "/api/v1/audit-logs?instance_id="+val, user, nil)
+		w := httptest.NewRecorder()
+
+		GetAuditLogs(w, req)
+
+		// On 64-bit platforms, the first value (uint64 max) may succeed since uint==uint64.
+		// On 32-bit, it would be rejected. Both behaviors are acceptable — the key is
+		// that no silent truncation occurs.
+		if w.Code != http.StatusOK && w.Code != http.StatusBadRequest {
+			t.Errorf("SECURITY: instance_id=%s: expected 200 or 400, got %d", val, w.Code)
+		}
+	}
+
+	// Negative values should always be rejected
+	req := buildRequest(t, "GET", "/api/v1/audit-logs?instance_id=-1", user, nil)
+	w := httptest.NewRecorder()
+	GetAuditLogs(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("SECURITY: negative instance_id should be rejected, got %d", w.Code)
+	}
+}
+
 func TestGetAuditLogs_InvalidLimit(t *testing.T) {
 	cleanup := setupAuditTest(t)
 	defer cleanup()

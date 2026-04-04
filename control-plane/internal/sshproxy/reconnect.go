@@ -114,8 +114,10 @@ func (m *SSHManager) reconnectWithBackoff(ctx context.Context, instanceID uint, 
 		Details:    reason,
 	})
 
-	// Close stale connection before attempting reconnect
+	// Close stale connection and clear the stored host key before attempting
+	// reconnect. The container may have restarted with a new host key.
 	m.Close(instanceID)
+	m.ClearHostKey(instanceID)
 
 	backoff := reconnectInitialBackoff
 	var lastErr error

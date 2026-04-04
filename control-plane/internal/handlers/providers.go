@@ -1039,7 +1039,7 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 // the status code. The URL is validated and reconstructed from parsed components
 // to ensure only http(s) schemes with valid hosts are used.
 func probeProviderURL(ctx context.Context, baseURL, pathSuffix, apiType, apiKey string) (statusCode int, respBody string, err error) {
-	safeURL, urlErr := utils.ValidateAndBuildURL(baseURL, pathSuffix)
+	safeURL, urlErr := utils.ValidateExternalURL(baseURL, pathSuffix)
 	if urlErr != nil {
 		return 0, "", urlErr
 	}

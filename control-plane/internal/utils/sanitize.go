@@ -1,9 +1,12 @@
 package utils
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // SanitizeForLog removes newlines and control characters from user-provided
@@ -50,6 +53,40 @@ func ValidateAndBuildURL(rawBaseURL, pathSuffix string) (string, error) {
 	pathPart := parsed.Path + pathSuffix
 	// Reconstruct URL from validated, individually extracted components
 	return fmt.Sprintf("%s://%s%s", scheme, host, pathPart), nil
+}
+
+// ValidateExternalURL builds a safe URL using ValidateAndBuildURL and then
+// resolves the hostname to ensure it does not point to a private, loopback, or
+// link-local IP address (SSRF protection). Returns the validated URL string or
+// an error describing why the URL was rejected.
+func ValidateExternalURL(rawBaseURL, pathSuffix string) (string, error) {
+	safeURL, err := ValidateAndBuildURL(rawBaseURL, pathSuffix)
+	if err != nil {
+		return "", err
+	}
+
+	parsed, _ := url.Parse(safeURL) // already validated above
+	hostname := parsed.Hostname()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, hostname)
+	if err != nil {
+		return "", fmt.Errorf("DNS resolution failed for %s: %w", hostname, err)
+	}
+	if len(ips) == 0 {
+		return "", fmt.Errorf("no DNS records for %s", hostname)
+	}
+
+	for _, ip := range ips {
+		if ip.IP.IsLoopback() || ip.IP.IsPrivate() || ip.IP.IsLinkLocalUnicast() ||
+			ip.IP.IsLinkLocalMulticast() || ip.IP.IsUnspecified() {
+			return "", fmt.Errorf("URL resolves to a private/internal address (%s)", ip.IP)
+		}
+	}
+
+	return safeURL, nil
 }
 
 // SanitizePath validates a path component to prevent directory traversal.

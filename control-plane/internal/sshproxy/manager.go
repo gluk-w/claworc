@@ -95,12 +95,11 @@ func (m *SSHManager) getSigner() ssh.Signer {
 
 // hostKeyCallback returns a Trust On First Use (TOFU) host key callback for the
 // given instance. On first connection, the host key is stored. On subsequent
-// connections, the stored key is compared with the presented key. If the key has
-// changed (e.g., container restart), the stored key is updated with a warning log.
+// connections, the stored key must match the previously seen key. A mismatch
+// returns an error — callers must call ClearHostKey before reconnecting to an
+// instance whose host key has legitimately changed (e.g., container restart).
 func (m *SSHManager) hostKeyCallback(instanceID uint) ssh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		keyBytes := key.Marshal()
-
 		m.hostKeyMu.RLock()
 		known, exists := m.hostKeys[instanceID]
 		m.hostKeyMu.RUnlock()
@@ -108,20 +107,24 @@ func (m *SSHManager) hostKeyCallback(instanceID uint) ssh.HostKeyCallback {
 		if !exists {
 			m.hostKeyMu.Lock()
 			// Double-check after acquiring write lock.
-			if _, exists2 := m.hostKeys[instanceID]; !exists2 {
-				m.hostKeys[instanceID] = key
-				log.Printf("[ssh] Stored host key for instance %d (%s %s)",
-					instanceID, key.Type(), ssh.FingerprintSHA256(key))
+			if known2, exists2 := m.hostKeys[instanceID]; exists2 {
+				m.hostKeyMu.Unlock()
+				if string(known2.Marshal()) != string(key.Marshal()) {
+					return fmt.Errorf("host key mismatch for instance %d: expected %s, got %s",
+						instanceID, ssh.FingerprintSHA256(known2), ssh.FingerprintSHA256(key))
+				}
+				return nil
 			}
+			m.hostKeys[instanceID] = key
+			log.Printf("[ssh] Stored host key for instance %d (%s %s)",
+				instanceID, key.Type(), ssh.FingerprintSHA256(key))
 			m.hostKeyMu.Unlock()
 			return nil
 		}
 
-		if string(known.Marshal()) != string(keyBytes) {
-			log.Printf("[ssh] Host key changed for instance %d (container likely restarted), updating stored key", instanceID)
-			m.hostKeyMu.Lock()
-			m.hostKeys[instanceID] = key
-			m.hostKeyMu.Unlock()
+		if string(known.Marshal()) != string(key.Marshal()) {
+			return fmt.Errorf("host key mismatch for instance %d: expected %s, got %s",
+				instanceID, ssh.FingerprintSHA256(known), ssh.FingerprintSHA256(key))
 		}
 		return nil
 	}
@@ -190,6 +193,15 @@ func (m *SSHManager) Connect(ctx context.Context, instanceID uint, host string, 
 		},
 		HostKeyCallback: m.hostKeyCallback(instanceID),
 		Timeout:         connectTimeout,
+	}
+
+	// If reconnecting (existing entry in conns), clear the stored host key
+	// because the container may have restarted with a new host key.
+	m.mu.RLock()
+	_, hadExisting := m.conns[instanceID]
+	m.mu.RUnlock()
+	if hadExisting {
+		m.ClearHostKey(instanceID)
 	}
 
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
