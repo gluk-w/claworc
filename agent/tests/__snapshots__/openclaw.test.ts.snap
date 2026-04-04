@@ -2,6 +2,11 @@
 
 exports[`agent image > openclaw.json structure matches snapshot 1`] = `
 {
+  "agents": {
+    "defaults": {
+      "workspace": "string",
+    },
+  },
   "browser": {
     "attachOnly": "boolean",
     "color": "string",
@@ -18,20 +23,21 @@ exports[`agent image > openclaw.json structure matches snapshot 1`] = `
     "remoteCdpHandshakeTimeoutMs": "number",
     "remoteCdpTimeoutMs": "number",
   },
-  "commands": {
-    "native": "string",
-    "nativeSkills": "string",
-    "ownerDisplay": "string",
-    "restart": "boolean",
-  },
   "gateway": {
     "auth": {
+      "mode": "string",
       "token": "string",
     },
+    "bind": "string",
     "controlUi": {
       "dangerouslyDisableDeviceAuth": "boolean",
     },
     "mode": "string",
+    "port": "number",
+    "tailscale": {
+      "mode": "string",
+      "resetOnExit": "boolean",
+    },
   },
   "logging": {
     "file": "string",
@@ -39,6 +45,30 @@ exports[`agent image > openclaw.json structure matches snapshot 1`] = `
   "meta": {
     "lastTouchedAt": "string",
     "lastTouchedVersion": "string",
+  },
+  "plugins": {
+    "entries": {
+      "browser": {
+        "enabled": "boolean",
+      },
+    },
+  },
+  "session": {
+    "dmScope": "string",
+  },
+  "skills": {
+    "install": {
+      "nodeManager": "string",
+    },
+  },
+  "tools": {
+    "profile": "string",
+  },
+  "wizard": {
+    "lastRunAt": "string",
+    "lastRunCommand": "string",
+    "lastRunMode": "string",
+    "lastRunVersion": "string",
   },
 }
 `;
