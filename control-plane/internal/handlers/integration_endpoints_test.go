@@ -587,6 +587,7 @@ func TestIntegration_LLMGateway(t *testing.T) {
 // ─── Gateway basePath ────────��───────────────────────────────────────────────
 
 func TestIntegration_GatewayBasePath(t *testing.T) {
+	t.Skip("Requires updated agent image with CLAWORC_INSTANCE_ID basePath support; enable after agent image rebuild")
 	withRunningInstance(t, func(instID uint, instName string) {
 		waitForSSHConnected(t, instID, 90*time.Second)
 
