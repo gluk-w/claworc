@@ -11,6 +11,8 @@ import AccountPage from "./pages/AccountPage";
 import VncPopupPage from "./pages/VncPopupPage";
 import ChatPopupPage from "./pages/ChatPopupPage";
 import SkillsPage from "./pages/SkillsPage";
+import BackupsPage from "./pages/BackupsPage";
+import SharedFoldersPage from "./pages/SharedFoldersPage";
 import { useAuth } from "./contexts/AuthContext";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -64,6 +66,7 @@ export default function App() {
           }
         />
         <Route path="/instances/:id" element={<InstanceDetailPage />} />
+        <Route path="/shared-folders" element={<SharedFoldersPage />} />
         <Route path="/profile" element={<AccountPage />} />
         <Route
           path="/settings"
@@ -94,6 +97,14 @@ export default function App() {
           element={
             <AdminRoute>
               <SkillsPage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="/backups"
+          element={
+            <AdminRoute>
+              <BackupsPage />
             </AdminRoute>
           }
         />

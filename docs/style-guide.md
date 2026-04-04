@@ -700,3 +700,51 @@ Used in `DeployModal.tsx`, `ProviderTable.tsx`.
 ```
 
 Same classes apply to `type="radio"`.
+
+---
+
+## 21. Multi-Select (`MultiSelect` component)
+
+Reusable component at `src/components/MultiSelect.tsx`. Wraps `react-select` with all styles
+pre-configured to match the design system. Used in `SharedFoldersPage.tsx`.
+
+```tsx
+import MultiSelect from "@/components/MultiSelect";
+
+const options = items.map((i) => ({ value: i.id, label: i.name }));
+const selected = options.filter((o) => selectedIds.includes(o.value));
+
+<div>
+  <label className="block text-xs text-gray-500 mb-1">Label</label>
+  <MultiSelect
+    options={options}
+    value={selected}
+    onChange={(sel) => setSelectedIds(sel.map((s) => s.value))}
+    placeholder="Select items..."
+    noOptionsMessage={() => "No items available"}
+  />
+</div>
+```
+
+The component handles `isMulti`, `styles`, and `menuPortalTarget` internally — do not pass them.
+All other `react-select` props (`isClearable`, `isDisabled`, `isLoading`, etc.) are forwarded.
+
+### Visual spec
+
+| Element | Idle | Focused / Hover |
+|---|---|---|
+| Control border | `#d1d5db` (gray-300) | `#3b82f6` (blue-500) + ring shadow |
+| Placeholder | `#9ca3af` (gray-400) 0.875rem | — |
+| Multi-value pill bg | `#eff6ff` (blue-50) | — |
+| Multi-value pill text | `#1d4ed8` (blue-700) 0.75rem | — |
+| Pill remove icon | `#93c5fd` (blue-300) | `#2563eb` (blue-600) on `#dbeafe` (blue-100) |
+| Option | `white` | `#eff6ff` (blue-50); active `#dbeafe` (blue-100) |
+| Dropdown / clear icons | `#9ca3af` (gray-400) | `#6b7280` (gray-500) |
+| Indicator separator | hidden | — |
+| Menu | `border #e5e7eb`, `rounded-md`, `shadow-lg`, `z-index: 9999` | — |
+
+Key rules:
+- Always use `<MultiSelect>` — never use raw `react-select` imports.
+- The menu portals to `document.body` with `z-index: 9999` so it renders above modals.
+- Label uses `text-xs text-gray-500 mb-1` (same as other form labels).
+- Options use `{ value: number, label: string }` shape (`MultiSelectOption` type is exported).

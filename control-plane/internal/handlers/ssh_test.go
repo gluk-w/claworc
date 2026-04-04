@@ -170,7 +170,9 @@ func (m *mockOrchestrator) CreateInstance(_ context.Context, _ orchestrator.Crea
 func (m *mockOrchestrator) DeleteInstance(_ context.Context, _ string) error  { return nil }
 func (m *mockOrchestrator) StartInstance(_ context.Context, _ string) error   { return nil }
 func (m *mockOrchestrator) StopInstance(_ context.Context, _ string) error    { return nil }
-func (m *mockOrchestrator) RestartInstance(_ context.Context, _ string) error { return nil }
+func (m *mockOrchestrator) RestartInstance(_ context.Context, _ string, _ orchestrator.CreateParams) error {
+	return nil
+}
 func (m *mockOrchestrator) GetInstanceStatus(_ context.Context, _ string) (string, error) {
 	return "running", nil
 }
@@ -200,6 +202,10 @@ func (m *mockOrchestrator) UpdateImage(_ context.Context, _ string, _ orchestrat
 func (m *mockOrchestrator) ExecInInstance(_ context.Context, _ string, _ []string) (string, string, int, error) {
 	return "", "", 0, nil
 }
+func (m *mockOrchestrator) StreamExecInInstance(_ context.Context, _ string, _ []string, _ io.Writer) (string, int, error) {
+	return "", 0, nil
+}
+func (m *mockOrchestrator) DeleteSharedVolume(_ context.Context, _ uint) error { return nil }
 
 // --- test helpers ---
 

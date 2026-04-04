@@ -404,6 +404,88 @@ func getEffectiveUserAgent(inst database.Instance) string {
 	return ""
 }
 
+// restartInstanceAsync restarts a running instance in the background,
+// rebuilding its container with current config and shared folder mounts.
+// Safe to call for stopped instances (no-op if status is not "running").
+func restartInstanceAsync(inst database.Instance) {
+	if inst.Status != "running" {
+		return
+	}
+	orch := orchestrator.Get()
+	if orch == nil {
+		return
+	}
+
+	// Stop SSH tunnels; they will be recreated by the background manager
+	if SSHMgr != nil {
+		SSHMgr.CancelReconnection(inst.ID)
+	}
+	if TunnelMgr != nil {
+		if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
+			log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)
+		}
+	}
+
+	database.DB.Model(&inst).Updates(map[string]interface{}{
+		"status":     "restarting",
+		"updated_at": time.Now().UTC(),
+	})
+
+	go func() {
+		params := buildCreateParams(inst)
+		if err := orch.RestartInstance(context.Background(), inst.Name, params); err != nil {
+			log.Printf("Failed to restart instance %d: %v", inst.ID, err)
+			database.DB.Model(&database.Instance{}).Where("id = ?", inst.ID).Updates(map[string]interface{}{
+				"status":     "error",
+				"updated_at": time.Now().UTC(),
+			})
+		}
+	}()
+}
+
+// buildCreateParams constructs orchestrator.CreateParams from a database Instance.
+func buildCreateParams(inst database.Instance) orchestrator.CreateParams {
+	envVars := map[string]string{}
+	if inst.GatewayToken != "" {
+		if plain, err := utils.Decrypt(inst.GatewayToken); err == nil {
+			envVars["OPENCLAW_GATEWAY_TOKEN"] = plain
+		}
+	}
+	envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
+
+	return orchestrator.CreateParams{
+		Name:               inst.Name,
+		CPURequest:         inst.CPURequest,
+		CPULimit:           inst.CPULimit,
+		MemoryRequest:      inst.MemoryRequest,
+		MemoryLimit:        inst.MemoryLimit,
+		StorageHomebrew:    inst.StorageHomebrew,
+		StorageHome:        inst.StorageHome,
+		ContainerImage:     getEffectiveImage(inst),
+		VNCResolution:      getEffectiveResolution(inst),
+		Timezone:           getEffectiveTimezone(inst),
+		UserAgent:          getEffectiveUserAgent(inst),
+		EnvVars:            envVars,
+		SharedFolderMounts: getSharedFolderMounts(inst.ID),
+	}
+}
+
+func getSharedFolderMounts(instanceID uint) []orchestrator.SharedFolderMount {
+	folders, err := database.GetSharedFoldersForInstance(instanceID)
+	if err != nil {
+		log.Printf("Failed to load shared folder mounts for instance %d: %v", instanceID, err)
+		return nil
+	}
+	var mounts []orchestrator.SharedFolderMount
+	for _, sf := range folders {
+		mounts = append(mounts, orchestrator.SharedFolderMount{
+			VolumeID:  sf.ID,
+			MountPath: sf.MountPath,
+		})
+	}
+	return mounts
+}
+
 func ListInstances(w http.ResponseWriter, r *http.Request) {
 	var instances []database.Instance
 	user := middleware.GetUser(r)
@@ -589,6 +671,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		if gatewayTokenPlain != "" {
 			envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
 		}
+		envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
 
 		err := orch.CreateInstance(ctx, orchestrator.CreateParams{
 			Name:            name,
@@ -1052,22 +1135,24 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 			envVars["OPENCLAW_GATEWAY_TOKEN"] = plain
 		}
 	}
+	envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
 
 	instID := inst.ID
 	instName := inst.Name
 	go func() {
 		ctx := context.Background()
 		err := orch.UpdateImage(ctx, instName, orchestrator.CreateParams{
-			Name:           instName,
-			CPURequest:     inst.CPURequest,
-			CPULimit:       inst.CPULimit,
-			MemoryRequest:  inst.MemoryRequest,
-			MemoryLimit:    inst.MemoryLimit,
-			ContainerImage: effectiveImage,
-			VNCResolution:  effectiveResolution,
-			Timezone:       effectiveTimezone,
-			UserAgent:      effectiveUserAgent,
-			EnvVars:        envVars,
+			Name:               instName,
+			CPURequest:         inst.CPURequest,
+			CPULimit:           inst.CPULimit,
+			MemoryRequest:      inst.MemoryRequest,
+			MemoryLimit:        inst.MemoryLimit,
+			ContainerImage:     effectiveImage,
+			VNCResolution:      effectiveResolution,
+			Timezone:           effectiveTimezone,
+			UserAgent:          effectiveUserAgent,
+			EnvVars:            envVars,
+			SharedFolderMounts: getSharedFolderMounts(instID),
 		})
 		if err != nil {
 			log.Printf("Failed to update image for instance %d: %v", instID, err)
@@ -1229,7 +1314,34 @@ func RestartInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if orch := orchestrator.Get(); orch != nil {
-		if err := orch.RestartInstance(r.Context(), inst.Name); err != nil {
+		effectiveImage := getEffectiveImage(inst)
+		effectiveResolution := getEffectiveResolution(inst)
+		effectiveTimezone := getEffectiveTimezone(inst)
+		effectiveUserAgent := getEffectiveUserAgent(inst)
+
+		envVars := map[string]string{}
+		if inst.GatewayToken != "" {
+			if plain, err := utils.Decrypt(inst.GatewayToken); err == nil {
+				envVars["OPENCLAW_GATEWAY_TOKEN"] = plain
+			}
+		}
+		envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
+
+		params := orchestrator.CreateParams{
+			Name:               inst.Name,
+			CPURequest:         inst.CPURequest,
+			CPULimit:           inst.CPULimit,
+			MemoryRequest:      inst.MemoryRequest,
+			MemoryLimit:        inst.MemoryLimit,
+			ContainerImage:     effectiveImage,
+			VNCResolution:      effectiveResolution,
+			Timezone:           effectiveTimezone,
+			UserAgent:          effectiveUserAgent,
+			EnvVars:            envVars,
+			SharedFolderMounts: getSharedFolderMounts(inst.ID),
+		}
+
+		if err := orch.RestartInstance(r.Context(), inst.Name, params); err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to restart instance: %v", err))
 			return
 		}
@@ -1438,22 +1550,24 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		if gatewayTokenPlain != "" {
 			envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
 		}
+		envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
 
 		// Create container/deployment with empty volumes
 		err := orch.CreateInstance(ctx, orchestrator.CreateParams{
-			Name:            cloneName,
-			CPURequest:      inst.CPURequest,
-			CPULimit:        inst.CPULimit,
-			MemoryRequest:   inst.MemoryRequest,
-			MemoryLimit:     inst.MemoryLimit,
-			StorageHomebrew: inst.StorageHomebrew,
-			StorageHome:     inst.StorageHome,
-			ContainerImage:  effectiveImage,
-			VNCResolution:   effectiveResolution,
-			Timezone:        effectiveTimezone,
-			UserAgent:       effectiveUserAgent,
-			EnvVars:         envVars,
-			OnProgress:      func(msg string) { setStatusMessage(inst.ID, msg) },
+			Name:               cloneName,
+			CPURequest:         inst.CPURequest,
+			CPULimit:           inst.CPULimit,
+			MemoryRequest:      inst.MemoryRequest,
+			MemoryLimit:        inst.MemoryLimit,
+			StorageHomebrew:    inst.StorageHomebrew,
+			StorageHome:        inst.StorageHome,
+			ContainerImage:     effectiveImage,
+			VNCResolution:      effectiveResolution,
+			Timezone:           effectiveTimezone,
+			UserAgent:          effectiveUserAgent,
+			EnvVars:            envVars,
+			OnProgress:         func(msg string) { setStatusMessage(inst.ID, msg) },
+			SharedFolderMounts: getSharedFolderMounts(inst.ID),
 		})
 		if err != nil {
 			log.Printf("Failed to create container for clone %s: %v", cloneName, err)
@@ -1556,6 +1670,23 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 		if code != 0 {
 			log.Printf("Failed to set model config for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(stderr))
 			// continue — providers must still be configured even if model config failed
+		}
+
+		// Set models allowlist to restrict the UI dropdown to only configured models
+		modelsMap := make(map[string]interface{}, len(models))
+		for _, m := range models {
+			modelsMap[m] = map[string]interface{}{}
+		}
+		modelsMapJSON, err := json.Marshal(modelsMap)
+		if err != nil {
+			log.Printf("Error marshaling models allowlist for %s: %v", utils.SanitizeForLog(name), err)
+		} else {
+			_, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "agents.defaults.models", string(modelsMapJSON), "--json")
+			if err != nil {
+				log.Printf("Error setting models allowlist for %s: %v", utils.SanitizeForLog(name), err)
+			} else if code != 0 {
+				log.Printf("Failed to set models allowlist for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(stderr))
+			}
 		}
 	}
 

@@ -43,10 +43,9 @@ export default function ActionButtons({
     const gwUrl = `${wsProtocol}//${window.location.host}/openclaw/${instance.id}/`;
     const params = new URLSearchParams({
       gatewayUrl: gwUrl,
-      token: instance.gateway_token,
       session: "browser",
     });
-    return `/openclaw/${instance.id}/?${params}`;
+    return `/openclaw/${instance.id}/?${params}#token=${encodeURIComponent(instance.gateway_token)}`;
   })();
 
   const disabledLinkClass = "pointer-events-none opacity-30";

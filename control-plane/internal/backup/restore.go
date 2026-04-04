@@ -12,56 +12,26 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 )
 
-// GetBackupChain resolves the full chain of backups needed to restore a given backup.
-// Returns [full, incr1, incr2, ...] in the order they should be applied.
-func GetBackupChain(backupID uint) ([]database.Backup, error) {
-	var chain []database.Backup
-	current, err := database.GetBackup(backupID)
-	if err != nil {
-		return nil, fmt.Errorf("get backup %d: %w", backupID, err)
-	}
-
-	chain = append(chain, *current)
-	for current.ParentID != nil {
-		parentID := *current.ParentID
-		current, err = database.GetBackup(parentID)
-		if err != nil {
-			return nil, fmt.Errorf("get parent backup %d: %w", parentID, err)
-		}
-		chain = append([]database.Backup{*current}, chain...)
-	}
-
-	if chain[0].Type != "full" {
-		return nil, fmt.Errorf("backup chain root (id=%d) is not a full backup", chain[0].ID)
-	}
-
-	return chain, nil
-}
-
-// RestoreBackup restores a backup (and its chain) to the given instance.
+// RestoreBackup restores a backup to the given instance.
 // The instance must be running. This runs synchronously.
 func RestoreBackup(ctx context.Context, orch orchestrator.ContainerOrchestrator, instanceName string, backupID uint) error {
-	chain, err := GetBackupChain(backupID)
+	b, err := database.GetBackup(backupID)
 	if err != nil {
-		return fmt.Errorf("resolve backup chain: %w", err)
+		return fmt.Errorf("get backup %d: %w", backupID, err)
 	}
 
-	for _, b := range chain {
-		if b.Status != "completed" {
-			return fmt.Errorf("backup %d in chain has status %q, expected completed", b.ID, b.Status)
-		}
-		absPath := filepath.Join(BackupDir(), b.FilePath)
-		if _, err := os.Stat(absPath); err != nil {
-			return fmt.Errorf("backup file missing for backup %d: %w", b.ID, err)
-		}
+	if b.Status != "completed" {
+		return fmt.Errorf("backup %d has status %q, expected completed", b.ID, b.Status)
 	}
 
-	for i, b := range chain {
-		log.Printf("restoring backup %d (%s, %d/%d) to instance %s", b.ID, b.Type, i+1, len(chain), instanceName)
-		absPath := filepath.Join(BackupDir(), b.FilePath)
-		if err := restoreArchive(ctx, orch, instanceName, absPath); err != nil {
-			return fmt.Errorf("restore backup %d: %w", b.ID, err)
-		}
+	absPath := filepath.Join(BackupDir(), b.FilePath)
+	if _, err := os.Stat(absPath); err != nil {
+		return fmt.Errorf("backup file missing for backup %d: %w", b.ID, err)
+	}
+
+	log.Printf("restoring backup %d to instance %s", b.ID, instanceName)
+	if err := restoreArchive(ctx, orch, instanceName, absPath); err != nil {
+		return fmt.Errorf("restore backup %d: %w", b.ID, err)
 	}
 
 	return nil

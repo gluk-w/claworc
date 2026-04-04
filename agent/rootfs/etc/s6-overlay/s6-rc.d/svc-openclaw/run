@@ -28,6 +28,11 @@ s6-setuidgid claworc openclaw config set gateway.mode local
 s6-setuidgid claworc openclaw config set gateway.bind localhost
 s6-setuidgid claworc openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth true
 
+# Set Control UI base path for reverse proxy
+if [ -n "$CLAWORC_INSTANCE_ID" ]; then
+    s6-setuidgid claworc openclaw config set gateway.controlUi.basePath "/openclaw/${CLAWORC_INSTANCE_ID}/"
+fi
+
 # Set token if provided
 if [ -n "$OPENCLAW_GATEWAY_TOKEN" ]; then
     s6-setuidgid claworc openclaw config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN"

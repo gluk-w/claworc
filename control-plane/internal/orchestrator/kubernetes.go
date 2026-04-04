@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"time"
@@ -96,6 +97,18 @@ func (k *KubernetesOrchestrator) CreateInstance(ctx context.Context, params Crea
 		pvc := buildPVC(fmt.Sprintf("%s-%s", params.Name, p.suffix), ns, p.storage)
 		if _, err := k.clientset.CoreV1().PersistentVolumeClaims(ns).Create(ctx, pvc, metav1.CreateOptions{}); err != nil {
 			return fmt.Errorf("create PVC %s: %w", p.suffix, err)
+		}
+	}
+
+	// Create shared folder PVCs (ReadWriteMany for multi-pod access)
+	for _, sfm := range params.SharedFolderMounts {
+		pvcName := fmt.Sprintf("shared-folder-%d", sfm.VolumeID)
+		_, err := k.clientset.CoreV1().PersistentVolumeClaims(ns).Get(ctx, pvcName, metav1.GetOptions{})
+		if errors.IsNotFound(err) {
+			pvc := buildSharedPVC(pvcName, ns, "1Gi")
+			if _, err := k.clientset.CoreV1().PersistentVolumeClaims(ns).Create(ctx, pvc, metav1.CreateOptions{}); err != nil {
+				return fmt.Errorf("create shared PVC %s: %w", pvcName, err)
+			}
 		}
 	}
 
@@ -223,6 +236,15 @@ func (k *KubernetesOrchestrator) DeleteInstance(ctx context.Context, name string
 	return nil
 }
 
+func (k *KubernetesOrchestrator) DeleteSharedVolume(ctx context.Context, folderID uint) error {
+	ns := k.ns()
+	pvcName := fmt.Sprintf("shared-folder-%d", folderID)
+	if err := k.clientset.CoreV1().PersistentVolumeClaims(ns).Delete(ctx, pvcName, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("delete shared PVC %s: %w", pvcName, err)
+	}
+	return nil
+}
+
 func (k *KubernetesOrchestrator) StartInstance(ctx context.Context, name string) error {
 	return k.scaleDeployment(ctx, name, 1)
 }
@@ -231,18 +253,30 @@ func (k *KubernetesOrchestrator) StopInstance(ctx context.Context, name string) 
 	return k.scaleDeployment(ctx, name, 0)
 }
 
-func (k *KubernetesOrchestrator) RestartInstance(ctx context.Context, name string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
-	patch := fmt.Sprintf(`{"spec":{"template":{"metadata":{"annotations":{"kubectl.kubernetes.io/restartedAt":"%s"}}}}}`, now)
-	_, err := k.clientset.AppsV1().Deployments(k.ns()).Patch(
-		ctx, name, "application/strategic-merge-patch+json", []byte(patch), metav1.PatchOptions{},
-	)
+func (k *KubernetesOrchestrator) RestartInstance(ctx context.Context, name string, params CreateParams) error {
+	ns := k.ns()
+
+	// Ensure shared folder PVCs exist
+	for _, sfm := range params.SharedFolderMounts {
+		pvcName := fmt.Sprintf("shared-folder-%d", sfm.VolumeID)
+		_, err := k.clientset.CoreV1().PersistentVolumeClaims(ns).Get(ctx, pvcName, metav1.GetOptions{})
+		if errors.IsNotFound(err) {
+			pvc := buildSharedPVC(pvcName, ns, "1Gi")
+			if _, err := k.clientset.CoreV1().PersistentVolumeClaims(ns).Create(ctx, pvc, metav1.CreateOptions{}); err != nil {
+				return fmt.Errorf("create shared PVC %s: %w", pvcName, err)
+			}
+		}
+	}
+
+	// Update the deployment spec to reflect current mounts, then trigger rollout
+	dep := buildDeployment(params, ns)
+	_, err := k.clientset.AppsV1().Deployments(ns).Update(ctx, dep, metav1.UpdateOptions{})
 	return err
 }
 
 func (k *KubernetesOrchestrator) UpdateImage(ctx context.Context, name string, params CreateParams) error {
 	// With ImagePullPolicy: Always, a rollout restart pulls the latest image
-	return k.RestartInstance(ctx, name)
+	return k.RestartInstance(ctx, name, params)
 }
 
 func (k *KubernetesOrchestrator) GetInstanceStatus(ctx context.Context, name string) (string, error) {
@@ -501,6 +535,55 @@ func (k *KubernetesOrchestrator) execInPod(ctx context.Context, podName string, 
 	return stdout.String(), stderr.String(), exitCode, nil
 }
 
+func (k *KubernetesOrchestrator) StreamExecInInstance(ctx context.Context, name string, cmd []string, stdout io.Writer) (string, int, error) {
+	podName, err := k.getPodName(ctx, name)
+	if err != nil {
+		return "", -1, err
+	}
+	if podName == "" {
+		return "", -1, fmt.Errorf("no running pod found for instance %s", name)
+	}
+	return k.streamExecInPod(ctx, podName, cmd, stdout)
+}
+
+func (k *KubernetesOrchestrator) streamExecInPod(ctx context.Context, podName string, command []string, stdout io.Writer) (string, int, error) {
+	req := k.clientset.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podName).
+		Namespace(k.ns()).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Command: command,
+			Stdout:  true,
+			Stderr:  true,
+			Stdin:   false,
+			TTY:     false,
+		}, scheme.ParameterCodec)
+
+	exec, err := remotecommand.NewSPDYExecutor(k.restConfig, "POST", req.URL())
+	if err != nil {
+		return "", -1, fmt.Errorf("create executor: %w", err)
+	}
+
+	var stderr bytes.Buffer
+	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdout: stdout,
+		Stderr: &stderr,
+	})
+
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(interface{ ExitStatus() int }); ok {
+			exitCode = exitErr.ExitStatus()
+		} else {
+			log.Printf("stream exec error (treating as exit code 1): %v", err)
+			exitCode = 1
+		}
+	}
+
+	return stderr.String(), exitCode, nil
+}
+
 // --- Resource builders ---
 
 func buildPVC(name, ns, storage string) *corev1.PersistentVolumeClaim {
@@ -508,6 +591,24 @@ func buildPVC(name, ns, storage string) *corev1.PersistentVolumeClaim {
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: resource.MustParse(storage),
+				},
+			},
+		},
+	}
+}
+
+func buildSharedPVC(name, ns, storage string) *corev1.PersistentVolumeClaim {
+	return &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: ns,
+			Labels:    map[string]string{"managed-by": "claworc", "type": "shared-folder"},
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
 			Resources: corev1.VolumeResourceRequirements{
 				Requests: corev1.ResourceList{
 					corev1.ResourceStorage: resource.MustParse(storage),
@@ -571,11 +672,11 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 								corev1.ResourceMemory: resource.MustParse(params.MemoryLimit),
 							},
 						},
-						VolumeMounts: []corev1.VolumeMount{
+						VolumeMounts: appendSharedVolumeMounts([]corev1.VolumeMount{
 							{Name: "home-data", MountPath: "/home/claworc"},
 							{Name: "homebrew-data", MountPath: "/home/linuxbrew/.linuxbrew"},
 							{Name: "dshm", MountPath: "/dev/shm"},
-						},
+						}, params.SharedFolderMounts),
 						LivenessProbe: &corev1.Probe{
 							ProbeHandler:        corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(22)}},
 							InitialDelaySeconds: 60,
@@ -587,14 +688,62 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 							PeriodSeconds:       10,
 						},
 					}},
-					Volumes: []corev1.Volume{
+					InitContainers: buildSharedFolderInitContainers(params.SharedFolderMounts),
+					Volumes: appendSharedVolumes([]corev1.Volume{
 						{Name: "homebrew-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-homebrew"}}},
 						{Name: "home-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-home"}}},
 						{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &shmSize}}},
-					},
+					}, params.SharedFolderMounts),
 					ImagePullSecrets: []corev1.LocalObjectReference{{Name: "ghcr-secret"}},
 				},
 			},
 		},
 	}
+}
+
+// buildSharedFolderInitContainers returns an init container that chowns shared folder
+// mount paths to claworc:claworc (1000:1000) so the unprivileged user can write to them.
+func buildSharedFolderInitContainers(sfMounts []SharedFolderMount) []corev1.Container {
+	if len(sfMounts) == 0 {
+		return nil
+	}
+	var chownCmds []string
+	var volumeMounts []corev1.VolumeMount
+	for _, sfm := range sfMounts {
+		chownCmds = append(chownCmds, fmt.Sprintf("chown 1000:1000 %s", sfm.MountPath))
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      fmt.Sprintf("shared-%d", sfm.VolumeID),
+			MountPath: sfm.MountPath,
+		})
+	}
+	return []corev1.Container{{
+		Name:         "fix-shared-permissions",
+		Image:        "busybox:latest",
+		Command:      []string{"sh", "-c", strings.Join(chownCmds, " && ")},
+		VolumeMounts: volumeMounts,
+	}}
+}
+
+func appendSharedVolumeMounts(base []corev1.VolumeMount, sfMounts []SharedFolderMount) []corev1.VolumeMount {
+	for _, sfm := range sfMounts {
+		base = append(base, corev1.VolumeMount{
+			Name:      fmt.Sprintf("shared-%d", sfm.VolumeID),
+			MountPath: sfm.MountPath,
+		})
+	}
+	return base
+}
+
+func appendSharedVolumes(base []corev1.Volume, sfMounts []SharedFolderMount) []corev1.Volume {
+	for _, sfm := range sfMounts {
+		base = append(base, corev1.Volume{
+			Name: fmt.Sprintf("shared-%d", sfm.VolumeID),
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: fmt.Sprintf("shared-folder-%d", sfm.VolumeID),
+				},
+			},
+		})
+	}
+	return base
 }

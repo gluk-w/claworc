@@ -46,7 +46,7 @@ func Init() error {
 		return fmt.Errorf("set busy timeout: %w", err)
 	}
 
-	if err := DB.AutoMigrate(&Instance{}, &Setting{}, &User{}, &UserInstance{}, &WebAuthnCredential{}, &LLMProvider{}, &LLMGatewayKey{}, &Skill{}); err != nil {
+	if err := DB.AutoMigrate(&Instance{}, &Setting{}, &User{}, &UserInstance{}, &WebAuthnCredential{}, &LLMProvider{}, &LLMGatewayKey{}, &Skill{}, &Backup{}, &BackupSchedule{}, &SharedFolder{}); err != nil {
 		return fmt.Errorf("auto-migrate: %w", err)
 	}
 
@@ -267,4 +267,142 @@ func DeleteWebAuthnCredential(id string, userID uint) error {
 
 func UpdateCredentialSignCount(id string, count uint32) error {
 	return DB.Model(&WebAuthnCredential{}).Where("id = ?", id).Update("sign_count", count).Error
+}
+
+// Backup helpers
+
+func CreateBackup(b *Backup) error {
+	return DB.Create(b).Error
+}
+
+func GetBackup(id uint) (*Backup, error) {
+	var b Backup
+	if err := DB.First(&b, id).Error; err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+func ListBackups(instanceID uint) ([]Backup, error) {
+	var backups []Backup
+	if err := DB.Where("instance_id = ?", instanceID).Order("created_at DESC").Find(&backups).Error; err != nil {
+		return nil, err
+	}
+	return backups, nil
+}
+
+func ListAllBackups() ([]Backup, error) {
+	var backups []Backup
+	if err := DB.Order("created_at DESC").Find(&backups).Error; err != nil {
+		return nil, err
+	}
+	return backups, nil
+}
+
+func UpdateBackup(id uint, updates map[string]interface{}) error {
+	return DB.Model(&Backup{}).Where("id = ?", id).Updates(updates).Error
+}
+
+func DeleteBackupRecord(id uint) error {
+	return DB.Delete(&Backup{}, id).Error
+}
+
+func GetLatestCompletedBackup(instanceID uint) (*Backup, error) {
+	var b Backup
+	if err := DB.Where("instance_id = ? AND status = ?", instanceID, "completed").
+		Order("created_at DESC").First(&b).Error; err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+// BackupSchedule helpers
+
+func CreateBackupSchedule(s *BackupSchedule) error {
+	return DB.Create(s).Error
+}
+
+func GetBackupSchedule(id uint) (*BackupSchedule, error) {
+	var s BackupSchedule
+	if err := DB.First(&s, id).Error; err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+func ListBackupSchedules() ([]BackupSchedule, error) {
+	var schedules []BackupSchedule
+	if err := DB.Order("created_at DESC").Find(&schedules).Error; err != nil {
+		return nil, err
+	}
+	return schedules, nil
+}
+
+func UpdateBackupSchedule(id uint, updates map[string]interface{}) error {
+	return DB.Model(&BackupSchedule{}).Where("id = ?", id).Updates(updates).Error
+}
+
+func DeleteBackupSchedule(id uint) error {
+	return DB.Delete(&BackupSchedule{}, id).Error
+}
+
+// Shared Folder helpers
+
+func CreateSharedFolder(sf *SharedFolder) error {
+	return DB.Create(sf).Error
+}
+
+func GetSharedFolder(id uint) (*SharedFolder, error) {
+	var sf SharedFolder
+	if err := DB.First(&sf, id).Error; err != nil {
+		return nil, err
+	}
+	return &sf, nil
+}
+
+func ListSharedFolders(ownerID uint, isAdmin bool) ([]SharedFolder, error) {
+	var folders []SharedFolder
+	q := DB.Order("created_at DESC")
+	if !isAdmin {
+		q = q.Where("owner_id = ?", ownerID)
+	}
+	if err := q.Find(&folders).Error; err != nil {
+		return nil, err
+	}
+	return folders, nil
+}
+
+func UpdateSharedFolder(id uint, updates map[string]interface{}) error {
+	return DB.Model(&SharedFolder{}).Where("id = ?", id).Updates(updates).Error
+}
+
+func DeleteSharedFolder(id uint) error {
+	return DB.Delete(&SharedFolder{}, id).Error
+}
+
+// GetSharedFoldersForInstance returns all shared folders that include the given instance ID.
+func GetSharedFoldersForInstance(instanceID uint) ([]SharedFolder, error) {
+	var all []SharedFolder
+	if err := DB.Find(&all).Error; err != nil {
+		return nil, err
+	}
+	var result []SharedFolder
+	for _, sf := range all {
+		for _, id := range ParseSharedFolderInstanceIDs(sf.InstanceIDs) {
+			if id == instanceID {
+				result = append(result, sf)
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
+func ListDueSchedules() ([]BackupSchedule, error) {
+	var schedules []BackupSchedule
+	if err := DB.Where("next_run_at IS NOT NULL AND next_run_at <= ?", time.Now().UTC()).
+		Find(&schedules).Error; err != nil {
+		return nil, err
+	}
+	return schedules, nil
 }

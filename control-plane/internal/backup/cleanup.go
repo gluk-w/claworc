@@ -9,16 +9,7 @@ import (
 )
 
 // DeleteBackup removes a backup file and its database record.
-// Returns an error if other backups depend on this one (incremental children).
 func DeleteBackup(backupID uint) error {
-	hasDeps, err := database.HasDependentBackups(backupID)
-	if err != nil {
-		return fmt.Errorf("check dependencies: %w", err)
-	}
-	if hasDeps {
-		return fmt.Errorf("cannot delete backup %d: other incremental backups depend on it", backupID)
-	}
-
 	b, err := database.GetBackup(backupID)
 	if err != nil {
 		return fmt.Errorf("get backup: %w", err)

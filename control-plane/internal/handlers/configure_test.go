@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -48,7 +49,9 @@ func (mockOps) CreateInstance(_ context.Context, _ orchestrator.CreateParams) er
 func (mockOps) DeleteInstance(_ context.Context, _ string) error                    { return nil }
 func (mockOps) StartInstance(_ context.Context, _ string) error                     { return nil }
 func (mockOps) StopInstance(_ context.Context, _ string) error                      { return nil }
-func (mockOps) RestartInstance(_ context.Context, _ string) error                   { return nil }
+func (mockOps) RestartInstance(_ context.Context, _ string, _ orchestrator.CreateParams) error {
+	return nil
+}
 func (mockOps) GetInstanceStatus(_ context.Context, _ string) (string, error)       { return "running", nil }
 func (mockOps) GetInstanceImageInfo(_ context.Context, _ string) (string, error)    { return "", nil }
 func (mockOps) UpdateInstanceConfig(_ context.Context, _ string, _ string) error    { return nil }
@@ -67,6 +70,10 @@ func (mockOps) UpdateImage(_ context.Context, _ string, _ orchestrator.CreatePar
 func (mockOps) ExecInInstance(_ context.Context, _ string, _ []string) (string, string, int, error) {
 	return "", "", 0, nil
 }
+func (mockOps) StreamExecInInstance(_ context.Context, _ string, _ []string, _ io.Writer) (string, int, error) {
+	return "", 0, nil
+}
+func (mockOps) DeleteSharedVolume(_ context.Context, _ uint) error { return nil }
 
 func TestConfigureInstance_NoOp(t *testing.T) {
 	inst := &mockInstance{}
@@ -82,13 +89,21 @@ func TestConfigureInstance_ModelSet(t *testing.T) {
 	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
 		[]string{"claude-3-5-sonnet"}, nil, 0)
 
-	if len(inst.calls) < 2 {
-		t.Fatalf("expected at least 2 calls (model set + gateway stop), got %d", len(inst.calls))
+	if len(inst.calls) < 3 {
+		t.Fatalf("expected at least 3 calls (model set + models allowlist + gateway stop), got %d", len(inst.calls))
 	}
 	// First call: config set agents.defaults.model
 	call0 := inst.calls[0]
 	if call0[0] != "config" || call0[1] != "set" || call0[2] != "agents.defaults.model" {
 		t.Errorf("unexpected first call: %v", call0)
+	}
+	// Second call: config set agents.defaults.models (allowlist)
+	call1 := inst.calls[1]
+	if call1[0] != "config" || call1[1] != "set" || call1[2] != "agents.defaults.models" {
+		t.Errorf("unexpected second call: %v", call1)
+	}
+	if !strings.Contains(call1[3], "claude-3-5-sonnet") {
+		t.Errorf("models allowlist should contain claude-3-5-sonnet, got: %s", call1[3])
 	}
 	// Last call must be gateway stop
 	last := inst.calls[len(inst.calls)-1]
@@ -135,7 +150,7 @@ func TestConfigureInstance_ProvidersSet(t *testing.T) {
 
 func TestConfigureInstance_NilModelsEmptySlice(t *testing.T) {
 	inst := &mockInstance{}
-	// Nil models but with gateway providers → skip model set, set providers, stop gateway
+	// Nil models but with gateway providers → skip model set and allowlist, set providers, stop gateway
 	providers := map[string]GatewayProvider{
 		"openai": {Key: "vk-test2", APIType: "openai-completions"},
 	}
@@ -145,6 +160,9 @@ func TestConfigureInstance_NilModelsEmptySlice(t *testing.T) {
 	for _, call := range inst.calls {
 		if call[0] == "config" && call[2] == "agents.defaults.model" {
 			t.Errorf("model set should not be called when models is nil, got call: %v", call)
+		}
+		if call[0] == "config" && call[2] == "agents.defaults.models" {
+			t.Errorf("models allowlist should not be called when models is nil, got call: %v", call)
 		}
 	}
 }
@@ -178,13 +196,20 @@ func TestConfigureInstance_ModelSetNonZeroCode(t *testing.T) {
 		[]string{"model-a"}, providers, 40001)
 
 	hasProviders := false
+	hasAllowlist := false
 	for _, c := range inst.calls {
 		if c[0] == "config" && c[1] == "set" && c[2] == "models.providers" {
 			hasProviders = true
 		}
+		if c[0] == "config" && c[1] == "set" && c[2] == "agents.defaults.models" {
+			hasAllowlist = true
+		}
 	}
 	if !hasProviders {
 		t.Errorf("providers must be set even when model config returns non-zero; calls: %v", inst.calls)
+	}
+	if !hasAllowlist {
+		t.Errorf("models allowlist must be set even when model config returns non-zero; calls: %v", inst.calls)
 	}
 }
 
@@ -206,10 +231,13 @@ func TestConfigureInstance_CustomProviderAllModels(t *testing.T) {
 		[]string{"anthropic/anthropic/claude-sonnet-4-6"}, providers, 40001)
 
 	var providersJSON string
+	var allowlistJSON string
 	for _, c := range inst.calls {
 		if c[0] == "config" && c[1] == "set" && c[2] == "models.providers" {
 			providersJSON = c[3]
-			break
+		}
+		if c[0] == "config" && c[1] == "set" && c[2] == "agents.defaults.models" {
+			allowlistJSON = c[3]
 		}
 	}
 	if providersJSON == "" {
@@ -220,6 +248,13 @@ func TestConfigureInstance_CustomProviderAllModels(t *testing.T) {
 	}
 	if !strings.Contains(providersJSON, "claude-sonnet-4-6") {
 		t.Errorf("sonnet should be present; got: %s", providersJSON)
+	}
+	// Models allowlist should only contain the effective model
+	if allowlistJSON == "" {
+		t.Fatal("agents.defaults.models call not found")
+	}
+	if !strings.Contains(allowlistJSON, "anthropic/anthropic/claude-sonnet-4-6") {
+		t.Errorf("allowlist should contain the effective model; got: %s", allowlistJSON)
 	}
 }
 
@@ -245,10 +280,13 @@ func TestConfigureInstance_CatalogProviderModelsFiltered(t *testing.T) {
 		[]string{"anthropic/anthropic/claude-sonnet-4-6"}, providers, 40001)
 
 	var providersJSON string
+	var allowlistJSON string
 	for _, c := range inst.calls {
 		if c[0] == "config" && c[1] == "set" && c[2] == "models.providers" {
 			providersJSON = c[3]
-			break
+		}
+		if c[0] == "config" && c[1] == "set" && c[2] == "agents.defaults.models" {
+			allowlistJSON = c[3]
 		}
 	}
 	if providersJSON == "" {
@@ -259,6 +297,13 @@ func TestConfigureInstance_CatalogProviderModelsFiltered(t *testing.T) {
 	}
 	if !strings.Contains(providersJSON, "claude-sonnet-4-6") {
 		t.Errorf("sonnet should be present; got: %s", providersJSON)
+	}
+	// Models allowlist should match effective models
+	if allowlistJSON == "" {
+		t.Fatal("agents.defaults.models call not found")
+	}
+	if !strings.Contains(allowlistJSON, "anthropic/anthropic/claude-sonnet-4-6") {
+		t.Errorf("allowlist should contain effective model; got: %s", allowlistJSON)
 	}
 }
 
@@ -289,10 +334,13 @@ func TestConfigureInstance_CatalogProviderWithCachedModelsFiltered(t *testing.T)
 		[]string{"anthropic/anthropic/claude-sonnet-4-6"}, providers, 40001)
 
 	var providersJSON string
+	var allowlistJSON string
 	for _, c := range inst.calls {
 		if c[0] == "config" && c[1] == "set" && c[2] == "models.providers" {
 			providersJSON = c[3]
-			break
+		}
+		if c[0] == "config" && c[1] == "set" && c[2] == "agents.defaults.models" {
+			allowlistJSON = c[3]
 		}
 	}
 	if providersJSON == "" {
@@ -303,6 +351,13 @@ func TestConfigureInstance_CatalogProviderWithCachedModelsFiltered(t *testing.T)
 	}
 	if !strings.Contains(providersJSON, "claude-sonnet-4-6") {
 		t.Errorf("sonnet should be present; got: %s", providersJSON)
+	}
+	// Models allowlist should match effective models
+	if allowlistJSON == "" {
+		t.Fatal("agents.defaults.models call not found")
+	}
+	if !strings.Contains(allowlistJSON, "anthropic/anthropic/claude-sonnet-4-6") {
+		t.Errorf("allowlist should contain effective model; got: %s", allowlistJSON)
 	}
 }
 
@@ -327,7 +382,9 @@ func TestConfigureInstance_CatalogProviderEmptyWhenNoneSelected(t *testing.T) {
 	for _, c := range inst.calls {
 		if c[0] == "config" && c[1] == "set" && c[2] == "models.providers" {
 			providersJSON = c[3]
-			break
+		}
+		if c[0] == "config" && c[1] == "set" && c[2] == "agents.defaults.models" {
+			t.Errorf("models allowlist should not be set when models is nil; got call: %v", c)
 		}
 	}
 	if providersJSON == "" {

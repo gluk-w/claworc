@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/backup"
 	"github.com/gluk-w/claworc/control-plane/internal/auth"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
@@ -183,6 +184,10 @@ func main() {
 	cancelRotation := handlers.StartKeyRotationJob(ctx)
 	_ = cancelRotation // stopped via context cancellation on shutdown
 
+	// Start background backup schedule executor (checks every minute)
+	cancelScheduler := backup.StartScheduleExecutor(ctx)
+	_ = cancelScheduler // stopped via context cancellation on shutdown
+
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
@@ -260,6 +265,13 @@ func main() {
 			// Desktop proxy (noVNC/websockify)
 			r.HandleFunc("/instances/{id}/desktop/*", handlers.DesktopProxy)
 
+			// Shared Folders
+			r.Get("/shared-folders", handlers.ListSharedFolders)
+			r.Post("/shared-folders", handlers.CreateSharedFolder)
+			r.Get("/shared-folders/{id}", handlers.GetSharedFolder)
+			r.Put("/shared-folders/{id}", handlers.UpdateSharedFolder)
+			r.Delete("/shared-folders/{id}", handlers.DeleteSharedFolder)
+
 			// Admin-only routes
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequireAdmin)
@@ -289,6 +301,21 @@ func main() {
 				// Provider catalog proxy (claworc.com/providers, cached 1h)
 				r.Get("/llm/catalog", handlers.GetCatalogProviders)
 				r.Get("/llm/catalog/{key}", handlers.GetCatalogProviderDetail)
+
+				// Backups
+				r.Post("/instances/{id}/backups", handlers.CreateBackup)
+				r.Get("/instances/{id}/backups", handlers.ListInstanceBackups)
+				r.Get("/backups", handlers.ListAllBackups)
+				r.Get("/backups/{backupId}", handlers.GetBackupDetail)
+				r.Delete("/backups/{backupId}", handlers.DeleteBackupHandler)
+				r.Post("/backups/{backupId}/restore", handlers.RestoreBackupHandler)
+				r.Get("/backups/{backupId}/download", handlers.DownloadBackup)
+
+				// Backup Schedules
+				r.Post("/backup-schedules", handlers.CreateBackupSchedule)
+				r.Get("/backup-schedules", handlers.ListBackupSchedules)
+				r.Put("/backup-schedules/{id}", handlers.UpdateBackupSchedule)
+				r.Delete("/backup-schedules/{id}", handlers.DeleteBackupSchedule)
 
 				// Skills
 				r.Get("/skills", handlers.ListSkills)

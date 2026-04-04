@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
+	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -77,7 +79,22 @@ func ControlProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := chi.URLParam(r, "*")
+	// Look up gateway token so we can inject it into upstream WebSocket requests
+	var gatewayToken string
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err == nil && inst.GatewayToken != "" {
+		if tok, err := utils.Decrypt(inst.GatewayToken); err == nil && tok != "" {
+			gatewayToken = tok
+		}
+	}
+
+	wildcardPath := chi.URLParam(r, "*")
+	// Forward the full path including the basePath prefix so that the gateway
+	// (when configured with gateway.controlUi.basePath) can match the request.
+	// Old images without basePath configured still work because the gateway
+	// ignores the prefix and serves from root; the <base href> injection
+	// in proxyToLocalPort handles relative asset resolution.
+	fullPath := fmt.Sprintf("openclaw/%d/%s", id, wildcardPath)
 
 	// Detect WebSocket upgrade and delegate
 	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
@@ -88,12 +105,18 @@ func ControlProxy(w http.ResponseWriter, r *http.Request) {
 		headers := http.Header{
 			"Origin": []string{gatewayOrigin},
 		}
-		websocketProxyToLocalPort(w, r, info.localPort, path, headers)
+		// Inject gateway token so the upstream gateway authenticates the connection
+		if gatewayToken != "" {
+			q := r.URL.Query()
+			q.Set("token", gatewayToken)
+			r.URL.RawQuery = q.Encode()
+		}
+		websocketProxyToLocalPort(w, r, info.localPort, fullPath, headers)
 		return
 	}
 
 	basePath := fmt.Sprintf("/openclaw/%d/", id)
-	if err := proxyToLocalPort(w, r, info.localPort, path, basePath); err != nil {
+	if err := proxyToLocalPort(w, r, info.localPort, fullPath, basePath); err != nil {
 		writeConnectingPage(w, id)
 	}
 }

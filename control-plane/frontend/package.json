@@ -31,6 +31,7 @@
     "react-hot-toast": "^2.6.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.1.0",
+    "react-select": "^5.10.2",
     "recharts": "^3.8.0",
     "remark-gfm": "^4.0.1"
   },

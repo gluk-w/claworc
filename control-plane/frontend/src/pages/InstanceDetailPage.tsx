@@ -10,6 +10,7 @@ import TerminalPanel from "@/components/TerminalPanel";
 import VncPanel from "@/components/VncPanel";
 import ChatPanel from "@/components/ChatPanel";
 import FileBrowser from "@/components/FileBrowser";
+import { useInstanceBackups } from "@/hooks/useBackups";
 import SSHStatus from "@/components/SSHStatus";
 import SSHEventLog from "@/components/SSHEventLog";
 import SSHTroubleshoot from "@/components/SSHTroubleshoot";
@@ -914,6 +915,11 @@ export default function InstanceDetailPage() {
               onClose={() => setTroubleshootOpen(false)}
             />
           )}
+          {/* Backups section (admin only) */}
+          {isAdmin && (
+            <BackupStatusCard instanceId={instanceId} instanceName={instance?.name || ""} />
+          )}
+
           {eventsOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
               <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
@@ -1093,6 +1099,7 @@ export default function InstanceDetailPage() {
               </div>
             </>
           )}
+
         </div>
       )}
 
@@ -1117,6 +1124,43 @@ export default function InstanceDetailPage() {
         onSaved={() => {}}
         onDeleted={() => {}}
       />
+    </div>
+  );
+}
+
+function BackupStatusCard({ instanceId, instanceName }: { instanceId: number; instanceName: string }) {
+  const { data: backups = [] } = useInstanceBackups(instanceId);
+  const completed = backups.filter((b) => b.status === "completed");
+  const lastBackup = completed.length > 0 ? completed[0] : null;
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-6">
+      <h3 className="text-sm font-medium text-gray-900 mb-4">Backups</h3>
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">Status:</span>
+          {lastBackup ? (
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+              Backed up
+            </span>
+          ) : (
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+              No backups
+            </span>
+          )}
+        </div>
+        {lastBackup && (
+          <p className="text-xs text-gray-500">
+            Last backup: {new Date(lastBackup.created_at).toLocaleString()}
+          </p>
+        )}
+        <a
+          href={`/backups?instance=${encodeURIComponent(instanceName)}`}
+          className="text-xs text-blue-600 hover:text-blue-800"
+        >
+          View backups
+        </a>
+      </div>
     </div>
   );
 }

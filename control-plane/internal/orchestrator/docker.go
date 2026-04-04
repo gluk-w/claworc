@@ -172,6 +172,18 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 		}
 	}
 
+	// Create shared folder volumes
+	for _, sfm := range params.SharedFolderMounts {
+		volName := fmt.Sprintf("claworc-shared-%d", sfm.VolumeID)
+		_, err := d.client.VolumeCreate(ctx, volume.CreateOptions{
+			Name:   volName,
+			Labels: map[string]string{"managed-by": labelManagedBy, "type": "shared-folder"},
+		})
+		if err != nil {
+			log.Printf("Shared volume %s may already exist: %v", volName, err)
+		}
+	}
+
 	progress("Creating container...")
 	return d.createContainer(ctx, params)
 }
@@ -249,6 +261,14 @@ func (d *DockerOrchestrator) DeleteInstance(ctx context.Context, name string) er
 	return nil
 }
 
+func (d *DockerOrchestrator) DeleteSharedVolume(ctx context.Context, folderID uint) error {
+	volName := fmt.Sprintf("claworc-shared-%d", folderID)
+	if err := d.client.VolumeRemove(ctx, volName, true); err != nil && !dockerclient.IsErrNotFound(err) {
+		return fmt.Errorf("remove shared volume %s: %w", volName, err)
+	}
+	return nil
+}
+
 func (d *DockerOrchestrator) StartInstance(ctx context.Context, name string) error {
 	return d.client.ContainerStart(ctx, name, container.StartOptions{})
 }
@@ -258,9 +278,29 @@ func (d *DockerOrchestrator) StopInstance(ctx context.Context, name string) erro
 	return d.client.ContainerStop(ctx, name, container.StopOptions{Timeout: &timeout})
 }
 
-func (d *DockerOrchestrator) RestartInstance(ctx context.Context, name string) error {
+func (d *DockerOrchestrator) RestartInstance(ctx context.Context, name string, params CreateParams) error {
+	// Stop and remove the container, then recreate it so mount changes take effect
 	timeout := 30
-	return d.client.ContainerRestart(ctx, name, container.StopOptions{Timeout: &timeout})
+	if err := d.client.ContainerStop(ctx, name, container.StopOptions{Timeout: &timeout}); err != nil {
+		return fmt.Errorf("stop container %s: %w", name, err)
+	}
+	if err := d.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true}); err != nil && !dockerclient.IsErrNotFound(err) {
+		return fmt.Errorf("remove container %s: %w", name, err)
+	}
+
+	// Ensure shared folder volumes exist
+	for _, sfm := range params.SharedFolderMounts {
+		volName := fmt.Sprintf("claworc-shared-%d", sfm.VolumeID)
+		_, err := d.client.VolumeCreate(ctx, volume.CreateOptions{
+			Name:   volName,
+			Labels: map[string]string{"managed-by": labelManagedBy, "type": "shared-folder"},
+		})
+		if err != nil {
+			log.Printf("Shared volume %s may already exist: %v", volName, err)
+		}
+	}
+
+	return d.createContainer(ctx, params)
 }
 
 func (d *DockerOrchestrator) UpdateImage(ctx context.Context, name string, params CreateParams) error {
@@ -304,6 +344,13 @@ func (d *DockerOrchestrator) createContainer(ctx context.Context, params CreateP
 	mounts := []mount.Mount{
 		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "homebrew"), Target: "/home/linuxbrew/.linuxbrew"},
 		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "home"), Target: "/home/claworc"},
+	}
+	for _, sfm := range params.SharedFolderMounts {
+		mounts = append(mounts, mount.Mount{
+			Type:   mount.TypeVolume,
+			Source: fmt.Sprintf("claworc-shared-%d", sfm.VolumeID),
+			Target: sfm.MountPath,
+		})
 	}
 
 	var nanoCPUs int64
@@ -361,6 +408,22 @@ func (d *DockerOrchestrator) createContainer(ctx context.Context, params CreateP
 
 	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return err
+	}
+
+	// Fix ownership of shared folder mounts so the claworc user (1000:1000) can write to them.
+	// New Docker volumes are owned by root by default.
+	for _, sfm := range params.SharedFolderMounts {
+		execCfg := container.ExecOptions{
+			Cmd: []string{"chown", "claworc:claworc", sfm.MountPath},
+		}
+		idResp, err := d.client.ContainerExecCreate(ctx, resp.ID, execCfg)
+		if err != nil {
+			log.Printf("Failed to create chown exec for %s: %v", sfm.MountPath, err)
+			continue
+		}
+		if err := d.client.ContainerExecStart(ctx, idResp.ID, container.ExecStartOptions{}); err != nil {
+			log.Printf("Failed to chown %s: %v", sfm.MountPath, err)
+		}
 	}
 
 	return nil
@@ -607,6 +670,69 @@ func (d *DockerOrchestrator) ExecInInstance(ctx context.Context, name string, cm
 	// For simplicity, treat all output as stdout
 	cleaned := stripDockerLogHeaders(output)
 	return cleaned, "", inspectResp.ExitCode, nil
+}
+
+func (d *DockerOrchestrator) StreamExecInInstance(ctx context.Context, name string, cmd []string, stdout io.Writer) (string, int, error) {
+	execCfg := container.ExecOptions{
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+
+	execID, err := d.client.ContainerExecCreate(ctx, name, execCfg)
+	if err != nil {
+		return "", -1, fmt.Errorf("exec create: %w", err)
+	}
+
+	resp, err := d.client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return "", -1, fmt.Errorf("exec attach: %w", err)
+	}
+	defer resp.Close()
+
+	var stderrBuf strings.Builder
+	if err := demuxDockerStream(resp.Reader, stdout, &stderrBuf); err != nil {
+		return stderrBuf.String(), -1, fmt.Errorf("stream exec output: %w", err)
+	}
+
+	inspectResp, err := d.client.ContainerExecInspect(ctx, execID.ID)
+	if err != nil {
+		return stderrBuf.String(), -1, fmt.Errorf("exec inspect: %w", err)
+	}
+
+	return stderrBuf.String(), inspectResp.ExitCode, nil
+}
+
+// demuxDockerStream reads Docker's multiplexed stream format and routes
+// stdout (stream type 1) to stdoutW and stderr (stream type 2) to stderrW.
+func demuxDockerStream(reader io.Reader, stdoutW io.Writer, stderrW io.Writer) error {
+	header := make([]byte, 8)
+	for {
+		_, err := io.ReadFull(reader, header)
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+		streamType := header[0]
+		size := int(header[4])<<24 | int(header[5])<<16 | int(header[6])<<8 | int(header[7])
+		if size == 0 {
+			continue
+		}
+		var dst io.Writer
+		switch streamType {
+		case 1:
+			dst = stdoutW
+		case 2:
+			dst = stderrW
+		default:
+			dst = stdoutW
+		}
+		if _, err := io.CopyN(dst, reader, int64(size)); err != nil {
+			return err
+		}
+	}
 }
 
 // Ensure DockerOrchestrator implements ContainerOrchestrator

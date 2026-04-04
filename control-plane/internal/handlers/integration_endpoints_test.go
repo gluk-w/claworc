@@ -583,3 +583,107 @@ func TestIntegration_LLMGateway(t *testing.T) {
 		}
 	})
 }
+
+// ─── Gateway basePath ────────��───────────────────────────────────────────────
+
+func TestIntegration_GatewayBasePath(t *testing.T) {
+	withRunningInstance(t, func(instID uint, instName string) {
+		waitForSSHConnected(t, instID, 90*time.Second)
+
+		// Step 1: Verify openclaw.json has gateway.controlUi.basePath set.
+		// The s6 startup script sets this from the CLAWORC_INSTANCE_ID env var.
+		type openClawCfg struct {
+			Gateway struct {
+				ControlUI struct {
+					BasePath string `json:"basePath"`
+				} `json:"controlUi"`
+			} `json:"gateway"`
+		}
+
+		expectedBasePath := fmt.Sprintf("/openclaw/%d/", instID)
+		deadline := time.Now().Add(90 * time.Second)
+		configured := false
+		for time.Now().Before(deadline) {
+			out, err := exec.Command("docker", "exec", instName, "cat", orchestrator.PathOpenClawConfig).Output()
+			if err != nil {
+				time.Sleep(3 * time.Second)
+				continue
+			}
+			var cfg openClawCfg
+			if err := json.Unmarshal(out, &cfg); err != nil {
+				time.Sleep(3 * time.Second)
+				continue
+			}
+			if cfg.Gateway.ControlUI.BasePath == expectedBasePath {
+				t.Logf("gateway.controlUi.basePath = %q ✓", cfg.Gateway.ControlUI.BasePath)
+				configured = true
+				break
+			}
+			t.Logf("gateway.controlUi.basePath = %q, want %q — retrying", cfg.Gateway.ControlUI.BasePath, expectedBasePath)
+			time.Sleep(3 * time.Second)
+		}
+		if !configured {
+			t.Fatalf("gateway.controlUi.basePath was not set to %q within 90s", expectedBasePath)
+		}
+
+		// Step 2: Hit Claworc's /openclaw/{id}/ endpoint (the full proxy chain:
+		// HTTP client → Claworc ControlProxy → SSH tunnel → OpenClaw gateway)
+		// and verify the gateway returns the Control UI HTML.
+		client := &http.Client{Timeout: 30 * time.Second}
+		controlURL := fmt.Sprintf("%s/openclaw/%d/", sessionURL, instID)
+
+		var resp *http.Response
+		var respErr error
+		deadline = time.Now().Add(90 * time.Second)
+		for time.Now().Before(deadline) {
+			resp, respErr = client.Get(controlURL)
+			if respErr == nil && resp.StatusCode == http.StatusOK {
+				break
+			}
+			if resp != nil {
+				resp.Body.Close()
+			}
+			t.Log("Control UI not yet available via proxy — retrying")
+			time.Sleep(3 * time.Second)
+		}
+		if respErr != nil {
+			t.Fatalf("GET %s: %v", controlURL, respErr)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s: HTTP %d, want 200", controlURL, resp.StatusCode)
+		}
+		t.Logf("GET %s → HTTP %d ✓", controlURL, resp.StatusCode)
+
+		ct := resp.Header.Get("Content-Type")
+		if !strings.Contains(ct, "text/html") {
+			t.Errorf("Content-Type = %q, want text/html", ct)
+		} else {
+			t.Logf("Content-Type = %q ✓", ct)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("read response body: %v", err)
+		}
+		html := string(body)
+		if !strings.Contains(html, "<html") {
+			t.Errorf("response body does not contain <html; got %.200s", html)
+		} else {
+			t.Logf("response body contains Control UI HTML ✓")
+		}
+
+		// Verify asset paths use relative "./" prefix so the browser resolves
+		// them under the proxy path (e.g. /openclaw/1/assets/...).
+		if !strings.Contains(html, `src="./assets/`) {
+			t.Errorf("HTML does not contain relative script src=\"./assets/\" paths")
+		} else {
+			t.Logf("script src uses relative ./assets/ paths ✓")
+		}
+		// Absolute /assets/ paths would break under the proxy — flag them.
+		if strings.Contains(html, `src="/assets/`) {
+			t.Errorf("HTML contains absolute src=\"/assets/\" paths — would break under proxy")
+		}
+	})
+}

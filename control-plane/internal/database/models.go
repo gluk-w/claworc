@@ -144,6 +144,66 @@ type UserInstance struct {
 	InstanceID uint `gorm:"primaryKey" json:"instance_id"`
 }
 
+type Backup struct {
+	ID           uint       `gorm:"primaryKey;autoIncrement" json:"id"`
+	InstanceID   uint       `gorm:"not null;index" json:"instance_id"`
+	InstanceName string     `gorm:"not null" json:"instance_name"`
+	Status       string     `gorm:"not null;default:running" json:"status"`
+	FilePath     string     `gorm:"not null" json:"file_path"`
+	Paths        string     `gorm:"type:text;default:''" json:"paths"`
+	SizeBytes    int64      `json:"size_bytes"`
+	ErrorMessage string     `gorm:"type:text" json:"error_message,omitempty"`
+	Note         string     `gorm:"type:text" json:"note"`
+	CreatedAt    time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+}
+
+type BackupSchedule struct {
+	ID             uint       `gorm:"primaryKey;autoIncrement" json:"id"`
+	InstanceIDs    string     `gorm:"type:text;not null" json:"instance_ids"`
+	CronExpression string     `gorm:"not null" json:"cron_expression"`
+	Paths          string     `gorm:"type:text;not null;default:'[\"HOME\"]'" json:"paths"`
+	LastRunAt      *time.Time `json:"last_run_at,omitempty"`
+	NextRunAt      *time.Time `json:"next_run_at,omitempty"`
+	CreatedAt      time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt      time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// SharedFolder represents a named shared volume that can be mounted into
+// multiple instances at the same path. InstanceIDs is a JSON array of
+// instance IDs this folder is mapped to.
+type SharedFolder struct {
+	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name        string    `gorm:"not null" json:"name"`
+	MountPath   string    `gorm:"not null" json:"mount_path"`
+	OwnerID     uint      `gorm:"not null;index" json:"owner_id"`
+	InstanceIDs string    `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint IDs
+	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// ParseSharedFolderInstanceIDs deserializes the JSON instance IDs field.
+func ParseSharedFolderInstanceIDs(raw string) []uint {
+	if raw == "" || raw == "[]" {
+		return []uint{}
+	}
+	var ids []uint
+	json.Unmarshal([]byte(raw), &ids)
+	if ids == nil {
+		return []uint{}
+	}
+	return ids
+}
+
+// EncodeSharedFolderInstanceIDs serializes instance IDs to JSON.
+func EncodeSharedFolderInstanceIDs(ids []uint) string {
+	if len(ids) == 0 {
+		return "[]"
+	}
+	b, _ := json.Marshal(ids)
+	return string(b)
+}
+
 type WebAuthnCredential struct {
 	ID              string    `gorm:"primaryKey;size:256" json:"id"`
 	UserID          uint      `gorm:"not null;index" json:"user_id"`

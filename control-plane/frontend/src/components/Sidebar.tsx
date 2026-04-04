@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
-  LayoutDashboard,
+  Server,
   Plus,
   Settings,
   Users,
@@ -8,6 +8,8 @@ import {
   User,
   BarChart2,
   BookOpen,
+  HardDrive,
+  FolderOpen,
 } from "lucide-react";
 import { useHealth } from "@/hooks/useHealth";
 import { useAuth } from "@/contexts/AuthContext";
@@ -83,17 +85,17 @@ export default function Sidebar() {
       {/* Nav items */}
       <div className="flex flex-col gap-1 px-3 mt-4">
         <Link to="/" className={navLinkClass("/")}>
-          <LayoutDashboard size={18} className="shrink-0" />
+          <Server size={18} className="shrink-0" />
           <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
-            Dashboard
+            Instances
           </span>
         </Link>
         {isAdmin && (
           <>
-            <Link to="/settings" className={navLinkClass("/settings")}>
-              <Settings size={18} className="shrink-0" />
+            <Link to="/usage" className={navLinkClass("/usage")}>
+              <BarChart2 size={18} className="shrink-0" />
               <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
-                Settings
+                Usage
               </span>
             </Link>
             <Link to="/skills" className={navLinkClass("/skills")}>
@@ -102,19 +104,21 @@ export default function Sidebar() {
                 Skills
               </span>
             </Link>
-            <Link to="/users" className={navLinkClass("/users")}>
-              <Users size={18} className="shrink-0" />
-              <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
-                Users
-              </span>
-            </Link>
-            <Link to="/usage" className={navLinkClass("/usage")}>
-              <BarChart2 size={18} className="shrink-0" />
-              <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
-                Usage
-              </span>
-            </Link>
           </>
+        )}
+        <Link to="/shared-folders" className={navLinkClass("/shared-folders")}>
+          <FolderOpen size={18} className="shrink-0" />
+          <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
+            Shared Folders
+          </span>
+        </Link>
+        {isAdmin && (
+          <Link to="/backups" className={navLinkClass("/backups")}>
+            <HardDrive size={18} className="shrink-0" />
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
+              Backups
+            </span>
+          </Link>
         )}
       </div>
 
@@ -129,6 +133,24 @@ export default function Sidebar() {
               ? `Built ${new Date(health.build_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
               : "Build: DEV"}
           </span>
+        </div>
+      )}
+
+      {/* Admin links below build info */}
+      {isAdmin && (
+        <div className="flex flex-col gap-1 px-3 pb-2">
+          <Link to="/users" className={navLinkClass("/users")}>
+            <Users size={18} className="shrink-0" />
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
+              Users
+            </span>
+          </Link>
+          <Link to="/settings" className={navLinkClass("/settings")}>
+            <Settings size={18} className="shrink-0" />
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
+              Settings
+            </span>
+          </Link>
         </div>
       )}
 

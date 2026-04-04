@@ -15,8 +15,8 @@ import (
 )
 
 type backupCreateRequest struct {
-	Type string `json:"type"` // "full" or "incremental"
-	Note string `json:"note"`
+	Paths []string `json:"paths"`
+	Note  string   `json:"note"`
 }
 
 // CreateBackup starts a new backup for an instance.
@@ -39,23 +39,13 @@ func CreateBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Type != "full" && req.Type != "incremental" {
-		writeError(w, http.StatusBadRequest, "Type must be 'full' or 'incremental'")
-		return
-	}
-
 	orch := orchestrator.Get()
 	if orch == nil {
 		writeError(w, http.StatusServiceUnavailable, "Orchestrator not available")
 		return
 	}
 
-	var backupID uint
-	if req.Type == "full" {
-		backupID, err = backup.CreateFullBackup(r.Context(), orch, inst.Name, inst.ID, req.Note)
-	} else {
-		backupID, err = backup.CreateIncrementalBackup(r.Context(), orch, inst.Name, inst.ID, req.Note)
-	}
+	backupID, err := backup.CreateFullBackup(r.Context(), orch, inst.Name, inst.ID, req.Note, req.Paths)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to start backup: %v", err))
 		return

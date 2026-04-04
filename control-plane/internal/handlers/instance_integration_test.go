@@ -210,8 +210,35 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 
 				r.Post("/llm/providers", handlers.CreateProvider)
 				r.Delete("/llm/providers/{id}", handlers.DeleteProvider)
+
+				// Backups
+				r.Post("/instances/{id}/backups", handlers.CreateBackup)
+				r.Get("/instances/{id}/backups", handlers.ListInstanceBackups)
+				r.Get("/backups", handlers.ListAllBackups)
+				r.Get("/backups/{backupId}", handlers.GetBackupDetail)
+				r.Delete("/backups/{backupId}", handlers.DeleteBackupHandler)
+				r.Post("/backups/{backupId}/restore", handlers.RestoreBackupHandler)
+				r.Get("/backups/{backupId}/download", handlers.DownloadBackup)
+
+				// Backup Schedules
+				r.Post("/backup-schedules", handlers.CreateBackupSchedule)
+				r.Get("/backup-schedules", handlers.ListBackupSchedules)
+				r.Put("/backup-schedules/{id}", handlers.UpdateBackupSchedule)
+				r.Delete("/backup-schedules/{id}", handlers.DeleteBackupSchedule)
+
+				// Shared Folders
+				r.Get("/shared-folders", handlers.ListSharedFolders)
+				r.Post("/shared-folders", handlers.CreateSharedFolder)
+				r.Get("/shared-folders/{id}", handlers.GetSharedFolder)
+				r.Put("/shared-folders/{id}", handlers.UpdateSharedFolder)
+				r.Delete("/shared-folders/{id}", handlers.DeleteSharedFolder)
 			})
 		})
+	})
+
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.RequireAuth(sessionStore))
+		r.HandleFunc("/openclaw/{id}/*", handlers.ControlProxy)
 	})
 
 	ts := httptest.NewServer(r)
@@ -435,4 +462,202 @@ func providerKeys[V any](m map[string]V) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+func TestIntegration_SharedFolder_MountedAndWritable(t *testing.T) {
+	baseURL := sessionURL
+	client := &http.Client{Timeout: 60 * time.Second}
+
+	// --- Step 1: Create an instance ---
+	displayName := fmt.Sprintf("sf-test-%d", time.Now().UnixNano())
+	instBody, _ := json.Marshal(map[string]interface{}{
+		"display_name": displayName,
+	})
+	resp, err := client.Post(baseURL+"/api/v1/instances", "application/json", bytes.NewReader(instBody))
+	if err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("create instance: expected 201, got %d (body: %s)", resp.StatusCode, string(body))
+	}
+	var instResp struct {
+		ID   uint   `json:"id"`
+		Name string `json:"name"`
+	}
+	json.NewDecoder(resp.Body).Decode(&instResp)
+	resp.Body.Close()
+	instID := instResp.ID
+	instName := instResp.Name
+	t.Logf("Created instance id=%d name=%s", instID, instName)
+
+	defer func() {
+		req, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/v1/instances/%d", baseURL, instID), nil)
+		resp, _ := client.Do(req)
+		if resp != nil {
+			resp.Body.Close()
+		}
+		t.Logf("Deleted instance id=%d", instID)
+	}()
+
+	// Wait for instance to be running
+	t.Log("Waiting for instance to be running...")
+	deadline := time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(fmt.Sprintf("%s/api/v1/instances/%d", baseURL, instID))
+		if err != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		var poll map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&poll)
+		resp.Body.Close()
+		status, _ := poll["status"].(string)
+		if status == "running" {
+			break
+		}
+		if status == "error" {
+			t.Fatalf("Instance entered error status: %v", poll["status_message"])
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Instance did not reach 'running' within 120s")
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	// --- Step 2: Create a shared folder ---
+	sfBody, _ := json.Marshal(map[string]string{
+		"name":       "test-shared",
+		"mount_path": "/shared/test-data",
+	})
+	resp, err = client.Post(baseURL+"/api/v1/shared-folders", "application/json", bytes.NewReader(sfBody))
+	if err != nil {
+		t.Fatalf("create shared folder: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("create shared folder: expected 201, got %d (body: %s)", resp.StatusCode, string(body))
+	}
+	var sfResp struct {
+		ID uint `json:"id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&sfResp)
+	resp.Body.Close()
+	sfID := sfResp.ID
+	t.Logf("Created shared folder id=%d", sfID)
+
+	// --- Step 3: Map the shared folder to the instance (triggers auto-restart) ---
+	updateBody, _ := json.Marshal(map[string]interface{}{
+		"instance_ids": []uint{instID},
+	})
+	req, _ := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/v1/shared-folders/%d", baseURL, sfID), bytes.NewReader(updateBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("update shared folder: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("update shared folder: expected 200, got %d (body: %s)", resp.StatusCode, string(body))
+	}
+	resp.Body.Close()
+	t.Log("Mapped shared folder to instance (auto-restart triggered)")
+
+	// --- Step 4: Wait for instance to be running again after restart ---
+	t.Log("Waiting for instance to be running after restart...")
+	time.Sleep(5 * time.Second) // Give restart time to initiate
+	deadline = time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(fmt.Sprintf("%s/api/v1/instances/%d", baseURL, instID))
+		if err != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		var poll map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&poll)
+		resp.Body.Close()
+		status, _ := poll["status"].(string)
+		if status == "running" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Instance did not reach 'running' after restart within 120s")
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	// --- Step 5: Verify mount exists and is writable by claworc user ---
+	t.Log("Verifying shared folder is mounted and writable...")
+	deadline = time.Now().Add(30 * time.Second)
+	verified := false
+	for time.Now().Before(deadline) {
+		// Check mount exists
+		out, err := exec.Command("docker", "exec", instName, "stat", "/shared/test-data").CombinedOutput()
+		if err != nil {
+			t.Logf("stat /shared/test-data: %v — retrying", err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		t.Logf("Mount exists: %s", strings.TrimSpace(string(out)))
+
+		// Write a file as claworc user
+		out, err = exec.Command("docker", "exec", "--user", "claworc", instName,
+			"sh", "-c", "echo hello > /shared/test-data/testfile.txt && cat /shared/test-data/testfile.txt").CombinedOutput()
+		if err != nil {
+			t.Logf("write test: %v (output: %s) — retrying", err, strings.TrimSpace(string(out)))
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		content := strings.TrimSpace(string(out))
+		if content != "hello" {
+			t.Fatalf("unexpected file content: %q, want %q", content, "hello")
+		}
+		t.Log("Shared folder is mounted and writable by claworc user ✓")
+		verified = true
+		break
+	}
+	if !verified {
+		t.Fatal("Failed to verify shared folder mount within 30s")
+	}
+
+	// --- Step 6: Delete the shared folder and verify volume is cleaned up ---
+	volName := fmt.Sprintf("claworc-shared-%d", sfID)
+
+	// Verify volume exists before delete
+	if _, err := exec.Command("docker", "volume", "inspect", volName).CombinedOutput(); err != nil {
+		t.Fatalf("volume %s should exist before delete but doesn't: %v", volName, err)
+	}
+	t.Logf("Volume %s exists before delete ✓", volName)
+
+	req, _ = http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/v1/shared-folders/%d", baseURL, sfID), nil)
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("delete shared folder: %v", err)
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("delete shared folder: expected 204, got %d (body: %s)", resp.StatusCode, string(body))
+	}
+	resp.Body.Close()
+	t.Log("Deleted shared folder via API")
+
+	// Wait for background volume deletion (handler sleeps 10s before deleting)
+	t.Log("Waiting for background volume deletion...")
+	deadline = time.Now().Add(30 * time.Second)
+	volumeDeleted := false
+	for time.Now().Before(deadline) {
+		if _, err := exec.Command("docker", "volume", "inspect", volName).CombinedOutput(); err != nil {
+			t.Logf("Volume %s deleted ✓", volName)
+			volumeDeleted = true
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if !volumeDeleted {
+		t.Fatalf("Volume %s was not deleted within 30s after shared folder deletion", volName)
+	}
 }
