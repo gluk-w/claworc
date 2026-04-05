@@ -68,11 +68,6 @@ export async function uploadFile(
   const { data } = await client.post(
     `/instances/${instanceId}/files/upload?path=${encodeURIComponent(path)}`,
     formData,
-    {
-      headers: {
-        "Content-Type": "multipart/form-data",
-      },
-    },
   );
   return data;
 }

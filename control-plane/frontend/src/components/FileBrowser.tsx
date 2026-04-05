@@ -31,6 +31,8 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
   const [isSaving, setIsSaving] = useState(false);
   const apiRef = useRef<IApi | null>(null);
   const currentPathRef = useRef(initialPath);
+  const selectedFileRef = useRef(selectedFile);
+  selectedFileRef.current = selectedFile;
   // Cache of virtualPath -> SvarFileItems for that directory, so the sidebar tree stays expanded
   const dirCacheRef = useRef<Map<string, SvarFileItem[]>>(new Map());
   const onPathChangeRef = useRef(onPathChange);
@@ -144,12 +146,17 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
     }
   }, [fileData]);
 
+
   const handleInit = (api: IApi) => {
     apiRef.current = api;
 
-    // Listen to set-path (runs after SVAR's internal handler) for folder navigation
+
+
+    // Listen to set-path (runs after SVAR's internal handler) for folder navigation.
+    // Only handle IDs that look like virtual paths (start with "/"). SVAR fires
+    // set-path with internal IDs like "body" that aren't file paths.
     api.on("set-path", (ev: any) => {
-      if (ev.id && ev.id !== currentPathRef.current) {
+      if (ev.id && ev.id.startsWith("/") && ev.id !== currentPathRef.current) {
         updatePath(ev.id);
         setSelectedFile(null);
         setEditedContent(null);
@@ -165,19 +172,27 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
       }
     });
 
-    // Intercept file creation to prevent SVAR's default behavior
+    // Intercept file creation to prevent SVAR's default behavior.
+    // SVAR also routes file uploads through "create-file" (there is no
+    // separate "upload-file" event). When the event originates from an
+    // upload, ev.file.file contains the native File blob.
     api.intercept("create-file", async (ev: any) => {
       if (!ev?.file?.name || !ev?.parent) {
         return false;
       }
 
       try {
-        const filePath = `${ev.parent === "/" ? ROOT_PATH : ROOT_PATH + ev.parent}/${ev.file.name}`;
+        const parentPath = ev.parent === "/" ? ROOT_PATH : ROOT_PATH + ev.parent;
 
         if (ev.file.type === "folder") {
+          const filePath = `${parentPath}/${ev.file.name}`;
           await createDirectory(instanceId, filePath);
           successToast("Folder created");
+        } else if (ev.file.file instanceof File) {
+          await uploadFile(instanceId, parentPath, ev.file.file);
+          successToast("File uploaded");
         } else {
+          const filePath = `${parentPath}/${ev.file.name}`;
           await createFile(instanceId, filePath, "");
           successToast("File created");
         }
@@ -185,47 +200,40 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
         refreshCurrentPathRef.current();
         return false;
       } catch (error: any) {
-        errorToast(ev.file.type === "folder" ? "Failed to create folder" : "Failed to create file", error);
+        const action = ev.file.type === "folder" ? "create folder" : ev.file.file instanceof File ? "upload file" : "create file";
+        errorToast(`Failed to ${action}`, error);
         return false;
       }
     });
 
-    // Intercept file upload to handle it via our API
-    api.intercept("upload-file", async (ev: any) => {
-      if (!ev?.file || !ev?.parent) {
-        return false;
-      }
-
-      try {
-        const parentRealPath = ev.parent === "/" ? ROOT_PATH : ROOT_PATH + ev.parent;
-
-        await uploadFile(instanceId, parentRealPath, ev.file);
-        successToast("File uploaded");
-
-        refreshCurrentPathRef.current();
-        return false;
-      } catch (error: any) {
-        errorToast("Failed to upload file", error);
-        return false;
-      }
-    });
-
-    // Intercept delete to remove file(s)/folder(s) via our API
-    // SVAR fires "delete-files" (plural) with {ids: TID[]}
+    // Intercept delete to remove file(s)/folder(s) via our API.
+    // We do NOT return false — SVAR's internal handler must run to clean up
+    // its selection/panel state. We also do NOT call setFileData directly
+    // because removing items while SVAR's internal state still references
+    // them causes a crash in SVAR's init(). Instead we let the query refresh
+    // rebuild fileData naturally through the useEffect.
     api.intercept("delete-files", async (ev: any) => {
-      if (!ev?.ids?.length) return false;
+      if (!ev?.ids?.length) return;
       try {
         for (const id of ev.ids) {
           const rp = id === "/" ? ROOT_PATH : ROOT_PATH + id;
           await deleteFile(instanceId, rp);
           dirCacheRef.current.delete(id);
         }
+        // Clean deleted items from cached directory listings
+        const idsSet = new Set<string>(ev.ids);
+        for (const [dirPath, items] of dirCacheRef.current.entries()) {
+          dirCacheRef.current.set(dirPath, items.filter(item => !idsSet.has(item.id)));
+        }
+        // Close editor if the selected file was deleted
+        if (selectedFileRef.current && idsSet.has(selectedFileRef.current)) {
+          setSelectedFile(null);
+          setEditedContent(null);
+        }
         successToast(ev.ids.length > 1 ? `Deleted ${ev.ids.length} items` : "Deleted");
         refreshCurrentPathRef.current();
-        return false;
       } catch (error: any) {
         errorToast("Failed to delete", error);
-        return false;
       }
     });
 
@@ -243,15 +251,17 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
       return false;
     });
 
-    // Intercept request-data (breadcrumbs refresh button) to reload current directory
+    // Intercept request-data (breadcrumbs refresh button) to reload current directory.
+    // Only handle IDs that look like virtual paths (start with "/"). SVAR also fires
+    // request-data with internal IDs like "body" that aren't file paths.
     api.intercept("request-data", async (ev: any) => {
-      if (!ev?.id) return false;
+      if (!ev?.id || !ev.id.startsWith("/")) return;
       const p = ev.id as string;
       const rp = p === "/" ? ROOT_PATH : ROOT_PATH + p;
+      dirCacheRef.current.delete(p);
       queryClient.invalidateQueries({
         queryKey: ["instances", instanceId, "files", "browse", rp],
       });
-      return false;
     });
 
     // Intercept rename to move the file/folder via our API
@@ -304,6 +314,7 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
     setSelectedFile(null);
     setEditedContent(null);
   };
+
 
   if (fileData.length === 0) {
     return (
