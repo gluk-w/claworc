@@ -9,9 +9,9 @@ description: "Enable LLM providers and models on individual OpenClaw instances"
 
 Open an instance and go to the **Overview** tab. The **Enabled Models** section (visible to admins) shows which providers and models are active for that instance.
 
-Before enabling models, configure at least one provider in **Settings**. See [Configuration](/models/configuration) for how to add providers and manage API keys.
+Before enabling models, configure at least one provider in **Settings** (global) or directly on the instance (instance-specific). See [Configuration](/models/configuration) for both options.
 
-Click **Edit** to enter edit mode. For each provider you want to enable, click its row to expand it:
+Click **Edit** to enter edit mode. Both global and instance-specific providers appear in the list. For each provider you want to enable, click its row to expand it:
 
 - **Catalog providers and custom providers with a model list** — an accordion shows all available models. Check individual models, or use **Select all** / **Deselect all**.
 - **Dynamic providers** (no fixed model list, e.g. Ollama with a local model server) — a toggle enables or disables the provider. Models are determined at runtime.

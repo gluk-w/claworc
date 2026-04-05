@@ -44,3 +44,23 @@ body {
     border-radius: 0.75rem;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
 }
+
+/* Screenshot slider */
+.slider-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(148, 163, 184, 0.4);
+    cursor: pointer;
+    transition: background 0.2s ease;
+    padding: 0;
+}
+
+.slider-dot:hover {
+    background: rgba(148, 163, 184, 0.7);
+}
+
+.slider-dot.active {
+    background: #3b82f6;
+}

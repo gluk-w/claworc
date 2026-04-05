@@ -26,7 +26,9 @@
             "pages": [
               "instances",
               "accessing",
-              "skills"
+              "skills",
+              "backups",
+              "shared-folders"
             ]
           },
           {

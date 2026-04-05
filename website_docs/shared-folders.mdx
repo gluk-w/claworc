@@ -1,0 +1,64 @@
+---
+title: "Shared folders"
+description: "Share data between OpenClaw instances using mounted volumes"
+---
+
+## Overview
+
+<Frame>
+  <img src="/images/shared-folders.png" alt="Shared folders page showing folder list with mapped instances" />
+</Frame>
+
+Shared folders let you create a named volume and mount it into multiple OpenClaw instances at the same path.
+Any file written by one instance is immediately visible to every other instance that shares the folder.
+This is useful for shared datasets, collaborative workspaces, or common configuration files.
+
+Shared folders are available to all authenticated users. Admins can see and manage all shared folders;
+regular users see only folders they created and can only map them to instances they have access to.
+
+## Creating a shared folder
+
+1. Open **Shared Folders** in the sidebar.
+2. Click **New Folder**.
+3. Enter a name (for example, "Research Data") and a mount path (for example, `/shared/research`).
+4. Click **Create**.
+
+The folder is created immediately but is not mounted to any instance yet. Add instances in the next step.
+
+### Mount path restrictions
+
+The mount path must start with `/` and cannot overlap with these reserved paths:
+
+- `/home/claworc` (instance home directory)
+- `/home/linuxbrew` (Homebrew installation)
+- `/dev/shm` (shared memory)
+
+Recommended mount paths: `/shared/<name>` or `/data/<name>`.
+
+## Mapping instances
+
+1. Open the shared folder by clicking **Edit** in the table row.
+2. Use the instance selector to add or remove instances.
+3. Click **Save**.
+
+<Warning>
+  Changing instance mappings or the mount path automatically restarts all affected running instances.
+  Stopped instances pick up the change on their next start.
+</Warning>
+
+## Deleting a shared folder
+
+Click the delete icon on the folder row and confirm. This removes the database record and
+restarts any mapped running instances to unmount the volume.
+
+The underlying storage volume is **not** automatically deleted as a safety measure. To reclaim
+storage, remove orphaned volumes manually:
+
+- **Docker**: `docker volume ls --filter label=type=shared-folder`
+- **Kubernetes**: `kubectl get pvc -l type=shared-folder -n claworc`
+
+## Kubernetes considerations
+
+Shared folder volumes use the `ReadWriteMany` (RWX) access mode, which requires a storage class
+that supports it (for example, NFS, CephFS, or AWS EFS). If your cluster only provides
+`ReadWriteOnce` storage, two instances cannot mount the same folder simultaneously.

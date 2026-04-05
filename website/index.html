@@ -159,7 +159,7 @@
                 A self-contained OpenClaw workspace. When you create one, Claworc spins up an isolated container that includes:
             </p>
 
-            <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 max-w-4xl mx-auto">
+            <div class="grid sm:grid-cols-2 lg:grid-cols-5 gap-6 max-w-5xl mx-auto">
                 <div class="text-center">
                     <div class="w-14 h-14 bg-blue-600/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
                         <svg class="w-7 h-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
@@ -186,6 +186,14 @@
 
                 <div class="text-center">
                     <div class="w-14 h-14 bg-blue-600/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                        <svg class="w-7 h-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                    </div>
+                    <h3 class="font-semibold mb-1">File Manager</h3>
+                    <p class="text-slate-400 text-sm">Browse, upload, and edit files</p>
+                </div>
+
+                <div class="text-center">
+                    <div class="w-14 h-14 bg-blue-600/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
                         <svg class="w-7 h-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
                     </div>
                     <h3 class="font-semibold mb-1">Persistent Storage</h3>
@@ -199,8 +207,45 @@
         </div>
     </section>
 
-    <!-- Access Control -->
+    <!-- Webchat -->
     <section class="py-16 sm:py-24">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6">
+            <div class="grid lg:grid-cols-2 gap-12 items-center">
+                <div>
+                    <h2 class="text-3xl sm:text-4xl font-bold mb-6">Webchat</h2>
+                    <p class="text-slate-300 mb-6">
+                        Chat with your OpenClaw agent while watching it work. The webchat panel runs side by side with the embedded browser, so you can send instructions and see the agent act on them in real time.
+                    </p>
+                    <div class="space-y-4">
+                        <div class="flex items-start gap-3">
+                            <div class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold">Side-by-side layout</h3>
+                                <p class="text-slate-400 text-sm">Chat and browser share the screen — toggle between split and full-chat views.</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-3">
+                            <div class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold">Watch it happen</h3>
+                                <p class="text-slate-400 text-sm">See the agent navigate, click, and type in the browser as you chat.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <img src="images/webchat.png" alt="Webchat panel running side by side with the embedded browser" class="screenshot w-full border border-slate-700">
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Access Control -->
+    <section class="py-16 sm:py-24 bg-slate-800/50">
         <div class="max-w-6xl mx-auto px-4 sm:px-6">
             <div class="grid lg:grid-cols-2 gap-12 items-center">
                 <div>
@@ -230,15 +275,24 @@
                     </div>
                     <p class="text-slate-400 text-sm mt-6">Biometric identification is supported for authentication.</p>
                 </div>
-                <div>
-                    <img src="images/login.png" alt="Claworc Login Screen" class="screenshot w-full border border-slate-700">
+                <div class="relative">
+                    <div class="screenshot-slider" data-slider>
+                        <div class="slider-track">
+                            <img src="images/login.png" alt="Claworc Login Screen" class="screenshot w-full border border-slate-700">
+                            <img src="images/users.png" alt="User management page showing roles and actions" class="screenshot w-full border border-slate-700 hidden">
+                        </div>
+                        <div class="flex items-center justify-center gap-3 mt-4">
+                            <button class="slider-dot active" data-slide="0" aria-label="Show login screen"></button>
+                            <button class="slider-dot" data-slide="1" aria-label="Show user management"></button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </section>
 
     <!-- Skills Library -->
-    <section class="py-16 sm:py-24 bg-slate-800/50">
+    <section class="py-16 sm:py-24">
         <div class="max-w-6xl mx-auto px-4 sm:px-6">
             <div class="grid lg:grid-cols-2 gap-12 items-center">
                 <div>
@@ -284,7 +338,7 @@
     </section>
 
     <!-- LLM Gateway -->
-    <section class="py-16 sm:py-24">
+    <section class="py-16 sm:py-24 bg-slate-800/50">
         <div class="max-w-6xl mx-auto px-4 sm:px-6">
             <div class="grid lg:grid-cols-2 gap-12 items-center">
                 <div>
@@ -322,15 +376,98 @@
                         </div>
                     </div>
                 </div>
+                <div class="relative">
+                    <div class="screenshot-slider" data-slider>
+                        <div class="slider-track">
+                            <img src="images/llm-provider.png" alt="LLM provider configuration with API key management" class="screenshot w-full border border-slate-700">
+                            <img src="images/usage.png" alt="LLM Usage dashboard showing request counts, token usage, and cost charts" class="screenshot w-full border border-slate-700 hidden">
+                        </div>
+                        <div class="flex items-center justify-center gap-3 mt-4">
+                            <button class="slider-dot active" data-slide="0" aria-label="Show provider configuration"></button>
+                            <button class="slider-dot" data-slide="1" aria-label="Show usage dashboard"></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Backups -->
+    <section class="py-16 sm:py-24">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6">
+            <div class="grid lg:grid-cols-2 gap-12 items-center">
                 <div>
-                    <img src="images/usage.png" alt="LLM Usage dashboard showing request counts, token usage, and cost charts" class="screenshot w-full border border-slate-700">
+                    <h2 class="text-3xl sm:text-4xl font-bold mb-6">Backups</h2>
+                    <p class="text-slate-300 mb-6">
+                        Create compressed snapshots of your instances on demand or on a schedule. Restore to any running instance with one click.
+                    </p>
+                    <div class="space-y-4">
+                        <div class="flex items-start gap-3">
+                            <div class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold">Scheduled backups</h3>
+                                <p class="text-slate-400 text-sm">Set a cron schedule to back up one, several, or all instances automatically.</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-3">
+                            <div class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold">Download or restore</h3>
+                                <p class="text-slate-400 text-sm">Download archives locally or restore them to any running instance.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <img src="images/backups.png" alt="Backups page showing backup list with status, size, and actions" class="screenshot w-full border border-slate-700">
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Shared Folders -->
+    <section class="py-16 sm:py-24 bg-slate-800/50">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6">
+            <div class="grid lg:grid-cols-2 gap-12 items-center">
+                <div>
+                    <h2 class="text-3xl sm:text-4xl font-bold mb-6">Shared Folders</h2>
+                    <p class="text-slate-300 mb-6">
+                        Mount a named volume into multiple instances so they can share files in real time. Useful for shared datasets, collaborative workspaces, or common configuration.
+                    </p>
+                    <div class="space-y-4">
+                        <div class="flex items-start gap-3">
+                            <div class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold">Real-time sharing</h3>
+                                <p class="text-slate-400 text-sm">Files written by one instance are immediately visible to all others that share the folder.</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-3">
+                            <div class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold">Flexible mapping</h3>
+                                <p class="text-slate-400 text-sm">Map any combination of instances to a folder and change mappings at any time.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <img src="images/shared-folders.png" alt="Shared folders page showing folder list with mapped instances" class="screenshot w-full border border-slate-700">
                 </div>
             </div>
         </div>
     </section>
 
     <!-- Installation -->
-    <section id="install" class="py-16 sm:py-24 bg-slate-800/50">
+    <section id="install" class="py-16 sm:py-24">
         <div class="max-w-6xl mx-auto px-4 sm:px-6">
             <h2 class="text-3xl sm:text-4xl font-bold text-center mb-4">Get Started</h2>
             <p class="text-slate-400 text-center max-w-2xl mx-auto mb-12">

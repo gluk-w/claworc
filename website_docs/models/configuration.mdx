@@ -1,15 +1,20 @@
 ---
 title: "Configuration"
-description: "Add LLM providers and manage API keys globally"
+description: "Add LLM providers and manage API keys globally or per instance"
 ---
 
 ## Configuring providers
 
-Go to **Settings** and find the **Model API Keys** section.
+Claworc supports two levels of provider configuration:
 
-### Adding a provider
+- **Global providers** are created in **Settings** and available to every instance. This is the most common setup.
+- **Instance providers** are created on an individual instance's detail page and apply only to that instance. Use these when an instance needs its own API key or a provider that other instances should not access.
 
-Click **Add Provider**. A modal opens with two paths:
+Both types work identically with the LLM gateway. Instance providers appear alongside global providers when you enable models on that instance.
+
+### Adding a global provider
+
+Go to **Settings** and find the **Model API Keys** section. Click **Add Provider**. A modal opens with two paths:
 
 **From the catalog** — Select a known provider (Anthropic, OpenAI, Moonshot AI, and others) from the dropdown. Claworc pre-fills the name and fetches the model list automatically from the Claworc hosted catalog. You only need to supply your API key for that provider.
 
@@ -45,6 +50,12 @@ The `api_type` field controls which authentication header the gateway forwards a
 - **`ollama`**: an empty or missing API key is accepted — Ollama does not require authentication by default.
 
 Any provider with an OpenAI-compatible `/chat/completions` endpoint can be added as a custom provider with `api_type: openai-completions`, regardless of whether it appears in the catalog.
+
+### Adding an instance provider
+
+Open the instance detail page and go to the **Enabled Models** section. Click **Add provider** to open the same provider modal, but scoped to that instance. The provider and its API key are stored separately from global providers and are only available to that specific instance.
+
+Instance providers are labeled with an **Instance** badge in the provider list to distinguish them from global ones. You can edit or delete an instance provider from the same location.
 
 ### Syncing catalog models
 

@@ -47,7 +47,8 @@ modifying or creating UI must follow these conventions exactly. The Settings pag
 
 - The outermost wrapper is a plain `<div>` with no extra padding (the sidebar layout provides it).
 - The page title uses `text-xl font-semibold text-gray-900 mb-6`.
-- All content is constrained to `max-w-2xl` using `space-y-8` between sections.
+- Settings and form-heavy pages constrain content to `max-w-2xl` using `space-y-8` between sections.
+- Data-heavy pages with tables (e.g., Instances, Backups) use full width — omit the `max-w-*` class.
 - Do **not** add a container background, shadow, or extra padding to the outer wrapper.
 
 ---

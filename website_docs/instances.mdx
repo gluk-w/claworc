@@ -20,6 +20,9 @@ Each instance runs one of three official agent images, differing only in which b
 All images except `glukw/openclaw-vnc-chrome` support **AMD64** and **ARM64** architectures.
 Use `latest` to always pull the most recent build.
 
+Every agent image comes with [Homebrew](https://brew.sh/) pre-installed, so you can install additional
+packages inside any instance using `brew install` without extra setup.
+
 ### Updating the agent image
 
 When a new version of the agent image is published under the same tag (e.g. `:latest`), you can pull it without recreating the instance. Open the instance **Settings** tab, find the **Agent Image** field, and click **Update**. Claworc pulls the latest version of the tag, stops the container, and restarts it with the new image. Persistent volumes (home directory, Homebrew packages) are preserved.
@@ -86,6 +89,16 @@ From the dashboard, click the **⋮** menu next to any instance:
 <Warning>
   **Delete** is irreversible. All persistent data — Chrome profile, Homebrew packages, OpenClaw configuration, and clawdbot data — is permanently deleted.
 </Warning>
+
+## Container security
+
+Agent containers run with hardened defaults:
+
+- **No privileged mode.** Containers use the Docker/Kubernetes default set of Linux capabilities. Seccomp is enabled.
+- **Privilege escalation blocked.** SUID bits are removed from unnecessary binaries. `sudo` is available only for package management (`apt-get`).
+- **No kernel access.** Mount, module loading, and `/proc` writes are blocked.
+
+These settings apply automatically to all new and restarted instances in both Kubernetes and Docker modes.
 
 ## Kubernetes resources per instance
 
@@ -172,13 +185,29 @@ Each instance also has its own `openclaw.json` for agent behavior (model selecti
 
 See [Configuration](/models/configuration) for the full reference, including per-instance override options and examples.
 
+## Backups
+
+Admins can create compressed snapshots of any instance's filesystem and restore them later.
+You can back up on demand from the instance detail page or set up scheduled backups from the
+**Backups** page in the sidebar.
+
+See [Backups](/backups) for the full guide.
+
+## Shared folders
+
+Shared folders let you mount a named volume into multiple instances so they can read and write the
+same files. Any authenticated user can create shared folders from the **Shared Folders** page in
+the sidebar.
+
+See [Shared folders](/shared-folders) for setup and limitations.
+
 ## Enabling models for an instance
 
 The **Overview** tab on each instance detail page includes an **Enabled Models** section (visible to admins). This controls which LLM providers and models the agent can use.
 
-Before you can enable models on an instance, configure at least one provider in **Settings**. See [Configuration](/models/configuration) for how to add providers and manage API keys.
+You can use global providers configured in **Settings**, or click **Add provider** to create a provider that belongs only to this instance. Instance-specific providers are useful when you need a dedicated API key or a provider that other instances should not access. See [Configuration](/models/configuration) for details on both options.
 
-Once providers are configured, open the instance, click **Edit** next to Enabled Models, and check the models you want to make available. You can also set a **Default model** — the model the agent uses unless instructed otherwise.
+Once providers are available, click **Edit** next to Enabled Models and check the models you want to make available. You can also set a **Default model** — the model the agent uses unless instructed otherwise.
 
 Claworc pushes the model configuration to the container over SSH in the background. A toast notification confirms when the update is complete.
 

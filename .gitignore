@@ -29,3 +29,5 @@ playwright-report/
 /control-plane/control-plane
 
 .DS_Store
+
+backups/

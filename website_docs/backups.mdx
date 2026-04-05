@@ -1,0 +1,68 @@
+---
+title: "Backups"
+description: "Back up and restore your OpenClaw instances with manual or scheduled snapshots"
+---
+
+## Overview
+
+Claworc can create compressed snapshots of your OpenClaw instances on demand or on a schedule.
+
+Backups are available to **admins only**.
+
+<Frame>
+  <img src="/images/backups.png" alt="Backups page showing backup list with status, size, and actions" />
+</Frame>
+
+## What gets backed up
+
+When creating a backup, you select from path aliases or enter absolute paths:
+
+| Alias | Resolves to | Description |
+|-------|------------|-------------|
+| `HOME` | `/home/claworc` | The agent's home directory (default) |
+| `Homebrew` | `/home/linuxbrew/.linuxbrew` | Homebrew installation and packages |
+| `/` | `/` | Full container filesystem (excluding system directories) |
+
+If you don't select any paths, `HOME` is used by default. You can also enter any absolute path
+(for example, `/etc/nginx`) to include specific directories.
+
+System directories such as `/proc`, `/sys`, `/dev`, `/tmp`, and `/run` are always excluded.
+
+## Creating a manual backup
+
+1. Open **Backups** in the sidebar.
+2. Click **Create Backup**.
+3. Select the target instance.
+4. Choose which folders to include.
+5. Optionally add a note (for example, "Before upgrading packages").
+6. Click **Create Backup**.
+
+The backup runs in the background. While it runs, the status column shows **running** with a spinner.
+Once complete, the archive size appears and the backup is ready for download or restore.
+
+You can also start a quick backup from the instance detail page. The **Overview** tab shows a
+**Backups** card with the latest backup status and a link to the full backups list for that instance.
+
+## Scheduling backups
+
+Scheduled backups run automatically based on a cron expression.
+
+1. Open **Backups** in the sidebar.
+2. Click **Schedule Backups**.
+3. Select one or more instances, or choose **All Instances** to cover every instance
+   (including any created in the future).
+4. Pick a cron preset or enter a custom expression.
+5. Choose which folders to include.
+6. Click **Create Schedule**.
+
+
+## Restoring a backup
+
+Click the restore icon on a completed backup, then select the target instance. The target
+instance must be running. Claworc streams the archive into the container and extracts it,
+restoring all files to their original paths.
+
+<Warning>
+  Restoring overwrites any existing files at the same paths inside the container. There is no undo
+  — consider creating a fresh backup of the target instance before restoring.
+</Warning>

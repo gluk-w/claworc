@@ -71,27 +71,26 @@ export default function BackupsPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-gray-900">Backups</h1>
-        <button
-          onClick={() => setShowCreateBackup(true)}
-          className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
-        >
-          Create Backup
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowCreateSchedule(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+          >
+            Schedule Backups
+          </button>
+          <button
+            onClick={() => setShowCreateBackup(true)}
+            className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+          >
+            Create Backup
+          </button>
+        </div>
       </div>
 
-      <div className="space-y-8 max-w-4xl">
+      <div className="space-y-8">
         {/* Schedules Section */}
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-gray-900">Schedules</h3>
-            <button
-              type="button"
-              onClick={() => setShowCreateSchedule(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-            >
-              Schedule Backups
-            </button>
-          </div>
+          <h3 className="text-sm font-medium text-gray-900 mb-4">Schedules</h3>
 
           {schedulesLoading ? (
             <p className="text-xs text-gray-400">Loading...</p>
@@ -574,28 +573,25 @@ function ScheduleModal({
 
           <div>
             <label className="block text-xs text-gray-500 mb-1">Schedule *</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={cronExpression}
-                onChange={(e) => setCronExpression(e.target.value)}
-                placeholder="0 2 * * *"
-                className="flex-1 px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-              />
-              <select
-                value=""
-                onChange={(e) => {
-                  if (e.target.value) setCronExpression(e.target.value);
-                }}
-                className="px-2 py-1.5 border border-gray-300 rounded-md text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-              >
-                <option value="" disabled>Presets</option>
-                {CRON_PRESETS.map((p) => (
-                  <option key={p.value} value={p.value}>{p.label}</option>
-                ))}
-              </select>
+            <input
+              type="text"
+              value={cronExpression}
+              onChange={(e) => setCronExpression(e.target.value)}
+              placeholder="0 2 * * *"
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+            />
+            <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-1">
+              {CRON_PRESETS.map((p) => (
+                <button
+                  key={p.value}
+                  type="button"
+                  onClick={() => setCronExpression(p.value)}
+                  className="text-xs text-blue-500 hover:text-blue-700 cursor-pointer"
+                >
+                  {p.label}
+                </button>
+              ))}
             </div>
-            <p className="text-xs text-gray-400 mt-1">{cronToHuman(cronExpression)}</p>
           </div>
 
           <div>

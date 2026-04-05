@@ -12,6 +12,23 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
+    // Screenshot sliders
+    document.querySelectorAll('[data-slider]').forEach(function (slider) {
+        var images = slider.querySelectorAll('.slider-track img');
+        var dots = slider.querySelectorAll('.slider-dot');
+        dots.forEach(function (dot) {
+            dot.addEventListener('click', function () {
+                var index = parseInt(this.getAttribute('data-slide'));
+                images.forEach(function (img, i) {
+                    img.classList.toggle('hidden', i !== index);
+                });
+                dots.forEach(function (d, i) {
+                    d.classList.toggle('active', i === index);
+                });
+            });
+        });
+    });
+
     // Copy-to-clipboard for install command
     var copyBtn = document.getElementById('copy-install');
     if (copyBtn) {
