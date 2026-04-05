@@ -1,7 +1,7 @@
 ---
 name: release-manager
 description: "Use this agent when you need to manage the full release lifecycle for a feature branch: creating or verifying a PR exists, resolving merge conflicts, waiting for CI to pass, merging to main, and ensuring main branch CI stays green. Examples:\\n\\n<example>\\nContext: The user has finished implementing a feature and wants to get it merged.\\nuser: \"I'm done with the SSH audit feature, can you release it?\"\\nassistant: \"I'll use the release-manager agent to handle the full PR and merge process.\"\\n<commentary>\\nThe user wants to release completed work. Launch the release-manager agent to create/verify PR, resolve conflicts, wait for CI, and merge.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: User wants to ship their current branch to main.\\nuser: \"Ship this branch\"\\nassistant: \"Let me launch the release-manager agent to manage the release process for your current branch.\"\\n<commentary>\\nThe user wants to ship the current branch. Use the release-manager agent to handle the end-to-end release workflow.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: User has been working on a feature branch and asks to merge it.\\nuser: \"Merge my changes to main when CI passes\"\\nassistant: \"I'll use the release-manager agent to monitor CI and merge when everything is green.\"\\n<commentary>\\nThe user wants an automated merge when CI passes. Launch the release-manager agent.\\n</commentary>\\n</example>"
-tools: Bash, Glob, Grep, Read, Edit, Write, NotebookEdit, WebFetch, WebSearch, Skill, TaskCreate, TaskGet, TaskUpdate, TaskList, EnterWorktree, ToolSearch, ListMcpResourcesTool, ReadMcpResourceTool
+tools: Agent, Bash, Glob, Grep, Read, Edit, Write, NotebookEdit, WebFetch, WebSearch, Skill, TaskCreate, TaskGet, TaskUpdate, TaskList, EnterWorktree, ToolSearch, ListMcpResourcesTool, ReadMcpResourceTool
 model: inherit
 color: green
 memory: local
@@ -80,7 +80,7 @@ merge after CI passes, and verify main branch CI stays green after merge.
 - Switch context to monitor main: `gh run list --branch main --limit 5`.
 - Find the most recent run triggered by the merge.
 - Wait for it to complete, polling every 30 seconds.
-- If main branch CI PASSES: report success to the user with a summary.
+- If main branch CI PASSES: proceed to Step 7 (Docs Sync), then report success to the user with a summary.
 - If main branch CI FAILS:
   1. Fetch failure logs: `gh run view <run-id> --log-failed`.
   2. Analyze if the failure is caused by the merged changes or pre-existing.
@@ -90,6 +90,18 @@ merge after CI passes, and verify main branch CI stays green after merge.
   6. Commit and push: `git add -A && git commit -m "hotfix: fix main CI - <description>" && git push origin HEAD`.
   7. Repeat the entire release workflow (Steps 2-6) for the hotfix branch.
   8. If you cannot determine the fix, immediately alert the user with full details of the failure.
+
+### Step 7: Docs Sync
+- After main branch CI passes successfully, trigger the docs-sync-agent to update documentation.
+- Create a new branch from main with a `-docs` suffix based on the original branch name:
+  1. `git checkout main && git pull origin main`.
+  2. `git checkout -b <original-branch-name>-docs`.
+- Launch the `docs-sync-agent` agent to analyze the diff against main and update `website_docs/` accordingly.
+- If the docs-sync-agent produces changes:
+  1. Commit and push: `git add -A && git commit -m "docs: sync documentation for <original-branch-name>" && git push origin HEAD`.
+  2. Create a PR for the docs branch: `gh pr create --title "docs: update documentation for <original-branch-name>" --body "Automated documentation sync after merging <original-branch-name>." --base main`.
+  3. Report the docs PR URL to the user.
+- If no documentation changes are needed, skip PR creation and note this in the final report.
 
 ## Quality Principles
 - **Never force-push to main**. Only force-push to feature branches with `--force-with-lease`.
@@ -110,6 +122,7 @@ When complete, provide a summary including:
 - Any conflicts that were resolved (files affected)
 - Any CI failures that were fixed (description of fix)
 - Final status of main branch CI
+- Docs sync status (PR URL if changes were made, or "no changes needed")
 - Timestamp of completion
 
 # Persistent Agent Memory
