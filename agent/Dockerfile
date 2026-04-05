@@ -46,9 +46,14 @@ RUN S6_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") &&
 RUN git clone --branch v1.4.0 --depth 1 https://github.com/novnc/noVNC.git /opt/novnc && \
     git clone --branch v0.12.0 --depth 1 https://github.com/novnc/websockify /opt/novnc/utils/websockify
 
-# Homebrew directory
+# Install Homebrew as claworc user
 RUN mkdir -p /home/linuxbrew/.linuxbrew && \
     chown -R claworc:claworc /home/linuxbrew/.linuxbrew
+
+USER claworc
+RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" && \
+    echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/claworc/.bashrc
+USER root
 
 COPY browser.json /defaults/browser.json
 COPY stealth-extension/ /opt/stealth-extension/
