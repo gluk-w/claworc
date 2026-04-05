@@ -72,6 +72,24 @@ export async function uploadFile(
   return data;
 }
 
+export async function uploadDirectory(
+  instanceId: number,
+  basePath: string,
+  files: FileList,
+): Promise<{ success: boolean; count: number }> {
+  const formData = new FormData();
+  for (let i = 0; i < files.length; i++) {
+    formData.append("files", files[i]);
+    formData.append("paths", files[i].webkitRelativePath);
+  }
+
+  const { data } = await client.post(
+    `/instances/${instanceId}/files/upload-directory?path=${encodeURIComponent(basePath)}`,
+    formData,
+  );
+  return data;
+}
+
 export async function deleteFile(
   instanceId: number,
   path: string,
@@ -88,6 +106,18 @@ export async function renameFile(
   to: string,
 ): Promise<{ success: boolean; path: string }> {
   const { data } = await client.post(`/instances/${instanceId}/files/rename`, {
+    from,
+    to,
+  });
+  return data;
+}
+
+export async function copyFile(
+  instanceId: number,
+  from: string,
+  to: string,
+): Promise<{ success: boolean; path: string }> {
+  const { data } = await client.post(`/instances/${instanceId}/files/copy`, {
     from,
     to,
   });

@@ -343,6 +343,106 @@ func UploadFile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func UploadDirectory(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	basePath := r.URL.Query().Get("path")
+	if basePath == "" {
+		writeError(w, http.StatusBadRequest, "path parameter required")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	// Parse multipart form (128 MB max in memory)
+	if err := r.ParseMultipartForm(128 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Failed to parse form: %v", err))
+		return
+	}
+
+	files := r.MultipartForm.File["files"]
+	paths := r.MultipartForm.Value["paths"]
+	if len(files) == 0 {
+		writeError(w, http.StatusBadRequest, "No files provided")
+		return
+	}
+	if len(files) != len(paths) {
+		writeError(w, http.StatusBadRequest, "files and paths count mismatch")
+		return
+	}
+
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	client, ok := SSHMgr.GetConnection(inst.ID)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "No SSH connection for instance")
+		return
+	}
+
+	start := time.Now()
+	createdDirs := make(map[string]bool)
+	count := 0
+
+	for i, fh := range files {
+		relPath := paths[i]
+		fullPath := path.Join(basePath, relPath)
+
+		// Ensure parent directory exists (deduplicate mkdir calls)
+		dir := path.Dir(fullPath)
+		if !createdDirs[dir] {
+			if err := sshproxy.EnsureParentDir(client, fullPath); err != nil {
+				log.Printf("[files] UploadDirectory mkdir failed for %s: %v", utils.SanitizeForLog(dir), err)
+				writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create directory %s: %v", dir, err))
+				return
+			}
+			createdDirs[dir] = true
+		}
+
+		f, err := fh.Open()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to open uploaded file: %v", err))
+			return
+		}
+		content, err := io.ReadAll(f)
+		f.Close()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to read uploaded file: %v", err))
+			return
+		}
+
+		if err := sshproxy.WriteFile(client, fullPath, content); err != nil {
+			log.Printf("[files] UploadDirectory write failed for %s: %v", utils.SanitizeForLog(fullPath), err)
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to upload %s: %v", relPath, err))
+			return
+		}
+		count++
+	}
+
+	log.Printf("[files] UploadDirectory instance=%d basePath=%s count=%d duration=%s", inst.ID, utils.SanitizeForLog(basePath), count, time.Since(start))
+	auditFileOp(r, inst.ID, fmt.Sprintf("op=upload-directory, path=%s, count=%d", basePath, count))
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"count":   count,
+	})
+}
+
 func DeleteFile(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
@@ -440,6 +540,63 @@ func RenameFile(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[files] RenameFile instance=%d from=%s to=%s duration=%s", inst.ID, utils.SanitizeForLog(body.From), utils.SanitizeForLog(body.To), time.Since(start))
 	auditFileOp(r, inst.ID, fmt.Sprintf("op=rename, from=%s, to=%s", body.From, body.To))
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"path":    body.To,
+	})
+}
+
+func CopyFile(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var body struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if body.From == "" || body.To == "" {
+		writeError(w, http.StatusBadRequest, "from and to are required")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	if SSHMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
+		return
+	}
+
+	client, ok := SSHMgr.GetConnection(inst.ID)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "No SSH connection for instance")
+		return
+	}
+
+	start := time.Now()
+	if err := sshproxy.CopyPath(client, body.From, body.To); err != nil {
+		log.Printf("Failed to copy %s -> %s for instance %s: %v", utils.SanitizeForLog(body.From), utils.SanitizeForLog(body.To), utils.SanitizeForLog(inst.Name), err)
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to copy: %v", err))
+		return
+	}
+	log.Printf("[files] CopyFile instance=%d from=%s to=%s duration=%s", inst.ID, utils.SanitizeForLog(body.From), utils.SanitizeForLog(body.To), time.Since(start))
+	auditFileOp(r, inst.ID, fmt.Sprintf("op=copy, from=%s, to=%s", body.From, body.To))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,

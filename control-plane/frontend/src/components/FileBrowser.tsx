@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { Filemanager, Willow, type IApi } from "@svar-ui/react-filemanager";
 import "@svar-ui/react-filemanager/all.css";
 import { useQueryClient } from "@tanstack/react-query";
+import { FilePlus, FolderPlus, Upload, FolderUp } from "lucide-react";
 import { successToast, errorToast } from "@/utils/toast";
 import { useBrowseFiles, useReadFile } from "@/hooks/useFiles";
-import { createFile, createDirectory, uploadFile, deleteFile, renameFile } from "@/api/files";
+import { createFile, createDirectory, uploadFile, uploadDirectory, deleteFile, renameFile, copyFile } from "@/api/files";
 import type { FileEntry } from "@/types/files";
 
 interface FileBrowserProps {
@@ -29,8 +31,13 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
   const [fileData, setFileData] = useState<SvarFileItem[]>([]);
   const [editedContent, setEditedContent] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const apiRef = useRef<IApi | null>(null);
   const currentPathRef = useRef(initialPath);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dirInputRef = useRef<HTMLInputElement>(null);
+  const svarWrapperRef = useRef<HTMLDivElement>(null);
+  const [portalTarget, setPortalTarget] = useState<HTMLDivElement | null>(null);
   const selectedFileRef = useRef(selectedFile);
   selectedFileRef.current = selectedFile;
   // Cache of virtualPath -> SvarFileItems for that directory, so the sidebar tree stays expanded
@@ -289,6 +296,119 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
         return false;
       }
     });
+
+    // Intercept copy-files to copy file(s)/folder(s) via our API
+    api.intercept("copy-files", async (ev: any) => {
+      if (!ev?.ids?.length || !ev?.target) return false;
+      try {
+        const targetReal = ev.target === "/" ? ROOT_PATH : ROOT_PATH + ev.target;
+        for (const id of ev.ids) {
+          const srcReal = id === "/" ? ROOT_PATH : ROOT_PATH + id;
+          const name = id.split("/").pop();
+          const dstReal = targetReal + "/" + name;
+          await copyFile(instanceId, srcReal, dstReal);
+        }
+        successToast(ev.ids.length > 1 ? `Copied ${ev.ids.length} items` : "Copied");
+        refreshCurrentPathRef.current();
+        return false;
+      } catch (error: any) {
+        errorToast("Failed to copy", error);
+        return false;
+      }
+    });
+
+    // Intercept move-files (cut+paste) to move file(s)/folder(s) via our API
+    api.intercept("move-files", async (ev: any) => {
+      if (!ev?.ids?.length || !ev?.target) return false;
+      try {
+        const targetReal = ev.target === "/" ? ROOT_PATH : ROOT_PATH + ev.target;
+        for (const id of ev.ids) {
+          const srcReal = id === "/" ? ROOT_PATH : ROOT_PATH + id;
+          const name = id.split("/").pop();
+          const dstReal = targetReal + "/" + name;
+          await renameFile(instanceId, srcReal, dstReal);
+          dirCacheRef.current.delete(id);
+        }
+        successToast(ev.ids.length > 1 ? `Moved ${ev.ids.length} items` : "Moved");
+        refreshCurrentPathRef.current();
+        return false;
+      } catch (error: any) {
+        errorToast("Failed to move", error);
+        return false;
+      }
+    });
+  };
+
+  // Inject a portal container into SVAR's sidebar, replacing the "Add New" button
+  useEffect(() => {
+    const wrapper = svarWrapperRef.current;
+    if (!wrapper) return;
+    const sidebarWrapper = wrapper.querySelector<HTMLElement>(".wx-FlucfALM.wx-wrapper");
+    if (!sidebarWrapper) return;
+    // Hide the original "Add New" button
+    const addNewBtn = sidebarWrapper.querySelector<HTMLElement>(":scope > .wx-button");
+    if (addNewBtn) addNewBtn.style.display = "none";
+    // Insert our portal container at the top
+    const container = document.createElement("div");
+    sidebarWrapper.insertBefore(container, sidebarWrapper.firstChild);
+    setPortalTarget(container);
+    return () => {
+      container.remove();
+      if (addNewBtn) addNewBtn.style.display = "";
+    };
+  }, [fileData]);
+
+  const handleNewFile = async () => {
+    const name = window.prompt("File name:");
+    if (!name) return;
+    try {
+      await createFile(instanceId, `${realPath}/${name}`, "");
+      successToast("File created");
+      refreshCurrentPathRef.current();
+    } catch (error: any) {
+      errorToast("Failed to create file", error);
+    }
+  };
+
+  const handleNewFolder = async () => {
+    const name = window.prompt("Folder name:");
+    if (!name) return;
+    try {
+      await createDirectory(instanceId, `${realPath}/${name}`);
+      successToast("Folder created");
+      refreshCurrentPathRef.current();
+    } catch (error: any) {
+      errorToast("Failed to create folder", error);
+    }
+  };
+
+  const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      await uploadFile(instanceId, realPath, file);
+      successToast("File uploaded");
+      refreshCurrentPathRef.current();
+    } catch (error: any) {
+      errorToast("Failed to upload file", error);
+    }
+    e.target.value = "";
+  };
+
+  const handleUploadDirectory = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setIsUploading(true);
+    try {
+      const result = await uploadDirectory(instanceId, realPath, files);
+      successToast(`Uploaded ${result.count} files`);
+      refreshCurrentPathRef.current();
+    } catch (error: any) {
+      errorToast("Failed to upload directory", error);
+    } finally {
+      setIsUploading(false);
+      e.target.value = "";
+    }
   };
 
   const handleSaveFile = async () => {
@@ -324,10 +444,49 @@ export default function FileBrowser({ instanceId, initialPath = "/", onPathChang
     );
   }
 
+  const sidebarToolbar = portalTarget && createPortal(
+    <div className="flex items-center gap-1 px-2 py-1.5">
+      <button
+        onClick={handleNewFile}
+        className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+        title="New file"
+      >
+        <FilePlus size={16} />
+      </button>
+      <button
+        onClick={handleNewFolder}
+        className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+        title="New folder"
+      >
+        <FolderPlus size={16} />
+      </button>
+      <button
+        onClick={() => fileInputRef.current?.click()}
+        className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+        title="Upload file"
+      >
+        <Upload size={16} />
+      </button>
+      <button
+        onClick={() => dirInputRef.current?.click()}
+        disabled={isUploading}
+        className="p-1 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+        title="Upload directory"
+      >
+        <FolderUp size={16} />
+      </button>
+      {isUploading && <span className="text-xs text-gray-400 ml-1">Uploading...</span>}
+    </div>,
+    portalTarget,
+  );
+
   return (
     <div className="h-full flex flex-col">
+      {sidebarToolbar}
+      <input ref={fileInputRef} type="file" className="hidden" onChange={handleUploadFile} />
+      <input ref={dirInputRef} type="file" className="hidden" onChange={handleUploadDirectory} {...{ webkitdirectory: "", directory: "" } as any} multiple />
       <div className="flex flex-1 min-h-0">
-        <div className="flex-1 min-w-0 overflow-hidden h-full">
+        <div ref={svarWrapperRef} className="flex-1 min-w-0 overflow-hidden h-full">
           <Willow>
             <Filemanager data={fileData} mode={"table"} panels={panels} init={handleInit} />
           </Willow>

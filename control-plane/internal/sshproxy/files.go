@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -250,6 +251,23 @@ func WriteFile(client *ssh.Client, path string, data []byte) error {
 	return nil
 }
 
+// EnsureParentDir creates all parent directories for the given file path via SSH.
+func EnsureParentDir(client *ssh.Client, filePath string) error {
+	filePath = sanitizePath(filePath)
+	dir := filepath.Dir(filePath)
+	if dir == "." || dir == "/" {
+		return nil
+	}
+	_, stderr, exitCode, err := executeCommand(client, suClaworc(fmt.Sprintf("mkdir -p %s", shellQuote(dir))))
+	if err != nil {
+		return fmt.Errorf("ensure parent dir: %w", err)
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("ensure parent dir: %s", strings.TrimSpace(stderr))
+	}
+	return nil
+}
+
 // CreateDirectory creates a remote directory (and any parent directories) via SSH.
 func CreateDirectory(client *ssh.Client, path string) error {
 	start := time.Now()
@@ -293,6 +311,22 @@ func RenamePath(client *ssh.Client, oldPath, newPath string) error {
 		return fmt.Errorf("rename path: %s", strings.TrimSpace(stderr))
 	}
 	log.Printf("[sshfiles] RenamePath completed in %s", time.Since(start))
+	return nil
+}
+
+// CopyPath copies a file or directory (recursively) to a new location via SSH.
+func CopyPath(client *ssh.Client, srcPath, dstPath string) error {
+	start := time.Now()
+	srcPath = sanitizePath(srcPath)
+	dstPath = sanitizePath(dstPath)
+	_, stderr, exitCode, err := executeCommand(client, suClaworc(fmt.Sprintf("cp -r %s %s", shellQuote(srcPath), shellQuote(dstPath))))
+	if err != nil {
+		return fmt.Errorf("copy path: %w", err)
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("copy path: %s", strings.TrimSpace(stderr))
+	}
+	log.Printf("[sshfiles] CopyPath completed in %s", time.Since(start))
 	return nil
 }
 
