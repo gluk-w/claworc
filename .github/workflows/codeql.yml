@@ -3,8 +3,12 @@ name: "CodeQL"
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - 'scripts/**'
   pull_request:
     branches: [ "main" ]
+    paths-ignore:
+      - 'scripts/**'
   schedule:
     # Run at 6:00 UTC every Monday
     - cron: '0 6 * * 1'
