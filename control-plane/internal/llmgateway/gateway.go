@@ -266,6 +266,8 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			w.Header().Add(k, v)
 		}
 	}
+	// Prevent browsers from MIME-sniffing the response into an executable content type (XSS mitigation).
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if isStreaming {
 		w.Header().Set("X-Accel-Buffering", "no")
 	}

@@ -7,7 +7,7 @@ type ToastStatus = "success" | "error" | "info" | "loading";
 function extractErrorDetail(error: unknown): string | undefined {
   if (!error) return undefined;
   if (typeof error === "string") return error;
-  if (error != null && typeof error === "object") {
+  if (typeof error === "object") {
     // Axios error
     const axiosDetail = (error as any).response?.data?.detail ?? (error as any).response?.data?.error;
     if (typeof axiosDetail === "string") return axiosDetail;
