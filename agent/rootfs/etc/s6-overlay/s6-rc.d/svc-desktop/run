@@ -19,13 +19,13 @@ fi
 # Auto-detect browser
 if command -v google-chrome-stable >/dev/null 2>&1; then
   BROWSER=google-chrome-stable
-  EXTRA_ARGS+=(--no-sandbox)
+  EXTRA_ARGS+=(--no-sandbox --test-type)
 elif command -v brave-browser >/dev/null 2>&1; then
   BROWSER=brave-browser
-  EXTRA_ARGS+=(--no-sandbox)
+  EXTRA_ARGS+=(--no-sandbox --test-type)
 else
   BROWSER=/usr/bin/chromium
-  EXTRA_ARGS+=(--no-sandbox)
+  EXTRA_ARGS+=(--no-sandbox --test-type)
 fi
 
 # Run browser in a restart loop

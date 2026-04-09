@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -303,10 +304,103 @@ func (d *DockerOrchestrator) RestartInstance(ctx context.Context, name string, p
 	return d.createContainer(ctx, params)
 }
 
+
+// dockerConfig represents Docker config.json structure
+type dockerConfig struct {
+	Auths map[string]struct {
+		Auth string `json:"auth"`
+	} `json:"auths"`
+}
+
+// getRegistryAuth reads ~/.docker/config.json and returns base64-encoded auth for Docker API
+// Docker API expects: base64({"username":"xxx","password":"xxx","serveraddress":"xxx"})
+func getRegistryAuth(registry string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("Failed to get home dir: %v", err)
+		return ""
+	}
+	
+	configPath := home + "/.docker/config.json"
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		log.Printf("Failed to read docker config: %v", err)
+		return ""
+	}
+	
+	var config dockerConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		log.Printf("Failed to parse docker config: %v", err)
+		return ""
+	}
+	
+	var rawAuth string
+	
+	// Try exact match first
+	if auth, ok := config.Auths[registry]; ok {
+		rawAuth = auth.Auth
+	}
+	// Try with https:// prefix
+	if rawAuth == "" {
+		if auth, ok := config.Auths["https://"+registry]; ok {
+			rawAuth = auth.Auth
+		}
+	}
+	// Try without port
+	if rawAuth == "" {
+		host := strings.Split(registry, ":")[0]
+		if auth, ok := config.Auths[host]; ok {
+			rawAuth = auth.Auth
+		}
+	}
+	
+	if rawAuth == "" {
+		log.Printf("No auth found for registry: %s", registry)
+		return ""
+	}
+	
+	// Docker config stores auth as base64(username:password)
+	// We need to decode and re-encode as base64(JSON)
+	decoded, err := base64.StdEncoding.DecodeString(rawAuth)
+	if err != nil {
+		log.Printf("Failed to decode auth: %v", err)
+		return ""
+	}
+	
+	parts := strings.SplitN(string(decoded), ":", 2)
+	if len(parts) != 2 {
+		log.Printf("Invalid auth format")
+		return ""
+	}
+	
+	// Build Docker API auth format
+	authJSON := fmt.Sprintf(`{"username":"%s","password":"%s","serveraddress":"%s"}`, parts[0], parts[1], registry)
+	return base64.StdEncoding.EncodeToString([]byte(authJSON))
+}
+
+// extractRegistry extracts registry host from image name
+func extractRegistry(image string) string {
+	parts := strings.SplitN(image, "/", 2)
+	if len(parts) == 1 {
+		return "docker.io"
+	}
+	if !strings.Contains(parts[0], ".") && !strings.Contains(parts[0], ":") {
+		return "docker.io"
+	}
+	return parts[0]
+}
+
 func (d *DockerOrchestrator) UpdateImage(ctx context.Context, name string, params CreateParams) error {
-	// Force-pull the latest image (bypass local cache)
-	log.Printf("Force-pulling image %s for instance %s", params.ContainerImage, utils.SanitizeForLog(name))
-	reader, err := d.client.ImagePull(ctx, params.ContainerImage, image.PullOptions{})
+	// Pull the latest image with registry auth
+	log.Printf("Pulling image %s for instance %s", params.ContainerImage, utils.SanitizeForLog(name))
+	
+	registry := extractRegistry(params.ContainerImage)
+	auth := getRegistryAuth(registry)
+	log.Printf("Registry: %s, Auth found: %v", registry, auth != "")
+	
+	reader, err := d.client.ImagePull(ctx, params.ContainerImage, image.PullOptions{
+		RegistryAuth: auth,
+	})
 	if err != nil {
 		return fmt.Errorf("pull image %s: %w", params.ContainerImage, err)
 	}
