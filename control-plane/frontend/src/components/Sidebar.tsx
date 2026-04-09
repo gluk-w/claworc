@@ -10,6 +10,7 @@ import {
   BookOpen,
   HardDrive,
   FolderOpen,
+  Trello,
 } from "lucide-react";
 import { useHealth } from "@/hooks/useHealth";
 import { useAuth } from "@/contexts/AuthContext";
@@ -106,6 +107,12 @@ export default function Sidebar() {
             </Link>
           </>
         )}
+        <Link to="/kanban" className={navLinkClass("/kanban")}>
+          <Trello size={18} className="shrink-0" />
+          <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
+            Kanban
+          </span>
+        </Link>
         <Link to="/shared-folders" className={navLinkClass("/shared-folders")}>
           <FolderOpen size={18} className="shrink-0" />
           <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">

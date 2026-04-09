@@ -14,13 +14,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gluk-w/claworc/control-plane/internal/backup"
 	"github.com/gluk-w/claworc/control-plane/internal/auth"
+	"github.com/gluk-w/claworc/control-plane/internal/backup"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
 	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
+	"github.com/gluk-w/claworc/control-plane/internal/moderator"
+	"github.com/gluk-w/claworc/control-plane/internal/modwiring"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
@@ -180,6 +182,24 @@ func main() {
 		tunnelMgr.StartTunnelHealthChecker(ctx)
 	}
 
+	// Wire moderator service (Kanban auto-routing). All ports are adapters
+	// from the modwiring package so the moderator package itself stays free
+	// of claworc-internal imports.
+	{
+		artifactsDir := config.Cfg.DataPath + "/kanban/artifacts"
+		_ = os.MkdirAll(artifactsDir, 0o755)
+		modSettings := &modwiring.Settings{DB: database.DB, DefaultDir: artifactsDir}
+		handlers.ModeratorSvc = moderator.New(moderator.Options{
+			Dialer:    &modwiring.GatewayDialer{DB: database.DB, Tunnels: tunnelMgr},
+			Workspace: &modwiring.WorkspaceFS{DB: database.DB, SSH: sshMgr},
+			LLM:       &modwiring.LLMClient{DB: database.DB},
+			Store:     &modwiring.Store{DB: database.DB},
+			Settings:  modSettings,
+			Instances: &modwiring.InstanceLister{DB: database.DB},
+		})
+		handlers.ModeratorSvc.StartSummarizer(ctx)
+	}
+
 	// Start background SSH key rotation job (checks daily)
 	cancelRotation := handlers.StartKeyRotationJob(ctx)
 	_ = cancelRotation // stopped via context cancellation on shutdown
@@ -266,6 +286,22 @@ func main() {
 
 			// Desktop proxy (noVNC/websockify)
 			r.HandleFunc("/instances/{id}/desktop/*", handlers.DesktopProxy)
+
+			// Kanban
+			r.Get("/kanban/boards", handlers.ListKanbanBoards)
+			r.Post("/kanban/boards", handlers.CreateKanbanBoard)
+			r.Get("/kanban/boards/{id}", handlers.GetKanbanBoard)
+			r.Put("/kanban/boards/{id}", handlers.UpdateKanbanBoard)
+			r.Delete("/kanban/boards/{id}", handlers.DeleteKanbanBoard)
+			r.Post("/kanban/boards/{id}/tasks", handlers.CreateKanbanTask)
+			r.Get("/kanban/tasks/{id}", handlers.GetKanbanTask)
+			r.Patch("/kanban/tasks/{id}", handlers.PatchKanbanTask)
+			r.Delete("/kanban/tasks/{id}", handlers.DeleteKanbanTask)
+			r.Post("/kanban/tasks/{id}/start", handlers.StartKanbanTask)
+			r.Post("/kanban/tasks/{id}/stop", handlers.StopKanbanTask)
+			r.Post("/kanban/tasks/{id}/comments", handlers.CreateKanbanUserComment)
+			r.Post("/kanban/tasks/{id}/reopen", handlers.ReopenKanbanTask)
+			r.Get("/kanban/tasks/{id}/artifacts/{artifact_id}", handlers.DownloadKanbanArtifact)
 
 			// Shared Folders
 			r.Get("/shared-folders", handlers.ListSharedFolders)

@@ -46,7 +46,7 @@ func Init() error {
 		return fmt.Errorf("set busy timeout: %w", err)
 	}
 
-	if err := DB.AutoMigrate(&Instance{}, &Setting{}, &User{}, &UserInstance{}, &WebAuthnCredential{}, &LLMProvider{}, &LLMGatewayKey{}, &Skill{}, &Backup{}, &BackupSchedule{}, &SharedFolder{}); err != nil {
+	if err := DB.AutoMigrate(&Instance{}, &Setting{}, &User{}, &UserInstance{}, &WebAuthnCredential{}, &LLMProvider{}, &LLMGatewayKey{}, &Skill{}, &Backup{}, &BackupSchedule{}, &SharedFolder{}, &KanbanBoard{}, &KanbanTask{}, &KanbanComment{}, &KanbanArtifact{}, &InstanceSoul{}); err != nil {
 		return fmt.Errorf("auto-migrate: %w", err)
 	}
 

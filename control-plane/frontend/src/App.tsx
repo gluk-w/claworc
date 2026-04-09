@@ -13,6 +13,7 @@ import ChatPopupPage from "./pages/ChatPopupPage";
 import SkillsPage from "./pages/SkillsPage";
 import BackupsPage from "./pages/BackupsPage";
 import SharedFoldersPage from "./pages/SharedFoldersPage";
+import KanbanPage from "./pages/KanbanPage";
 import { useAuth } from "./contexts/AuthContext";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -67,6 +68,7 @@ export default function App() {
         />
         <Route path="/instances/:id" element={<InstanceDetailPage />} />
         <Route path="/shared-folders" element={<SharedFoldersPage />} />
+        <Route path="/kanban" element={<KanbanPage />} />
         <Route path="/profile" element={<AccountPage />} />
         <Route
           path="/settings"

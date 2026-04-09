@@ -79,7 +79,7 @@ type LLMProvider struct {
 	Name       string    `gorm:"not null" json:"name"`                                               // display name
 	BaseURL    string    `gorm:"not null" json:"base_url"`                                           // OpenAI-compat base URL for this provider
 	APIType    string    `gorm:"size:100;default:'openai-completions'" json:"api_type"`
-	APIKey     string    `gorm:"type:text;default:''" json:"-"` // Fernet-encrypted upstream API key
+	APIKey     string    `gorm:"type:text;default:''" json:"-"`   // Fernet-encrypted upstream API key
 	Models     string    `gorm:"type:text;default:'[]'" json:"-"` // JSON []ProviderModel
 	CreatedAt  time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt  time.Time `gorm:"autoUpdateTime" json:"updated_at"`
@@ -202,6 +202,72 @@ func EncodeSharedFolderInstanceIDs(ids []uint) string {
 	}
 	b, _ := json.Marshal(ids)
 	return string(b)
+}
+
+// KanbanBoard is a global Kanban board grouping tasks dispatched to OpenClaw
+// instances. EligibleInstances is a JSON array of Instance IDs that the
+// moderator may choose from when routing tasks created on this board.
+type KanbanBoard struct {
+	ID                uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name              string    `gorm:"not null" json:"name"`
+	Description       string    `gorm:"type:text" json:"description"`
+	EligibleInstances string    `gorm:"type:text;default:'[]'" json:"-"` // JSON []uint
+	CreatedAt         time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt         time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// KanbanTask is one card on a Kanban board. Status moves through
+// todo → dispatching → in_progress → done|failed. AssignedInstanceID is set
+// by the moderator's dispatch step.
+type KanbanTask struct {
+	ID                   uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	BoardID              uint      `gorm:"not null;index" json:"board_id"`
+	Title                string    `gorm:"not null" json:"title"`
+	Description          string    `gorm:"type:text" json:"description"`
+	Status               string    `gorm:"not null;default:todo" json:"status"`
+	AssignedInstanceID   *uint     `gorm:"index" json:"assigned_instance_id,omitempty"`
+	OpenClawSessionID    string    `json:"openclaw_session_id"`
+	OpenClawRunID        string    `json:"openclaw_run_id"`
+	EvaluatorProviderKey string    `json:"evaluator_provider_key"`
+	EvaluatorModel       string    `json:"evaluator_model"`
+	CreatedAt            time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt            time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// KanbanComment captures both moderator-authored notes and streamed agent
+// output. The "assistant" comment for a run is appended to in place as
+// chunks arrive over the gateway WebSocket.
+type KanbanComment struct {
+	ID                uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	TaskID            uint      `gorm:"not null;index" json:"task_id"`
+	Kind              string    `gorm:"not null" json:"kind"` // routing|assistant|tool|moderator|evaluation|error
+	Author            string    `json:"author"`
+	Body              string    `gorm:"type:text" json:"body"`
+	OpenClawSessionID string    `json:"openclaw_session_id"`
+	CreatedAt         time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt         time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// KanbanArtifact is a file the agent explicitly mentioned in chat output and
+// the moderator pulled from the instance workspace via SSH.
+type KanbanArtifact struct {
+	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	TaskID      uint      `gorm:"not null;index" json:"task_id"`
+	Path        string    `gorm:"not null" json:"path"`
+	SizeBytes   int64     `json:"size_bytes"`
+	SHA256      string    `json:"sha256"`
+	StoragePath string    `json:"-"`
+	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
+}
+
+// InstanceSoul is a cached, periodically refreshed LLM summary of an
+// instance's workspace markdown plus a JSON list of its installed skill
+// slugs. The moderator uses these for ranking candidates at dispatch time.
+type InstanceSoul struct {
+	InstanceID uint      `gorm:"primaryKey" json:"instance_id"`
+	Summary    string    `gorm:"type:text" json:"summary"`
+	Skills     string    `gorm:"type:text;default:'[]'" json:"-"` // JSON []string
+	UpdatedAt  time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 type WebAuthnCredential struct {
