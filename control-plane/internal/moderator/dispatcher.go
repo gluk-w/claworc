@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -119,7 +120,7 @@ func parseRankReply(s string) (uint, string, bool) {
 		return 0, "", false
 	}
 	n, err := strconv.ParseUint(string(out.InstanceID), 10, 64)
-	if err != nil {
+	if err != nil || n > math.MaxUint {
 		return 0, "", false
 	}
 	return uint(n), out.Reason, true
