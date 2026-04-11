@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/coder/websocket"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
+	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -67,112 +67,15 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build local WebSocket URL via tunnel
-	gwURL := fmt.Sprintf("ws://127.0.0.1:%d/gateway", port)
-	if gatewayToken != "" {
-		gwURL += "?token=" + gatewayToken
-	}
-
-	// Connect to gateway via tunnel
-	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	// Set Origin to loopback so the gateway's local-loopback bypass accepts the
-	// connection (the gateway enforces an origin check when client.id is
-	// "openclaw-control-ui" or mode is "webchat").
-	gwOrigin := fmt.Sprintf("http://127.0.0.1:%d", port)
-	log.Printf("[chat] Connecting to gateway via tunnel: %s", gwURL)
-	gwConn, _, err := websocket.Dial(dialCtx, gwURL, &websocket.DialOptions{
-		HTTPHeader: http.Header{
-			"Origin": []string{gwOrigin},
-		},
-	})
+	gwConn, err := sshproxy.DialGateway(ctx, port, gatewayToken)
 	if err != nil {
-		log.Printf("[chat] Failed to connect to gateway at %s: %v", gwURL, err)
-		clientConn.Close(4502, "Cannot connect to gateway")
+		log.Printf("[chat] Gateway dial/handshake failed for %s: %v", inst.Name, err)
+		clientConn.Close(4502, truncate(err.Error(), 120))
 		return
 	}
 	defer gwConn.CloseNow()
 
 	clientConn.SetReadLimit(4 * 1024 * 1024)
-	gwConn.SetReadLimit(4 * 1024 * 1024)
-
-	// Phase 1: Read connect.challenge from gateway
-	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, 10*time.Second)
-	defer handshakeCancel()
-
-	_, challengeData, err := gwConn.Read(handshakeCtx)
-	if err != nil {
-		log.Printf("[chat] Failed to read connect.challenge for %s: %v", inst.Name, err)
-		clientConn.Close(4504, "Gateway handshake timeout")
-		return
-	}
-	log.Printf("[chat] Received challenge: %s", string(challengeData))
-
-	// Phase 2: Send connect request
-	connectFrame := map[string]interface{}{
-		"type":   "req",
-		"id":     fmt.Sprintf("connect-%d", time.Now().UnixNano()),
-		"method": "connect",
-		"params": map[string]interface{}{
-			"minProtocol": 3,
-			"maxProtocol": 3,
-			"client": map[string]interface{}{
-				"id":       "openclaw-control-ui",
-				"version":  "1.0.0",
-				"platform": "linux",
-				"mode":     "webchat",
-			},
-			"role":   "operator",
-			"scopes": []string{"operator.admin"},
-			"auth": map[string]interface{}{
-				"token": gatewayToken,
-			},
-		},
-	}
-	connectJSON, _ := json.Marshal(connectFrame)
-	log.Printf("[chat] Sending connect: %s", string(connectJSON))
-	if err := gwConn.Write(ctx, websocket.MessageText, connectJSON); err != nil {
-		log.Printf("[chat] Failed to send connect for %s: %v", inst.Name, err)
-		clientConn.Close(4502, "Failed to send handshake")
-		return
-	}
-
-	// Phase 3: Read hello-ok response (skip event frames)
-	for {
-		_, data, err := gwConn.Read(handshakeCtx)
-		if err != nil {
-			log.Printf("[chat] Handshake read error for %s: %v", inst.Name, err)
-			clientConn.Close(4504, "Gateway handshake timeout")
-			return
-		}
-		log.Printf("[chat] Handshake frame: %s", string(data))
-
-		var resp map[string]interface{}
-		if err := json.Unmarshal(data, &resp); err != nil {
-			continue
-		}
-
-		// Skip event frames
-		if resp["type"] == "event" {
-			continue
-		}
-
-		if resp["type"] == "res" {
-			if ok, _ := resp["ok"].(bool); !ok {
-				errObj, _ := resp["error"].(map[string]interface{})
-				msg := "Gateway auth failed"
-				if m, _ := errObj["message"].(string); m != "" {
-					msg = m
-				}
-				log.Printf("[chat] Handshake error for %s: %s (full: %s)", inst.Name, msg, string(data))
-				clientConn.Close(4401, truncate(msg, 120))
-				return
-			}
-			log.Printf("[chat] Handshake OK for %s", inst.Name)
-			break
-		}
-	}
 
 	// Notify browser that connection is established
 	connectedMsg, _ := json.Marshal(map[string]string{"type": "connected"})
