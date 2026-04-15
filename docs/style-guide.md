@@ -192,6 +192,32 @@ When showing a computed or masked value (fingerprints, API key previews):
 When editing, replace the row with the input + Cancel button (see the Brave API Key section in
 `SettingsPage.tsx` for the full pattern).
 
+### Keyboard shortcuts for edit-in-place inputs
+
+All edit-in-place inputs must handle **Enter** (save) and **Escape** (cancel). Use the
+`EditInput` component (`src/components/EditInput.tsx`) instead of a raw `<input>` — it is a
+drop-in replacement that adds `onSave` and `onCancel` props:
+
+```tsx
+import EditInput from "@/components/EditInput";
+
+<EditInput
+  type="text"
+  value={pendingValue ?? ""}
+  onChange={(e) => setPendingValue(e.target.value)}
+  onSave={handleSave}
+  onCancel={() => { setEditing(false); setPendingValue(null); }}
+  className="..."
+/>
+```
+
+Key rules:
+- Always use `<EditInput>` — never wire up `onKeyDown` for Enter/Escape manually.
+- `onSave` is called on **Enter**. The handler itself guards against invalid input, so no extra check is needed.
+- `onCancel` is called on **Escape**. It should exit edit mode and clear pending state — same logic as the Cancel button.
+- Apply to every input in an edit-in-place row, including multi-field groups (e.g., Resources grid — each input gets the shared save/cancel callbacks).
+- All standard `<input>` props (including a custom `onKeyDown`) are forwarded.
+
 ---
 
 ## 4. Buttons

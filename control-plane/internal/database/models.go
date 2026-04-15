@@ -163,6 +163,7 @@ type BackupSchedule struct {
 	InstanceIDs    string     `gorm:"type:text;not null" json:"instance_ids"`
 	CronExpression string     `gorm:"not null" json:"cron_expression"`
 	Paths          string     `gorm:"type:text;not null;default:'[\"HOME\"]'" json:"paths"`
+	RetentionDays  int        `gorm:"not null;default:0" json:"retention_days"`
 	LastRunAt      *time.Time `json:"last_run_at,omitempty"`
 	NextRunAt      *time.Time `json:"next_run_at,omitempty"`
 	CreatedAt      time.Time  `gorm:"autoCreateTime" json:"created_at"`

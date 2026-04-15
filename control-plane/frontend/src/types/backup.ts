@@ -26,6 +26,7 @@ export interface BackupSchedule {
   instance_ids: string;
   cron_expression: string;
   paths: string;
+  retention_days: number;
   last_run_at?: string;
   next_run_at?: string;
   created_at: string;
@@ -36,10 +37,12 @@ export interface BackupScheduleCreatePayload {
   instance_ids: string;
   cron_expression: string;
   paths: string[];
+  retention_days?: number;
 }
 
 export interface BackupScheduleUpdatePayload {
   instance_ids?: string;
   cron_expression?: string;
   paths?: string[];
+  retention_days?: number;
 }

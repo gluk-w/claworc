@@ -1156,8 +1156,13 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			log.Printf("Failed to update image for instance %d: %v", instID, err)
+			finalStatus := "error"
+			if liveStatus, lerr := orch.GetInstanceStatus(ctx, instName); lerr == nil && liveStatus == "running" {
+				log.Printf("Instance %d pod is still running after UpdateImage failure; keeping status=running so tunnels are reconciled", instID)
+				finalStatus = "running"
+			}
 			database.DB.Model(&database.Instance{}).Where("id = ?", instID).Updates(map[string]interface{}{
-				"status":         "error",
+				"status":         finalStatus,
 				"status_message": fmt.Sprintf("Image update failed: %v", err),
 				"updated_at":     time.Now().UTC(),
 			})

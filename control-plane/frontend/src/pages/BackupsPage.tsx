@@ -104,6 +104,7 @@ export default function BackupsPage() {
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Instances</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Schedule</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Paths</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Retention</th>
                     <th className="text-right px-4 py-3 font-medium text-gray-600">Actions</th>
                   </tr>
                 </thead>
@@ -116,6 +117,9 @@ export default function BackupsPage() {
                       <td className="px-4 py-3 text-gray-500">{cronToHuman(s.cron_expression)}</td>
                       <td className="px-4 py-3 text-gray-500">
                         <SchedulePaths paths={s.paths} />
+                      </td>
+                      <td className="px-4 py-3 text-gray-500">
+                        {s.retention_days > 0 ? `${s.retention_days}d` : "—"}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
@@ -495,6 +499,7 @@ function ScheduleModal({
   );
   const [cronExpression, setCronExpression] = useState(schedule?.cron_expression || "0 2 * * *");
   const [paths, setPaths] = useState<string[]>(parsePaths());
+  const [retentionDays, setRetentionDays] = useState<number>(schedule?.retention_days ?? 0);
 
   const instanceOptions = useMemo<MultiSelectOption[]>(
     () => instances.map((i) => ({ value: i.id, label: i.display_name })),
@@ -518,6 +523,7 @@ function ScheduleModal({
           instance_ids: instanceIdsValue,
           cron_expression: cronExpression,
           paths: cleanPaths.length > 0 ? cleanPaths : ["HOME"],
+          retention_days: retentionDays,
         },
         { onSuccess: () => onClose() },
       );
@@ -527,6 +533,7 @@ function ScheduleModal({
           instance_ids: instanceIdsValue,
           cron_expression: cronExpression,
           paths: cleanPaths.length > 0 ? cleanPaths : ["HOME"],
+          retention_days: retentionDays,
         },
         { onSuccess: () => onClose() },
       );
@@ -597,6 +604,22 @@ function ScheduleModal({
           <div>
             <label className="block text-xs text-gray-500 mb-1">Folders to backup</label>
             <FolderInput value={paths} onChange={setPaths} />
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Retention (days)</label>
+            <input
+              type="number"
+              min={0}
+              value={retentionDays}
+              onChange={(e) =>
+                setRetentionDays(Math.max(0, parseInt(e.target.value, 10) || 0))
+              }
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Scheduled backups older than this many days will be deleted automatically. Set to 0 to keep forever.
+            </p>
           </div>
         </div>
 

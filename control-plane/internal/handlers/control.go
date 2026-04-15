@@ -116,7 +116,42 @@ func ControlProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	basePath := fmt.Sprintf("/openclaw/%d/", id)
-	if err := proxyToLocalPort(w, r, info.localPort, fullPath, basePath); err != nil {
+
+	// Try the prefixed path first (e.g. openclaw/26/favicon.svg). If the
+	// gateway returns 404, retry with just the resource path (e.g. favicon.svg).
+	//
+	// Why: when an HTML page is served under /openclaw/{id}/ we inject a
+	// <base href="/openclaw/{id}/"> tag so relative asset URLs resolve under
+	// the proxy prefix. But some resources — notably /favicon.svg, which
+	// browsers request automatically from the document root independent of
+	// the <base> tag — live at the root of the instance and are NOT served
+	// under /openclaw/{id}/. Without this fallback those requests 404.
+	// Retrying with the bare resource path lets the gateway serve them from
+	// its root. The fallback only fires on 404, so correctly-prefixed
+	// responses (200, 304, redirects, etc.) are passed through unchanged.
+	resp, err := doProxyRequest(r, info.localPort, fullPath)
+	if err != nil {
 		writeConnectingPage(w, id)
+		return
+	}
+
+	if resp.StatusCode == http.StatusNotFound && wildcardPath != "" {
+		// Discard the 404 body and retry against the instance root.
+		resp.Body.Close()
+		fallbackResp, fbErr := doProxyRequest(r, info.localPort, wildcardPath)
+		if fbErr == nil {
+			resp = fallbackResp
+		} else {
+			// Fallback couldn't even reach the tunnel — show the connecting page.
+			writeConnectingPage(w, id)
+			return
+		}
+	}
+
+	if err := writeProxyResponse(w, resp, basePath); err != nil {
+		// writeProxyResponse only returns an error after it has already
+		// started writing the response, so we can't switch to a different
+		// response here — the error is already logged inside the helper.
+		_ = err
 	}
 }

@@ -268,9 +268,24 @@ func (k *KubernetesOrchestrator) RestartInstance(ctx context.Context, name strin
 		}
 	}
 
-	// Update the deployment spec to reflect current mounts, then trigger rollout
-	dep := buildDeployment(params, ns)
-	_, err := k.clientset.AppsV1().Deployments(ns).Update(ctx, dep, metav1.UpdateOptions{})
+	// Fetch existing deployment so Update carries a valid resourceVersion;
+	// without it the K8s API rejects the write and the pod template is never rolled out.
+	existing, err := k.clientset.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		dep := buildDeployment(params, ns)
+		if _, err := k.clientset.AppsV1().Deployments(ns).Create(ctx, dep, metav1.CreateOptions{}); err != nil {
+			return fmt.Errorf("create deployment: %w", err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("get deployment: %w", err)
+	}
+
+	desired := buildDeployment(params, ns)
+	existing.Spec = desired.Spec
+	existing.Labels = desired.Labels
+	_, err = k.clientset.AppsV1().Deployments(ns).Update(ctx, existing, metav1.UpdateOptions{})
 	return err
 }
 
@@ -608,7 +623,7 @@ func buildSharedPVC(name, ns, storage string) *corev1.PersistentVolumeClaim {
 			Labels:    map[string]string{"managed-by": "claworc", "type": "shared-folder"},
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
-			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 			Resources: corev1.VolumeResourceRequirements{
 				Requests: corev1.ResourceList{
 					corev1.ResourceStorage: resource.MustParse(storage),
@@ -655,7 +670,7 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": params.Name, "managed-by": "claworc"}},
 				Spec: corev1.PodSpec{
-					Hostname:   strings.TrimPrefix(params.Name, "bot-"),
+					Hostname: strings.TrimPrefix(params.Name, "bot-"),
 					Containers: []corev1.Container{{
 						Name:            "claworc-instance",
 						Image:           params.ContainerImage,
