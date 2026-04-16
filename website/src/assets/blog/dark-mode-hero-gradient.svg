@@ -1,0 +1,31 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .bg  { fill: var(--brand-500); }
+    .ico { stroke: var(--brand-100); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+    .txt { fill: var(--brand-50); font-family: 'Outfit Variable', Outfit, system-ui, -apple-system, sans-serif; font-weight: 800; }
+    .ln  { stroke: var(--brand-300); stroke-width: 1; stroke-opacity: 0.35; }
+    .pil { fill: var(--brand-400); fill-opacity: 0.25; stroke: var(--brand-200); stroke-opacity: 0.4; stroke-width: 1; }
+    .ptx { fill: var(--brand-100); font-family: 'Outfit Variable', Outfit, system-ui, -apple-system, sans-serif; }
+    .cor { stroke: var(--brand-300); stroke-width: 1.5; fill: none; stroke-opacity: 0.45; }
+  </style>
+  <rect width="1200" height="630" class="bg"/>
+  <!-- Lucide Sunset -->
+  <g transform="translate(540, 180) scale(5)" class="ico" opacity="0.9">
+    <path d="M12 10V2"/>
+    <path d="m4.93 10.93 1.41 1.41"/>
+    <path d="M2 18h2"/>
+    <path d="M20 18h2"/>
+    <path d="m19.07 10.93-1.41 1.41"/>
+    <path d="M22 22H2"/>
+    <path d="m16 6-4 4-4-4"/>
+    <path d="M16 18a4 4 0 0 0-8 0"/>
+  </g>
+  <text x="600" y="410" font-size="96" text-anchor="middle" letter-spacing="-2" class="txt">gradient</text>
+  <line x1="370" y1="436" x2="830" y2="436" class="ln"/>
+  <rect x="450" y="464" width="300" height="38" rx="19" class="pil"/>
+  <text x="600" y="487" font-size="16" text-anchor="middle" class="ptx">hansmartens.dev</text>
+  <path d="M 36 60 L 36 36 L 60 36" class="cor"/>
+  <path d="M 1140 36 L 1164 36 L 1164 60" class="cor"/>
+  <path d="M 36 570 L 36 594 L 60 594" class="cor"/>
+  <path d="M 1140 594 L 1164 594 L 1164 570" class="cor"/>
+</svg>

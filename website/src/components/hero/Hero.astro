@@ -1,0 +1,147 @@
+---
+import type { HTMLAttributes } from 'astro/types';
+import { cn } from '@/lib/cn';
+import { heroSectionVariants } from './hero.variants';
+
+interface Props extends HTMLAttributes<'section'> {
+  /** Layout mode: centered single column or split two-column */
+  layout?: 'centered' | 'split';
+  /** Vertical padding size */
+  size?: 'sm' | 'md' | 'lg' | 'xl';
+  /** Show background grid pattern */
+  showGrid?: boolean;
+  /** Apply the dark-mode hero gradient (black → brand). Homepage only. */
+  gradient?: boolean;
+}
+
+const {
+  layout = 'centered',
+  size = 'lg',
+  showGrid = false,
+  gradient = false,
+  class: className,
+  ...attrs
+} = Astro.props;
+
+// Check which slots are provided
+const hasBadgeSlot = Astro.slots.has('badge');
+const hasTitleSlot = Astro.slots.has('title');
+const hasDescriptionSlot = Astro.slots.has('description');
+const hasActionsSlot = Astro.slots.has('actions');
+const hasAsideSlot = Astro.slots.has('aside');
+
+// Compute alignment based on layout
+const alignment = layout === 'centered' ? 'text-center items-center' : 'text-left items-start';
+
+// Compute classes
+const sectionClasses = cn(heroSectionVariants({ size }), gradient && 'hero-dark-gradient', className);
+
+const contentClasses = cn(
+  'z-10 flex flex-col',
+  alignment
+);
+
+const gridClasses = cn(
+  'mx-auto grid max-w-6xl grid-cols-1 items-center gap-[var(--space-section-gap)] px-6',
+  layout === 'split' && 'lg:grid-cols-2 lg:gap-[var(--space-section-gap)]'
+);
+---
+
+<section class={sectionClasses} {...attrs}>
+  {showGrid && (
+    <div
+      class="bg-grid-pattern pointer-events-none absolute inset-x-0 -inset-y-[20%] opacity-30"
+      style="mask-image: radial-gradient(ellipse 50% 50% at 50% 40%, black 0%, transparent 70%);"
+      data-parallax="0.2"
+      aria-hidden="true"
+    />
+  )}
+
+  <div class={gridClasses}>
+    {/* Content Column */}
+    <div class={cn(contentClasses, 'order-1 lg:order-none animate-hero-slide-up')}>
+      {/* Badge Slot */}
+      {hasBadgeSlot && (
+        <div class="mb-[var(--space-heading-gap)]">
+          <slot name="badge" />
+        </div>
+      )}
+
+      {/* Title Slot */}
+      {hasTitleSlot && (
+        <div class={cn(
+          'hero-title-slot mb-[var(--space-heading-gap)]',
+          '[&>h1]:font-display [&>h1]:text-5xl [&>h1]:leading-[1.1] [&>h1]:font-bold [&>h1]:tracking-tight [&>h1]:text-balance [&>h1]:text-foreground md:[&>h1]:text-6xl lg:[&>h1]:text-7xl',
+          '[&>h2]:font-display [&>h2]:text-4xl [&>h2]:leading-[1.1] [&>h2]:font-bold [&>h2]:tracking-tight [&>h2]:text-balance [&>h2]:text-foreground md:[&>h2]:text-5xl lg:[&>h2]:text-6xl'
+        )}>
+          <slot name="title" />
+        </div>
+      )}
+
+      {/* Description Slot */}
+      {hasDescriptionSlot && (
+        <div class={cn(
+          'mb-[var(--space-stack-lg)] max-w-xl text-lg leading-relaxed text-foreground-muted',
+          '[&>p]:text-lg [&>p]:leading-relaxed [&>p]:text-foreground-muted',
+          layout === 'centered' && 'mx-auto'
+        )}>
+          <slot name="description" />
+        </div>
+      )}
+
+      {/* Actions Slot */}
+      {hasActionsSlot && (
+        <div class={cn(
+          'flex w-full flex-col gap-4 sm:w-auto sm:flex-row',
+          layout === 'centered' && 'justify-center'
+        )}>
+          <slot name="actions" />
+        </div>
+      )}
+
+      {/* Default slot for additional content (social proof, etc.) */}
+      <slot />
+    </div>
+
+    {/* Aside Column (for split layout) */}
+    {layout === 'split' && hasAsideSlot && (
+      <div class="relative z-10 w-full order-2 lg:order-none">
+        <slot name="aside" />
+      </div>
+    )}
+  </div>
+</section>
+
+
+<script>
+  // Parallax: move [data-parallax] layers at a fraction of scroll speed.
+  // Elements with -inset-y-[20%] have extra room to move without clipping.
+  // Skipped entirely when the user prefers reduced motion.
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const layers = document.querySelectorAll<HTMLElement>('[data-parallax]');
+
+    function applyParallax() {
+      layers.forEach((el) => {
+        const section = el.closest('section');
+        if (!section) return;
+
+        const rect = section.getBoundingClientRect();
+        // Skip sections fully outside the viewport
+        if (rect.bottom < 0 || rect.top > window.innerHeight) return;
+
+        const speed = parseFloat(el.dataset.parallax ?? '0.3');
+        // Offset relative to how far the section top is from the viewport top
+        const offset = -rect.top * speed;
+        el.style.transform = `translateY(${offset.toFixed(2)}px)`;
+      });
+    }
+
+    window.addEventListener('scroll', applyParallax, { passive: true });
+    applyParallax();
+
+    // Clean up the listener when navigating away to prevent accumulation
+    document.addEventListener('astro:before-swap', () => {
+      window.removeEventListener('scroll', applyParallax);
+    }, { once: true });
+  }
+</script>

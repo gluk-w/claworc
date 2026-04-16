@@ -25,7 +25,7 @@ HELM_NAMESPACE := claworc
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-docs \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
 	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models scrape-models test \
-	worker-deploy worker-test
+	worker-deploy worker-test site-dev site-build site-deploy
 
 agent: agent-base agent-build agent-test agent-push
 
@@ -162,3 +162,14 @@ worker-deploy:
 
 worker-test:
 	cd website/worker && npm install && npx vitest run
+
+# Astro marketing site (claworc.com). Deployed as a Cloudflare Worker via
+# website/wrangler.toml — independent of website/worker/ (the providers API).
+site-dev:
+	cd website && npm install && npx astro dev
+
+site-build:
+	cd website && npm install && npx astro build
+
+site-deploy:
+	cd website && npm install && npx astro build && npx wrangler deploy

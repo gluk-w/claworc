@@ -1,0 +1,63 @@
+---
+/**
+ * Accordion Component
+ * Collapsible content sections using native <details>/<summary> for zero-JS.
+ * Supports single and multiple open items.
+ */
+import { cn } from '@/lib/cn';
+import { accordionItemVariants, accordionTriggerVariants } from './accordion.variants';
+import Icon from '../../primitives/Icon/Icon.astro';
+
+interface AccordionItem {
+  title: string;
+  content: string;
+  defaultOpen?: boolean;
+}
+
+interface Props {
+  items: AccordionItem[];
+  variant?: 'default' | 'card';
+  size?: 'sm' | 'md' | 'lg';
+  /** Only allow one item open at a time */
+  exclusive?: boolean;
+  class?: string;
+}
+
+const { items, variant = 'default', size = 'md', exclusive = false, class: className } = Astro.props;
+
+// Generate unique group name for exclusive mode
+const groupName = exclusive ? `accordion-${Math.random().toString(36).slice(2, 9)}` : undefined;
+---
+
+<div class={cn('w-full', className)} data-accordion={exclusive ? 'exclusive' : undefined}>
+  {items.map((item) => (
+    <details
+      class={cn(accordionItemVariants({ variant }))}
+      open={item.defaultOpen}
+      name={groupName}
+    >
+      <summary
+        class={cn(
+          accordionTriggerVariants({ size }),
+          'cursor-pointer list-none [&::-webkit-details-marker]:hidden',
+        )}
+      >
+        {item.title}
+        <Icon
+          name="chevron-down"
+          size="sm"
+          class="accordion-icon shrink-0 text-foreground-muted transition-transform duration-200"
+        />
+      </summary>
+      <div class="pb-4 text-sm text-foreground-muted leading-relaxed">
+        {item.content}
+      </div>
+    </details>
+  ))}
+</div>
+
+<style>
+  details[open] > summary .accordion-icon {
+    transform: rotate(180deg);
+  }
+</style>

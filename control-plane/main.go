@@ -169,8 +169,13 @@ func main() {
 	// Start background tunnel manager to maintain SSH tunnels for running instances
 	if orch := orchestrator.Get(); orch != nil {
 		tunnelMgr.StartBackgroundManager(ctx, func(ctx context.Context) ([]uint, error) {
+			// Include instances that are stuck in transient/failed states. The
+			// per-instance exponential backoff in the tunnel manager keeps this
+			// cheap for genuinely dead pods, while ensuring a healthy pod whose
+			// DB row was left at 'error' or 'restarting' (e.g. after a failed
+			// UpdateImage) is still eligible for tunnel reconciliation.
 			var instances []database.Instance
-			if err := database.DB.Where("status = ?", "running").Find(&instances).Error; err != nil {
+			if err := database.DB.Where("status IN ?", []string{"running", "restarting", "error"}).Find(&instances).Error; err != nil {
 				return nil, err
 			}
 			ids := make([]uint, len(instances))

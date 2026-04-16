@@ -68,16 +68,16 @@ var tunnelProxyClient = &http.Client{
 	Timeout: 30 * time.Second,
 }
 
-// proxyToLocalPort proxies an HTTP request to localhost:port/path.
-// It forwards relevant headers and streams the response back.
+// doProxyRequest performs an HTTP request to http://127.0.0.1:port/path,
+// forwarding relevant headers from the original client request. The returned
+// response is NOT written to the client — the caller is responsible for either
+// passing it to writeProxyResponse or closing its body.
 //
-// If rewriteBase is provided and the response Content-Type is text/html,
-// a <base href="{rewriteBase}"> tag is injected after <head> so that
-// relative paths in the HTML resolve correctly under the proxy path.
-//
-// Performance: ~67µs direct to localhost, ~124µs via SSH tunnel (~57µs tunnel overhead).
-// Supports 20+ concurrent requests through a single SSH tunnel without errors.
-func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path string, rewriteBase ...string) error {
+// Separating fetch from write lets callers like ControlProxy inspect the
+// upstream status code and choose to retry with a different path (e.g. falling
+// back from /openclaw/{id}/favicon.svg to /favicon.svg on a 404) before any
+// bytes have been committed to the client's ResponseWriter.
+func doProxyRequest(r *http.Request, port int, path string) (*http.Response, error) {
 	targetURL := fmt.Sprintf("http://127.0.0.1:%d/%s", port, path)
 	if r.URL.RawQuery != "" {
 		targetURL += "?" + r.URL.RawQuery
@@ -87,8 +87,7 @@ func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path str
 
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to create proxy request")
-		return nil
+		return nil, fmt.Errorf("create proxy request: %w", err)
 	}
 
 	// Forward relevant headers
@@ -105,8 +104,17 @@ func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path str
 	resp, err := tunnelProxyClient.Do(proxyReq)
 	if err != nil {
 		log.Printf("Tunnel proxy error: %v", err)
-		return fmt.Errorf("cannot connect to service via tunnel: %w", err)
+		return nil, fmt.Errorf("cannot connect to service via tunnel: %w", err)
 	}
+	return resp, nil
+}
+
+// writeProxyResponse writes an upstream HTTP response to the client, forwarding
+// relevant headers and optionally injecting a <base href> tag into HTML responses
+// so relative paths resolve correctly under the proxy prefix.
+//
+// This helper closes resp.Body.
+func writeProxyResponse(w http.ResponseWriter, resp *http.Response, rewriteBase string) error {
 	defer resp.Body.Close()
 
 	// Forward response headers
@@ -120,14 +128,13 @@ func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path str
 	}
 
 	// Inject <base> tag into HTML responses when rewriteBase is supplied.
-	if len(rewriteBase) > 0 && rewriteBase[0] != "" &&
-		strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
+	if rewriteBase != "" && strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
 		body, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
 			log.Printf("Tunnel proxy: error reading HTML body: %v", readErr)
 			return fmt.Errorf("error reading response body: %w", readErr)
 		}
-		baseTag := `<base href="` + rewriteBase[0] + `">`
+		baseTag := `<base href="` + rewriteBase + `">`
 		body = bytes.Replace(body, []byte("<head>"), []byte("<head>"+baseTag), 1)
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
 		w.WriteHeader(resp.StatusCode)
@@ -138,6 +145,35 @@ func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path str
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 	return nil
+}
+
+// proxyToLocalPort proxies an HTTP request to localhost:port/path.
+// It forwards relevant headers and streams the response back.
+//
+// If rewriteBase is provided and the response Content-Type is text/html,
+// a <base href="{rewriteBase}"> tag is injected after <head> so that
+// relative paths in the HTML resolve correctly under the proxy path.
+//
+// Performance: ~67µs direct to localhost, ~124µs via SSH tunnel (~57µs tunnel overhead).
+// Supports 20+ concurrent requests through a single SSH tunnel without errors.
+func proxyToLocalPort(w http.ResponseWriter, r *http.Request, port int, path string, rewriteBase ...string) error {
+	resp, err := doProxyRequest(r, port, path)
+	if err != nil {
+		// Preserve historical behavior: if we couldn't even create the request,
+		// write a 500 and swallow the error; tunnel failures bubble up so the
+		// caller can show a "connecting" page.
+		if strings.Contains(err.Error(), "create proxy request") {
+			writeError(w, http.StatusInternalServerError, "Failed to create proxy request")
+			return nil
+		}
+		return err
+	}
+
+	base := ""
+	if len(rewriteBase) > 0 {
+		base = rewriteBase[0]
+	}
+	return writeProxyResponse(w, resp, base)
 }
 
 // websocketProxyToLocalPort proxies a WebSocket connection to localhost:port/path.

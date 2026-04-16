@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import {
   Send,
   Plus,
@@ -153,10 +160,19 @@ export default function ChatPanel({
 }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, thinkingLabel]);
+
+  // Auto-resize the textarea to fit its content (bounded by max-h-40 in CSS).
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [input]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -164,6 +180,13 @@ export default function ChatPanel({
     if (!trimmed || connectionState !== "connected") return;
     onSend(trimmed);
     setInput("");
+  };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      handleSubmit(e as unknown as FormEvent);
+    }
   };
 
   return (
@@ -217,19 +240,21 @@ export default function ChatPanel({
       {/* Input bar */}
       <form
         onSubmit={handleSubmit}
-        className="flex items-center gap-2 px-3 py-2 bg-gray-800 border-t border-gray-700"
+        className="flex items-end gap-2 px-3 py-2 bg-gray-800 border-t border-gray-700"
       >
-        <input
-          type="text"
+        <textarea
+          ref={textareaRef}
+          rows={1}
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder={
             connectionState === "connected"
               ? "Type a message..."
               : "Waiting for connection..."
           }
           disabled={connectionState !== "connected"}
-          className="flex-1 bg-gray-700 text-gray-200 text-sm rounded px-3 py-1.5 outline-none placeholder-gray-500 disabled:opacity-50"
+          className="flex-1 bg-gray-700 text-gray-200 text-sm rounded px-3 py-1.5 outline-none placeholder-gray-500 disabled:opacity-50 resize-none overflow-y-auto leading-5 max-h-40"
         />
         {thinkingLabel && connectionState === "connected" ? (
           <button

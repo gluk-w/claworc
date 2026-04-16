@@ -1,0 +1,53 @@
+---
+/**
+ * Skeleton Component
+ * Loading placeholder with pulse animation
+ */
+import type { HTMLAttributes } from 'astro/types';
+import { cn } from '@/lib/cn';
+import { skeletonVariants } from './skeleton.variants';
+
+interface Props extends HTMLAttributes<'div'> {
+  variant?: 'default' | 'circular' | 'text';
+  width?: string;
+  height?: string;
+  animated?: boolean;
+}
+
+const {
+  variant = 'default',
+  width,
+  height,
+  animated = true,
+  class: className,
+  ...attrs
+} = Astro.props;
+
+const style = [
+  width && `width: ${width}`,
+  height && `height: ${height}`,
+].filter(Boolean).join('; ');
+---
+
+<div
+  class={cn(skeletonVariants({ variant, animated }), className)}
+  style={style || undefined}
+  aria-hidden="true"
+  role="presentation"
+  {...attrs}
+/>
+
+<style>
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  .animate-pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+</style>

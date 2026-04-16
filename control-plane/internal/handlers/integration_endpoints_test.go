@@ -688,3 +688,106 @@ func TestIntegration_GatewayBasePath(t *testing.T) {
 		}
 	})
 }
+
+// ─── Control Proxy: root-resource fallback ────────────────────────────────────
+
+// TestIntegration_ControlProxy_FaviconFallback verifies that when a request is
+// proxied through /openclaw/{id}/{resource} and the gateway returns 404, the
+// proxy retries with just /{resource} against the instance root. Browsers
+// automatically request /favicon.svg from the document root regardless of
+// any injected <base href>, so this fallback is required to serve favicons
+// (and similar root-level resources) through the control proxy.
+func TestIntegration_ControlProxy_FaviconFallback(t *testing.T) {
+	withRunningInstance(t, func(instID uint, _ string) {
+		waitForSSHConnected(t, instID, 90*time.Second)
+
+		client := &http.Client{Timeout: 30 * time.Second}
+
+		// Wait for the Gateway tunnel to come up. Until it does, the proxy
+		// returns the "Connecting to OpenClaw…" 503 placeholder regardless of
+		// path.
+		gatewayReady := false
+		deadline := time.Now().Add(90 * time.Second)
+		for time.Now().Before(deadline) {
+			resp, err := client.Get(fmt.Sprintf("%s/api/v1/instances/%d/ssh-status", sessionURL, instID))
+			if err == nil {
+				var status struct {
+					Tunnels []struct {
+						Label  string `json:"label"`
+						Status string `json:"status"`
+					} `json:"tunnels"`
+				}
+				json.NewDecoder(resp.Body).Decode(&status)
+				resp.Body.Close()
+				for _, tun := range status.Tunnels {
+					if tun.Label == "Gateway" && tun.Status == "active" {
+						gatewayReady = true
+						break
+					}
+				}
+			}
+			if gatewayReady {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+		if !gatewayReady {
+			t.Fatal("Gateway tunnel did not become active within 90s")
+		}
+
+		// Request favicon.svg via the proxy. This is the exact case that
+		// motivated the fallback: the browser asks for /openclaw/{id}/favicon.svg
+		// but the gateway only serves /favicon.svg (browsers ignore <base> for
+		// the implicit favicon request).
+		//
+		// Poll for up to 60s in case the gateway process is still initializing
+		// even after the SSH tunnel is active.
+		faviconURL := fmt.Sprintf("%s/openclaw/%d/favicon.svg", sessionURL, instID)
+		var lastStatus int
+		var lastBody []byte
+		deadline = time.Now().Add(60 * time.Second)
+		got200 := false
+		for time.Now().Before(deadline) {
+			resp, err := client.Get(faviconURL)
+			if err != nil {
+				t.Logf("GET %s: %v — retrying", faviconURL, err)
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			lastStatus = resp.StatusCode
+			lastBody, _ = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				got200 = true
+				break
+			}
+			t.Logf("GET %s: HTTP %d — retrying", faviconURL, resp.StatusCode)
+			time.Sleep(2 * time.Second)
+		}
+		if !got200 {
+			t.Fatalf("GET %s: last status %d (body: %.200s)", faviconURL, lastStatus, lastBody)
+		}
+		if len(lastBody) == 0 {
+			t.Error("favicon.svg response body is empty")
+		} else {
+			t.Logf("GET %s → HTTP 200, %d bytes ✓", faviconURL, len(lastBody))
+		}
+
+		// Negative case: a path that exists neither under the prefix nor at
+		// the root must still return 404. This verifies the fallback does not
+		// mask legitimate 404s — it only kicks in for paths that happen to
+		// live at the instance root.
+		missingURL := fmt.Sprintf("%s/openclaw/%d/definitely-not-a-real-path-xyz-12345.bin", sessionURL, instID)
+		resp, err := client.Get(missingURL)
+		if err != nil {
+			t.Fatalf("GET %s: %v", missingURL, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("GET %s: expected 404, got %d (body: %.200s)", missingURL, resp.StatusCode, body)
+		} else {
+			t.Logf("GET %s → HTTP 404 ✓ (fallback did not mask a real 404)", missingURL)
+		}
+	})
+}

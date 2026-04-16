@@ -10,6 +10,7 @@ import TerminalPanel from "@/components/TerminalPanel";
 import VncPanel from "@/components/VncPanel";
 import ChatPanel from "@/components/ChatPanel";
 import FileBrowser from "@/components/FileBrowser";
+import EditInput from "@/components/EditInput";
 import { useInstanceBackups } from "@/hooks/useBackups";
 import SSHStatus from "@/components/SSHStatus";
 import SSHEventLog from "@/components/SSHEventLog";
@@ -552,10 +553,12 @@ export default function InstanceDetailPage() {
                 <dt className="text-xs text-gray-500">Display Name</dt>
                 {isAdmin && editingDisplayName ? (
                   <dd className="mt-0.5 flex gap-2">
-                    <input
+                    <EditInput
                       type="text"
                       value={pendingDisplayName ?? ""}
                       onChange={(e) => setPendingDisplayName(e.target.value)}
+                      onSave={handleSaveDisplayName}
+                      onCancel={() => { setEditingDisplayName(false); setPendingDisplayName(null); }}
                       className="flex-1 min-w-0 text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     <button onClick={handleSaveDisplayName} disabled={updateMutation.isPending || !pendingDisplayName?.trim()} className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shrink-0">{updateMutation.isPending ? "Saving..." : "Save"}</button>
@@ -612,10 +615,12 @@ export default function InstanceDetailPage() {
                 {isAdmin && editingResolution ? (
                   <dd className="mt-0.5">
                     <div className="flex gap-2">
-                      <input
+                      <EditInput
                         type="text"
                         value={pendingResolution ?? ""}
                         onChange={(e) => setPendingResolution(e.target.value)}
+                        onSave={handleSaveResolution}
+                        onCancel={() => { setEditingResolution(false); setPendingResolution(null); }}
                         placeholder="e.g., 1920x1080 (empty = default)"
                         className={`flex-1 min-w-0 text-sm border rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 ${pendingResolution && !isValidResolution(pendingResolution) ? "border-red-300" : "border-gray-300"}`}
                       />
@@ -640,10 +645,12 @@ export default function InstanceDetailPage() {
                 {editingTimezone ? (
                   <dd className="mt-0.5">
                     <div className="flex gap-2">
-                      <input
+                      <EditInput
                         type="text"
                         value={pendingTimezone ?? ""}
                         onChange={(e) => setPendingTimezone(e.target.value)}
+                        onSave={handleSaveTimezone}
+                        onCancel={() => { setEditingTimezone(false); setPendingTimezone(null); }}
                         placeholder="e.g., America/New_York (empty = default)"
                         className="flex-1 min-w-0 text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
@@ -666,10 +673,12 @@ export default function InstanceDetailPage() {
                 {editingUserAgent ? (
                   <dd className="mt-0.5">
                     <div className="flex gap-2">
-                      <input
+                      <EditInput
                         type="text"
                         value={pendingUserAgent ?? ""}
                         onChange={(e) => setPendingUserAgent(e.target.value)}
+                        onSave={handleSaveUserAgent}
+                        onCancel={() => { setEditingUserAgent(false); setPendingUserAgent(null); }}
                         placeholder="Empty = default"
                         className="flex-1 min-w-0 text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
@@ -717,22 +726,26 @@ export default function InstanceDetailPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">CPU Request</label>
-                    <input type="text" value={pendingCPURequest} onChange={(e) => setPendingCPURequest(e.target.value)} placeholder="e.g., 500m"
+                    <EditInput type="text" value={pendingCPURequest} onChange={(e) => setPendingCPURequest(e.target.value)} placeholder="e.g., 500m"
+                      onSave={handleSaveResources} onCancel={() => setEditingResources(false)}
                       className={`w-full px-3 py-1.5 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${pendingCPURequest && !isValidCPU(pendingCPURequest) ? "border-red-300" : "border-gray-300"}`} />
                   </div>
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">CPU Limit</label>
-                    <input type="text" value={pendingCPULimit} onChange={(e) => setPendingCPULimit(e.target.value)} placeholder="e.g., 2000m"
+                    <EditInput type="text" value={pendingCPULimit} onChange={(e) => setPendingCPULimit(e.target.value)} placeholder="e.g., 2000m"
+                      onSave={handleSaveResources} onCancel={() => setEditingResources(false)}
                       className={`w-full px-3 py-1.5 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${pendingCPULimit && !isValidCPU(pendingCPULimit) ? "border-red-300" : "border-gray-300"}`} />
                   </div>
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">Memory Request</label>
-                    <input type="text" value={pendingMemoryRequest} onChange={(e) => setPendingMemoryRequest(e.target.value)} placeholder="e.g., 1Gi"
+                    <EditInput type="text" value={pendingMemoryRequest} onChange={(e) => setPendingMemoryRequest(e.target.value)} placeholder="e.g., 1Gi"
+                      onSave={handleSaveResources} onCancel={() => setEditingResources(false)}
                       className={`w-full px-3 py-1.5 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${pendingMemoryRequest && !isValidMemory(pendingMemoryRequest) ? "border-red-300" : "border-gray-300"}`} />
                   </div>
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">Memory Limit</label>
-                    <input type="text" value={pendingMemoryLimit} onChange={(e) => setPendingMemoryLimit(e.target.value)} placeholder="e.g., 4Gi"
+                    <EditInput type="text" value={pendingMemoryLimit} onChange={(e) => setPendingMemoryLimit(e.target.value)} placeholder="e.g., 4Gi"
+                      onSave={handleSaveResources} onCancel={() => setEditingResources(false)}
                       className={`w-full px-3 py-1.5 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${pendingMemoryLimit && !isValidMemory(pendingMemoryLimit) ? "border-red-300" : "border-gray-300"}`} />
                   </div>
                 </div>

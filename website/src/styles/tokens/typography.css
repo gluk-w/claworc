@@ -1,0 +1,55 @@
+/* =============================================================================
+   Astro Rocket Design Tokens - Typography
+   =============================================================================
+   Fluid typography using clamp() for responsive sizing.
+   Font families are theme-controlled — see themes/*.css
+   ============================================================================= */
+
+:root {
+  /* ---------------------------------------------------------------------------
+     Font Sizes - Fluid Typography
+     Using clamp(min, preferred, max) for smooth scaling
+     --------------------------------------------------------------------------- */
+  --text-xs: clamp(0.75rem, 0.7rem + 0.25vw, 0.8125rem);
+  --text-sm: clamp(0.875rem, 0.8rem + 0.375vw, 0.9375rem);
+  --text-base: clamp(1rem, 0.925rem + 0.375vw, 1.0625rem);
+  --text-lg: clamp(1.125rem, 1rem + 0.625vw, 1.25rem);
+  --text-xl: clamp(1.25rem, 1.1rem + 0.75vw, 1.5rem);
+  --text-2xl: clamp(1.5rem, 1.25rem + 1.25vw, 1.875rem);
+  --text-3xl: clamp(1.875rem, 1.5rem + 1.875vw, 2.5rem);
+  --text-4xl: clamp(2.25rem, 1.75rem + 2.5vw, 3.25rem);
+  --text-5xl: clamp(3rem, 2.25rem + 3.75vw, 4.5rem);
+
+  /* ---------------------------------------------------------------------------
+     Line Heights
+     --------------------------------------------------------------------------- */
+  --leading-none: 1;
+  --leading-tight: 1.25;
+  --leading-snug: 1.375;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.625;
+  --leading-loose: 2;
+
+  /* ---------------------------------------------------------------------------
+     Letter Spacing
+     --------------------------------------------------------------------------- */
+  --tracking-tighter: -0.05em;
+  --tracking-tight: -0.025em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.025em;
+  --tracking-wider: 0.05em;
+  --tracking-widest: 0.1em;
+
+  /* ---------------------------------------------------------------------------
+     Font Weights
+     --------------------------------------------------------------------------- */
+  --weight-thin: 100;
+  --weight-extralight: 200;
+  --weight-light: 300;
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --weight-extrabold: 800;
+  --weight-black: 900;
+}

@@ -1,0 +1,663 @@
+---
+/**
+ * ConsentBanner Component
+ *
+ * Cookie consent UI with Google Consent Mode v2 integration.
+ * Shows a banner with Accept/Decline + Customize settings panel using Dialog.
+ * Only renders when PUBLIC_CONSENT_ENABLED is true.
+ */
+import { PUBLIC_CONSENT_ENABLED, PUBLIC_PRIVACY_POLICY_URL } from 'astro:env/client';
+import consentConfig from '@/config/consent.config';
+import Dialog from '@/components/ui/overlay/Dialog';
+import Button from '@/components/ui/form/Button';
+import Switch from '@/components/ui/form/Switch';
+import type { ConsentUIText } from '@/lib/consent.types';
+
+interface Props {
+  position?: 'top' | 'bottom';
+  ui?: Partial<ConsentUIText>;
+  alwaysOnLabel?: string;
+  class?: string;
+}
+
+const {
+  position = 'bottom',
+  ui: uiOverrides,
+  alwaysOnLabel: alwaysOnLabelProp,
+  class: className,
+} = Astro.props;
+
+const consentEnabled = PUBLIC_CONSENT_ENABLED;
+const privacyPolicyUrl = PUBLIC_PRIVACY_POLICY_URL;
+
+// Merge UI text: props override config defaults
+const ui = { ...consentConfig.ui, ...uiOverrides };
+const alwaysOnLabel = alwaysOnLabelProp ?? ui.alwaysOnLabel ?? 'Always on';
+const privacyPolicyLabel = ui.privacyPolicyLabel ?? 'Privacy Policy';
+
+const isTop = position === 'top';
+
+// Build category → GCM type mapping for dynamic GCM updates
+const categoryGcmMap: Record<string, string[]> = {};
+for (const [key, cat] of Object.entries(consentConfig.categories)) {
+  categoryGcmMap[key] = cat.gcmTypes;
+}
+const categoryGcmMapJson = JSON.stringify(categoryGcmMap);
+
+// Serialize config for client-side use
+const configJson = JSON.stringify(consentConfig);
+---
+
+{consentEnabled && (
+  <>
+    <!-- Bottom/Top Bar Banner -->
+    <div
+      id="consent-banner"
+      class:list={[
+        'consent-banner',
+        isTop ? 'consent-banner--top' : 'consent-banner--bottom',
+        className,
+      ]}
+      role="dialog"
+      aria-modal="false"
+      aria-label="Cookie consent"
+    >
+      <div class="consent-banner-inner">
+        <div class="consent-banner-content">
+          <p class="consent-banner-heading" id="consent-banner-heading">
+            {ui.heading}
+          </p>
+          <p class="consent-banner-description">
+            {ui.description}
+            {privacyPolicyUrl && (
+              <>
+                {' '}
+                <a href={privacyPolicyUrl} class="consent-privacy-link">
+                  {privacyPolicyLabel}
+                </a>
+              </>
+            )}
+          </p>
+        </div>
+        <div class="consent-banner-actions">
+          <Button variant="primary" size="sm" id="consent-accept-all">
+            {ui.acceptAll}
+          </Button>
+          <Button variant="secondary" size="sm" id="consent-decline-all">
+            {ui.declineAll}
+          </Button>
+          <Button variant="link" size="sm" id="consent-customize">
+            {ui.customize}
+          </Button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Panel via Dialog -->
+    <Dialog id="consent-settings" title={ui.settingsHeading} size="md">
+      <div class="consent-settings-body">
+        {Object.entries(consentConfig.categories).map(([key, cat]) => (
+          <div class="consent-category" data-category={key}>
+            <div class="consent-category-info">
+              <span class="consent-category-label">{cat.label}</span>
+              {cat.required && (
+                <span class="consent-category-badge">{alwaysOnLabel}</span>
+              )}
+              <p class="consent-category-description">{cat.description}</p>
+            </div>
+            <Switch
+              id={`consent-${key}`}
+              size="sm"
+              checked={cat.required || cat.defaultEnabled}
+              disabled={cat.required}
+              class="shrink-0 mt-0.5"
+            />
+          </div>
+        ))}
+      </div>
+
+      <div slot="footer" class="consent-settings-footer">
+        <Button variant="primary" size="sm" fullWidth id="consent-save-preferences">
+          {ui.savePreferences}
+        </Button>
+      </div>
+    </Dialog>
+
+    <!-- Reopener Button -->
+    <button
+      type="button"
+      id="consent-reopener"
+      class:list={[
+        'consent-reopener',
+        isTop ? 'consent-reopener--top' : 'consent-reopener--bottom',
+      ]}
+      aria-label="Open cookie settings"
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+      </svg>
+    </button>
+
+    <!-- Config data for client script -->
+    <script type="application/json" id="consent-config-data" set:html={configJson} />
+    <script type="application/json" id="consent-gcm-map-data" set:html={categoryGcmMapJson} />
+
+    <script>
+      interface ConsentWindow extends Window {
+        dataLayer: Record<string, unknown>[];
+        gtag: (...args: unknown[]) => void;
+        __consentState: { decided: boolean; categories: Record<string, boolean> } | undefined;
+        __consentAnalyticsInjected: boolean | undefined;
+        __consentBannerIsSetupBound: boolean | undefined;
+        openConsentSettings: (() => void) | undefined;
+        openDialog: ((id: string) => void) | undefined;
+        closeDialog: ((id: string) => void) | undefined;
+      }
+      const w = window as unknown as ConsentWindow;
+
+      function initConsentBanner() {
+        const configEl = document.getElementById('consent-config-data');
+        const gcmMapEl = document.getElementById('consent-gcm-map-data');
+        if (!configEl || !gcmMapEl) return;
+
+        const config = JSON.parse(configEl.textContent!);
+        const categoryGcmMap = JSON.parse(gcmMapEl.textContent!);
+        const STORAGE_KEY = config.storageKey;
+        const VERSION = config.version;
+        const MODE = config.mode;
+        const DELAY = config.showDelay;
+        let hideBannerTimeout: ReturnType<typeof setTimeout> | null = null;
+        let currentDialogObserver: MutationObserver | null = null;
+        let bindController: AbortController | null = null;
+
+        // ── Storage helpers ──
+        function getStored() {
+          try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (!raw) return null;
+            const data = JSON.parse(raw);
+            if (data && data.version === VERSION) return data;
+            return null;
+          } catch { return null; }
+        }
+
+        function saveConsent(categories: Record<string, boolean>) {
+          const prefs = {
+            version: VERSION,
+            timestamp: new Date().toISOString(),
+            categories: categories
+          };
+          try { localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs)); } catch { /* ignored */ }
+          return prefs;
+        }
+
+        // ── GCM update (dynamic mapping) ──
+        function updateGCM(categories: Record<string, boolean>) {
+          if (typeof w.gtag !== 'function') {
+            w.dataLayer = w.dataLayer || [];
+            if (typeof w.gtag !== 'function') {
+              w.gtag = function(...args: unknown[]) { w.dataLayer.push(args as unknown as Record<string, unknown>); };
+            }
+          }
+
+          const gcm: Record<string, string> = { security_storage: 'granted' };
+          Object.keys(categoryGcmMap).forEach(function(catKey) {
+            const granted = !!categories[catKey];
+            categoryGcmMap[catKey].forEach(function(gcmType: string) {
+              gcm[gcmType] = granted ? 'granted' : 'denied';
+            });
+          });
+
+          w.gtag('consent', 'update', gcm);
+        }
+
+        // ── Strict mode: dynamically inject analytics ──
+        function injectAnalyticsStrict(categories: Record<string, boolean>) {
+          if (MODE !== 'strict') return;
+          const analyticsGranted = Object.keys(categoryGcmMap).some(function(catKey) {
+            return categoryGcmMap[catKey].indexOf('analytics_storage') !== -1 && categories[catKey];
+          });
+          if (!analyticsGranted) return;
+          if (w.__consentAnalyticsInjected) return;
+          w.__consentAnalyticsInjected = true;
+
+          const gtmMeta = document.querySelector('meta[name="gtm-id"]');
+          const gaMeta = document.querySelector('meta[name="ga-id"]');
+          const gtmId = gtmMeta ? gtmMeta.getAttribute('content') : null;
+          const gaId = gaMeta ? gaMeta.getAttribute('content') : null;
+
+          if (gtmId) {
+            w.dataLayer = w.dataLayer || [];
+            w.dataLayer.push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' });
+            const gtmScript = document.createElement('script');
+            gtmScript.async = true;
+            gtmScript.src = 'https://www.googletagmanager.com/gtm.js?id=' + gtmId;
+            document.head.appendChild(gtmScript);
+          } else if (gaId) {
+            const gaScript = document.createElement('script');
+            gaScript.async = true;
+            gaScript.src = 'https://www.googletagmanager.com/gtag/js?id=' + gaId;
+            document.head.appendChild(gaScript);
+            w.gtag('js', new Date());
+            w.gtag('config', gaId);
+          }
+        }
+
+        // ── Apply consent ──
+        function applyConsent(categories: Record<string, boolean>) {
+          saveConsent(categories);
+          updateGCM(categories);
+          injectAnalyticsStrict(categories);
+
+          w.__consentState = { decided: true, categories: categories };
+          window.dispatchEvent(new CustomEvent('consent-updated', { detail: { categories: categories } }));
+
+          hideBanner();
+          closeSettings();
+          showReopener();
+        }
+
+        // ── Banner show/hide ──
+        function showBanner() {
+          if (hideBannerTimeout) {
+            clearTimeout(hideBannerTimeout);
+            hideBannerTimeout = null;
+          }
+          const banner = document.getElementById('consent-banner');
+          if (!banner) return;
+          banner.removeAttribute('hidden');
+          banner.classList.add('consent-banner--visible');
+        }
+
+        function hideBanner() {
+          if (hideBannerTimeout) {
+            clearTimeout(hideBannerTimeout);
+            hideBannerTimeout = null;
+          }
+          const banner = document.getElementById('consent-banner');
+          if (!banner) return;
+          banner.classList.remove('consent-banner--visible');
+          hideBannerTimeout = setTimeout(function() {
+            banner.setAttribute('hidden', '');
+            hideBannerTimeout = null;
+          }, 300);
+        }
+
+        // ── Reopener ──
+        function showReopener() {
+          const btn = document.getElementById('consent-reopener');
+          if (btn) btn.classList.add('consent-reopener--visible');
+        }
+
+        function hideReopener() {
+          const btn = document.getElementById('consent-reopener');
+          if (btn) btn.classList.remove('consent-reopener--visible');
+        }
+
+        // ── Settings panel (via Dialog API) ──
+        function openSettings() {
+          const stored = getStored();
+          Object.keys(config.categories).forEach(function(key: string) {
+            const cb = document.getElementById('consent-' + key) as HTMLInputElement | null;
+            if (cb && !config.categories[key].required) {
+              cb.checked = stored ? !!stored.categories[key] : config.categories[key].defaultEnabled;
+              cb.setAttribute('aria-checked', cb.checked ? 'true' : 'false');
+            }
+          });
+
+          if (typeof w.openDialog === 'function') {
+            w.openDialog('consent-settings');
+          }
+        }
+
+        function closeSettings() {
+          if (typeof w.closeDialog === 'function') {
+            w.closeDialog('consent-settings');
+          }
+        }
+
+        // ── Global API ──
+        w.openConsentSettings = openSettings;
+
+        // ── Build categories from toggles ──
+        function getCategoriesFromToggles() {
+          const cats: Record<string, boolean> = {};
+          Object.keys(config.categories).forEach(function(key: string) {
+            if (config.categories[key].required) {
+              cats[key] = true;
+            } else {
+              const cb = document.getElementById('consent-' + key) as HTMLInputElement | null;
+              cats[key] = cb ? cb.checked : false;
+            }
+          });
+          return cats;
+        }
+
+        function buildAllGranted() {
+          const cats: Record<string, boolean> = {};
+          Object.keys(config.categories).forEach(function(key: string) { cats[key] = true; });
+          return cats;
+        }
+
+        function buildAllDenied() {
+          const cats: Record<string, boolean> = {};
+          Object.keys(config.categories).forEach(function(key: string) {
+            cats[key] = config.categories[key].required;
+          });
+          return cats;
+        }
+
+        // ── Initialize ──
+        function init() {
+          const banner = document.getElementById('consent-banner');
+          if (!banner) return;
+
+          banner.setAttribute('hidden', '');
+
+          const stored = getStored();
+          if (stored && stored.categories && (!w.__consentState || !w.__consentState.decided)) {
+            w.__consentState = { decided: true, categories: stored.categories };
+            updateGCM(stored.categories);
+            injectAnalyticsStrict(stored.categories);
+          }
+
+          const state = w.__consentState;
+          if (state && state.decided) {
+            showReopener();
+            return;
+          }
+
+          setTimeout(showBanner, DELAY);
+        }
+
+        // ── Re-show banner when Dialog closes without saving ──
+        function watchDialogClose() {
+          const dialogEl = document.getElementById('consent-settings');
+          if (!dialogEl) return;
+
+          if (currentDialogObserver) {
+            currentDialogObserver.disconnect();
+            currentDialogObserver = null;
+          }
+
+          currentDialogObserver = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+              if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                if (dialogEl.classList.contains('hidden')) {
+                  const state = w.__consentState;
+                  if (!state || !state.decided) {
+                    showBanner();
+                  } else {
+                    showReopener();
+                  }
+                }
+              }
+            });
+          });
+          currentDialogObserver.observe(dialogEl, { attributes: true, attributeFilter: ['class'] });
+        }
+
+        // ── Bind event listeners ──
+        function bindEvents() {
+          if (bindController) {
+            bindController.abort();
+          }
+          bindController = new AbortController();
+          const signal = bindController.signal;
+
+          const acceptBtn = document.getElementById('consent-accept-all');
+          const declineBtn = document.getElementById('consent-decline-all');
+          const customizeBtn = document.getElementById('consent-customize');
+          const saveBtn = document.getElementById('consent-save-preferences');
+          const reopenerBtn = document.getElementById('consent-reopener');
+
+          if (acceptBtn) acceptBtn.addEventListener('click', function() {
+            applyConsent(buildAllGranted());
+          }, { signal: signal });
+
+          if (declineBtn) declineBtn.addEventListener('click', function() {
+            applyConsent(buildAllDenied());
+          }, { signal: signal });
+
+          if (customizeBtn) customizeBtn.addEventListener('click', function() {
+            hideBanner();
+            openSettings();
+          }, { signal: signal });
+
+          if (saveBtn) saveBtn.addEventListener('click', function() {
+            applyConsent(getCategoriesFromToggles());
+          }, { signal: signal });
+
+          if (reopenerBtn) reopenerBtn.addEventListener('click', function() {
+            hideReopener();
+            openSettings();
+          }, { signal: signal });
+
+          watchDialogClose();
+        }
+
+        // Run on page load and view transitions
+        function setup() {
+          init();
+          bindEvents();
+        }
+
+        setup();
+      }
+
+      initConsentBanner();
+      document.addEventListener('astro:page-load', initConsentBanner);
+    </script>
+  </>
+)}
+
+<style>
+  /* ─── Banner ─── */
+  .consent-banner {
+    position: fixed;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    transition: transform var(--transition-slow) cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .consent-banner--bottom {
+    bottom: 0;
+    transform: translateY(100%);
+  }
+
+  .consent-banner--top {
+    top: 0;
+    transform: translateY(-100%);
+  }
+
+  .consent-banner--visible.consent-banner--bottom,
+  .consent-banner--visible.consent-banner--top {
+    transform: translateY(0);
+  }
+
+  .consent-banner-inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem;
+    max-width: 72rem;
+    margin: 0 auto;
+    padding: 1.25rem 1.5rem;
+    background: var(--background-elevated);
+    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.08);
+  }
+
+  .consent-banner--bottom .consent-banner-inner {
+    border-top: 1px solid var(--border);
+  }
+
+  .consent-banner--top .consent-banner-inner {
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  }
+
+  .consent-banner-content {
+    flex: 1 1 0%;
+    min-width: 280px;
+  }
+
+  .consent-banner-heading {
+    font-weight: 600;
+    font-size: 0.9375rem;
+    line-height: 1.4;
+    color: var(--foreground);
+    margin: 0 0 0.25rem 0;
+  }
+
+  .consent-banner-description {
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    color: var(--foreground-muted);
+    margin: 0;
+  }
+
+  .consent-privacy-link {
+    color: var(--primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    font-weight: 500;
+    transition: color var(--transition-fast);
+  }
+
+  .consent-privacy-link:hover {
+    color: var(--primary-hover);
+  }
+
+  .consent-banner-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    flex-shrink: 0;
+  }
+
+  /* ─── Settings (inside Dialog) ─── */
+  .consent-settings-body {
+    padding: 0;
+  }
+
+  .consent-settings-footer {
+    padding: 1.25rem 1.5rem;
+    border-top: 1px solid var(--border);
+  }
+
+  /* ─── Category rows ─── */
+  .consent-category {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 0;
+  }
+
+  .consent-category + .consent-category {
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .consent-category-info {
+    flex: 1 1 0%;
+    min-width: 0;
+  }
+
+  .consent-category-label {
+    display: inline;
+    font-weight: 500;
+    font-size: 0.875rem;
+    color: var(--foreground);
+  }
+
+  .consent-category-badge {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    color: var(--foreground-muted);
+    background: var(--muted);
+    border-radius: 9999px;
+    vertical-align: middle;
+  }
+
+  .consent-category-description {
+    margin: 0.25rem 0 0 0;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    color: var(--foreground-subtle);
+  }
+
+  /* ─── Reopener Button ─── */
+  .consent-reopener {
+    position: fixed;
+    z-index: 49;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 9999px;
+    border: 1px solid var(--border);
+    background: var(--background-elevated);
+    color: var(--foreground-muted);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(0.8);
+    transition:
+      opacity var(--transition-normal),
+      transform var(--transition-normal),
+      color var(--transition-fast),
+      background-color var(--transition-fast);
+  }
+
+  .consent-reopener--bottom {
+    bottom: 1rem;
+    left: 1rem;
+  }
+
+  .consent-reopener--top {
+    top: 1rem;
+    left: 1rem;
+  }
+
+  .consent-reopener--visible {
+    opacity: 1;
+    pointer-events: auto;
+    transform: scale(1);
+  }
+
+  .consent-reopener:hover {
+    color: var(--foreground);
+    background: var(--muted);
+  }
+
+  .consent-reopener:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring);
+  }
+
+  /* ─── Responsive ─── */
+  @media (max-width: 640px) {
+    .consent-banner-inner {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .consent-banner-actions {
+      flex-wrap: wrap;
+    }
+  }
+
+  /* ─── Reduced Motion ─── */
+  @media (prefers-reduced-motion: reduce) {
+    .consent-banner,
+    .consent-reopener {
+      transition: none;
+    }
+  }
+</style>

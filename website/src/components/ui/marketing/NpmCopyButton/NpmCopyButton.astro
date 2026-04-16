@@ -1,0 +1,92 @@
+---
+import Icon from '@/components/ui/primitives/Icon/Icon.astro';
+import { cn } from '@/lib/cn';
+
+interface Props {
+  /** The npm command to copy */
+  command?: string;
+  /** Text shown after copying */
+  copiedText?: string;
+  /** Button size */
+  size?: 'sm' | 'md' | 'lg';
+  /** Additional CSS classes */
+  class?: string;
+}
+
+const {
+  command = 'npm create astro@latest',
+  copiedText = 'Copied!',
+  size = 'lg',
+  class: className,
+} = Astro.props;
+
+const sizes = {
+  sm: 'h-8 px-3 text-xs',
+  md: 'h-10 px-4 text-sm',
+  lg: 'h-12 px-5 text-base',
+};
+---
+
+<button
+  type="button"
+  class={cn(
+    'inline-flex items-center justify-center gap-2 rounded-md font-medium transition-all',
+    'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none',
+    'active:scale-[0.98]',
+    'bg-foreground text-background hover:bg-foreground/90',
+    sizes[size],
+    className
+  )}
+  data-npm-copy
+  data-command={command}
+  data-copied={copiedText}
+>
+  <Icon name="terminal" size="md" />
+  <span data-command-text>{command}</span>
+  <span data-copy-icon class="ml-1 text-secondary">
+    <Icon name="copy" size="sm" />
+  </span>
+  <span data-check-icon class="ml-1 hidden text-success">
+    <Icon name="check" size="sm" />
+  </span>
+</button>
+
+<script>
+  function initCopyButtons() {
+    const npmCopyButtons = document.querySelectorAll<HTMLButtonElement>('[data-npm-copy]');
+    npmCopyButtons.forEach((button) => {
+      if (button.dataset.initialized) return;
+      button.dataset.initialized = 'true';
+
+      const copyIcon = button.querySelector('[data-copy-icon]');
+      const checkIcon = button.querySelector('[data-check-icon]');
+      const commandText = button.querySelector('[data-command-text]');
+
+      if (!copyIcon || !checkIcon || !commandText) return;
+
+      const command = button.dataset.command || 'npm create astro@latest';
+      const copiedText = button.dataset.copied || 'Copied!';
+
+      button.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(command);
+
+          copyIcon.classList.add('hidden');
+          checkIcon.classList.remove('hidden');
+          commandText.textContent = copiedText;
+
+          setTimeout(() => {
+            copyIcon.classList.remove('hidden');
+            checkIcon.classList.add('hidden');
+            commandText.textContent = command;
+          }, 2000);
+        } catch {
+          // Clipboard API failed - user will need to copy manually
+        }
+      });
+    });
+  }
+
+  initCopyButtons();
+  document.addEventListener('astro:page-load', initCopyButtons);
+</script>

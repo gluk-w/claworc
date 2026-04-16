@@ -1,0 +1,63 @@
+---
+/**
+ * StatCard Pattern
+ * Composition example: Card + typography for a metric display.
+ * Common in dashboards and landing pages.
+ */
+import { cn } from '@/lib/cn';
+import Card from '@/components/ui/data-display/Card/Card.astro';
+import Icon from '@/components/ui/primitives/Icon/Icon.astro';
+
+interface Props {
+  label: string;
+  value: string;
+  /** Optional trend indicator: 'up' | 'down' | 'neutral' */
+  trend?: 'up' | 'down' | 'neutral';
+  /** Trend description text (e.g., "+12% from last month") */
+  trendText?: string;
+  /** Icon name from the Icon component */
+  icon?: string;
+  class?: string;
+}
+
+const {
+  label,
+  value,
+  trend,
+  trendText,
+  icon,
+  class: className,
+} = Astro.props;
+
+const trendColors = {
+  up: 'text-[var(--success)]',
+  down: 'text-[var(--error)]',
+  neutral: 'text-foreground-muted',
+};
+
+const trendIcons = {
+  up: 'trending-up',
+  down: 'trending-down',
+  neutral: 'minus',
+};
+---
+
+<Card variant="default" padding="md" hover class={className}>
+  <div class="flex items-start justify-between">
+    <div>
+      <p class="text-sm text-foreground-muted">{label}</p>
+      <p class="text-2xl font-bold text-foreground mt-1">{value}</p>
+      {trend && trendText && (
+        <div class={cn('flex items-center gap-1 mt-2 text-xs font-medium', trendColors[trend])}>
+          <Icon name={trendIcons[trend]} size="xs" />
+          <span>{trendText}</span>
+        </div>
+      )}
+    </div>
+    {icon && (
+      <div class="p-2.5 rounded-lg bg-secondary text-foreground-muted">
+        <Icon name={icon} size="md" />
+      </div>
+    )}
+  </div>
+</Card>
