@@ -158,7 +158,7 @@ export function VerticalTabs({
   }, [isDropdownOpen, tabs, focusedIndex, handleTabChange, closeDropdown]);
 
   const handleDesktopKeyDown = useCallback((e: KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
-    let newIndex = currentIndex;
+    let newIndex: number;
 
     switch (e.key) {
       case 'ArrowUp':

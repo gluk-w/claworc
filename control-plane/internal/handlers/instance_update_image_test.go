@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,19 +16,51 @@ import (
 )
 
 // updateImageMock wraps mockOrchestrator so UpdateImage and GetInstanceStatus
-// can be overridden per test — the base mock exposes static implementations.
+// can be overridden per test. The WaitGroup lets tests wait until the handler's
+// background goroutine fully completes (including the DB write after UpdateImage
+// returns), preventing cross-test races on the global database.DB.
 type updateImageMock struct {
 	mockOrchestrator
 	updateImageErr error
-	liveStatus     string
+
+	mu         sync.Mutex
+	liveStatus string
+
+	// gate, when non-nil, blocks UpdateImage until closed. This lets the test
+	// change mock state (e.g. liveStatus) before the goroutine proceeds past
+	// UpdateImage to its post-failure GetInstanceStatus check.
+	gate chan struct{}
+
+	wg sync.WaitGroup
 }
 
 func (m *updateImageMock) UpdateImage(_ context.Context, _ string, _ orchestrator.CreateParams) error {
+	defer m.wg.Done()
+	if m.gate != nil {
+		<-m.gate
+	}
 	return m.updateImageErr
 }
 
 func (m *updateImageMock) GetInstanceStatus(_ context.Context, _ string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.liveStatus, nil
+}
+
+func (m *updateImageMock) setLiveStatus(s string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.liveStatus = s
+}
+
+// ensureStatusMessageColumn adds the `status_message` column to the test DB
+// so GORM's map-based Updates in UpdateInstanceImage don't fail on SQLite
+// with "no such column" (production has this column via migration, but the
+// Instance struct used by AutoMigrate in setupTestDB does not declare it).
+func ensureStatusMessageColumn(t *testing.T) {
+	t.Helper()
+	database.DB.Exec("ALTER TABLE instances ADD COLUMN status_message TEXT")
 }
 
 // waitForStatus polls the DB until the instance status matches `want` or the
@@ -57,6 +90,7 @@ func waitForStatus(t *testing.T, id uint, want string, timeout time.Duration) st
 // 127.0.0.1:40001 that the embedded agent relies on).
 func TestUpdateInstanceImage_FailureKeepsRunningStatusWhenPodHealthy(t *testing.T) {
 	setupTestDB(t)
+	ensureStatusMessageColumn(t)
 
 	sshMgr := sshproxy.NewSSHManager(nil, "")
 	tm := sshproxy.NewTunnelManager(sshMgr)
@@ -67,6 +101,7 @@ func TestUpdateInstanceImage_FailureKeepsRunningStatusWhenPodHealthy(t *testing.
 		updateImageErr: errors.New("simulated image pull failure"),
 		liveStatus:     "running",
 	}
+	mock.wg.Add(1)
 	orchestrator.Set(mock)
 	defer orchestrator.Set(nil)
 
@@ -87,11 +122,12 @@ func TestUpdateInstanceImage_FailureKeepsRunningStatusWhenPodHealthy(t *testing.
 		t.Fatalf("expected status 202, got %d (body: %s)", w.Code, w.Body.String())
 	}
 
-	// UpdateImage runs in a goroutine; wait for the DB write.
-	final := waitForStatus(t, inst.ID, "running", 2*time.Second)
+	final := waitForStatus(t, inst.ID, "running", 5*time.Second)
 	if final != "running" {
 		t.Fatalf("expected status to remain 'running' when pod is live, got %q", final)
 	}
+
+	mock.wg.Wait()
 }
 
 // TestUpdateInstanceImage_FailureMarksErrorWhenPodUnhealthy covers the
@@ -99,16 +135,20 @@ func TestUpdateInstanceImage_FailureKeepsRunningStatusWhenPodHealthy(t *testing.
 // row must transition to 'error' so the UI surfaces the problem.
 func TestUpdateInstanceImage_FailureMarksErrorWhenPodUnhealthy(t *testing.T) {
 	setupTestDB(t)
+	ensureStatusMessageColumn(t)
 
 	sshMgr := sshproxy.NewSSHManager(nil, "")
 	tm := sshproxy.NewTunnelManager(sshMgr)
 	TunnelMgr = tm
 	defer func() { TunnelMgr = nil }()
 
+	gate := make(chan struct{})
 	mock := &updateImageMock{
 		updateImageErr: errors.New("simulated image pull failure"),
-		liveStatus:     "stopped",
+		liveStatus:     "running",
+		gate:           gate,
 	}
+	mock.wg.Add(1)
 	orchestrator.Set(mock)
 	defer orchestrator.Set(nil)
 
@@ -123,21 +163,23 @@ func TestUpdateInstanceImage_FailureMarksErrorWhenPodUnhealthy(t *testing.T) {
 		map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
 	w := httptest.NewRecorder()
 
-	// The handler's precondition check requires the orchestrator to report
-	// 'running' before kicking off the update. Flip the mock to 'running' for
-	// that check, then back to 'stopped' once the goroutine re-reads status.
-	mock.liveStatus = "running"
 	UpdateInstanceImage(w, req)
-	mock.liveStatus = "stopped"
 
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("expected status 202, got %d (body: %s)", w.Code, w.Body.String())
 	}
 
-	final := waitForStatus(t, inst.ID, "error", 2*time.Second)
+	// Flip status BEFORE unblocking the goroutine so that the post-failure
+	// GetInstanceStatus check inside the goroutine sees "stopped".
+	mock.setLiveStatus("stopped")
+	close(gate)
+
+	final := waitForStatus(t, inst.ID, "error", 5*time.Second)
 	if final != "error" {
 		t.Fatalf("expected status 'error' when pod is not running, got %q", final)
 	}
+
+	mock.wg.Wait()
 }
 
 // TestUpdateInstanceImage_SuccessMarksRunning is the happy path — a
@@ -145,6 +187,7 @@ func TestUpdateInstanceImage_FailureMarksErrorWhenPodUnhealthy(t *testing.T) {
 // state.
 func TestUpdateInstanceImage_SuccessMarksRunning(t *testing.T) {
 	setupTestDB(t)
+	ensureStatusMessageColumn(t)
 
 	sshMgr := sshproxy.NewSSHManager(nil, "")
 	tm := sshproxy.NewTunnelManager(sshMgr)
@@ -155,6 +198,7 @@ func TestUpdateInstanceImage_SuccessMarksRunning(t *testing.T) {
 		updateImageErr: nil,
 		liveStatus:     "running",
 	}
+	mock.wg.Add(1)
 	orchestrator.Set(mock)
 	defer orchestrator.Set(nil)
 
@@ -175,8 +219,10 @@ func TestUpdateInstanceImage_SuccessMarksRunning(t *testing.T) {
 		t.Fatalf("expected status 202, got %d (body: %s)", w.Code, w.Body.String())
 	}
 
-	final := waitForStatus(t, inst.ID, "running", 2*time.Second)
+	final := waitForStatus(t, inst.ID, "running", 5*time.Second)
 	if final != "running" {
 		t.Fatalf("expected status 'running' after successful update, got %q", final)
 	}
+
+	mock.wg.Wait()
 }

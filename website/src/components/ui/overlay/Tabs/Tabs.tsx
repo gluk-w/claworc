@@ -71,7 +71,7 @@ export function Tabs({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
-      let newIndex = currentIndex;
+      let newIndex: number;
 
       switch (e.key) {
         case 'ArrowLeft':

@@ -1,6 +1,6 @@
 import { defineCollection, reference } from 'astro:content';
 import { z } from 'astro/zod';
-import { glob, file } from 'astro/loaders';
+import { glob } from 'astro/loaders';
 import { docsLoader } from '@astrojs/starlight/loaders';
 import { docsSchema } from '@astrojs/starlight/schema';
 
