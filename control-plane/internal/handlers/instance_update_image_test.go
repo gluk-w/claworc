@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -13,18 +14,11 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
+	"gorm.io/gorm"
 )
 
 // updateImageMock wraps mockOrchestrator so UpdateImage and GetInstanceStatus
 // can be overridden per test.
-//
-// Synchronisation: the handler fires a background goroutine that calls
-// UpdateImage, then updates the DB. Two channels are used to coordinate:
-//   - gate (optional): blocks UpdateImage until the test closes it, giving the
-//     test a window to change mock state before the goroutine continues.
-//   - done: closed by UpdateImage AFTER the mock's wg.Done() runs. Tests call
-//     <-mock.done followed by a brief poll to let the few lines of code between
-//     UpdateImage's return and the subsequent DB write execute.
 type updateImageMock struct {
 	mockOrchestrator
 	updateImageErr error
@@ -35,16 +29,11 @@ type updateImageMock struct {
 	// gate, when non-nil, blocks UpdateImage until closed.
 	gate chan struct{}
 
-	// done is closed when UpdateImage returns. Tests wait on this to know
-	// the goroutine has progressed past UpdateImage.
-	done chan struct{}
-
 	wg sync.WaitGroup
 }
 
 func (m *updateImageMock) UpdateImage(_ context.Context, _ string, _ orchestrator.CreateParams) error {
 	defer m.wg.Done()
-	defer close(m.done)
 	if m.gate != nil {
 		<-m.gate
 	}
@@ -72,15 +61,16 @@ func ensureStatusMessageColumn(t *testing.T) {
 	database.DB.Exec("ALTER TABLE instances ADD COLUMN status_message TEXT")
 }
 
-// waitForStatus polls the DB until the instance status matches `want` or the
-// deadline passes. Returns the final status observed.
-func waitForStatus(t *testing.T, id uint, want string, timeout time.Duration) string {
+// waitForStatusDB polls the given DB handle until the instance status matches
+// `want` or the deadline passes. Uses a captured DB reference instead of the
+// global database.DB to avoid races with parallel tests that call setupTestDB.
+func waitForStatusDB(t *testing.T, db *gorm.DB, id uint, want string, timeout time.Duration) string {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	var got string
 	for time.Now().Before(deadline) {
 		var inst database.Instance
-		if err := database.DB.First(&inst, id).Error; err != nil {
+		if err := db.First(&inst, id).Error; err != nil {
 			t.Fatalf("reload instance: %v", err)
 		}
 		got = inst.Status
@@ -92,6 +82,17 @@ func waitForStatus(t *testing.T, id uint, want string, timeout time.Duration) st
 	return got
 }
 
+// awaitGoroutine waits for UpdateImage to return (via wg.Wait), then yields
+// the CPU and sleeps briefly to let the handler's goroutine execute the DB
+// write that follows UpdateImage. Returns the DB handle captured before the
+// handler was called — using this (rather than database.DB) insulates the
+// polling loop from concurrent setupTestDB calls in parallel tests.
+func awaitGoroutine(mock *updateImageMock) {
+	mock.wg.Wait()
+	runtime.Gosched()
+	time.Sleep(100 * time.Millisecond)
+}
+
 // TestUpdateInstanceImage_FailureKeepsRunningStatusWhenPodHealthy reproduces
 // the production incident where a failed UpdateImage left the DB row at
 // status='error' even though the pod was fine, which prevented the background
@@ -100,6 +101,7 @@ func waitForStatus(t *testing.T, id uint, want string, timeout time.Duration) st
 func TestUpdateInstanceImage_FailureKeepsRunningStatusWhenPodHealthy(t *testing.T) {
 	setupTestDB(t)
 	ensureStatusMessageColumn(t)
+	db := database.DB // capture before handler fires its goroutine
 
 	sshMgr := sshproxy.NewSSHManager(nil, "")
 	tm := sshproxy.NewTunnelManager(sshMgr)
@@ -109,7 +111,6 @@ func TestUpdateInstanceImage_FailureKeepsRunningStatusWhenPodHealthy(t *testing.
 	mock := &updateImageMock{
 		updateImageErr: errors.New("simulated image pull failure"),
 		liveStatus:     "running",
-		done:           make(chan struct{}),
 	}
 	mock.wg.Add(1)
 	orchestrator.Set(mock)
@@ -132,17 +133,12 @@ func TestUpdateInstanceImage_FailureKeepsRunningStatusWhenPodHealthy(t *testing.
 		t.Fatalf("expected status 202, got %d (body: %s)", w.Code, w.Body.String())
 	}
 
-	// Wait for the goroutine to complete UpdateImage (no timeout — the mock
-	// returns immediately so this blocks only on goroutine scheduling).
-	<-mock.done
+	awaitGoroutine(mock)
 
-	// The DB update runs a few lines after UpdateImage returns; poll briefly.
-	final := waitForStatus(t, inst.ID, "running", 5*time.Second)
+	final := waitForStatusDB(t, db, inst.ID, "running", 5*time.Second)
 	if final != "running" {
 		t.Fatalf("expected status to remain 'running' when pod is live, got %q", final)
 	}
-
-	mock.wg.Wait()
 }
 
 // TestUpdateInstanceImage_FailureMarksErrorWhenPodUnhealthy covers the
@@ -151,6 +147,7 @@ func TestUpdateInstanceImage_FailureKeepsRunningStatusWhenPodHealthy(t *testing.
 func TestUpdateInstanceImage_FailureMarksErrorWhenPodUnhealthy(t *testing.T) {
 	setupTestDB(t)
 	ensureStatusMessageColumn(t)
+	db := database.DB
 
 	sshMgr := sshproxy.NewSSHManager(nil, "")
 	tm := sshproxy.NewTunnelManager(sshMgr)
@@ -162,7 +159,6 @@ func TestUpdateInstanceImage_FailureMarksErrorWhenPodUnhealthy(t *testing.T) {
 		updateImageErr: errors.New("simulated image pull failure"),
 		liveStatus:     "running",
 		gate:           gate,
-		done:           make(chan struct{}),
 	}
 	mock.wg.Add(1)
 	orchestrator.Set(mock)
@@ -190,16 +186,12 @@ func TestUpdateInstanceImage_FailureMarksErrorWhenPodUnhealthy(t *testing.T) {
 	mock.setLiveStatus("stopped")
 	close(gate)
 
-	// Wait for UpdateImage to return inside the goroutine.
-	<-mock.done
+	awaitGoroutine(mock)
 
-	// Poll for the DB write that follows immediately after.
-	final := waitForStatus(t, inst.ID, "error", 5*time.Second)
+	final := waitForStatusDB(t, db, inst.ID, "error", 5*time.Second)
 	if final != "error" {
 		t.Fatalf("expected status 'error' when pod is not running, got %q", final)
 	}
-
-	mock.wg.Wait()
 }
 
 // TestUpdateInstanceImage_SuccessMarksRunning is the happy path — a
@@ -208,6 +200,7 @@ func TestUpdateInstanceImage_FailureMarksErrorWhenPodUnhealthy(t *testing.T) {
 func TestUpdateInstanceImage_SuccessMarksRunning(t *testing.T) {
 	setupTestDB(t)
 	ensureStatusMessageColumn(t)
+	db := database.DB
 
 	sshMgr := sshproxy.NewSSHManager(nil, "")
 	tm := sshproxy.NewTunnelManager(sshMgr)
@@ -217,7 +210,6 @@ func TestUpdateInstanceImage_SuccessMarksRunning(t *testing.T) {
 	mock := &updateImageMock{
 		updateImageErr: nil,
 		liveStatus:     "running",
-		done:           make(chan struct{}),
 	}
 	mock.wg.Add(1)
 	orchestrator.Set(mock)
@@ -240,13 +232,10 @@ func TestUpdateInstanceImage_SuccessMarksRunning(t *testing.T) {
 		t.Fatalf("expected status 202, got %d (body: %s)", w.Code, w.Body.String())
 	}
 
-	// Wait for the goroutine to complete UpdateImage.
-	<-mock.done
+	awaitGoroutine(mock)
 
-	final := waitForStatus(t, inst.ID, "running", 5*time.Second)
+	final := waitForStatusDB(t, db, inst.ID, "running", 5*time.Second)
 	if final != "running" {
 		t.Fatalf("expected status 'running' after successful update, got %q", final)
 	}
-
-	mock.wg.Wait()
 }
