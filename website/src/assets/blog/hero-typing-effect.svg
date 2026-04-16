@@ -1,0 +1,25 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .bg  { fill: var(--brand-500); }
+    .ico { stroke: var(--brand-100); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+    .txt { fill: var(--brand-50); font-family: 'Outfit Variable', Outfit, system-ui, -apple-system, sans-serif; font-weight: 800; }
+    .ln  { stroke: var(--brand-300); stroke-width: 1; stroke-opacity: 0.35; }
+    .pil { fill: var(--brand-400); fill-opacity: 0.25; stroke: var(--brand-200); stroke-opacity: 0.4; stroke-width: 1; }
+    .ptx { fill: var(--brand-100); font-family: 'Outfit Variable', Outfit, system-ui, -apple-system, sans-serif; }
+    .cor { stroke: var(--brand-300); stroke-width: 1.5; fill: none; stroke-opacity: 0.45; }
+  </style>
+  <rect width="1200" height="630" class="bg"/>
+  <!-- Lucide Terminal -->
+  <g transform="translate(540, 180) scale(5)" class="ico" opacity="0.9">
+    <polyline points="4 17 10 11 4 5"/>
+    <line x1="12" x2="20" y1="19" y2="19"/>
+  </g>
+  <text x="600" y="410" font-size="96" text-anchor="middle" letter-spacing="-2" class="txt">typing effect</text>
+  <line x1="380" y1="436" x2="820" y2="436" class="ln"/>
+  <rect x="450" y="464" width="300" height="38" rx="19" class="pil"/>
+  <text x="600" y="487" font-size="16" text-anchor="middle" class="ptx">hansmartens.dev</text>
+  <path d="M 36 60 L 36 36 L 60 36" class="cor"/>
+  <path d="M 1140 36 L 1164 36 L 1164 60" class="cor"/>
+  <path d="M 36 570 L 36 594 L 60 594" class="cor"/>
+  <path d="M 1140 594 L 1164 594 L 1164 570" class="cor"/>
+</svg>

@@ -14,12 +14,14 @@ type scheduleCreateRequest struct {
 	InstanceIDs    string   `json:"instance_ids"`
 	CronExpression string   `json:"cron_expression"`
 	Paths          []string `json:"paths"`
+	RetentionDays  *int     `json:"retention_days,omitempty"`
 }
 
 type scheduleUpdateRequest struct {
 	InstanceIDs    *string  `json:"instance_ids,omitempty"`
 	CronExpression *string  `json:"cron_expression,omitempty"`
 	Paths          []string `json:"paths,omitempty"`
+	RetentionDays  *int     `json:"retention_days,omitempty"`
 }
 
 // CreateBackupSchedule creates a new backup schedule.
@@ -46,6 +48,15 @@ func CreateBackupSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	retentionDays := 0
+	if req.RetentionDays != nil {
+		if *req.RetentionDays < 0 {
+			writeError(w, http.StatusBadRequest, "retention_days must be >= 0")
+			return
+		}
+		retentionDays = *req.RetentionDays
+	}
+
 	pathsJSON, _ := json.Marshal(req.Paths)
 	if len(req.Paths) == 0 {
 		pathsJSON = []byte(`["HOME"]`)
@@ -55,6 +66,7 @@ func CreateBackupSchedule(w http.ResponseWriter, r *http.Request) {
 		InstanceIDs:    req.InstanceIDs,
 		CronExpression: req.CronExpression,
 		Paths:          string(pathsJSON),
+		RetentionDays:  retentionDays,
 		NextRunAt:      &nextRun,
 	}
 
@@ -115,6 +127,14 @@ func UpdateBackupSchedule(w http.ResponseWriter, r *http.Request) {
 		}
 		updates["cron_expression"] = *req.CronExpression
 		updates["next_run_at"] = &nextRun
+	}
+
+	if req.RetentionDays != nil {
+		if *req.RetentionDays < 0 {
+			writeError(w, http.StatusBadRequest, "retention_days must be >= 0")
+			return
+		}
+		updates["retention_days"] = *req.RetentionDays
 	}
 
 	if len(updates) == 0 {

@@ -1,0 +1,62 @@
+---
+/**
+ * Icon component
+ * UI icons  → Lucide  (lucide.dev)
+ * Brand/social icons → Simple Icons (simpleicons.org)
+ *
+ * Same public API as before — callers pass the short name (e.g. "arrow-right",
+ * "github", "x-twitter"). This wrapper resolves it to the correct Iconify set.
+ */
+import { Icon as AstroIcon } from 'astro-icon/components';
+import { cn } from '@/lib/cn';
+
+interface Props {
+  name: string;
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+  class?: string;
+  strokeWidth?: number;
+  [key: string]: unknown;
+}
+
+const { name, size = 'md', class: className, strokeWidth = 2, ...attrs } = Astro.props;
+
+const sizes: Record<string, string> = {
+  xs: 'w-3 h-3',
+  sm: 'w-4 h-4',
+  md: 'w-5 h-5',
+  lg: 'w-6 h-6',
+  xl: 'w-8 h-8',
+};
+
+/**
+ * Maps short legacy names → fully-qualified Iconify names.
+ * Social / brand icons use simple-icons; everything else uses lucide.
+ */
+const iconMap: Record<string, string> = {
+  // Social & brand → Simple Icons
+  github:           'simple-icons:github',
+  'x-twitter':      'simple-icons:x',
+  twitter:          'simple-icons:x',
+  instagram:        'simple-icons:instagram',
+  linkedin:         'simple-icons:linkedin',
+  bluesky:          'simple-icons:bluesky',
+  // Tech stack → Simple Icons
+  'brand-astro':      'simple-icons:astro',
+  'brand-tailwind':   'simple-icons:tailwindcss',
+  'brand-typescript': 'simple-icons:typescript',
+  'brand-react':      'simple-icons:react',
+  'brand-mdx':        'simple-icons:mdx',
+  'brand-claude':     'simple-icons:anthropic',
+};
+
+const resolvedName = iconMap[name] ?? `lucide:${name}`;
+const isSimpleIcon = resolvedName.startsWith('simple-icons:');
+---
+
+<AstroIcon
+  name={resolvedName}
+  class={cn(sizes[size], 'shrink-0', className)}
+  aria-hidden="true"
+  stroke-width={isSimpleIcon ? undefined : strokeWidth}
+  {...attrs}
+/>

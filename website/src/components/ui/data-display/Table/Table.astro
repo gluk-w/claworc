@@ -1,0 +1,90 @@
+---
+/**
+ * Table Component
+ * A styled data table with hover rows and responsive design.
+ */
+import type { HTMLAttributes } from 'astro/types';
+import { cn } from '@/lib/cn';
+
+interface Column {
+  key: string;
+  label: string;
+  align?: 'left' | 'center' | 'right';
+  class?: string;
+}
+
+interface Props extends HTMLAttributes<'div'> {
+  columns: Column[];
+  rows: Record<string, unknown>[];
+  /** Enable row hover highlighting */
+  hoverable?: boolean;
+  /** Enable row striping */
+  striped?: boolean;
+  /** Make table compact */
+  compact?: boolean;
+}
+
+const {
+  columns,
+  rows,
+  hoverable = true,
+  striped = false,
+  compact = false,
+  class: className,
+  ...attrs
+} = Astro.props;
+
+const alignClasses = {
+  left: 'text-left',
+  center: 'text-center',
+  right: 'text-right',
+};
+
+const cellPadding = compact ? 'px-3 py-2' : 'px-4 py-3';
+---
+
+<div class={cn('w-full overflow-auto rounded-lg border border-border', className)} {...attrs}>
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-border bg-secondary/50">
+        {columns.map((col) => (
+          <th
+            class={cn(
+              cellPadding,
+              'font-medium text-foreground-muted',
+              alignClasses[col.align || 'left'],
+              col.class
+            )}
+          >
+            {col.label}
+          </th>
+        ))}
+      </tr>
+    </thead>
+    <tbody>
+      {rows.map((row, i) => (
+        <tr
+          class={cn(
+            'border-b border-border last:border-b-0',
+            'transition-colors',
+            hoverable && 'hover:bg-secondary/30',
+            striped && i % 2 === 1 && 'bg-secondary/20'
+          )}
+        >
+          {columns.map((col) => (
+            <td
+              class={cn(
+                cellPadding,
+                'text-foreground',
+                alignClasses[col.align || 'left'],
+                col.class
+              )}
+            >
+              {String(row[col.key] ?? '')}
+            </td>
+          ))}
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</div>

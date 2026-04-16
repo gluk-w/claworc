@@ -39,6 +39,7 @@ func runScheduleExecutor(ctx context.Context) {
 			return
 		case <-ticker.C:
 			executeDueSchedules(ctx)
+			runRetentionCleanup(ctx)
 		}
 	}
 }

@@ -1,0 +1,192 @@
+/* =============================================================================
+   Astro Rocket Theme - Default
+   =============================================================================
+   The default Astro Rocket theme: clean, neutral grays with International Orange
+   accent. This is the default theme shipped with the template.
+
+   Theme Contract: Every theme must define the same set of semantic tokens
+   listed below. Swap this file with another theme to change the entire look.
+
+   Required tokens:
+     Colors (~35): background, foreground, border, primary, secondary, accent,
+       muted, card, input, ring, destructive, gradient, invert section
+     Typography (6): --theme-font-sans, --theme-font-display, --theme-font-mono,
+       --theme-heading-weight, --theme-heading-tracking, --theme-body-leading
+     Shadows (4): --theme-shadow-sm, --theme-shadow-md, --theme-shadow-lg,
+       --theme-shadow-xl
+     Radii (5): --theme-radius-sm, --theme-radius-md, --theme-radius-lg,
+       --theme-radius-xl, --theme-radius-full
+
+     Dark mode: all of the above re-mapped for dark backgrounds
+   ============================================================================= */
+
+html[data-theme="orange"] {
+  /* -------------------------------------------------------------------------
+     Semantic Tokens - Light Mode
+     ------------------------------------------------------------------------- */
+  --background: var(--gray-0);
+  --background-secondary: oklch(97.5% 0.010 38);
+  --background-tertiary: oklch(95% 0.018 38);
+  --background-elevated: var(--gray-0);
+
+  --foreground: var(--gray-900);           /* 18.3:1 on white — WCAG AAA */
+  --foreground-secondary: var(--gray-700); /* 12.7:1 on white — WCAG AAA */
+  --foreground-muted: var(--gray-600);     /* 10.0:1 on white — WCAG AA  */
+  --foreground-subtle: var(--gray-500);    /*  5.5:1 on white — WCAG AA  */
+
+  --border: var(--gray-200);
+  --border-strong: var(--gray-300);
+  --border-subtle: var(--gray-100);
+
+  --primary: var(--gray-900);
+  --primary-hover: var(--gray-800);
+  --primary-foreground: var(--gray-0);
+
+  --secondary: var(--gray-100);
+  --secondary-hover: var(--gray-200);
+  --secondary-foreground: var(--gray-900);
+
+  --accent: var(--brand-500);
+  --accent-hover: var(--brand-600);
+  --accent-light: var(--brand-100);
+
+  --muted: var(--gray-100);
+  --muted-foreground: var(--gray-500);     /*  5.5:1 on white — WCAG AA  */
+
+  --card: var(--gray-0);
+  --card-border: var(--gray-200);
+
+  --input-bg: var(--gray-0);
+  --input-border: var(--gray-300);
+  --input-focus: var(--brand-500);
+
+  --ring: var(--brand-500);
+
+  /* Destructive - for delete/remove actions */
+  --destructive: var(--error);
+  --destructive-foreground: var(--gray-0);
+
+  /* Gradient colors - OKLCH */
+  --gradient-start: oklch(96.5% 0 0);
+  --gradient-end: oklch(100% 0 0);
+
+  /* Status colors - light mode backgrounds */
+  --success-light: oklch(94% 0.05 145);
+  --warning-light: oklch(95% 0.05 85);
+  --error-light:   oklch(94% 0.05 25);
+
+  /* -------------------------------------------------------------------------
+     Inverted/Contrast Section - Always dark for visual hierarchy
+     ------------------------------------------------------------------------- */
+  --surface-invert: var(--gray-950);           /* bg for .invert-section */
+  --surface-invert-secondary: var(--gray-900);
+  --surface-invert-tertiary: var(--gray-800);
+  --on-invert: var(--gray-50);                 /* 19.3:1 on gray-950 — WCAG AAA */
+  --on-invert-secondary: var(--gray-200);      /* 15.6:1 on gray-950 — WCAG AAA */
+  --on-invert-muted: var(--gray-300);          /* 13.1:1 on gray-950, 11.9:1 on gray-900 — WCAG AAA */
+  --border-invert: var(--gray-800);
+  --border-invert-strong: var(--gray-700);
+
+  /* -------------------------------------------------------------------------
+     Typography
+     ------------------------------------------------------------------------- */
+  --theme-font-sans: 'Manrope Variable', 'Manrope', ui-sans-serif, system-ui,
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+    'Segoe UI Symbol', 'Noto Color Emoji';
+  --theme-font-display: 'Outfit Variable', 'Outfit', var(--theme-font-sans);
+  --theme-font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace,
+    SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+    monospace;
+  --theme-heading-weight: 700;
+  --theme-heading-tracking: -0.02em;
+  --theme-body-leading: 1.6;
+
+  /* -------------------------------------------------------------------------
+     Shadows
+     ------------------------------------------------------------------------- */
+  --theme-shadow-sm: 0 1px 2px oklch(20% 0.01 38 / 0.06);
+  --theme-shadow-md: 0 4px 8px oklch(20% 0.01 38 / 0.08), 0 0 1px oklch(20% 0.01 38 / 0.04);
+  --theme-shadow-lg: 0 8px 16px oklch(20% 0.01 38 / 0.10), 0 0 1px oklch(20% 0.01 38 / 0.04);
+  --theme-shadow-xl: 0 24px 48px oklch(20% 0.01 38 / 0.14), 0 0 1px oklch(20% 0.01 38 / 0.04);
+
+  /* -------------------------------------------------------------------------
+     Border Radii
+     ------------------------------------------------------------------------- */
+  --theme-radius-sm: 0.25rem;    /* 4px */
+  --theme-radius-md: 0.375rem;   /* 6px */
+  --theme-radius-lg: 0.5rem;     /* 8px */
+  --theme-radius-xl: 0.625rem;   /* 10px */
+  --theme-radius-full: 9999px;
+}
+
+/* -------------------------------------------------------------------------
+   Dark Mode - The Vercel signature look
+   ------------------------------------------------------------------------- */
+html.dark[data-theme="orange"] {
+  /* Backgrounds with a barely-there warm tint — matches the orange brand character */
+  --background: oklch(9.5% 0.006 38);
+  --background-secondary: oklch(15% 0.006 38);
+  --background-tertiary: oklch(20% 0.005 38);
+  --background-elevated: oklch(15% 0.006 38);
+
+  --foreground: oklch(91% 0.008 38);           /* warm near-white — 15:1 on dark bg, WCAG AAA */
+  --foreground-secondary: oklch(82% 0.008 38);
+  --foreground-muted: oklch(68% 0.006 38);
+  --foreground-subtle: oklch(58% 0.005 38);    /*  ~4.6:1 on bg — WCAG AA  */
+
+  --border: oklch(22% 0.006 38);
+  --border-strong: oklch(28% 0.005 38);
+  --border-subtle: oklch(15% 0.006 38);
+
+  --primary: oklch(94% 0.008 38);              /* warm near-white instead of pure white */
+  --primary-hover: oklch(85% 0.008 38);
+  --primary-foreground: oklch(9.5% 0.006 38);
+
+  --secondary: oklch(20% 0.005 38);
+  --secondary-hover: oklch(26% 0.005 38);
+  --secondary-foreground: oklch(90% 0.007 38);
+
+  --muted: oklch(20% 0 0);
+  --muted-foreground: var(--gray-400);      /*  6.0:1 on oklch(9.5%) — WCAG AA  */
+
+  --card: oklch(15% 0 0);
+  --card-border: oklch(22% 0 0);
+
+  --input-bg: oklch(15% 0.006 38);
+  --input-border: oklch(28% 0.005 38);
+  --input-focus: var(--brand-400);
+
+  --ring: var(--brand-400);
+
+  --accent-light: oklch(18% 0.06 38);
+
+  --destructive: oklch(65% 0.22 25);
+  --destructive-foreground: var(--gray-0);
+
+  --gradient-start: oklch(9.5% 0.006 38);
+  --gradient-end: oklch(15% 0.006 38);
+
+  --success-light: oklch(18% 0.06 155);
+  --warning-light: oklch(18% 0.05 85);
+  --error-light: oklch(18% 0.05 25);
+
+  /* Inverted section: stays slightly lighter than main bg for visual lift */
+  --surface-invert: oklch(13% 0.006 38);
+  --surface-invert-secondary: oklch(16.5% 0.005 38);
+  --surface-invert-tertiary: oklch(21% 0.005 38);
+  --on-invert: oklch(94% 0.008 38);
+  --on-invert-secondary: oklch(72% 0.007 38);
+  --on-invert-muted: oklch(68% 0.006 38);
+  --border-invert: oklch(21% 0.006 38);
+  --border-invert-strong: oklch(29% 0.005 38);
+
+  --theme-shadow-sm: 0 1px 3px oklch(9% 0.02 38 / 0.35);
+  --theme-shadow-md: 0 4px 12px oklch(9% 0.02 38 / 0.4),
+    0 0 1px oklch(9% 0.02 38 / 0.15);
+  --theme-shadow-lg: 0 8px 24px oklch(9% 0.02 38 / 0.45),
+    0 1px 2px oklch(50% 0.15 38 / 0.06);
+  --theme-shadow-xl: 0 24px 48px oklch(9% 0.02 38 / 0.55),
+    0 2px 4px oklch(50% 0.15 38 / 0.09);
+}
+

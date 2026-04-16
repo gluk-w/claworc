@@ -1,0 +1,187 @@
+---
+/**
+ * Dropdown Component
+ * Accessible dropdown menu with keyboard navigation and optional icons
+ */
+import { cn } from '@/lib/cn';
+import Icon from '../../primitives/Icon/Icon.astro';
+
+interface DropdownItem {
+  label: string;
+  href?: string;
+  icon?: string;
+  disabled?: boolean;
+  separator?: boolean;
+}
+
+interface Props {
+  items: DropdownItem[];
+  align?: 'start' | 'end';
+  class?: string;
+}
+
+const { items, align = 'start', class: className } = Astro.props;
+
+// Map common action names to icons
+const iconMap: Record<string, string> = {
+  edit: 'file-text',
+  copy: 'copy',
+  share: 'arrow-up-right',
+  archive: 'box',
+  trash: 'x',
+  delete: 'x',
+  download: 'download',
+  upload: 'upload',
+  settings: 'settings',
+  view: 'external-link',
+};
+---
+
+<div class={cn('relative inline-block', className)} data-dropdown>
+  <div data-dropdown-trigger>
+    <slot name="trigger" />
+  </div>
+
+  <div
+    class={cn(
+      'absolute z-[100] mt-2 min-w-[180px] p-1.5',
+      'rounded-xl bg-background border border-border shadow-xl',
+      'opacity-0 invisible translate-y-1',
+      'transition-all duration-150 ease-out',
+      align === 'end' ? 'right-0' : 'left-0'
+    )}
+    data-dropdown-menu
+    role="menu"
+    aria-orientation="vertical"
+  >
+    {items.map((item, index) =>
+      item.separator ? (
+        <div class="my-1.5 h-px bg-border" role="separator" />
+      ) : (
+        <a
+          href={item.href || '#'}
+          class={cn(
+            'flex items-center gap-2.5 px-3 py-2 text-sm rounded-md',
+            'transition-colors outline-none',
+            'focus-visible:ring-2 focus-visible:ring-ring',
+            item.disabled
+              ? 'opacity-50 cursor-not-allowed pointer-events-none text-foreground-muted'
+              : 'hover:bg-secondary focus:bg-secondary text-foreground-secondary hover:text-foreground'
+          )}
+          role="menuitem"
+          tabindex={item.disabled ? -1 : 0}
+          aria-disabled={item.disabled}
+          data-dropdown-item={index}
+        >
+          {item.icon && (
+            <Icon
+              name={iconMap[item.icon] || item.icon}
+              size="sm"
+              class={cn(
+                'shrink-0',
+                item.disabled ? 'text-foreground-subtle' : 'text-foreground-muted'
+              )}
+            />
+          )}
+          <span>{item.label}</span>
+        </a>
+      )
+    )}
+  </div>
+</div>
+
+<script>
+  function initDropdowns() {
+    const dropdowns = document.querySelectorAll<HTMLElement>('[data-dropdown]');
+    dropdowns.forEach((dropdown) => {
+      if (dropdown.dataset.dropdownInit) return;
+      dropdown.dataset.dropdownInit = 'true';
+
+      const trigger = dropdown.querySelector('[data-dropdown-trigger]');
+      const menu = dropdown.querySelector<HTMLElement>('[data-dropdown-menu]');
+      const items = dropdown.querySelectorAll<HTMLElement>('[data-dropdown-item]');
+      let isOpen = false;
+      let focusedIndex = -1;
+
+      function open() {
+        isOpen = true;
+        menu?.classList.remove('opacity-0', 'invisible', 'translate-y-1');
+        menu?.classList.add('opacity-100', 'visible', 'translate-y-0');
+        focusedIndex = 0;
+        items[0]?.focus();
+      }
+
+      function close() {
+        isOpen = false;
+        menu?.classList.add('opacity-0', 'invisible', 'translate-y-1');
+        menu?.classList.remove('opacity-100', 'visible', 'translate-y-0');
+        focusedIndex = -1;
+      }
+
+      function focusItem(index: number) {
+        if (index < 0) index = items.length - 1;
+        if (index >= items.length) index = 0;
+        focusedIndex = index;
+        items[index]?.focus();
+      }
+
+      trigger?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (isOpen) {
+          close();
+        } else {
+          open();
+        }
+      });
+
+      trigger?.addEventListener('keydown', (event) => {
+        const e = event as KeyboardEvent;
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+          e.preventDefault();
+          open();
+        }
+      });
+
+      menu?.addEventListener('keydown', (event) => {
+        const e = event as KeyboardEvent;
+        switch (e.key) {
+          case 'ArrowDown':
+            e.preventDefault();
+            focusItem(focusedIndex + 1);
+            break;
+          case 'ArrowUp':
+            e.preventDefault();
+            focusItem(focusedIndex - 1);
+            break;
+          case 'Home':
+            e.preventDefault();
+            focusItem(0);
+            break;
+          case 'End':
+            e.preventDefault();
+            focusItem(items.length - 1);
+            break;
+          case 'Escape':
+            e.preventDefault();
+            close();
+            (trigger as HTMLElement)?.focus();
+            break;
+          case 'Tab':
+            close();
+            break;
+        }
+      });
+
+      document.addEventListener('click', (e) => {
+        if (!dropdown.contains(e.target as Node)) close();
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && isOpen) close();
+      });
+    });
+  }
+
+  initDropdowns();
+  document.addEventListener('astro:page-load', initDropdowns);
+</script>

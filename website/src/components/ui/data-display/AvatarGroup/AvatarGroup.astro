@@ -1,0 +1,66 @@
+---
+/**
+ * AvatarGroup Component
+ * Displays stacked avatars with an optional "+N" overflow indicator.
+ */
+import type { HTMLAttributes } from 'astro/types';
+import { cn } from '@/lib/cn';
+import Avatar from '../Avatar/Avatar.astro';
+
+interface AvatarItem {
+  src?: string;
+  alt?: string;
+  fallback?: string;
+}
+
+interface Props extends HTMLAttributes<'div'> {
+  avatars: AvatarItem[];
+  /** Maximum number of avatars to show before "+N" */
+  max?: number;
+  size?: 'xs' | 'sm' | 'md' | 'lg';
+}
+
+const {
+  avatars,
+  max = 4,
+  size = 'md',
+  class: className,
+  ...attrs
+} = Astro.props;
+
+const visibleAvatars = avatars.slice(0, max);
+const overflowCount = Math.max(0, avatars.length - max);
+
+const overflowSizes = {
+  xs: 'w-6 h-6 text-[8px]',
+  sm: 'w-8 h-8 text-[10px]',
+  md: 'w-10 h-10 text-xs',
+  lg: 'w-12 h-12 text-sm',
+};
+---
+
+<div class={cn('flex -space-x-2', className)} {...attrs}>
+  {visibleAvatars.map((avatar) => (
+    <Avatar
+      src={avatar.src}
+      alt={avatar.alt || ''}
+      fallback={avatar.fallback}
+      size={size}
+      class="ring-2 ring-background"
+    />
+  ))}
+  {overflowCount > 0 && (
+    <div
+      class={cn(
+        'relative inline-flex items-center justify-center',
+        'rounded-full overflow-hidden',
+        'bg-secondary text-foreground-muted font-semibold',
+        'ring-2 ring-background',
+        overflowSizes[size]
+      )}
+      aria-label={`${overflowCount} more`}
+    >
+      +{overflowCount}
+    </div>
+  )}
+</div>

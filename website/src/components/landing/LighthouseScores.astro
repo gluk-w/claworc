@@ -1,0 +1,192 @@
+---
+/**
+ * LighthouseScores.astro
+ * A callout component displaying perfect Lighthouse scores
+ * Designed to match the authentic Lighthouse report aesthetic
+ */
+import Badge from '@/components/ui/data-display/Badge/Badge.astro';
+
+interface Score {
+  label: string;
+  value: number;
+}
+
+const scores: Score[] = [
+  { label: 'Performance', value: 100 },
+  { label: 'Accessibility', value: 100 },
+  { label: 'Best Practices', value: 100 },
+  { label: 'SEO', value: 100 },
+];
+---
+
+<section class="bg-background-secondary border-border border-y py-[var(--space-section-md)]">
+  <div class="mx-auto max-w-6xl px-6">
+    <!-- Header -->
+    <div class="mb-8 text-center">
+      <div class="mb-4 flex justify-center">
+        <Badge variant="success">Lighthouse Report</Badge>
+      </div>
+      <h3 class="font-display text-foreground text-2xl font-bold md:text-3xl">
+        Perfect scores. Out of the box.
+      </h3>
+    </div>
+
+    <!-- Scores Grid -->
+    <div
+      class="lighthouse-scores mx-auto grid max-w-2xl grid-cols-4 gap-[var(--space-content-gap)]"
+      role="list"
+      aria-label="Lighthouse scores"
+    >
+      {
+        scores.map((score, index) => (
+          <div
+            class="lighthouse-score group flex flex-col items-center"
+            role="listitem"
+            style={`--delay: ${index * 80}ms;`}
+          >
+            {/* Circular gauge - authentic Lighthouse style */}
+            <div class="relative">
+              <svg
+                class="lighthouse-gauge h-16 w-16 sm:h-20 sm:w-20 md:h-24 md:w-24"
+                viewBox="0 0 120 120"
+                aria-hidden="true"
+              >
+                {/* Outer gray track */}
+                <circle
+                  cx="60"
+                  cy="60"
+                  r="54"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="8"
+                  class="text-gray-200 dark:text-gray-800"
+                />
+                {/* Green progress arc */}
+                <circle
+                  cx="60"
+                  cy="60"
+                  r="54"
+                  fill="none"
+                  stroke="var(--success)"
+                  stroke-width="8"
+                  stroke-linecap="round"
+                  stroke-dasharray="339.292"
+                  stroke-dashoffset="0"
+                  class="lighthouse-progress"
+                  style="transform: rotate(-90deg); transform-origin: center;"
+                />
+                {/* Score number - authentic Lighthouse sizing */}
+                <text
+                  x="60"
+                  y="60"
+                  text-anchor="middle"
+                  dominant-baseline="central"
+                  class="lighthouse-number fill-current"
+                  style="font-size: 26px; font-weight: 600; font-family: Roboto, system-ui, sans-serif;"
+                >
+                  {score.value}
+                </text>
+              </svg>
+            </div>
+
+            {/* Label */}
+            <span class="text-foreground-muted mt-2 text-center text-xs font-medium sm:text-sm">
+              {score.label}
+            </span>
+          </div>
+        ))
+      }
+    </div>
+
+    <!-- Footer note -->
+    <p class="text-foreground-subtle mt-[var(--space-stack-lg)] text-center text-xs">
+      *Tested in production for landing page demo &middot; Desktop & Mobile emulation &middot;
+      Results will vary.
+    </p>
+  </div>
+</section>
+
+<style>
+  /* Authentic Lighthouse green for the number */
+  .lighthouse-number {
+    fill: var(--success);
+  }
+
+  /* Entrance animations */
+  .lighthouse-score {
+    animation: score-enter 0.5s ease-out both;
+    animation-delay: calc(0.2s + var(--delay, 0ms));
+  }
+
+  .lighthouse-progress {
+    animation: progress-fill 1s ease-out both;
+    animation-delay: calc(0.3s + var(--delay, 0ms));
+  }
+
+  @keyframes score-enter {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes progress-fill {
+    from {
+      stroke-dashoffset: 339.292;
+    }
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+
+  .animation-paused {
+    animation-play-state: paused;
+  }
+
+  .animation-running {
+    animation-play-state: running;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .lighthouse-score,
+    .lighthouse-progress {
+      animation: none;
+    }
+
+    .lighthouse-progress {
+      stroke-dashoffset: 0;
+    }
+  }
+</style>
+
+<script>
+  // Intersection Observer for scroll-triggered animations
+  const section = document.querySelector('.lighthouse-scores');
+  if (section) {
+    const elements = section.querySelectorAll('.lighthouse-score, .lighthouse-progress');
+    elements.forEach((el) => {
+      el.classList.add('animation-paused');
+    });
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            elements.forEach((el) => {
+              el.classList.remove('animation-paused');
+              el.classList.add('animation-running');
+            });
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.3 }
+    );
+
+    observer.observe(section);
+  }
+</script>

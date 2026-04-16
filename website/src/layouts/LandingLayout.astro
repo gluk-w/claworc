@@ -1,0 +1,69 @@
+---
+/**
+ * LandingLayout
+ * Layout wrapper for landing-style pages (marketing, demo, showcase)
+ * Uses Header + Footer with landing-specific configuration
+ *
+ * This layout is part of the "demo" layer - it can be optionally installed
+ * via CLI for users who want the full landing page experience.
+ */
+import BaseLayout from './BaseLayout.astro';
+import Header from '@/components/layout/Header.astro';
+import Footer from '@/components/layout/Footer.astro';
+
+interface Props {
+  title?: string;
+  description?: string;
+  image?: string;
+  imageAlt?: string;
+  noindex?: boolean;
+  nofollow?: boolean;
+  includeOrgSchema?: boolean;
+  includePersonSchema?: boolean;
+  includeProfessionalServiceSchema?: boolean;
+}
+
+const {
+  title,
+  description,
+  image,
+  imageAlt,
+  noindex = false,
+  nofollow = false,
+  includeOrgSchema = false,
+  includePersonSchema = false,
+  includeProfessionalServiceSchema = false,
+} = Astro.props;
+
+const isHomePage = Astro.url.pathname === '/';
+---
+
+<BaseLayout
+  title={title}
+  description={description}
+  image={image}
+  imageAlt={imageAlt}
+  noindex={noindex}
+  nofollow={nofollow}
+  includeOrgSchema={includeOrgSchema}
+  includePersonSchema={includePersonSchema}
+  includeProfessionalServiceSchema={includeProfessionalServiceSchema}
+>
+  <Header
+    slot="header"
+    position="fixed"
+    shape="floating"
+    variant="default"
+    colorScheme="default"
+    size="lg"
+    showCta={false}
+    cta={{ label: 'Get in touch', href: '/contact' }}
+    showThemeSelector
+    showScrollProgress={isHomePage}
+    scrollProgressPosition="top"
+  />
+
+  <slot />
+
+  <Footer slot="footer" layout="simple" background="secondary" />
+</BaseLayout>

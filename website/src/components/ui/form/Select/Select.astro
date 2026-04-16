@@ -1,0 +1,99 @@
+---
+import type { HTMLAttributes } from 'astro/types';
+import { cn } from '@/lib/cn';
+import { generateId } from '@/lib/utils';
+import { selectVariants } from './select.variants';
+
+interface Option {
+  value: string;
+  label: string;
+  disabled?: boolean;
+}
+
+interface Props extends HTMLAttributes<'select'> {
+  label?: string;
+  error?: string;
+  hint?: string;
+  size?: 'sm' | 'md' | 'lg';
+  options: Option[];
+  placeholder?: string;
+}
+
+const {
+  label,
+  error,
+  hint,
+  size = 'md',
+  options,
+  placeholder,
+  class: className,
+  id,
+  ...attrs
+} = Astro.props;
+
+const selectId = id || generateId('select');
+
+const selectStyles = cn(
+  selectVariants({ size }),
+  error && 'border-destructive focus-visible:ring-destructive'
+);
+---
+
+<div class={cn('space-y-1.5', className)}>
+  {
+    label && (
+      <label for={selectId} class="text-sm font-medium leading-none">
+        {label}
+      </label>
+    )
+  }
+
+  <div class="relative">
+    <select
+      id={selectId}
+      class={selectStyles}
+      aria-invalid={error ? 'true' : undefined}
+      aria-describedby={error ? `${selectId}-error` : hint ? `${selectId}-hint` : undefined}
+      {...attrs}
+    >
+      {placeholder && <option value="" disabled selected>{placeholder}</option>}
+      {options.map((option) => (
+        <option value={option.value} disabled={option.disabled}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+
+    <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
+      <svg
+        class="h-4 w-4 text-muted-foreground"
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 20 20"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path
+          fill-rule="evenodd"
+          d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+          clip-rule="evenodd"
+        />
+      </svg>
+    </div>
+  </div>
+
+  {
+    error && (
+      <p id={`${selectId}-error`} class="text-sm text-destructive">
+        {error}
+      </p>
+    )
+  }
+
+  {
+    hint && !error && (
+      <p id={`${selectId}-hint`} class="text-sm text-muted-foreground">
+        {hint}
+      </p>
+    )
+  }
+</div>

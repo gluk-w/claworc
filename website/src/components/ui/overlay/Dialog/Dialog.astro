@@ -1,0 +1,216 @@
+---
+/**
+ * Dialog Component
+ * Accessible modal dialog with focus trap and keyboard navigation
+ */
+import { cn } from '@/lib/cn';
+import Icon from '../../primitives/Icon/Icon.astro';
+
+interface Props {
+  id: string;
+  title?: string;
+  description?: string;
+  size?: 'sm' | 'md' | 'lg' | 'xl';
+  class?: string;
+}
+
+const { id, title, description, size = 'md', class: className } = Astro.props;
+
+const sizes = {
+  sm: 'max-w-sm',
+  md: 'max-w-lg',
+  lg: 'max-w-2xl',
+  xl: 'max-w-4xl',
+};
+---
+
+<div
+  id={id}
+  class="fixed inset-0 z-50 hidden"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby={title ? `${id}-title` : undefined}
+  aria-describedby={description ? `${id}-description` : undefined}
+  data-dialog
+>
+  <!-- Backdrop -->
+  <div
+    class="fixed inset-0 bg-foreground/50 backdrop-blur-sm opacity-0 transition-opacity duration-200"
+    data-dialog-backdrop
+    aria-hidden="true"
+  />
+
+  <!-- Dialog Panel -->
+  <div class="fixed inset-0 flex items-center justify-center p-4 overflow-y-auto">
+    <div
+      class={cn(
+        'relative w-full',
+        sizes[size],
+        'bg-background rounded-xl border border-border shadow-xl',
+        'scale-95 opacity-0 transition-all duration-200',
+        className
+      )}
+      data-dialog-panel
+    >
+      <!-- Close Button -->
+      <button
+        type="button"
+        class={cn(
+          'absolute top-4 right-4',
+          'text-foreground-muted hover:text-foreground',
+          'transition-colors',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md'
+        )}
+        data-dialog-close
+        aria-label="Close dialog"
+      >
+        <Icon name="x" class="w-5 h-5" />
+      </button>
+
+      <!-- Header -->
+      {(title || description) && (
+        <div class="p-6 pb-0">
+          {title && (
+            <h2
+              id={`${id}-title`}
+              class="text-lg font-semibold text-foreground pr-8"
+            >
+              {title}
+            </h2>
+          )}
+          {description && (
+            <p
+              id={`${id}-description`}
+              class="mt-1 text-sm text-foreground-muted"
+            >
+              {description}
+            </p>
+          )}
+        </div>
+      )}
+
+      <!-- Content -->
+      <div class="p-6">
+        <slot />
+      </div>
+
+      <!-- Footer (optional) -->
+      <slot name="footer" />
+    </div>
+  </div>
+</div>
+
+<script>
+  function initDialogs() {
+    const dialogs = document.querySelectorAll<HTMLElement>('[data-dialog]');
+    dialogs.forEach((dialog) => {
+      if (dialog.dataset.dialogInit) return;
+      dialog.dataset.dialogInit = 'true';
+
+      const backdrop = dialog.querySelector<HTMLElement>('[data-dialog-backdrop]');
+      const panel = dialog.querySelector<HTMLElement>('[data-dialog-panel]');
+      const closeButtons = dialog.querySelectorAll('[data-dialog-close]');
+
+      let previousActiveElement: HTMLElement | null = null;
+
+      function getFocusableElements(): HTMLElement[] {
+        return Array.from(
+          panel?.querySelectorAll<HTMLElement>(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+          ) || []
+        ).filter((el) => !el.hasAttribute('disabled'));
+      }
+
+      function trapFocus(e: KeyboardEvent) {
+        if (e.key !== 'Tab') return;
+
+        const focusable = getFocusableElements();
+        if (focusable.length === 0) return;
+
+        const firstFocusable = focusable[0];
+        const lastFocusable = focusable[focusable.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === firstFocusable) {
+            e.preventDefault();
+            lastFocusable.focus();
+          }
+        } else {
+          if (document.activeElement === lastFocusable) {
+            e.preventDefault();
+            firstFocusable.focus();
+          }
+        }
+      }
+
+      function open() {
+        previousActiveElement = document.activeElement as HTMLElement;
+        dialog.classList.remove('hidden');
+
+        requestAnimationFrame(() => {
+          backdrop?.classList.add('opacity-100');
+          panel?.classList.remove('scale-95', 'opacity-0');
+          panel?.classList.add('scale-100', 'opacity-100');
+
+          // Focus first focusable element
+          const focusable = getFocusableElements();
+          if (focusable.length > 0) {
+            focusable[0].focus();
+          }
+        });
+
+        document.body.classList.add('overflow-hidden');
+        document.addEventListener('keydown', trapFocus);
+      }
+
+      function close() {
+        backdrop?.classList.remove('opacity-100');
+        panel?.classList.add('scale-95', 'opacity-0');
+        panel?.classList.remove('scale-100', 'opacity-100');
+
+        setTimeout(() => {
+          dialog.classList.add('hidden');
+          document.body.classList.remove('overflow-hidden');
+          previousActiveElement?.focus();
+        }, 200);
+
+        document.removeEventListener('keydown', trapFocus);
+      }
+
+      // Expose methods on the element
+      (dialog as HTMLElement & { open?: () => void; close?: () => void }).open = open;
+      (dialog as HTMLElement & { open?: () => void; close?: () => void }).close = close;
+
+      // Close button handlers
+      closeButtons.forEach((btn) => {
+        btn.addEventListener('click', close);
+      });
+
+      // Backdrop click to close
+      backdrop?.addEventListener('click', close);
+
+      // Escape key to close
+      dialog.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          close();
+        }
+      });
+    });
+  }
+
+  // Global function to open dialogs by ID
+  type DialogElement = HTMLElement & { open?: () => void; close?: () => void };
+  (window as Window & { openDialog?: (id: string) => void }).openDialog = (id: string) => {
+    const dialog = document.getElementById(id) as DialogElement | null;
+    dialog?.open?.();
+  };
+
+  (window as Window & { closeDialog?: (id: string) => void }).closeDialog = (id: string) => {
+    const dialog = document.getElementById(id) as DialogElement | null;
+    dialog?.close?.();
+  };
+
+  initDialogs();
+  document.addEventListener('astro:page-load', initDialogs);
+</script>

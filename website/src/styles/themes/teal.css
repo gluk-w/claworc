@@ -1,0 +1,207 @@
+/* =============================================================================
+   Astro Rocket Theme - Teal
+   =============================================================================
+   Fresh cyan-teal brand (hue 190°). The go-to colour for modern SaaS and
+   developer tooling — clean, trustworthy, and equally strong in light and
+   dark mode.
+
+   Dark mode: near-black with a barely-there teal tint and cyan glow.
+   Light mode: clean neutral whites with teal as the single accent.
+
+   To use: swap the theme import in tokens/colors.css:
+     @import '../themes/teal.css';
+   ============================================================================= */
+
+html[data-theme="teal"] {
+  /* -------------------------------------------------------------------------
+     Brand Scale Override — Cyan-Teal (hue 190)
+     Fresh, tech-forward. Not turquoise, not blue — the pure mid-teal.
+     ------------------------------------------------------------------------- */
+  --brand-50:  oklch(97.5% 0.02  190);
+  --brand-100: oklch(94.8% 0.04  190);
+  --brand-200: oklch(87.5% 0.09  190);
+  --brand-300: oklch(77.8% 0.15  190);
+  --brand-400: oklch(68.5% 0.20  190);
+  --brand-500: oklch(62.5% 0.22  190);
+  --brand-600: oklch(53.2% 0.19  190);
+  --brand-700: oklch(45.5% 0.16  190);
+  --brand-800: oklch(37.2% 0.13  190);
+  --brand-900: oklch(26.5% 0.09  190);
+
+  /* -------------------------------------------------------------------------
+     Semantic Tokens - Light Mode
+     Clean neutral whites — teal accent does all the work.
+     ------------------------------------------------------------------------- */
+  --background: var(--gray-0);
+  --background-secondary: oklch(97.5% 0.010 190);
+  --background-tertiary: oklch(95% 0.018 190);
+  --background-elevated: var(--gray-0);
+
+  --foreground: var(--gray-900);           /* 18.3:1 on white — WCAG AAA */
+  --foreground-secondary: var(--gray-700); /* 12.7:1 on white — WCAG AAA */
+  --foreground-muted: var(--gray-600);     /* 10.0:1 on white — WCAG AA  */
+  --foreground-subtle: var(--gray-500);    /*  5.5:1 on white — WCAG AA  */
+
+  --border: var(--gray-200);
+  --border-strong: var(--gray-300);
+  --border-subtle: var(--gray-100);
+
+  --primary: var(--gray-900);
+  --primary-hover: var(--gray-800);
+  --primary-foreground: var(--gray-0);
+
+  --secondary: var(--gray-100);
+  --secondary-hover: var(--gray-200);
+  --secondary-foreground: var(--gray-900);
+
+  --accent: var(--brand-500);
+  --accent-hover: var(--brand-600);
+  --accent-light: var(--brand-100);
+
+  --muted: var(--gray-100);
+  --muted-foreground: var(--gray-500);     /*  5.5:1 on white — WCAG AA  */
+
+  --card: var(--gray-0);
+  --card-border: var(--gray-200);
+
+  --input-bg: var(--gray-0);
+  --input-border: var(--gray-300);
+  --input-focus: var(--brand-500);
+
+  --ring: var(--brand-500);
+
+  /* Destructive */
+  --destructive: var(--error);
+  --destructive-foreground: var(--gray-0);
+
+  /* Gradient colors */
+  --gradient-start: oklch(96.5% 0 0);
+  --gradient-end: oklch(100% 0 0);
+
+  /* Status colors - light mode backgrounds */
+  --success-light: oklch(94% 0.05 145);
+  --warning-light: oklch(95% 0.05 85);
+  --error-light:   oklch(94% 0.05 25);
+
+  /* -------------------------------------------------------------------------
+     Inverted/Contrast Section — deep teal-dark
+     ------------------------------------------------------------------------- */
+  --surface-invert: oklch(9.5% 0.01 190);
+  --surface-invert-secondary: oklch(13.5% 0.01 190);
+  --surface-invert-tertiary: oklch(17.5% 0.008 190);
+  --on-invert: var(--gray-50);
+  --on-invert-secondary: var(--gray-200);
+  --on-invert-muted: var(--gray-300);
+  --border-invert: oklch(21% 0.01 190);
+  --border-invert-strong: oklch(29% 0.008 190);
+
+  /* -------------------------------------------------------------------------
+     Typography — Manrope (body) + Outfit (display)
+     ------------------------------------------------------------------------- */
+  --theme-font-sans: 'Manrope Variable', 'Manrope', ui-sans-serif, system-ui,
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+    'Segoe UI Symbol', 'Noto Color Emoji';
+  --theme-font-display: 'Outfit Variable', 'Outfit', var(--theme-font-sans);
+  --theme-font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace,
+    SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+    monospace;
+  --theme-heading-weight: 700;
+  --theme-heading-tracking: -0.02em;
+  --theme-body-leading: 1.6;
+
+  /* -------------------------------------------------------------------------
+     Shadows — teal-tinted
+     ------------------------------------------------------------------------- */
+  --theme-shadow-sm: 0 1px 2px oklch(20% 0.01 190 / 0.06);
+  --theme-shadow-md: 0 4px 8px oklch(20% 0.01 190 / 0.08),
+    0 0 1px oklch(20% 0.01 190 / 0.04);
+  --theme-shadow-lg: 0 8px 16px oklch(20% 0.01 190 / 0.1),
+    0 0 1px oklch(20% 0.01 190 / 0.04);
+  --theme-shadow-xl: 0 24px 48px oklch(20% 0.01 190 / 0.14),
+    0 0 1px oklch(20% 0.01 190 / 0.04);
+
+  /* -------------------------------------------------------------------------
+     Border Radii
+     ------------------------------------------------------------------------- */
+  --theme-radius-sm: 0.25rem;    /* 4px  */
+  --theme-radius-md: 0.375rem;   /* 6px  */
+  --theme-radius-lg: 0.5rem;     /* 8px  */
+  --theme-radius-xl: 0.625rem;   /* 10px */
+  --theme-radius-full: 9999px;
+}
+
+/* -------------------------------------------------------------------------
+   Dark Mode — deep near-black with teal glow
+   SaaS-generation aesthetic. Fresh and focused.
+   ------------------------------------------------------------------------- */
+html.dark[data-theme="teal"] {
+  --background: oklch(9.5% 0.012 190);
+  --background-secondary: oklch(15% 0.01 190);
+  --background-tertiary: oklch(20% 0.008 190);
+  --background-elevated: oklch(15% 0.01 190);
+
+  --foreground: oklch(91% 0.008 190);          /* teal-tinted near-white — 15:1 on dark bg, WCAG AAA */
+  --foreground-secondary: oklch(82% 0.01 190);
+  --foreground-muted: oklch(68% 0.008 190);
+  --foreground-subtle: oklch(58% 0.006 190);   /*  ~4.8:1 on bg — WCAG AA  */
+
+  --border: oklch(20% 0.01 190);
+  --border-strong: oklch(27% 0.008 190);
+  --border-subtle: oklch(13.5% 0.01 190);
+
+  --primary: oklch(94% 0.008 190);
+  --primary-hover: oklch(82% 0.01 190);
+  --primary-foreground: oklch(9.5% 0.012 190);
+
+  --secondary: oklch(20% 0.008 190);
+  --secondary-hover: oklch(24% 0.008 190);
+  --secondary-foreground: oklch(90% 0.008 190);
+
+  --accent: var(--brand-400);
+  --accent-hover: var(--brand-500);
+  --accent-light: oklch(18% 0.06 190);
+
+  --muted: oklch(20% 0.008 190);
+  --muted-foreground: oklch(68% 0.008 190);
+
+  --card: oklch(15% 0.01 190);
+  --card-border: oklch(23% 0.01 190);
+
+  --input-bg: oklch(15% 0.01 190);
+  --input-border: oklch(27% 0.008 190);
+  --input-focus: var(--brand-400);
+
+  --ring: var(--brand-400);
+
+  --destructive: oklch(65% 0.22 25);
+  --destructive-foreground: var(--gray-0);
+
+  /* Gradient colors */
+  --gradient-start: oklch(9.5% 0.012 190);
+  --gradient-end: oklch(13% 0.01 190);
+
+  /* Status colors */
+  --success-light: oklch(18% 0.06 155);
+  --warning-light: oklch(18% 0.05 85);
+  --error-light: oklch(18% 0.05 25);
+
+  /* Inverted section in dark mode */
+  --surface-invert: oklch(13% 0.01 190);
+  --surface-invert-secondary: oklch(16.5% 0.008 190);
+  --surface-invert-tertiary: oklch(21% 0.008 190);
+  --on-invert: oklch(94% 0.008 190);
+  --on-invert-secondary: oklch(72% 0.01 190);
+  --on-invert-muted: oklch(68% 0.008 190);
+  --border-invert: oklch(21% 0.008 190);
+  --border-invert-strong: oklch(29% 0.007 190);
+
+  /* Shadows — teal-tinted, deep */
+  --theme-shadow-sm: 0 1px 3px oklch(9% 0.02 190 / 0.35);
+  --theme-shadow-md: 0 4px 12px oklch(9% 0.02 190 / 0.4),
+    0 0 1px oklch(9% 0.02 190 / 0.15);
+  --theme-shadow-lg: 0 8px 24px oklch(9% 0.02 190 / 0.45),
+    0 1px 2px oklch(50% 0.15 190 / 0.06);
+  --theme-shadow-xl: 0 24px 48px oklch(9% 0.02 190 / 0.55),
+    0 2px 4px oklch(50% 0.15 190 / 0.09);
+}
