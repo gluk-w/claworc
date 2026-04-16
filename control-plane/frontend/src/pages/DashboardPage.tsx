@@ -14,6 +14,7 @@ import {
   useCreationToast,
   useReorderInstances,
 } from "@/hooks/useInstances";
+import { useAuth } from "@/contexts/AuthContext";
 import type { Instance } from "@/types/instance";
 
 export default function DashboardPage() {
@@ -52,6 +53,7 @@ export default function DashboardPage() {
   };
 
   const loadingInstanceId = getLoadingInstanceId();
+  const { isAdmin } = useAuth();
 
   return (
     <div>
@@ -60,13 +62,17 @@ export default function DashboardPage() {
       ) : !instances || instances.length === 0 ? (
         <div className="text-center py-12">
           <p data-testid="empty-state-message" className="text-gray-500 mb-4">No instances yet.</p>
-          <Link
-            to="/instances/new"
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
-          >
-            <Plus size={16} />
-            Create your first instance
-          </Link>
+          {isAdmin ? (
+            <Link
+              to="/instances/new"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+            >
+              <Plus size={16} />
+              Create your first instance
+            </Link>
+          ) : (
+            <p className="text-gray-400 text-sm">Ask an administrator to create an instance for you.</p>
+          )}
         </div>
       ) : (
         <InstanceTable
