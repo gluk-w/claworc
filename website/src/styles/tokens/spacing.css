@@ -1,0 +1,88 @@
+/* =============================================================================
+   Astro Rocket Design Tokens - Spacing
+   =============================================================================
+   4px base unit spacing system
+   ============================================================================= */
+
+:root {
+  /* ---------------------------------------------------------------------------
+     Spacing Scale (4px base unit)
+     --------------------------------------------------------------------------- */
+  --space-0: 0;
+  --space-px: 1px;
+  --space-0-5: 0.125rem; /* 2px */
+  --space-1: 0.25rem; /* 4px */
+  --space-1-5: 0.375rem; /* 6px */
+  --space-2: 0.5rem; /* 8px */
+  --space-2-5: 0.625rem; /* 10px */
+  --space-3: 0.75rem; /* 12px */
+  --space-3-5: 0.875rem; /* 14px */
+  --space-4: 1rem; /* 16px */
+  --space-5: 1.25rem; /* 20px */
+  --space-6: 1.5rem; /* 24px */
+  --space-7: 1.75rem; /* 28px */
+  --space-8: 2rem; /* 32px */
+  --space-9: 2.25rem; /* 36px */
+  --space-10: 2.5rem; /* 40px */
+  --space-11: 2.75rem; /* 44px */
+  --space-12: 3rem; /* 48px */
+  --space-14: 3.5rem; /* 56px */
+  --space-16: 4rem; /* 64px */
+  --space-20: 5rem; /* 80px */
+  --space-24: 6rem; /* 96px */
+  --space-28: 7rem; /* 112px */
+  --space-32: 8rem; /* 128px */
+  --space-36: 9rem; /* 144px */
+  --space-40: 10rem; /* 160px */
+  --space-44: 11rem; /* 176px */
+  --space-48: 12rem; /* 192px */
+  --space-52: 13rem; /* 208px */
+  --space-56: 14rem; /* 224px */
+  --space-60: 15rem; /* 240px */
+  --space-64: 16rem; /* 256px */
+  --space-72: 18rem; /* 288px */
+  --space-80: 20rem; /* 320px */
+  --space-96: 24rem; /* 384px */
+
+  /* ---------------------------------------------------------------------------
+     Semantic Spacing
+     --------------------------------------------------------------------------- */
+  --space-section: clamp(var(--space-16), 10vw, var(--space-24));
+  --space-section-header: clamp(var(--space-4), 2vw, var(--space-6));
+  --space-container-x: clamp(var(--space-4), 5vw, var(--space-8));
+  --space-stack-sm: var(--space-2);
+  --space-stack-md: var(--space-4);
+  --space-stack-lg: var(--space-8);
+  --space-inline-sm: var(--space-2);
+  --space-inline-md: var(--space-4);
+  --space-inline-lg: var(--space-6);
+
+  /* ---------------------------------------------------------------------------
+     Section Padding - Size Variants
+     --------------------------------------------------------------------------- */
+  --space-section-sm: clamp(var(--space-12), 6vw, var(--space-16));
+  --space-section-md: clamp(var(--space-16), 8vw, var(--space-24));
+  --space-section-lg: clamp(var(--space-20), 10vw, var(--space-32));
+  --space-section-xl: clamp(var(--space-28), 12vw, var(--space-40));
+
+  /* ---------------------------------------------------------------------------
+     Section Grid Gaps - Fluid Scaling
+     --------------------------------------------------------------------------- */
+  --space-section-gap: clamp(var(--space-8), 5vw, var(--space-12));
+
+  /* ---------------------------------------------------------------------------
+     Content Block Spacing
+     --------------------------------------------------------------------------- */
+  --space-content-gap: clamp(var(--space-4), 3vw, var(--space-8));
+
+  /* ---------------------------------------------------------------------------
+     Heading Margins
+     --------------------------------------------------------------------------- */
+  --space-heading-gap: var(--space-6); /* 24px - consistent heading bottom margin */
+
+  /* ---------------------------------------------------------------------------
+     Page Top Spacing (after fixed header)
+     --------------------------------------------------------------------------- */
+  --space-page-top: var(--space-32); /* 128px - clearance for fixed header + breathing room */
+  --space-page-top-sm: var(--space-24); /* 96px - smaller top clearance */
+}

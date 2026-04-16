@@ -1,0 +1,113 @@
+---
+import { cn } from '@/lib/cn';
+
+interface Props {
+  code: string;
+  filename?: string;
+  showLineNumbers?: boolean;
+  class?: string;
+}
+
+const {
+  code,
+  filename,
+  showLineNumbers = true,
+  class: className,
+} = Astro.props;
+
+const lines = code.trim().split('\n');
+const codeId = `code-${Math.random().toString(36).slice(2, 9)}`;
+---
+
+<div class={cn(
+  "group relative w-full overflow-hidden rounded-md border border-border bg-background-secondary shadow-sm font-mono text-sm",
+  className
+)}>
+  <!-- Header -->
+  <div class="flex items-center justify-between border-b border-border bg-card px-4 py-2.5">
+    <div class="flex items-center gap-3">
+      <div class="flex gap-1.5">
+        <div class="h-2.5 w-2.5 rounded-full bg-gray-300 dark:bg-gray-600"></div>
+        <div class="h-2.5 w-2.5 rounded-full bg-gray-300 dark:bg-gray-600"></div>
+        <div class="h-2.5 w-2.5 rounded-full bg-gray-300 dark:bg-gray-600"></div>
+      </div>
+      {filename && (
+        <span class="text-xs font-medium text-foreground-muted font-sans">{filename}</span>
+      )}
+    </div>
+    <button
+      type="button"
+      class="copy-button flex items-center gap-1.5 rounded px-2 py-0.5 text-xs font-medium text-foreground-muted transition-colors hover:bg-secondary hover:text-foreground focus:outline-none"
+      data-code-id={codeId}
+      aria-label="Copy code to clipboard"
+    >
+      <svg class="copy-icon h-3 w-3" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+      </svg>
+      <svg class="check-icon hidden h-3 w-3 text-success" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12"></polyline>
+      </svg>
+      <span class="copy-text">Copy</span>
+    </button>
+  </div>
+
+  <!-- Code Area -->
+  <div class="overflow-x-auto p-4 bg-card">
+    <pre id={codeId} class="flex flex-col leading-6">{lines.map((line, i) => (
+      <div class="table-row">
+        {showLineNumbers && (
+          <span class="table-cell select-none pr-4 text-right text-xs text-foreground-subtle w-8">
+            {i + 1}
+          </span>
+        )}
+        <span class="table-cell whitespace-pre text-foreground-secondary">{line || ' '}</span>
+      </div>
+    ))}</pre>
+  </div>
+</div>
+
+<script>
+  function initCodeBlocks() {
+    const copyButtons = document.querySelectorAll<HTMLButtonElement>('.copy-button');
+    copyButtons.forEach((button) => {
+      button.addEventListener('click', async () => {
+        const codeId = button.dataset.codeId;
+        if (!codeId) return;
+
+        const codeEl = document.getElementById(codeId);
+        if (!codeEl) return;
+
+        const code = codeEl.textContent || '';
+
+        try {
+          await navigator.clipboard.writeText(code);
+
+          const copyIcon = button.querySelector('.copy-icon');
+          const checkIcon = button.querySelector('.check-icon');
+          const copyText = button.querySelector('.copy-text');
+
+          if (copyIcon && checkIcon && copyText) {
+            copyIcon.classList.add('hidden');
+            checkIcon.classList.remove('hidden');
+            copyText.textContent = 'Copied';
+
+            setTimeout(() => {
+              copyIcon.classList.remove('hidden');
+              checkIcon.classList.add('hidden');
+              copyText.textContent = 'Copy';
+            }, 2000);
+          }
+        } catch {
+          // Clipboard API failed - user will need to copy manually
+        }
+      });
+    });
+  }
+
+  // Initialize on page load
+  initCodeBlocks();
+
+  // Re-initialize on view transitions (Astro)
+  document.addEventListener('astro:page-load', initCodeBlocks);
+</script>

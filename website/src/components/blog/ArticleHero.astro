@@ -1,0 +1,132 @@
+---
+import { Image } from 'astro:assets';
+import type { ImageMetadata } from 'astro';
+import { formatDate } from '@/lib/utils';
+import Logo from '@/components/ui/marketing/Logo/Logo.astro';
+import BlogImageSVG from '@/components/blog/BlogImageSVG.astro';
+
+interface Props {
+  title: string;
+  description: string;
+  publishedAt: Date;
+  updatedAt?: Date;
+  author?: string;
+  tags?: string[];
+  image?: ImageMetadata;
+  imageAlt?: string;
+  svgSlug?: string;
+}
+
+const {
+  title,
+  description,
+  publishedAt,
+  updatedAt,
+  author = 'Team',
+  tags = [],
+  image,
+  imageAlt,
+  svgSlug,
+} = Astro.props;
+
+// Estimate reading time
+const wordsPerMinute = 200;
+const estimatedWords = description.split(' ').length * 15;
+const readingTime = Math.max(1, Math.ceil(estimatedWords / wordsPerMinute));
+---
+
+<header class="relative overflow-hidden pt-[var(--space-page-top-sm)] pb-[var(--space-section)]">
+<div class="relative mx-auto max-w-4xl px-6 animate-hero-slide-up">
+    <!-- Tags -->
+    {tags.length > 0 && (
+      <div class="mb-[var(--space-heading-gap)] flex flex-wrap gap-2">
+        {tags.map((tag) => (
+          <span class="inline-flex items-center rounded-full bg-brand-100 dark:bg-brand-900/30 px-3 py-1 text-xs font-semibold text-brand-700 dark:text-brand-300 ring-1 ring-inset ring-brand-200 dark:ring-brand-800">
+            {tag}
+          </span>
+        ))}
+      </div>
+    )}
+
+    <!-- Title -->
+    <h1 class="font-display text-4xl font-bold tracking-tight text-foreground md:text-5xl lg:text-6xl mb-[var(--space-heading-gap)]">
+      {title}
+    </h1>
+
+    <!-- Description -->
+    <p class="text-xl text-foreground-muted leading-relaxed max-w-3xl mb-[var(--space-stack-lg)]">
+      {description}
+    </p>
+
+    <!-- Meta info -->
+    <div class="flex flex-wrap items-center gap-[var(--space-stack-lg)] text-sm text-foreground-muted">
+      <!-- Author -->
+      <div class="flex items-center gap-3">
+        <Logo size="sm" letter={author.charAt(0).toUpperCase()} />
+        <p class="font-semibold text-foreground">{author}</p>
+      </div>
+
+      <div class="h-8 w-px bg-border hidden md:block"></div>
+
+      <!-- Published date -->
+      <div class="flex items-center gap-2">
+        <svg class="h-5 w-5 text-foreground-subtle" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+        </svg>
+        <time datetime={publishedAt.toISOString()}>
+          {formatDate(publishedAt)}
+        </time>
+      </div>
+
+      {updatedAt && (
+        <>
+          <div class="h-8 w-px bg-border hidden md:block"></div>
+          <div class="flex items-center gap-2">
+            <svg class="h-5 w-5 text-foreground-subtle" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+            <time datetime={updatedAt.toISOString()}>
+              Updated {formatDate(updatedAt)}
+            </time>
+          </div>
+        </>
+      )}
+
+      <div class="h-8 w-px bg-border hidden md:block"></div>
+
+      <!-- Reading time -->
+      <div class="flex items-center gap-2">
+        <svg class="h-5 w-5 text-foreground-subtle" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>{readingTime} min read</span>
+      </div>
+    </div>
+  </div>
+
+  {(svgSlug || image) && (
+    <div class="relative mx-auto max-w-5xl px-6 mt-[var(--space-section)] animate-hero-slide-up [animation-delay:200ms]">
+      {svgSlug ? (
+        <div
+          class="relative overflow-hidden rounded-xl border border-border shadow-2xl
+            bg-gradient-to-br from-brand-100/50 to-brand-50/30 dark:from-brand-900/50 dark:to-brand-600/30"
+          style="color: var(--brand-500);"
+        >
+          <BlogImageSVG slug={svgSlug} title={imageAlt || title} />
+        </div>
+      ) : image ? (
+        <div class="relative overflow-hidden rounded-xl border border-border shadow-2xl">
+          <Image
+            src={image}
+            alt={imageAlt || title}
+            layout="full-width"
+            widths={[640, 960, 1280, 1920]}
+            sizes="100vw"
+            class="aspect-video w-full object-cover"
+            loading="eager"
+          />
+        </div>
+      ) : null}
+    </div>
+  )}
+</header>

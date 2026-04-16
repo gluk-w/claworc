@@ -1,0 +1,104 @@
+---
+import { Image } from 'astro:assets';
+import type { ImageMetadata } from 'astro';
+import { formatDate } from '@/lib/utils';
+import Logo from '@/components/ui/marketing/Logo/Logo.astro';
+import BlogImageSVG from '@/components/blog/BlogImageSVG.astro';
+
+interface Props {
+  title: string;
+  description: string;
+  href: string;
+  publishedAt: Date;
+  tags?: string[];
+  featured?: boolean;
+  author?: string;
+  image?: ImageMetadata;
+  svgSlug?: string;
+}
+
+const {
+  title,
+  description,
+  href,
+  publishedAt,
+  tags = [],
+  author,
+  image,
+  svgSlug,
+} = Astro.props;
+
+// Estimate reading time (rough estimate based on average words)
+const wordsPerMinute = 200;
+const estimatedWords = description.split(' ').length * 10; // Rough estimate
+const readingTime = Math.max(1, Math.ceil(estimatedWords / wordsPerMinute));
+---
+
+<article class="group rounded-lg border border-brand-500/30 bg-background p-6 ring-1 ring-brand-500/20 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-brand-500 hover:shadow-md">
+
+  <a href={href} class="block">
+    <div
+      class="relative mb-4 overflow-hidden rounded-md
+        bg-background-secondary bg-gradient-to-br from-brand-100/65 to-transparent dark:from-brand-900/60 dark:to-brand-600/25"
+      style="color: var(--brand-500);"
+    >
+      {svgSlug ? (
+        <div class="transition-transform duration-300 group-hover:scale-105">
+          <BlogImageSVG slug={svgSlug} title={title} />
+        </div>
+      ) : image ? (
+        <Image
+          src={image}
+          alt={title}
+          widths={[320, 640, 960]}
+          sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 400px"
+          class="aspect-video w-full object-cover transition-transform duration-300 group-hover:scale-105"
+          loading="lazy"
+        />
+      ) : (
+        <div class="aspect-video w-full" />
+      )}
+    </div>
+
+    <h2 class="font-display text-xl font-bold text-foreground transition-colors group-hover:text-brand-600 dark:group-hover:text-brand-400 mb-2">
+      {title}
+    </h2>
+
+    <p class="text-foreground-muted line-clamp-2 mb-4">
+      {description}
+    </p>
+
+    <div class="flex flex-wrap items-center gap-3 text-sm text-foreground-subtle">
+      {author && (
+        <div class="flex items-center gap-2">
+          <Logo size="sm" letter={author.charAt(0).toUpperCase()} />
+          <span class="font-medium">{author}</span>
+        </div>
+      )}
+
+      <time datetime={publishedAt.toISOString()} class="flex items-center gap-1">
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+        </svg>
+        {formatDate(publishedAt)}
+      </time>
+
+      <span class="flex items-center gap-1">
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        {readingTime} min read
+      </span>
+    </div>
+
+    {tags.length > 0 && (
+      <div class="mt-4 flex flex-wrap gap-2">
+        {tags.map((tag) => (
+          <span class="inline-flex items-center rounded-full bg-background-secondary px-2.5 py-0.5 text-xs font-medium text-foreground-muted ring-1 ring-inset ring-border transition-colors group-hover:bg-brand-50 group-hover:text-brand-700 group-hover:ring-brand-200 dark:group-hover:bg-brand-900/20 dark:group-hover:text-brand-400 dark:group-hover:ring-brand-800">
+            {tag}
+          </span>
+        ))}
+      </div>
+    )}
+  </a>
+</article>

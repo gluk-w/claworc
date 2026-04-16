@@ -1,0 +1,58 @@
+/* =============================================================================
+   Astro Rocket Design Tokens - Primitive Colors
+   =============================================================================
+   Raw color scales that themes build upon.
+   Using OKLCH for perceptual color uniformity.
+   ============================================================================= */
+
+:root {
+  /* -------------------------------------------------------------------------
+     Grayscale - The foundation (OKLCH neutral scale)
+     ------------------------------------------------------------------------- */
+  --gray-0: oklch(100% 0 0);
+  --gray-50: oklch(98.3% 0 0);
+  --gray-100: oklch(96.5% 0 0);
+  --gray-200: oklch(91.3% 0 0);
+  --gray-300: oklch(85.8% 0 0);
+  --gray-400: oklch(64% 0 0);
+  --gray-500: oklch(52% 0 0);
+  --gray-600: oklch(38% 0 0);
+  --gray-700: oklch(32% 0 0);
+  --gray-800: oklch(26.7% 0 0);
+  --gray-900: oklch(19.4% 0 0);
+  --gray-950: oklch(12.3% 0 0);
+
+  /* -------------------------------------------------------------------------
+     Brand Orange Scale - International Orange (#F94C10)
+     OKLCH for perceptual uniformity across the scale
+     ------------------------------------------------------------------------- */
+  --brand-50: oklch(97.5% 0.02 45);
+  --brand-100: oklch(94.8% 0.04 45);
+  --brand-200: oklch(87.5% 0.08 45);
+  --brand-300: oklch(77.8% 0.14 45);
+  --brand-400: oklch(68.5% 0.19 40);
+  --brand-500: oklch(62.5% 0.22 38);
+  --brand-600: oklch(53.2% 0.19 38);
+  --brand-700: oklch(45.5% 0.16 38);
+  --brand-800: oklch(37.2% 0.13 38);
+  --brand-900: oklch(26.5% 0.09 38);
+
+  /* Accent - Blue for links/focus */
+  --blue-500: oklch(59.5% 0.19 260);
+  --blue-600: oklch(53.2% 0.19 260);
+
+  /* Status Colors - OKLCH for consistent perception */
+  /* Base colors for icons, borders, indicators */
+  --success: oklch(72.3% 0.19 145);
+  --success-light: oklch(94% 0.05 145);
+  --success-foreground: oklch(35% 0.15 145); /* WCAG AA compliant on success-light */
+  --warning: oklch(79.5% 0.18 85);
+  --warning-light: oklch(96% 0.05 85);
+  --warning-foreground: oklch(40% 0.12 85); /* WCAG AA compliant on warning-light */
+  --error: oklch(62.8% 0.22 25);
+  --error-light: oklch(94% 0.05 25);
+  --error-foreground: oklch(40% 0.18 25); /* WCAG AA compliant on error-light */
+  --info: oklch(59.5% 0.19 260);
+  --info-light: oklch(94% 0.05 260);
+  --info-foreground: oklch(40% 0.15 260); /* WCAG AA compliant on info-light */
+}

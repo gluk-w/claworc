@@ -1,0 +1,261 @@
+---
+/**
+ * Analytics Component
+ *
+ * Conditionally loads analytics scripts based on environment variables.
+ * Supports Google Analytics (GA4) and Google Tag Manager.
+ *
+ * When PUBLIC_CONSENT_ENABLED is true, integrates with Google Consent Mode v2:
+ * - consent_mode_v2: Scripts load normally but with denied defaults (cookieless pings)
+ * - strict: Scripts only load after explicit user consent
+ *
+ * Environment variables:
+ * - PUBLIC_GA_MEASUREMENT_ID: Google Analytics 4 Measurement ID (e.g., G-XXXXXXXXXX)
+ * - PUBLIC_GTM_ID: Google Tag Manager Container ID (e.g., GTM-XXXXXXX)
+ * - PUBLIC_CONSENT_ENABLED: Enable cookie consent integration (boolean)
+ *
+ * CSP: All is:inline scripts here are STATIC (no define:vars). Dynamic values are
+ * passed via <script type="application/json"> data elements. Pin each script's
+ * sha256 hash in astro.config.mjs → security.csp.scriptDirective.hashes.
+ *
+ * Required CSP directives for GA4/GTM:
+ *
+ *   script-src:
+ *     https://*.googletagmanager.com
+ *     https://*.google-analytics.com
+ *     https://analytics.google.com
+ *
+ *   connect-src:
+ *     https://*.google-analytics.com      (covers region1, region2, etc.)
+ *     https://analytics.google.com         (separate domain, not a subdomain)
+ *     https://*.googletagmanager.com
+ *
+ * IMPORTANT: GA4 sends data to regional endpoints like
+ * https://region1.google-analytics.com/g/s/collect — whitelisting only
+ * www.google-analytics.com will silently drop all tracking requests with
+ * no console errors. The wildcard *.google-analytics.com is required.
+ */
+import { PUBLIC_GA_MEASUREMENT_ID, PUBLIC_GTM_ID, PUBLIC_CONSENT_ENABLED } from 'astro:env/client';
+import consentConfig from '@/config/consent.config';
+
+const gaId = PUBLIC_GA_MEASUREMENT_ID;
+const gtmId = PUBLIC_GTM_ID;
+const consentEnabled = PUBLIC_CONSENT_ENABLED;
+const consentMode = consentConfig.mode;
+const storageKey = consentConfig.storageKey;
+const configVersion = consentConfig.version;
+
+// Build GCM default values from config categories
+const gcmDefaults: Record<string, string> = {};
+for (const [, cat] of Object.entries(consentConfig.categories)) {
+  for (const gcmType of cat.gcmTypes) {
+    gcmDefaults[gcmType] = cat.defaultEnabled ? 'granted' : 'denied';
+  }
+}
+
+// Build category default states from config (e.g. { necessary: true, analytics: false, ... })
+const categoryDefaults: Record<string, boolean> = {};
+for (const [key, cat] of Object.entries(consentConfig.categories)) {
+  categoryDefaults[key] = cat.required || cat.defaultEnabled;
+}
+
+// Build category → GCM type mapping for dynamic resolution
+const categoryGcmMap: Record<string, string[]> = {};
+for (const [key, cat] of Object.entries(consentConfig.categories)) {
+  categoryGcmMap[key] = cat.gcmTypes;
+}
+
+// Derive the category key that maps to analytics_storage (for strict-mode guards)
+let analyticsCategoryKey = 'analytics';
+for (const [key, cat] of Object.entries(consentConfig.categories)) {
+  if (cat.gcmTypes.includes('analytics_storage')) {
+    analyticsCategoryKey = key;
+    break;
+  }
+}
+
+// Rendering flags — keeps template conditions simple and highlighter-friendly
+const hasGtm = !!gtmId;
+const hasGa = !!gaId && !gtmId;
+const hasAnalytics = !!(gaId || gtmId);
+const noConsent = !consentEnabled;
+const isV2 = consentEnabled && consentMode === 'consent_mode_v2';
+const isStrict = consentEnabled && consentMode === 'strict';
+
+// JSON data for all analytics scripts (single data element avoids duplication)
+const analyticsDataJson = JSON.stringify({
+  gtmId: gtmId || null,
+  gaId: gaId || null,
+  storageKey,
+  configVersion,
+  gcmDefaults,
+  categoryDefaults,
+  categoryGcmMap,
+  analyticsCategoryKey,
+});
+---
+
+{/* Analytics data element — read by all inline scripts below */}
+{hasAnalytics && (
+  <script type="application/json" id="analytics-data" set:html={analyticsDataJson} />
+)}
+
+{/* ── No consent: load GTM directly ── */}
+{noConsent && hasGtm && (
+  <script is:inline>
+    (function(){
+      const d = JSON.parse(document.getElementById('analytics-data').textContent);
+      const i = d.gtmId;
+      window.dataLayer = window.dataLayer || [];
+      window.dataLayer.push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' });
+      const f = document.getElementsByTagName('script')[0],
+        j = document.createElement('script');
+      j.async = true;
+      j.src = 'https://www.googletagmanager.com/gtm.js?id=' + i;
+      f.parentNode.insertBefore(j, f);
+    })();
+  </script>
+)}
+
+{/* ── No consent: load GA directly ── */}
+{noConsent && hasGa && (
+  <>
+    <script is:inline async src={`https://www.googletagmanager.com/gtag/js?id=${gaId}`}></script>
+    <script is:inline>
+      (function(){
+        const d = JSON.parse(document.getElementById('analytics-data').textContent);
+        window.dataLayer = window.dataLayer || [];
+        function gtag(...args){window.dataLayer.push(args);}
+        gtag('js', new Date());
+        gtag('config', d.gaId);
+      })();
+    </script>
+  </>
+)}
+
+{/* ── Consent enabled: set consent defaults BEFORE loading scripts ── */}
+{consentEnabled && hasAnalytics && (
+  <script is:inline>
+    (function(){
+      const d = JSON.parse(document.getElementById('analytics-data').textContent);
+      window.dataLayer = window.dataLayer || [];
+      function gtag(...args){window.dataLayer.push(args);}
+
+      let stored = null;
+      try {
+        const raw = localStorage.getItem(d.storageKey);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.version === d.configVersion) {
+            stored = parsed;
+          }
+        }
+      } catch { /* ignored */ }
+
+      const gcmValues = {};
+      const keys = Object.keys(d.gcmDefaults);
+      for (let k = 0; k < keys.length; k++) { gcmValues[keys[k]] = d.gcmDefaults[keys[k]]; }
+      let decided = false;
+      let categories = {};
+      const catKeys = Object.keys(d.categoryDefaults);
+      for (let c = 0; c < catKeys.length; c++) { categories[catKeys[c]] = d.categoryDefaults[catKeys[c]]; }
+
+      if (stored && stored.categories) {
+        decided = true;
+        categories = stored.categories;
+
+        const mapKeys = Object.keys(d.categoryGcmMap);
+        for (let m = 0; m < mapKeys.length; m++) {
+          const catKey = mapKeys[m];
+          const granted = !!categories[catKey];
+          const gcmTypes = d.categoryGcmMap[catKey];
+          for (let g = 0; g < gcmTypes.length; g++) {
+            gcmValues[gcmTypes[g]] = granted ? 'granted' : 'denied';
+          }
+        }
+      }
+
+      gtag('consent', 'default', gcmValues);
+      window.__consentState = { decided: decided, categories: categories };
+    })();
+  </script>
+)}
+
+{/* ── V2 mode: load GTM after consent defaults ── */}
+{isV2 && hasGtm && (
+  <script is:inline>
+    (function(){
+      const d = JSON.parse(document.getElementById('analytics-data').textContent);
+      const i = d.gtmId;
+      window.dataLayer = window.dataLayer || [];
+      window.dataLayer.push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' });
+      const f = document.getElementsByTagName('script')[0],
+        j = document.createElement('script');
+      j.async = true;
+      j.src = 'https://www.googletagmanager.com/gtm.js?id=' + i;
+      f.parentNode.insertBefore(j, f);
+    })();
+  </script>
+)}
+
+{/* ── V2 mode: load GA after consent defaults ── */}
+{isV2 && hasGa && (
+  <>
+    <script is:inline async src={`https://www.googletagmanager.com/gtag/js?id=${gaId}`}></script>
+    <script is:inline>
+      (function(){
+        const d = JSON.parse(document.getElementById('analytics-data').textContent);
+        window.dataLayer = window.dataLayer || [];
+        function gtag(...args){window.dataLayer.push(args);}
+        gtag('js', new Date());
+        gtag('config', d.gaId);
+      })();
+    </script>
+  </>
+)}
+
+{/* ── Strict mode: meta tags for consent banner dynamic injection ── */}
+{isStrict && hasGtm && (
+  <meta name="gtm-id" content={gtmId} />
+)}
+{isStrict && hasGa && (
+  <meta name="ga-id" content={gaId} />
+)}
+
+{/* ── Strict mode: conditionally load GTM if consent already granted ── */}
+{isStrict && hasGtm && (
+  <script is:inline>
+    (function(){
+      const d = JSON.parse(document.getElementById('analytics-data').textContent);
+      if (window.__consentState && window.__consentState.decided && window.__consentState.categories[d.analyticsCategoryKey]) {
+        const i = d.gtmId;
+        window.dataLayer = window.dataLayer || [];
+        window.dataLayer.push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' });
+        const f = document.getElementsByTagName('script')[0],
+          j = document.createElement('script');
+        j.async = true;
+        j.src = 'https://www.googletagmanager.com/gtm.js?id=' + i;
+        f.parentNode.insertBefore(j, f);
+      }
+    })();
+  </script>
+)}
+
+{/* ── Strict mode: conditionally load GA if consent already granted ── */}
+{isStrict && hasGa && (
+  <script is:inline>
+    (function(){
+      const d = JSON.parse(document.getElementById('analytics-data').textContent);
+      if (window.__consentState && window.__consentState.decided && window.__consentState.categories[d.analyticsCategoryKey]) {
+        const s = document.createElement('script');
+        s.async = true;
+        s.src = 'https://www.googletagmanager.com/gtag/js?id=' + d.gaId;
+        document.head.appendChild(s);
+        window.dataLayer = window.dataLayer || [];
+        function gtag(...args){window.dataLayer.push(args);}
+        gtag('js', new Date());
+        gtag('config', d.gaId);
+      }
+    })();
+  </script>
+)}

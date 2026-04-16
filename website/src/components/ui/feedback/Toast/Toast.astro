@@ -1,0 +1,13 @@
+---
+/**
+ * Toast Astro Wrapper
+ * Renders the ToastProvider with client:load so Astro pages
+ * can include the toast system without React boilerplate.
+ * Use useToast() inside React children to trigger toasts.
+ */
+import { ToastProvider } from './Toast';
+---
+
+<ToastProvider client:load>
+  <slot />
+</ToastProvider>

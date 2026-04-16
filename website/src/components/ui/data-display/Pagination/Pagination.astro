@@ -1,0 +1,135 @@
+---
+/**
+ * Pagination Component
+ * Page navigation with prev/next and numbered pages.
+ */
+import type { HTMLAttributes } from 'astro/types';
+import { cn } from '@/lib/cn';
+import { paginationItemVariants } from './pagination.variants';
+import Icon from '../../primitives/Icon/Icon.astro';
+
+interface Props extends HTMLAttributes<'nav'> {
+  /** Current active page (1-indexed) */
+  currentPage: number;
+  /** Total number of pages */
+  totalPages: number;
+  /** Base URL for page links (page number appended) */
+  baseUrl?: string;
+  /** Maximum number of visible page buttons */
+  maxVisible?: number;
+  size?: 'sm' | 'md' | 'lg';
+}
+
+const {
+  currentPage,
+  totalPages,
+  baseUrl = '?page=',
+  maxVisible = 5,
+  size = 'md',
+  class: className,
+  ...attrs
+} = Astro.props;
+
+/**
+ * Build the array of page numbers and ellipsis markers to render.
+ *
+ * @param current - The 1-indexed active page.
+ * @param total   - Total number of pages.
+ * @param max     - Size of the central sliding window. When `total <= max`,
+ *                  every page is returned directly. Otherwise a window of
+ *                  `max` pages is centered around `current`, and first/last
+ *                  pages plus `'...'` ellipsis markers are added outside the
+ *                  window as needed — so the returned array can contain more
+ *                  than `max` entries.
+ * @returns An array of page numbers and `'...'` separators.
+ */
+function getPageRange(current: number, total: number, max: number): (number | '...')[] {
+  if (total <= max) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+
+  const pages: (number | '...')[] = [];
+  const half = Math.floor(max / 2);
+  let start = Math.max(1, current - half);
+  let end = Math.min(total, start + max - 1);
+
+  if (end - start < max - 1) {
+    start = Math.max(1, end - max + 1);
+  }
+
+  if (start > 1) {
+    pages.push(1);
+    if (start > 2) pages.push('...');
+  }
+
+  for (let i = start; i <= end; i++) {
+    pages.push(i);
+  }
+
+  if (end < total) {
+    if (end < total - 1) pages.push('...');
+    pages.push(total);
+  }
+
+  return pages;
+}
+
+const pages = getPageRange(currentPage, totalPages, maxVisible);
+const prevUrl = currentPage > 1 ? `${baseUrl}${currentPage - 1}` : undefined;
+const nextUrl = currentPage < totalPages ? `${baseUrl}${currentPage + 1}` : undefined;
+---
+
+<nav class={cn('flex items-center gap-1', className)} aria-label="Pagination" {...attrs}>
+  {/* Previous */}
+  {prevUrl ? (
+    <a
+      href={prevUrl}
+      class={cn(paginationItemVariants({ variant: 'default', size }))}
+      aria-label="Previous page"
+    >
+      <Icon name="chevron-left" size="sm" />
+    </a>
+  ) : (
+    <span class={cn(paginationItemVariants({ variant: 'disabled', size }))} aria-disabled="true">
+      <Icon name="chevron-left" size="sm" />
+    </span>
+  )}
+
+  {/* Page Numbers */}
+  {pages.map((page) =>
+    page === '...' ? (
+      <span class={cn(paginationItemVariants({ variant: 'default', size }), 'cursor-default hover:bg-transparent')} role="separator" aria-label="More pages">
+        <span aria-hidden="true">...</span>
+      </span>
+    ) : page === currentPage ? (
+      <span
+        class={cn(paginationItemVariants({ variant: 'active', size }))}
+        aria-current="page"
+      >
+        {page}
+      </span>
+    ) : (
+      <a
+        href={`${baseUrl}${page}`}
+        class={cn(paginationItemVariants({ variant: 'default', size }))}
+      >
+        {page}
+      </a>
+    )
+  )}
+
+  {/* Next */}
+  {nextUrl ? (
+    <a
+      href={nextUrl}
+      class={cn(paginationItemVariants({ variant: 'default', size }))}
+      aria-label="Next page"
+    >
+      <Icon name="chevron-right" size="sm" />
+    </a>
+  ) : (
+    <span class={cn(paginationItemVariants({ variant: 'disabled', size }))} aria-disabled="true">
+      <Icon name="chevron-right" size="sm" />
+    </span>
+  )}
+</nav>

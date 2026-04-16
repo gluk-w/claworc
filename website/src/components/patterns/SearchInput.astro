@@ -1,0 +1,28 @@
+---
+/**
+ * SearchInput Pattern
+ * Composition example: Input + Icon for a search field.
+ * Demonstrates building on UI primitives.
+ */
+import Input from '@/components/ui/form/Input/Input.astro';
+
+interface Props {
+  placeholder?: string;
+  size?: 'sm' | 'md' | 'lg';
+  class?: string;
+}
+
+const {
+  placeholder = 'Search...',
+  size = 'md',
+  class: className,
+} = Astro.props;
+---
+
+<Input
+  type="search"
+  placeholder={placeholder}
+  size={size}
+  leadingIcon="search"
+  class={className}
+/>

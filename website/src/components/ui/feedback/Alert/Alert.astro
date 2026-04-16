@@ -1,0 +1,89 @@
+---
+/**
+ * Alert Component
+ * Contextual feedback messages with refined design system integration
+ */
+import type { HTMLAttributes } from 'astro/types';
+import { cn } from '@/lib/cn';
+import Icon from '../../primitives/Icon/Icon.astro';
+import { alertVariants, alertIconColors, alertAccentColors } from './alert.variants';
+
+interface Props extends HTMLAttributes<'div'> {
+  variant?: 'info' | 'success' | 'warning' | 'error';
+  title?: string;
+  dismissible?: boolean;
+}
+
+const { variant = 'info', title, dismissible = false, class: className, ...attrs } = Astro.props;
+
+const icons: Record<string, 'info' | 'check-circle' | 'alert-triangle' | 'x-circle'> = {
+  info: 'info',
+  success: 'check-circle',
+  warning: 'alert-triangle',
+  error: 'x-circle',
+};
+---
+
+<div
+  class={cn(alertVariants({ variant }), className)}
+  role="alert"
+  data-alert
+  {...attrs}
+>
+  {/* Accent bar */}
+  <div class={cn('absolute left-0 top-0 bottom-0 w-1', alertAccentColors[variant])} />
+
+  {/* Icon */}
+  <div class={cn('shrink-0 mt-0.5', alertIconColors[variant])}>
+    <Icon name={icons[variant]} class="w-5 h-5" strokeWidth={2} />
+  </div>
+
+  {/* Content */}
+  <div class="flex-1 min-w-0 pl-1">
+    {title && (
+      <h5 class="font-semibold text-sm mb-1 text-foreground">
+        {title}
+      </h5>
+    )}
+    <div class="text-sm leading-relaxed text-foreground-muted">
+      <slot />
+    </div>
+  </div>
+
+  {/* Dismiss button */}
+  {dismissible && (
+    <button
+      type="button"
+      class="shrink-0 p-1 -mr-1 -mt-1 rounded-md text-foreground-muted hover:text-foreground hover:bg-secondary transition-colors"
+      aria-label="Dismiss"
+      data-dismiss-alert
+    >
+      <Icon name="x" class="w-4 h-4" />
+    </button>
+  )}
+</div>
+
+{dismissible && (
+  <script>
+    function initAlerts() {
+      document.querySelectorAll('[data-dismiss-alert]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const alert = button.closest('[data-alert]');
+          if (alert) {
+            alert.classList.add('opacity-0', 'scale-[0.98]');
+            setTimeout(() => alert.remove(), 150);
+          }
+        });
+      });
+    }
+
+    initAlerts();
+    document.addEventListener('astro:page-load', initAlerts);
+  </script>
+)}
+
+<style>
+  [data-alert] {
+    transition: opacity 150ms ease-out, transform 150ms ease-out;
+  }
+</style>

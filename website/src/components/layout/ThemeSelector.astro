@@ -1,0 +1,135 @@
+---
+/**
+ * ThemeSelector
+ * A row of five colour swatches that switches the active colour theme at
+ * runtime by writing `data-theme` on <html> and persisting to localStorage.
+ *
+ * Usage in Header:  <ThemeSelector />
+ * Pass `class` to tint the label colour for floating / inverted headers.
+ */
+interface Props {
+  class?: string;
+}
+
+const { class: className } = Astro.props;
+
+// All 13 themes in Tailwind color order
+const themes = [
+  { id: 'orange',  name: 'Orange',  color: 'oklch(62.5% 0.22  38)'  },
+  { id: 'amber',   name: 'Amber',   color: 'oklch(68%   0.19  75)'  },
+  { id: 'lime',    name: 'Lime',    color: 'oklch(64%   0.27 130)'  },
+  { id: 'emerald', name: 'Emerald', color: 'oklch(62.5% 0.22 160)'  },
+  { id: 'teal',    name: 'Teal',    color: 'oklch(62.5% 0.22 190)'  },
+  { id: 'cyan',    name: 'Cyan',    color: 'oklch(65%   0.22 200)'  },
+  { id: 'sky',     name: 'Sky',     color: 'oklch(67%   0.21 222)'  },
+  { id: 'blue',    name: 'Blue',    color: 'oklch(62.5% 0.22 255)'  },
+  { id: 'indigo',  name: 'Indigo',  color: 'oklch(60%   0.24 264)'  },
+  { id: 'violet',  name: 'Violet',  color: 'oklch(62.5% 0.26 277)'  },
+  { id: 'purple',  name: 'Purple',  color: 'oklch(62.5% 0.25 303)'  },
+  { id: 'magenta', name: 'Magenta', color: 'oklch(58%   0.28 330)'  },
+];
+---
+
+<div
+  class:list={['theme-selector flex flex-wrap items-center gap-1', className]}
+  role="group"
+  aria-label="Select colour theme"
+>
+  {themes.map((theme) => (
+    <button
+      type="button"
+      class="theme-swatch relative h-3.5 w-3.5 rounded-full transition-transform duration-150 focus-visible:outline-none"
+      data-theme-id={theme.id}
+      style={`background-color:${theme.color};--swatch:${theme.color}`}
+      title={theme.name}
+      aria-label={`${theme.name} theme`}
+    />
+  ))}
+</div>
+
+<style>
+  /* Inactive: subtle border + dimmed so active pops without extra decoration */
+  .theme-swatch {
+    box-shadow: inset 0 0 0 1px oklch(0% 0 0 / 0.12);
+    opacity: 0.55;
+    transition:
+      opacity 150ms ease,
+      transform 150ms ease;
+  }
+
+  /* Active: full opacity + slim underline pill in the swatch colour */
+  .theme-swatch[data-active] {
+    opacity: 1;
+    box-shadow: inset 0 0 0 1px oklch(0% 0 0 / 0.12);
+  }
+
+  .theme-swatch[data-active]::after {
+    content: '';
+    position: absolute;
+    bottom: -3px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 10px;
+    height: 2px;
+    background: var(--swatch);
+    border-radius: 1px;
+  }
+
+  /* Hover: lift opacity on inactive */
+  .theme-swatch:not([data-active]):hover {
+    opacity: 0.85;
+    transform: scale(1.1);
+  }
+</style>
+
+<script>
+  const STORAGE_KEY = 'color-theme';
+  const DEFAULT_THEME = 'blue';
+
+  function getActiveTheme(): string {
+    try {
+      return sessionStorage.getItem(STORAGE_KEY) || DEFAULT_THEME;
+    } catch {
+      return DEFAULT_THEME;
+    }
+  }
+
+  function setTheme(id: string) {
+    document.documentElement.setAttribute('data-theme', id);
+    try { sessionStorage.setItem(STORAGE_KEY, id); } catch { /* private mode */ }
+
+    // Update every swatch on the page (handles multiple selector instances)
+    const swatches = document.querySelectorAll<HTMLButtonElement>('.theme-swatch');
+    swatches.forEach((btn) => {
+      if (btn.dataset.themeId === id) {
+        btn.setAttribute('data-active', '');
+      } else {
+        btn.removeAttribute('data-active');
+      }
+    });
+  }
+
+  function initThemeSelector() {
+    const active = getActiveTheme();
+
+    const activeSwatches = document.querySelectorAll<HTMLButtonElement>('.theme-swatch');
+    activeSwatches.forEach((btn) => {
+      // Mark current active
+      if (btn.dataset.themeId === active) {
+        btn.setAttribute('data-active', '');
+      } else {
+        btn.removeAttribute('data-active');
+      }
+
+      // Guard against double-binding across re-runs
+      if (btn.dataset.selectorInit) return;
+      btn.dataset.selectorInit = 'true';
+
+      btn.addEventListener('click', () => setTheme(btn.dataset.themeId!));
+    });
+  }
+
+  initThemeSelector();
+  document.addEventListener('astro:page-load', initThemeSelector);
+  document.addEventListener('astro:after-swap', initThemeSelector);
+</script>

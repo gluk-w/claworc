@@ -1,0 +1,41 @@
+---
+/**
+ * Separator Component
+ * A visual divider between content sections
+ */
+import type { HTMLAttributes } from 'astro/types';
+import { cn } from '@/lib/cn';
+import { separatorVariants } from './separator.variants';
+
+interface Props extends HTMLAttributes<'div'> {
+  orientation?: 'horizontal' | 'vertical';
+  /** Optional label displayed in the center of the separator */
+  label?: string;
+}
+
+const { orientation = 'horizontal', label, class: className, ...attrs } = Astro.props;
+---
+
+{label ? (
+  <div
+    class={cn(
+      'flex items-center gap-3',
+      orientation === 'vertical' && 'flex-col h-full',
+      className
+    )}
+    role="separator"
+    aria-orientation={orientation}
+    {...attrs}
+  >
+    <div class={cn(separatorVariants({ orientation }), 'flex-1')} />
+    <span class="text-xs font-medium text-muted-foreground whitespace-nowrap">{label}</span>
+    <div class={cn(separatorVariants({ orientation }), 'flex-1')} />
+  </div>
+) : (
+  <div
+    class={cn(separatorVariants({ orientation }), className)}
+    role="separator"
+    aria-orientation={orientation}
+    {...attrs}
+  />
+)}

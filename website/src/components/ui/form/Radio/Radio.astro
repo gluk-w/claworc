@@ -1,0 +1,170 @@
+---
+import type { HTMLAttributes } from 'astro/types';
+import { cn } from '@/lib/cn';
+import { generateId } from '@/lib/utils';
+
+interface Props extends HTMLAttributes<'input'> {
+  label?: string;
+  description?: string;
+  error?: string;
+  variant?: 'default' | 'card';
+}
+
+const { label, description, error, variant = 'default', class: className, id, disabled, ...attrs } = Astro.props;
+
+const radioId = id || generateId('radio');
+const isCard = variant === 'card';
+---
+
+{isCard ? (
+  <div class={cn('group', className)}>
+    <label
+      for={radioId}
+      class={cn(
+        'relative flex items-start gap-4 p-4 cursor-pointer',
+        'rounded-xl border-2 border-border',
+        'bg-background',
+        'transition-all duration-150 ease-out',
+        'hover:border-foreground-subtle hover:bg-secondary/30',
+        'has-[:checked]:border-foreground has-[:checked]:bg-secondary/50',
+        'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2',
+        disabled && 'cursor-not-allowed opacity-50',
+        error && 'border-destructive'
+      )}
+    >
+      <!-- Radio indicator with checkmark inside -->
+      <div class="relative flex items-center justify-center mt-0.5 shrink-0">
+        <input
+          type="radio"
+          id={radioId}
+          class="peer sr-only"
+          aria-invalid={error ? 'true' : undefined}
+          aria-describedby={description ? `${radioId}-description` : undefined}
+          disabled={disabled}
+          {...attrs}
+        />
+        <!-- Outer circle -->
+        <div
+          class={cn(
+            'h-5 w-5 rounded-full',
+            'border-2 border-border',
+            'bg-background',
+            'transition-all duration-150 ease-out',
+            'peer-checked:border-foreground peer-checked:bg-foreground',
+            'group-hover:border-foreground-muted'
+          )}
+        />
+        <!-- Checkmark inside circle -->
+        <svg
+          class={cn(
+            'absolute h-3 w-3 text-background',
+            'opacity-0 scale-50',
+            'transition-all duration-150 ease-out',
+            'peer-checked:opacity-100 peer-checked:scale-100'
+          )}
+          viewBox="0 0 12 12"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M2.5 6L5 8.5L9.5 3.5" />
+        </svg>
+      </div>
+
+      <!-- Content -->
+      {(label || description) && (
+        <div class="flex-1 grid gap-0.5">
+          {label && (
+            <span class="text-sm font-semibold text-foreground">
+              {label}
+            </span>
+          )}
+          {description && (
+            <span
+              id={`${radioId}-description`}
+              class="text-xs text-foreground-subtle leading-normal"
+            >
+              {description}
+            </span>
+          )}
+        </div>
+      )}
+    </label>
+
+    {error && (
+      <p class="mt-2 text-sm text-destructive">{error}</p>
+    )}
+  </div>
+) : (
+  <div class={cn('group', className)}>
+    <label
+      for={radioId}
+      class={cn(
+        'relative flex items-start gap-3 cursor-pointer',
+        'select-none',
+        disabled && 'cursor-not-allowed opacity-50'
+      )}
+    >
+      <!-- Custom radio visual -->
+      <div class="relative flex items-center justify-center mt-0.5 shrink-0">
+        <input
+          type="radio"
+          id={radioId}
+          class="peer sr-only"
+          aria-invalid={error ? 'true' : undefined}
+          aria-describedby={description ? `${radioId}-description` : undefined}
+          disabled={disabled}
+          {...attrs}
+        />
+        <!-- Radio circle -->
+        <div
+          class={cn(
+            'h-[18px] w-[18px] rounded-full',
+            'border-2 border-border',
+            'bg-background',
+            'transition-all duration-150 ease-out',
+            'peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background',
+            'peer-checked:border-foreground',
+            'group-hover:border-foreground-muted',
+            error && 'border-destructive peer-focus-visible:ring-destructive'
+          )}
+        />
+        <!-- Inner dot -->
+        <div
+          class={cn(
+            'absolute h-2 w-2 rounded-full',
+            'bg-foreground',
+            'opacity-0 scale-0',
+            'transition-all duration-150 ease-out',
+            'peer-checked:opacity-100 peer-checked:scale-100'
+          )}
+        />
+      </div>
+
+      <!-- Label and description -->
+      {(label || description) && (
+        <div class="grid gap-0.5 leading-tight">
+          {label && (
+            <span class="text-sm font-medium text-foreground">
+              {label}
+            </span>
+          )}
+          {description && (
+            <span
+              id={`${radioId}-description`}
+              class="text-xs text-foreground-subtle leading-normal"
+            >
+              {description}
+            </span>
+          )}
+        </div>
+      )}
+    </label>
+
+    {error && (
+      <p class="mt-2 text-sm text-destructive pl-[30px]">{error}</p>
+    )}
+  </div>
+)}

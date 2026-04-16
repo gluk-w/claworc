@@ -1,0 +1,49 @@
+---
+/**
+ * EmptyState Pattern
+ * Composition example: Icon + text + action for empty data states.
+ * Shows how to compose UI primitives into a reusable pattern.
+ */
+import { cn } from '@/lib/cn';
+import Icon from '@/components/ui/primitives/Icon/Icon.astro';
+import Button from '@/components/ui/form/Button/Button.astro';
+
+interface Props {
+  /** Icon name to display */
+  icon?: string;
+  /** Title text */
+  title: string;
+  /** Description text */
+  description?: string;
+  /** Primary action button label */
+  actionLabel?: string;
+  /** Primary action button href */
+  actionHref?: string;
+  class?: string;
+}
+
+const {
+  icon = 'inbox',
+  title,
+  description,
+  actionLabel,
+  actionHref,
+  class: className,
+} = Astro.props;
+---
+
+<div class={cn('flex flex-col items-center justify-center text-center py-12 px-4', className)}>
+  <div class="w-12 h-12 rounded-xl bg-secondary flex items-center justify-center text-foreground-muted mb-4">
+    <Icon name={icon} size="lg" />
+  </div>
+  <h3 class="text-base font-semibold text-foreground mb-1">{title}</h3>
+  {description && (
+    <p class="text-sm text-foreground-muted max-w-sm mb-4">{description}</p>
+  )}
+  {actionLabel && (
+    <Button variant="secondary" size="sm" href={actionHref}>
+      {actionLabel}
+    </Button>
+  )}
+  <slot />
+</div>

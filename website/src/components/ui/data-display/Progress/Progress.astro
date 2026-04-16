@@ -1,0 +1,64 @@
+---
+/**
+ * Progress Component
+ * A bar indicator showing determinate or indeterminate progress.
+ */
+import type { HTMLAttributes } from 'astro/types';
+import { cn } from '@/lib/cn';
+import { progressTrackVariants, progressBarVariants } from './progress.variants';
+
+interface Props extends HTMLAttributes<'div'> {
+  /** Progress value between 0 and 100. Omit for indeterminate mode. */
+  value?: number;
+  /** Maximum value (default 100) */
+  max?: number;
+  variant?: 'default' | 'brand' | 'success' | 'warning' | 'error';
+  size?: 'sm' | 'md' | 'lg';
+  /** Show percentage label */
+  showLabel?: boolean;
+}
+
+const {
+  value,
+  max = 100,
+  variant = 'default',
+  size = 'md',
+  showLabel = false,
+  class: className,
+  ...attrs
+} = Astro.props;
+
+const isIndeterminate = value === undefined;
+const percentage = isIndeterminate || max <= 0 ? 0 : Math.min(100, Math.max(0, (value / max) * 100));
+---
+
+<div class={cn('w-full', className)} {...attrs}>
+  {showLabel && !isIndeterminate && (
+    <div class="flex justify-between mb-1.5">
+      <slot />
+      <span class="text-xs font-medium text-foreground-muted">{Math.round(percentage)}%</span>
+    </div>
+  )}
+  <div
+    class={cn(progressTrackVariants({ size }))}
+    role="progressbar"
+    aria-valuenow={isIndeterminate ? undefined : Math.round(percentage)}
+    aria-valuemin={0}
+    aria-valuemax={max}
+  >
+    <div
+      class={cn(progressBarVariants({ variant, indeterminate: isIndeterminate }))}
+      style={!isIndeterminate ? `width: ${percentage}%` : undefined}
+    />
+  </div>
+</div>
+
+<style>
+  @keyframes indeterminate {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(400%); }
+  }
+  .animate-indeterminate {
+    animation: indeterminate 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+</style>

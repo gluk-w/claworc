@@ -1,0 +1,106 @@
+---
+import Icon from '@/components/ui/primitives/Icon/Icon.astro';
+
+const steps = [
+  { cmd: 'git clone https://github.com/hansmartens68/Astro-Rocket.git', desc: 'Clone the repository' },
+  { cmd: 'cd Astro-Rocket && pnpm install', desc: 'Install dependencies' },
+  { cmd: 'pnpm dev', desc: 'Start dev server on localhost:4321' },
+];
+
+const stats = [
+  { value: '3', label: 'steps to start' },
+  { value: '57+', label: 'components included' },
+  { value: '40+', label: 'pages & layouts' },
+];
+---
+
+<section id="architecture" class="invert-section bg-background py-[var(--space-section-md)]">
+  <div class="mx-auto grid max-w-6xl grid-cols-1 items-center gap-[var(--space-section-gap)] px-6 lg:grid-cols-2 lg:gap-[var(--space-section-gap)]">
+    <!-- Left Column - Content -->
+    <div>
+      <!-- Badge -->
+      <div
+        class="text-brand-500 mb-4 flex items-center gap-2 text-sm font-bold tracking-wide uppercase"
+      >
+        <Icon name="terminal" size="sm" />
+        <span>Up and running fast</span>
+      </div>
+
+      <h2 class="font-display mb-[var(--space-heading-gap)] text-3xl font-bold text-balance md:text-4xl">
+        Clone, install, <span class="text-brand-500">ship.</span>
+      </h2>
+
+      <div class="text-foreground-secondary space-y-4 text-lg leading-relaxed">
+        <p>
+          Astro Rocket is a ready-to-go starter — no CLI wizard, no configuration maze. Clone the repo and you have a full production-grade site in minutes.
+        </p>
+        <p>
+          Swap out the content, adjust the design tokens, and deploy. Everything is already wired: routing, components, blog, i18n support, dark mode, and SEO.
+        </p>
+        <p class="text-foreground-muted">
+          Open source. No licence fees. No hidden dependencies.
+        </p>
+      </div>
+
+      <!-- Stats -->
+      <div class="border-border mt-[var(--space-stack-lg)] grid grid-cols-3 gap-[var(--space-stack-lg)] border-t pt-[var(--space-stack-lg)]">
+        {
+          stats.map((stat) => (
+            <div>
+              <div class="font-display text-foreground text-3xl font-bold">{stat.value}</div>
+              <div class="text-foreground-muted text-sm">{stat.label}</div>
+            </div>
+          ))
+        }
+      </div>
+    </div>
+
+    <!-- Right Column - Terminal Card -->
+    <div class="relative">
+      <div
+        class="bg-card border-border overflow-hidden rounded-lg border shadow-xl"
+      >
+        <!-- Terminal Header -->
+        <div
+          class="bg-secondary border-border flex items-center gap-2 border-b px-4 py-3"
+        >
+          <div class="flex gap-2">
+            <span class="h-3 w-3 rounded-full" style="background-color: var(--error);"></span>
+            <span class="h-3 w-3 rounded-full" style="background-color: var(--warning);"></span>
+            <span class="h-3 w-3 rounded-full" style="background-color: var(--success);"></span>
+          </div>
+          <span class="text-foreground-muted ml-2 font-mono text-xs">terminal</span>
+        </div>
+
+        <!-- Terminal Body -->
+        <div class="p-5 font-mono text-sm leading-relaxed">
+          {
+            steps.map((step, i) => (
+              <div class="mb-4">
+                <div class="text-foreground-muted mb-1 text-xs">#{i + 1} {step.desc}</div>
+                <div class="flex items-start gap-2">
+                  <span class="shrink-0 text-green-400 select-none">$</span>
+                  <span class="text-cyan-400 break-all">{step.cmd}</span>
+                </div>
+              </div>
+            ))
+          }
+
+          <!-- Output -->
+          <div class="border-border mt-2 border-t pt-4">
+            <div class="flex items-center gap-2">
+              <span class="text-green-400">✓</span>
+              <span class="text-foreground">Ready at <span class="text-cyan-400">localhost:4321</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Decorative glow -->
+      <div
+        class="bg-brand-500/10 pointer-events-none absolute top-0 right-0 h-32 w-32 rounded-full blur-3xl"
+      >
+      </div>
+    </div>
+  </div>
+</section>
