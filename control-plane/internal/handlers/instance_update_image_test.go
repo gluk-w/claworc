@@ -16,9 +16,15 @@ import (
 )
 
 // updateImageMock wraps mockOrchestrator so UpdateImage and GetInstanceStatus
-// can be overridden per test. The WaitGroup lets tests wait until the handler's
-// background goroutine fully completes (including the DB write after UpdateImage
-// returns), preventing cross-test races on the global database.DB.
+// can be overridden per test.
+//
+// Synchronisation: the handler fires a background goroutine that calls
+// UpdateImage, then updates the DB. Two channels are used to coordinate:
+//   - gate (optional): blocks UpdateImage until the test closes it, giving the
+//     test a window to change mock state before the goroutine continues.
+//   - done: closed by UpdateImage AFTER the mock's wg.Done() runs. Tests call
+//     <-mock.done followed by a brief poll to let the few lines of code between
+//     UpdateImage's return and the subsequent DB write execute.
 type updateImageMock struct {
 	mockOrchestrator
 	updateImageErr error
@@ -26,16 +32,19 @@ type updateImageMock struct {
 	mu         sync.Mutex
 	liveStatus string
 
-	// gate, when non-nil, blocks UpdateImage until closed. This lets the test
-	// change mock state (e.g. liveStatus) before the goroutine proceeds past
-	// UpdateImage to its post-failure GetInstanceStatus check.
+	// gate, when non-nil, blocks UpdateImage until closed.
 	gate chan struct{}
+
+	// done is closed when UpdateImage returns. Tests wait on this to know
+	// the goroutine has progressed past UpdateImage.
+	done chan struct{}
 
 	wg sync.WaitGroup
 }
 
 func (m *updateImageMock) UpdateImage(_ context.Context, _ string, _ orchestrator.CreateParams) error {
 	defer m.wg.Done()
+	defer close(m.done)
 	if m.gate != nil {
 		<-m.gate
 	}
@@ -100,6 +109,7 @@ func TestUpdateInstanceImage_FailureKeepsRunningStatusWhenPodHealthy(t *testing.
 	mock := &updateImageMock{
 		updateImageErr: errors.New("simulated image pull failure"),
 		liveStatus:     "running",
+		done:           make(chan struct{}),
 	}
 	mock.wg.Add(1)
 	orchestrator.Set(mock)
@@ -122,6 +132,11 @@ func TestUpdateInstanceImage_FailureKeepsRunningStatusWhenPodHealthy(t *testing.
 		t.Fatalf("expected status 202, got %d (body: %s)", w.Code, w.Body.String())
 	}
 
+	// Wait for the goroutine to complete UpdateImage (no timeout — the mock
+	// returns immediately so this blocks only on goroutine scheduling).
+	<-mock.done
+
+	// The DB update runs a few lines after UpdateImage returns; poll briefly.
 	final := waitForStatus(t, inst.ID, "running", 5*time.Second)
 	if final != "running" {
 		t.Fatalf("expected status to remain 'running' when pod is live, got %q", final)
@@ -147,6 +162,7 @@ func TestUpdateInstanceImage_FailureMarksErrorWhenPodUnhealthy(t *testing.T) {
 		updateImageErr: errors.New("simulated image pull failure"),
 		liveStatus:     "running",
 		gate:           gate,
+		done:           make(chan struct{}),
 	}
 	mock.wg.Add(1)
 	orchestrator.Set(mock)
@@ -174,6 +190,10 @@ func TestUpdateInstanceImage_FailureMarksErrorWhenPodUnhealthy(t *testing.T) {
 	mock.setLiveStatus("stopped")
 	close(gate)
 
+	// Wait for UpdateImage to return inside the goroutine.
+	<-mock.done
+
+	// Poll for the DB write that follows immediately after.
 	final := waitForStatus(t, inst.ID, "error", 5*time.Second)
 	if final != "error" {
 		t.Fatalf("expected status 'error' when pod is not running, got %q", final)
@@ -197,6 +217,7 @@ func TestUpdateInstanceImage_SuccessMarksRunning(t *testing.T) {
 	mock := &updateImageMock{
 		updateImageErr: nil,
 		liveStatus:     "running",
+		done:           make(chan struct{}),
 	}
 	mock.wg.Add(1)
 	orchestrator.Set(mock)
@@ -218,6 +239,9 @@ func TestUpdateInstanceImage_SuccessMarksRunning(t *testing.T) {
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("expected status 202, got %d (body: %s)", w.Code, w.Body.String())
 	}
+
+	// Wait for the goroutine to complete UpdateImage.
+	<-mock.done
 
 	final := waitForStatus(t, inst.ID, "running", 5*time.Second)
 	if final != "running" {
