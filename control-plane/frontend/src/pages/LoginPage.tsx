@@ -12,28 +12,43 @@ import {
 import { startAuthentication } from "@simplewebauthn/browser";
 import type { PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/browser";
 
+function getNetworkOrServerError(error: unknown): string | null {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return "You appear to be offline. Please check your internet connection.";
+  }
+  if (!isAxiosError(error)) return null;
+  if (!error.response || error.code === "ERR_NETWORK") {
+    return "Unable to reach the server. If you connect via VPN, make sure it's enabled.";
+  }
+  const status = error.response.status;
+  if (status === 403) {
+    return "Access denied by the network. If you connect via VPN, make sure it's enabled, otherwise contact your administrator.";
+  }
+  if (status === 502 || status === 503 || status === 504) {
+    return "The server is temporarily unavailable. Please try again in a moment.";
+  }
+  if (status >= 500) {
+    return "Something went wrong on the server. Please try again later.";
+  }
+  return null;
+}
+
 function getLoginError(error: unknown): string {
+  const networkOrServer = getNetworkOrServerError(error);
+  if (networkOrServer) return networkOrServer;
   if (isAxiosError(error)) {
-    if (!error.response) {
-      return "Unable to connect to the server. Please check your connection.";
-    }
-    const status = error.response.status;
-    if (status === 401) return "Invalid username or password";
-    if (status >= 500) return "Something went wrong. Please try again later.";
-    const detail = error.response.data?.detail;
+    if (error.response?.status === 401) return "Invalid username or password";
+    const detail = error.response?.data?.detail;
     if (typeof detail === "string") return detail;
   }
-  return "Something went wrong. Please try again later.";
+  return "Sign in failed. Please try again.";
 }
 
 function getSetupError(error: unknown): string {
+  const networkOrServer = getNetworkOrServerError(error);
+  if (networkOrServer) return networkOrServer;
   if (isAxiosError(error)) {
-    if (!error.response) {
-      return "Unable to connect to the server. Please check your connection.";
-    }
-    const status = error.response.status;
-    if (status >= 500) return "Something went wrong. Please try again later.";
-    const detail = error.response.data?.detail;
+    const detail = error.response?.data?.detail;
     if (typeof detail === "string") return detail;
   }
   return "Failed to create admin account";
@@ -97,11 +112,8 @@ export default function LoginPage() {
       refetch();
       navigate("/");
     } catch (err) {
-      if (isAxiosError(err) && !err.response) {
-        setError("Unable to connect to the server. Please check your connection.");
-      } else {
-        setError("Passkey authentication failed");
-      }
+      const networkOrServer = getNetworkOrServerError(err);
+      setError(networkOrServer ?? "Passkey authentication failed");
     } finally {
       setLoading(false);
     }

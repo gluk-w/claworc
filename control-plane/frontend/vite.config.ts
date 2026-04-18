@@ -60,7 +60,11 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
+        // Deliberately exclude HTML so the app shell (index.html) is always
+        // fetched from the network. An offline / off-VPN cold start should
+        // surface the browser's own connectivity error instead of serving a
+        // stale login form that then fails mysteriously on submit.
+        globPatterns: ["**/*.{js,css,ico,png,svg,woff2}"],
         // No navigateFallback — server handles SPA routing.
         // This prevents the SW from intercepting navigation to /openclaw/.
         // Must be explicitly null to override VitePWA's default of "index.html".
