@@ -172,6 +172,66 @@ type GatewayProvider struct {
 	CatalogKey string // non-empty for catalog-backed providers (e.g. "openai", "anthropic")
 }
 
+// openclawProviderCfg is the JSON shape expected by OpenClaw's models.providers config.
+type openclawProviderCfg struct {
+	BaseURL string                   `json:"baseUrl"`
+	API     string                   `json:"api"`
+	APIKey  string                   `json:"apiKey"`
+	Models  []database.ProviderModel `json:"models"`
+}
+
+// buildOpenClawProvidersJSON builds the models.providers JSON for OpenClaw config.
+// It filters catalog providers to only the selected models.
+func buildOpenClawProvidersJSON(models []string, gatewayProviders map[string]GatewayProvider, gatewayPort int) (string, error) {
+	if len(gatewayProviders) == 0 || gatewayPort <= 0 {
+		return "", nil
+	}
+
+	effectiveSet := make(map[string]struct{}, len(models))
+	for _, m := range models {
+		effectiveSet[m] = struct{}{}
+	}
+
+	providers := make(map[string]openclawProviderCfg, len(gatewayProviders))
+	for providerKey, gp := range gatewayProviders {
+		apiType := gp.APIType
+		if apiType == "" {
+			apiType = "openai-completions"
+		}
+		var gpModels []database.ProviderModel
+		if gp.CatalogKey != "" {
+			var allModels []database.ProviderModel
+			if len(gp.Models) > 0 {
+				allModels = gp.Models
+			} else {
+				allModels = getCatalogModels(gp.CatalogKey)
+			}
+			for _, m := range allModels {
+				if _, ok := effectiveSet[providerKey+"/"+m.ID]; ok {
+					gpModels = append(gpModels, m)
+				}
+			}
+		} else if len(gp.Models) > 0 {
+			gpModels = gp.Models
+		}
+		if gpModels == nil {
+			gpModels = []database.ProviderModel{}
+		}
+		providers[providerKey] = openclawProviderCfg{
+			BaseURL: fmt.Sprintf("http://127.0.0.1:%d", gatewayPort),
+			API:     apiType,
+			APIKey:  gp.Key,
+			Models:  gpModels,
+		}
+	}
+
+	b, err := json.Marshal(providers)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
 // resolveGatewayProviders builds the providerKey→GatewayProvider map for an instance's enabled
 // providers (both global and instance-specific). Each entry includes the virtual auth key,
 // API type, and stored model list.
@@ -657,6 +717,30 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	effectiveTimezone := getEffectiveTimezone(inst)
 	effectiveUserAgent := getEffectiveUserAgent(inst)
 
+	// Pre-create virtual keys so we can pass initial config to the container.
+	// This eliminates the race where messages arrive before providers are configured.
+	allIDs := allProviderIDsForInstance(inst.ID, enabledProviders)
+	if err := llmgateway.EnsureKeysForInstance(inst.ID, allIDs); err != nil {
+		log.Printf("Failed to ensure LLM gateway keys for instance %d: %s", inst.ID, utils.SanitizeForLog(err.Error()))
+	}
+	models := resolveInstanceModels(inst)
+	gatewayProviders := resolveGatewayProviders(inst)
+
+	// Build initial OpenClaw config env vars so the gateway starts with providers already configured
+	initialModelsJSON := ""
+	if len(models) > 0 {
+		modelConfig := map[string]interface{}{"primary": models[0]}
+		if len(models) > 1 {
+			modelConfig["fallbacks"] = models[1:]
+		} else {
+			modelConfig["fallbacks"] = []string{}
+		}
+		if b, err := json.Marshal(modelConfig); err == nil {
+			initialModelsJSON = string(b)
+		}
+	}
+	initialProvidersJSON, _ := buildOpenClawProvidersJSON(models, gatewayProviders, config.Cfg.LLMGatewayPort)
+
 	// Launch container creation asynchronously (image pull can take minutes)
 	go func() {
 		ctx := context.Background()
@@ -672,6 +756,12 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
 		}
 		envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
+		if initialModelsJSON != "" {
+			envVars["OPENCLAW_INITIAL_MODELS"] = initialModelsJSON
+		}
+		if initialProvidersJSON != "" {
+			envVars["OPENCLAW_INITIAL_PROVIDERS"] = initialProvidersJSON
+		}
 
 		err := orch.CreateInstance(ctx, orchestrator.CreateParams{
 			Name:            name,
@@ -700,20 +790,15 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			"updated_at": time.Now().UTC(),
 		})
 
-		// Push models, API keys, and gateway providers to the instance (waits for container ready)
+		// Reconcile models and providers via SSH (handles any config that couldn't
+		// be passed via env vars, and restarts the gateway for a clean state)
 		database.DB.First(&inst, inst.ID)
-		allIDs := allProviderIDsForInstance(inst.ID, enabledProviders)
-		if err := llmgateway.EnsureKeysForInstance(inst.ID, allIDs); err != nil {
-			log.Printf("Failed to ensure LLM gateway keys for instance %d: %s", inst.ID, utils.SanitizeForLog(err.Error()))
-		}
-		models := resolveInstanceModels(inst)
-		gatewayProviders := resolveGatewayProviders(inst)
 		sshClient, err := SSHMgr.WaitForSSH(ctx, inst.ID, 120*time.Second)
 		if err != nil {
 			log.Printf("Failed to get SSH connection for instance %d during configure: %v", inst.ID, err)
 			return
 		}
-		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), name, models, gatewayProviders, config.Cfg.LLMGatewayPort)
+		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), inst.Name, models, gatewayProviders, config.Cfg.LLMGatewayPort)
 	}()
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -1697,59 +1782,11 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 
 	// Set gateway providers via openclaw CLI.
 	if len(gatewayProviders) > 0 && gatewayPort > 0 {
-		type providerCfg struct {
-			BaseURL string                   `json:"baseUrl"`
-			API     string                   `json:"api"`
-			APIKey  string                   `json:"apiKey"`
-			Models  []database.ProviderModel `json:"models"`
-		}
-		// Build lookup set of effective model IDs in "providerKey/modelId" format.
-		// Used to filter catalog providers to only selected models.
-		effectiveSet := make(map[string]struct{}, len(models))
-		for _, m := range models {
-			effectiveSet[m] = struct{}{}
-		}
-
-		providers := make(map[string]providerCfg, len(gatewayProviders))
-		for providerKey, gp := range gatewayProviders {
-			apiType := gp.APIType
-			if apiType == "" {
-				apiType = "openai-completions"
-			}
-			var gpModels []database.ProviderModel
-			if gp.CatalogKey != "" {
-				// Catalog provider: filter to only the models the user selected.
-				// Use cached models if available, otherwise fetch from catalog.
-				var allModels []database.ProviderModel
-				if len(gp.Models) > 0 {
-					allModels = gp.Models
-				} else {
-					allModels = getCatalogModels(gp.CatalogKey)
-				}
-				for _, m := range allModels {
-					if _, ok := effectiveSet[providerKey+"/"+m.ID]; ok {
-						gpModels = append(gpModels, m)
-					}
-				}
-			} else if len(gp.Models) > 0 {
-				// Custom provider: all models are enabled as a unit.
-				gpModels = gp.Models
-			}
-			if gpModels == nil {
-				gpModels = []database.ProviderModel{}
-			}
-			providers[providerKey] = providerCfg{
-				BaseURL: fmt.Sprintf("http://127.0.0.1:%d", gatewayPort),
-				API:     apiType,
-				APIKey:  gp.Key,
-				Models:  gpModels,
-			}
-		}
-		providersJSON, err := json.Marshal(providers)
+		providersJSON, err := buildOpenClawProvidersJSON(models, gatewayProviders, gatewayPort)
 		if err != nil {
 			log.Printf("Error marshaling gateway providers for %s: %v", utils.SanitizeForLog(name), err)
-		} else {
-			stdout, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "models.providers", string(providersJSON), "--json")
+		} else if providersJSON != "" {
+			stdout, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "models.providers", providersJSON, "--json")
 			if err != nil {
 				log.Printf("Error setting gateway providers for %s: %v", utils.SanitizeForLog(name), err)
 			} else if code != 0 {
