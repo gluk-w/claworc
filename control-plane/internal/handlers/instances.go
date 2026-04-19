@@ -42,21 +42,22 @@ type modelsConfig struct {
 }
 
 type instanceCreateRequest struct {
-	DisplayName      string        `json:"display_name"`
-	CPURequest       string        `json:"cpu_request"`
-	CPULimit         string        `json:"cpu_limit"`
-	MemoryRequest    string        `json:"memory_request"`
-	MemoryLimit      string        `json:"memory_limit"`
-	StorageHomebrew  string        `json:"storage_homebrew"`
-	StorageHome      string        `json:"storage_home"`
-	BraveAPIKey      *string       `json:"brave_api_key"`
-	Models           *modelsConfig `json:"models"`
-	DefaultModel     string        `json:"default_model"`
-	ContainerImage   *string       `json:"container_image"`
-	VNCResolution    *string       `json:"vnc_resolution"`
-	Timezone         *string       `json:"timezone"`
-	UserAgent        *string       `json:"user_agent"`
-	EnabledProviders []uint        `json:"enabled_providers"`
+	DisplayName      string            `json:"display_name"`
+	CPURequest       string            `json:"cpu_request"`
+	CPULimit         string            `json:"cpu_limit"`
+	MemoryRequest    string            `json:"memory_request"`
+	MemoryLimit      string            `json:"memory_limit"`
+	StorageHomebrew  string            `json:"storage_homebrew"`
+	StorageHome      string            `json:"storage_home"`
+	BraveAPIKey      *string           `json:"brave_api_key"`
+	Models           *modelsConfig     `json:"models"`
+	DefaultModel     string            `json:"default_model"`
+	ContainerImage   *string           `json:"container_image"`
+	VNCResolution    *string           `json:"vnc_resolution"`
+	Timezone         *string           `json:"timezone"`
+	UserAgent        *string           `json:"user_agent"`
+	EnabledProviders []uint            `json:"enabled_providers"`
+	EnvVarsSet       map[string]string `json:"env_vars_set"`
 }
 
 type modelsResponse struct {
@@ -87,6 +88,10 @@ type instanceResponse struct {
 	HasTimezoneOverride   bool            `json:"has_timezone_override"`
 	UserAgent             *string         `json:"user_agent"`
 	HasUserAgentOverride  bool            `json:"has_user_agent_override"`
+	EnvVars               map[string]string `json:"env_vars"`
+	HasEnvOverride        bool            `json:"has_env_override"`
+	RequiresRestart       bool            `json:"requires_restart,omitempty"`
+	Restarting            bool            `json:"restarting,omitempty"`
 	LiveImageInfo         *string         `json:"live_image_info,omitempty"`
 	StatusMessage         string          `json:"status_message,omitempty"`
 	AllowedSourceIPs      string          `json:"allowed_source_ips"`
@@ -345,6 +350,8 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 	mc := parseModelsConfig(inst.ModelsConfig)
 	effective := computeEffectiveModels(mc)
 
+	envVarsPlain := EnvVarsForResponse(inst.EnvVars)
+
 	return instanceResponse{
 		ID:                    inst.ID,
 		Name:                  inst.Name,
@@ -368,6 +375,8 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		HasTimezoneOverride:   inst.Timezone != "",
 		UserAgent:             userAgent,
 		HasUserAgentOverride:  inst.UserAgent != "",
+		EnvVars:               envVarsPlain,
+		HasEnvOverride:        len(envVarsPlain) > 0,
 		AllowedSourceIPs:      inst.AllowedSourceIPs,
 		EnabledProviders:      enabledProviders,
 		InstanceProviders:     instProviderResps,
@@ -506,6 +515,11 @@ func restartInstanceAsync(inst database.Instance) {
 // buildCreateParams constructs orchestrator.CreateParams from a database Instance.
 func buildCreateParams(inst database.Instance) orchestrator.CreateParams {
 	envVars := map[string]string{}
+
+	// User-defined env vars (global defaults overridden by per-instance values)
+	MergeUserEnvVars(envVars, LoadGlobalEnvVars(), LoadInstanceEnvVars(inst))
+
+	// System env vars — applied last so they cannot be shadowed
 	if inst.GatewayToken != "" {
 		if plain, err := utils.Decrypt(inst.GatewayToken); err == nil {
 			envVars["OPENCLAW_GATEWAY_TOKEN"] = plain
@@ -681,6 +695,17 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	enabledProvidersJSON, _ := json.Marshal(enabledProviders)
 
+	// Serialize (and encrypt) user-supplied env vars
+	envVarsJSON := "{}"
+	if len(body.EnvVarsSet) > 0 {
+		encoded, err := UpsertEncryptedEnvVarsJSON("{}", body.EnvVarsSet, nil)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		envVarsJSON = encoded
+	}
+
 	// Compute next sort_order
 	var maxSortOrder int
 	database.DB.Model(&database.Instance{}).Select("COALESCE(MAX(sort_order), 0)").Scan(&maxSortOrder)
@@ -704,6 +729,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		ModelsConfig:     modelsConfigJSON,
 		DefaultModel:     body.DefaultModel,
 		EnabledProviders: string(enabledProvidersJSON),
+		EnvVars:          envVarsJSON,
 		SortOrder:        maxSortOrder + 1,
 	}
 
@@ -752,6 +778,12 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		}
 
 		envVars := map[string]string{}
+
+		// User-defined env vars (global defaults overridden by per-instance values).
+		// Applied first so reserved system names below can never be shadowed.
+		MergeUserEnvVars(envVars, LoadGlobalEnvVars(), LoadInstanceEnvVars(inst))
+
+		// System env vars — reserved, always win over user values
 		if gatewayTokenPlain != "" {
 			envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
 		}
@@ -838,19 +870,21 @@ func GetInstance(w http.ResponseWriter, r *http.Request) {
 }
 
 type instanceUpdateRequest struct {
-	BraveAPIKey      *string       `json:"brave_api_key"`
-	Models           *modelsConfig `json:"models"`
-	DefaultModel     *string       `json:"default_model"`
-	Timezone         *string       `json:"timezone"`
-	UserAgent        *string       `json:"user_agent"`
-	AllowedSourceIPs *string       `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
-	EnabledProviders *[]uint       `json:"enabled_providers"`  // admin only: LLM gateway provider IDs
-	DisplayName      *string       `json:"display_name"`       // admin only
-	CPURequest       *string       `json:"cpu_request"`        // admin only
-	CPULimit         *string       `json:"cpu_limit"`          // admin only
-	MemoryRequest    *string       `json:"memory_request"`     // admin only
-	MemoryLimit      *string       `json:"memory_limit"`       // admin only
-	VNCResolution    *string       `json:"vnc_resolution"`     // admin only
+	BraveAPIKey      *string           `json:"brave_api_key"`
+	Models           *modelsConfig     `json:"models"`
+	DefaultModel     *string           `json:"default_model"`
+	Timezone         *string           `json:"timezone"`
+	UserAgent        *string           `json:"user_agent"`
+	AllowedSourceIPs *string           `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
+	EnabledProviders *[]uint           `json:"enabled_providers"`  // admin only: LLM gateway provider IDs
+	DisplayName      *string           `json:"display_name"`       // admin only
+	CPURequest       *string           `json:"cpu_request"`        // admin only
+	CPULimit         *string           `json:"cpu_limit"`          // admin only
+	MemoryRequest    *string           `json:"memory_request"`     // admin only
+	MemoryLimit      *string           `json:"memory_limit"`       // admin only
+	VNCResolution    *string           `json:"vnc_resolution"`     // admin only
+	EnvVarsSet       map[string]string `json:"env_vars_set"`
+	EnvVarsUnset     []string          `json:"env_vars_unset"`
 }
 
 var (
@@ -1067,6 +1101,25 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		database.DB.Model(&inst).Update("vnc_resolution", *body.VNCResolution)
 	}
 
+	// Update env vars (PATCH-style: set+unset). Only write and restart when the
+	// plaintext set actually changed — a no-op request (e.g. the user clicked
+	// Save without modifying anything) skips both.
+	envVarsChanged := false
+	if len(body.EnvVarsSet) > 0 || len(body.EnvVarsUnset) > 0 {
+		updated, changed, err := ApplyEnvVarsDelta(inst.EnvVars, body.EnvVarsSet, body.EnvVarsUnset)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if changed {
+			if err := database.DB.Model(&inst).Update("env_vars", updated).Error; err != nil {
+				writeError(w, http.StatusInternalServerError, "Failed to save env vars")
+				return
+			}
+			envVarsChanged = true
+		}
+	}
+
 	// Re-fetch
 	database.DB.First(&inst, inst.ID)
 
@@ -1105,7 +1158,21 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := resolveStatus(&inst, orchStatus)
+	// Auto-restart so the new env vars are injected into the container.
+	// buildCreateParams (evaluated inside restartInstanceAsync's goroutine)
+	// re-reads EnvVars from the DB, so it picks up what we just wrote.
+	restarting := false
+	if envVarsChanged && status == "running" {
+		restartInstanceAsync(inst)
+		restarting = true
+		status = "restarting"
+	}
+
 	resp := instanceToResponse(inst, status)
+	if envVarsChanged && (restarting || status == "running") {
+		resp.RequiresRestart = true
+	}
+	resp.Restarting = restarting
 	if orch != nil {
 		if info, err := orch.GetInstanceImageInfo(r.Context(), inst.Name); err == nil && info != "" {
 			resp.LiveImageInfo = &info
@@ -1404,32 +1471,11 @@ func RestartInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if orch := orchestrator.Get(); orch != nil {
-		effectiveImage := getEffectiveImage(inst)
-		effectiveResolution := getEffectiveResolution(inst)
-		effectiveTimezone := getEffectiveTimezone(inst)
-		effectiveUserAgent := getEffectiveUserAgent(inst)
-
-		envVars := map[string]string{}
-		if inst.GatewayToken != "" {
-			if plain, err := utils.Decrypt(inst.GatewayToken); err == nil {
-				envVars["OPENCLAW_GATEWAY_TOKEN"] = plain
-			}
-		}
-		envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
-
-		params := orchestrator.CreateParams{
-			Name:               inst.Name,
-			CPURequest:         inst.CPURequest,
-			CPULimit:           inst.CPULimit,
-			MemoryRequest:      inst.MemoryRequest,
-			MemoryLimit:        inst.MemoryLimit,
-			ContainerImage:     effectiveImage,
-			VNCResolution:      effectiveResolution,
-			Timezone:           effectiveTimezone,
-			UserAgent:          effectiveUserAgent,
-			EnvVars:            envVars,
-			SharedFolderMounts: getSharedFolderMounts(inst.ID),
-		}
+		// buildCreateParams is the single source of truth for CreateParams —
+		// it merges global + per-instance user env vars before applying the
+		// reserved system vars. Duplicating the param struct inline here used
+		// to drop user env vars on every manual restart.
+		params := buildCreateParams(inst)
 
 		if err := orch.RestartInstance(r.Context(), inst.Name, params); err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to restart instance: %v", err))

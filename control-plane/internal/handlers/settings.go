@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
@@ -69,6 +70,11 @@ func settingsToResponse(raw map[string]string) map[string]interface{} {
 		}
 	}
 
+	// Global env vars — decrypt and surface as plaintext. Settings is an
+	// admin-only surface; masking offers no real confidentiality here and the
+	// edit flow needs the live value to diff against.
+	result["default_env_vars"] = EnvVarsForResponse(raw["default_env_vars"])
+
 	return result
 }
 
@@ -116,9 +122,36 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Handle env_vars_set / env_vars_unset (PATCH-style for the encrypted map).
+	// envVarsChanged is true only when the resulting plaintext map actually
+	// differs from what was stored — a no-op request (e.g. re-setting the same
+	// value, or an empty set/unset pair) skips the save and skips the restart
+	// that would otherwise cascade to every running instance.
+	envSet, envUnset, err := parseEnvVarsDelta(raw)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	envVarsChanged := false
+	if len(envSet) > 0 || len(envUnset) > 0 {
+		existing, _ := database.GetSetting("default_env_vars")
+		updated, changed, err := ApplyEnvVarsDelta(existing, envSet, envUnset)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to update env vars: "+err.Error())
+			return
+		}
+		if changed {
+			if err := database.SetSetting("default_env_vars", updated); err != nil {
+				writeError(w, http.StatusInternalServerError, "Failed to save env vars")
+				return
+			}
+			envVarsChanged = true
+		}
+	}
+
 	// Handle remaining plain settings
 	for key, val := range raw {
-		if key == "default_models" || key == "brave_api_key" {
+		if key == "default_models" || key == "brave_api_key" || key == "env_vars_set" || key == "env_vars_unset" {
 			continue
 		}
 		if strVal, ok := val.(string); ok {
@@ -126,6 +159,67 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	allRaw := getAllSettings()
-	writeJSON(w, http.StatusOK, settingsToResponse(allRaw))
+	// Auto-restart every currently-running instance so the new global env vars
+	// take effect. The container only injects env vars on (re)create, so without
+	// this the DB and the live containers silently diverge.
+	var restartingInstances []restartTarget
+	if envVarsChanged {
+		var running []database.Instance
+		database.DB.Where("status = ?", "running").Find(&running)
+		for i := range running {
+			restartInstanceAsync(running[i])
+			restartingInstances = append(restartingInstances, restartTarget{
+				ID:          running[i].ID,
+				Name:        running[i].Name,
+				DisplayName: running[i].DisplayName,
+			})
+		}
+	}
+
+	resp := settingsToResponse(getAllSettings())
+	if len(restartingInstances) > 0 {
+		resp["restarting_instances"] = restartingInstances
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+type restartTarget struct {
+	ID          uint   `json:"id"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+}
+
+// parseEnvVarsDelta extracts env_vars_set (map[string]string) and
+// env_vars_unset ([]string) from the raw JSON body. Missing keys → empty
+// results. Malformed values → error.
+func parseEnvVarsDelta(raw map[string]interface{}) (map[string]string, []string, error) {
+	set := map[string]string{}
+	if v, ok := raw["env_vars_set"]; ok && v != nil {
+		m, ok := v.(map[string]interface{})
+		if !ok {
+			return nil, nil, fmt.Errorf("env_vars_set must be an object")
+		}
+		for k, val := range m {
+			s, ok := val.(string)
+			if !ok {
+				return nil, nil, fmt.Errorf("env_vars_set[%s] must be a string", k)
+			}
+			set[k] = s
+		}
+	}
+	var unset []string
+	if v, ok := raw["env_vars_unset"]; ok && v != nil {
+		arr, ok := v.([]interface{})
+		if !ok {
+			return nil, nil, fmt.Errorf("env_vars_unset must be an array")
+		}
+		for _, item := range arr {
+			s, ok := item.(string)
+			if !ok {
+				return nil, nil, fmt.Errorf("env_vars_unset items must be strings")
+			}
+			unset = append(unset, s)
+		}
+	}
+	return set, unset, nil
 }

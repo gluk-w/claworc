@@ -60,6 +60,7 @@ COPY stealth-extension/ /opt/stealth-extension/
 COPY rootfs/ /
 
 RUN chmod +x /etc/s6-overlay/s6-rc.d/init-setup/up \
+    /etc/s6-overlay/scripts/init-setup.sh \
     /etc/s6-overlay/s6-rc.d/svc-xvnc/run \
     /etc/s6-overlay/s6-rc.d/svc-novnc/run \
     /etc/s6-overlay/s6-rc.d/svc-desktop/run \

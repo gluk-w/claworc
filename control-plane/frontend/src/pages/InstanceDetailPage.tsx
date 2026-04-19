@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, createElement } from "react";
-import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { Link, useParams, useNavigate, useLocation } from "react-router-dom";
 import { AlertTriangle, X, Maximize, ExternalLink, Plus } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import StatusBadge from "@/components/StatusBadge";
@@ -36,8 +36,10 @@ import type { CatalogProviderDetail } from "@/api/llm";
 import ProviderIcon from "@/components/ProviderIcon";
 import ProviderModelSelector from "@/components/ProviderModelSelector";
 import ProviderModal from "@/components/ProviderModal";
+import EnvVarsEditor from "@/components/EnvVarsEditor";
 import AppToast from "@/components/AppToast";
 import toast from "react-hot-toast";
+import { envVarRestartToast } from "@/utils/toast";
 import { useSSHStatus, useSSHEvents } from "@/hooks/useSSHStatus";
 import { useInstanceLogs } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
@@ -160,6 +162,7 @@ export default function InstanceDetailPage() {
   const [instanceProviderModalOpen, setInstanceProviderModalOpen] = useState(false);
   const [editingInstanceProvider, setEditingInstanceProvider] = useState<import("@/types/instance").LLMProvider | undefined>(undefined);
 
+
   // Update tab when hash changes
   useEffect(() => {
     const tab = getTabFromHash();
@@ -172,15 +175,6 @@ export default function InstanceDetailPage() {
   const handleFilesPathChange = (path: string) => {
     const hash = path === "/" ? "files" : `files://${path.replace(/^\//, "")}`;
     navigate(`#${hash}`, { replace: true });
-  };
-
-  // Update hash when tab changes
-  const handleTabChange = (tab: Tab) => {
-    setActiveTab(tab);
-    if (tab === "terminal") setTerminalActivated(true);
-    if (tab === "chat") setChatActivated(true);
-    if (tab === "config") qc.invalidateQueries({ queryKey: ["instances", instanceId, "config"] });
-    navigate(`#${tab}`, { replace: true });
   };
 
   const chatInitSentRef = useRef(false);
@@ -331,6 +325,16 @@ export default function InstanceDetailPage() {
         },
       },
     );
+  };
+
+  const handleSaveEnvVars = async (delta: { set: Record<string, string>; unset: string[] }) => {
+    const payload: InstanceUpdatePayload = {};
+    if (Object.keys(delta.set).length > 0) payload.env_vars_set = delta.set;
+    if (delta.unset.length > 0) payload.env_vars_unset = delta.unset;
+    const updated = await updateMutation.mutateAsync({ id: instanceId, payload });
+    if (updated?.restarting && instance) {
+      envVarRestartToast(instanceId, instance.display_name);
+    }
   };
 
   const handleUpdateImage = () => {
@@ -528,16 +532,17 @@ export default function InstanceDetailPage() {
       <div className="border-b border-gray-200 mb-4">
         <nav className="flex gap-6">
           {tabs.map((tab) => (
-            <button
+            <Link
               key={tab.key}
-              onClick={() => handleTabChange(tab.key)}
+              to={{ hash: tab.key }}
+              replace
               className={`pb-3 text-sm font-medium border-b-2 ${activeTab === tab.key
                   ? "border-blue-600 text-blue-600"
                   : "border-transparent text-gray-500 hover:text-gray-700"
                 }`}
             >
               {tab.label}
-            </button>
+            </Link>
           ))}
         </nav>
       </div>
@@ -809,6 +814,16 @@ export default function InstanceDetailPage() {
               </div>
             )}
           </div>
+
+          {/* Environment Variables */}
+          <EnvVarsEditor
+            values={instance.env_vars ?? {}}
+            title="Environment Variables"
+            description="Per-instance values override globals with the same name. Values are encrypted at rest. Saving restarts this instance so the change takes effect immediately."
+            onSave={handleSaveEnvVars}
+            isSaving={updateMutation.isPending}
+            emptyMessage="No instance-specific env vars. Globals from Settings apply."
+          />
 
           {/* LLM Gateway Providers (admin only) */}
           {isAdmin && (

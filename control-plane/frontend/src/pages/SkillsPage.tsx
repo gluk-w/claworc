@@ -13,6 +13,7 @@ interface DeployTarget {
   description?: string;
   source: "library" | "clawhub";
   version?: string;
+  requiredEnvVars: string[];
 }
 
 export default function SkillsPage() {
@@ -45,12 +46,27 @@ export default function SkillsPage() {
 
   const handleDeployLibrary = (slug: string, displayName: string) => {
     const skill = skills?.find((s) => s.slug === slug);
-    setDeployTarget({ slug, displayName, description: skill?.summary, source: "library" });
+    setDeployTarget({
+      slug,
+      displayName,
+      description: skill?.summary,
+      source: "library",
+      requiredEnvVars: skill?.required_env_vars ?? [],
+    });
   };
 
   const handleDeployClawhub = (slug: string, displayName: string, version: string) => {
     const result = clawhubData?.results?.find((r) => r.slug === slug);
-    setDeployTarget({ slug, displayName, description: result?.summary, source: "clawhub", version });
+    // Clawhub search results don't expose required_env_vars; the backend will
+    // still surface any missing names in the per-instance DeployResult.
+    setDeployTarget({
+      slug,
+      displayName,
+      description: result?.summary,
+      source: "clawhub",
+      version,
+      requiredEnvVars: [],
+    });
   };
 
   const handleDelete = (slug: string) => {
@@ -179,6 +195,7 @@ export default function SkillsPage() {
           description={deployTarget.description}
           source={deployTarget.source}
           version={deployTarget.version}
+          requiredEnvVars={deployTarget.requiredEnvVars}
           onClose={() => setDeployTarget(null)}
         />
       )}

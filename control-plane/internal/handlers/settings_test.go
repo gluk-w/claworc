@@ -186,3 +186,114 @@ func TestUpdateSettings_DefaultModels(t *testing.T) {
 		t.Errorf("default_models = %q", val)
 	}
 }
+
+// TestUpdateSettings_EnvVars_RestartsRunningInstances verifies that env var
+// changes trigger restart of every running instance and that the response
+// reports each one. The orchestrator is not initialized in this test, so
+// restartInstanceAsync no-ops internally — but the response listing is still
+// built from the DB query and is what we assert on.
+func TestUpdateSettings_EnvVars_RestartsRunningInstances(t *testing.T) {
+	setupSettingsTest(t)
+
+	// Two running + one stopped instance — only the running ones should appear
+	// in the restart list.
+	database.DB.Create(&database.Instance{Name: "bot-alpha", DisplayName: "Alpha", Status: "running"})
+	database.DB.Create(&database.Instance{Name: "bot-beta", DisplayName: "Beta", Status: "running"})
+	database.DB.Create(&database.Instance{Name: "bot-gamma", DisplayName: "Gamma", Status: "stopped"})
+
+	body := `{"env_vars_set":{"MYVAR":"hello"}}`
+	req := httptest.NewRequest("POST", "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	UpdateSettings(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+
+	restarting, ok := resp["restarting_instances"].([]interface{})
+	if !ok {
+		t.Fatalf("restarting_instances missing or wrong type: %T %v", resp["restarting_instances"], resp["restarting_instances"])
+	}
+	if len(restarting) != 2 {
+		t.Fatalf("restarting_instances len = %d, want 2 (running only)", len(restarting))
+	}
+	names := map[string]bool{}
+	for _, item := range restarting {
+		m, _ := item.(map[string]interface{})
+		if name, ok := m["name"].(string); ok {
+			names[name] = true
+		}
+	}
+	if !names["bot-alpha"] || !names["bot-beta"] {
+		t.Errorf("expected bot-alpha and bot-beta, got %v", names)
+	}
+	if names["bot-gamma"] {
+		t.Error("stopped instance should not be in the restart list")
+	}
+
+	// The env var should also have been persisted.
+	stored, _ := database.GetSetting("default_env_vars")
+	if !strings.Contains(stored, "MYVAR") {
+		t.Errorf("MYVAR not saved: %q", stored)
+	}
+}
+
+// TestUpdateSettings_EnvVars_NoChangeMeansNoRestart guards the condition:
+// non-env-var settings edits must not trigger restart.
+func TestUpdateSettings_EnvVars_NoChangeMeansNoRestart(t *testing.T) {
+	setupSettingsTest(t)
+	database.DB.Create(&database.Instance{Name: "bot-alpha", DisplayName: "Alpha", Status: "running"})
+
+	body := `{"default_cpu_request":"1000m"}`
+	req := httptest.NewRequest("POST", "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	UpdateSettings(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if _, ok := resp["restarting_instances"]; ok {
+		t.Errorf("restarting_instances should be absent when no env vars changed: %v", resp["restarting_instances"])
+	}
+}
+
+// TestUpdateSettings_EnvVars_NoOpSetSkipsRestart covers a realistic flow:
+// the admin enters edit mode, saves without changes, or re-saves the same
+// value. Backend decrypts the existing map, sees no diff, skips restart.
+func TestUpdateSettings_EnvVars_NoOpSetSkipsRestart(t *testing.T) {
+	setupSettingsTest(t)
+	// Seed MYVAR with the same plaintext that the request is about to submit.
+	initial, err := UpsertEncryptedEnvVarsJSON("{}", map[string]string{"MYVAR": "unchanged"}, nil)
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	database.SetSetting("default_env_vars", initial)
+	database.DB.Create(&database.Instance{Name: "bot-alpha", DisplayName: "Alpha", Status: "running"})
+
+	body := `{"env_vars_set":{"MYVAR":"unchanged"}}`
+	req := httptest.NewRequest("POST", "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	UpdateSettings(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if _, ok := resp["restarting_instances"]; ok {
+		t.Errorf("no-op save must not restart anyone: %v", resp["restarting_instances"])
+	}
+}

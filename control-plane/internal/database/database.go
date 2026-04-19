@@ -117,6 +117,7 @@ func seedDefaults() error {
 		"ssh_audit_retention_days":     "90",
 		"default_timezone":             "America/New_York",
 		"default_user_agent":           "",
+		"default_env_vars":             "{}",
 	}
 
 	for key, value := range defaults {

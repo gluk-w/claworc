@@ -2,12 +2,13 @@ import { useState } from "react";
 import { AlertTriangle, Eye, EyeOff, Key, Pencil, Plus, RefreshCw } from "lucide-react";
 import ProviderIcon from "@/components/ProviderIcon";
 import ProviderModal from "@/components/ProviderModal";
+import EnvVarsEditor from "@/components/EnvVarsEditor";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import { useProviders } from "@/hooks/useProviders";
 import { fetchSSHFingerprint, rotateSSHKey } from "@/api/ssh";
 import { syncAllProviders } from "@/api/llm";
-import { successToast, errorToast } from "@/utils/toast";
+import { successToast, errorToast, envVarRestartToast } from "@/utils/toast";
 import type { LLMProvider } from "@/types/instance";
 
 import type { SettingsUpdatePayload } from "@/types/settings";
@@ -83,6 +84,18 @@ export default function SettingsPage() {
         setBraveValue("");
       },
     });
+  };
+
+  // Env var changes save independently of the rest of the page so the editor
+  // has its own Save button inside the card (see EnvVarsEditor).
+  const handleSaveEnvVars = async (delta: { set: Record<string, string>; unset: string[] }) => {
+    const payload: SettingsUpdatePayload = {};
+    if (Object.keys(delta.set).length > 0) payload.env_vars_set = delta.set;
+    if (delta.unset.length > 0) payload.env_vars_unset = delta.unset;
+    const data = await updateMutation.mutateAsync(payload);
+    for (const inst of data?.restarting_instances ?? []) {
+      envVarRestartToast(inst.id, inst.display_name);
+    }
   };
 
   const resourceFields: { key: string; label: string }[] = [
@@ -300,6 +313,15 @@ export default function SettingsPage() {
             ))}
           </div>
         </div>
+
+        <EnvVarsEditor
+          values={settings.default_env_vars ?? {}}
+          title="Environment Variables"
+          description="Passed to every OpenClaw instance at container start. Per-instance values override these when the name matches. Values are encrypted at rest. Saving restarts every running instance so the change takes effect immediately."
+          onSave={handleSaveEnvVars}
+          isSaving={updateMutation.isPending}
+          emptyMessage="No global environment variables set."
+        />
 
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-2">

@@ -151,6 +151,9 @@ export function useRestartedToast(instances: Instance[] | undefined) {
     for (const inst of instances) {
       if (prev.get(inst.id) === "restarting" && inst.status === "running") {
         successToast("Instance restarted", inst.display_name);
+        // Auto-dismiss the "Setting environment variables" loading toast if
+        // it was fired when the admin saved env var changes — restart is done.
+        toast.dismiss(`env-restart-${inst.id}`);
       }
       if (prev.get(inst.id) === "stopping" && inst.status === "stopped") {
         successToast("Instance stopped", inst.display_name);

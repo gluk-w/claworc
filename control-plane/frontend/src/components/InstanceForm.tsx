@@ -5,6 +5,7 @@ import { useProviders } from "@/hooks/useProviders";
 import { fetchCatalogProviderDetail } from "@/api/llm";
 import type { CatalogProviderDetail } from "@/api/llm";
 import ProviderModelSelector from "@/components/ProviderModelSelector";
+import KeyValueListEditor from "@/components/KeyValueListEditor";
 import type { InstanceCreatePayload } from "@/types/instance";
 
 interface InstanceFormProps {
@@ -56,6 +57,9 @@ export default function InstanceForm({
   // Brave key
   const [braveKey, setBraveKey] = useState("");
 
+  // Per-instance env var overrides (plaintext, encrypted server-side on save)
+  const [envVars, setEnvVars] = useState<Record<string, string>>({});
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!displayName.trim()) return;
@@ -93,6 +97,9 @@ export default function InstanceForm({
     }
     if (defaultModel) {
       payload.default_model = defaultModel;
+    }
+    if (Object.keys(envVars).length > 0) {
+      payload.env_vars_set = envVars;
     }
 
     onSubmit(payload);
@@ -254,6 +261,30 @@ export default function InstanceForm({
             ))}
           </div>
         </div>
+      </div>
+
+      {/* Environment Variables */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="text-sm font-medium text-gray-900 mb-1">Environment Variables</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Per-instance env vars override globals with the same name. Values are
+          encrypted at rest. Reserved names (<span className="font-mono">OPENCLAW_GATEWAY_TOKEN</span>,
+          <span className="font-mono"> CLAWORC_INSTANCE_ID</span>,
+          <span className="font-mono"> OPENCLAW_INITIAL_MODELS</span>,
+          <span className="font-mono"> OPENCLAW_INITIAL_PROVIDERS</span>) are not allowed.
+        </p>
+        <KeyValueListEditor
+          values={{}}
+          pendingSet={envVars}
+          onSet={(name, value) => setEnvVars((m) => ({ ...m, [name]: value }))}
+          onUnset={(name) =>
+            setEnvVars((m) => {
+              const { [name]: _omit, ...rest } = m;
+              return rest;
+            })
+          }
+          emptyMessage="No instance-specific env vars. Globals from Settings apply."
+        />
       </div>
 
       <div className="flex justify-end gap-3">

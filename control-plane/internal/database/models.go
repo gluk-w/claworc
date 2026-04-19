@@ -6,12 +6,13 @@ import (
 )
 
 type Skill struct {
-	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	Slug      string    `gorm:"uniqueIndex;not null" json:"slug"`
-	Name      string    `gorm:"not null" json:"name"`
-	Summary   string    `json:"summary"`
-	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	ID              uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Slug            string    `gorm:"uniqueIndex;not null" json:"slug"`
+	Name            string    `gorm:"not null" json:"name"`
+	Summary         string    `json:"summary"`
+	RequiredEnvVars string    `gorm:"type:text;default:'[]'" json:"-"` // JSON []string of env var names the skill declares it needs
+	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt       time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 type Instance struct {
@@ -36,6 +37,7 @@ type Instance struct {
 	EnabledProviders string    `gorm:"type:text;default:'[]'" json:"-"`                // JSON array of LLMProvider IDs enabled for this instance
 	Timezone         string    `gorm:"default:''" json:"timezone"`
 	UserAgent        string    `gorm:"default:''" json:"user_agent"`
+	EnvVars          string    `gorm:"type:text;default:'{}'" json:"-"` // JSON map KEY -> fernet-encrypted value
 	SortOrder        int       `gorm:"not null;default:0" json:"sort_order"`
 	CreatedAt        time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt        time.Time `gorm:"autoUpdateTime" json:"updated_at"`

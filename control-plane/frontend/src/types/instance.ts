@@ -27,6 +27,13 @@ export interface Instance {
   has_timezone_override: boolean;
   user_agent: string | null;
   has_user_agent_override: boolean;
+  /** Per-instance env var overrides. Values are masked (e.g. "****abcd"). */
+  env_vars: Record<string, string>;
+  has_env_override: boolean;
+  /** Set to true when env var changes were saved but a restart is needed to apply them. */
+  requires_restart?: boolean;
+  /** Set to true by the backend when it kicked off an auto-restart to apply env var changes. */
+  restarting?: boolean;
   live_image_info?: string;
   allowed_source_ips: string;
   enabled_providers: number[];
@@ -57,6 +64,7 @@ export interface InstanceCreatePayload {
   timezone?: string | null;
   user_agent?: string | null;
   enabled_providers?: number[];
+  env_vars_set?: Record<string, string>;
 }
 
 export interface InstanceUpdatePayload {
@@ -73,6 +81,8 @@ export interface InstanceUpdatePayload {
   memory_request?: string;
   memory_limit?: string;
   vnc_resolution?: string;
+  env_vars_set?: Record<string, string>;
+  env_vars_unset?: string[];
 }
 
 export interface InstanceStats {

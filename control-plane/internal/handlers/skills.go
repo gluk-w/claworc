@@ -145,8 +145,9 @@ func ClawhubSearch(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 type skillFrontmatter struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
+	Name            string   `yaml:"name"`
+	Description     string   `yaml:"description"`
+	RequiredEnvVars []string `yaml:"required_env_vars,omitempty"`
 }
 
 func parseSkillFrontmatter(content []byte) (*skillFrontmatter, error) {
@@ -177,13 +178,61 @@ func parseSkillFrontmatter(content []byte) (*skillFrontmatter, error) {
 // List skills
 // ---------------------------------------------------------------------------
 
+type skillResponse struct {
+	ID              uint     `json:"id"`
+	Slug            string   `json:"slug"`
+	Name            string   `json:"name"`
+	Summary         string   `json:"summary"`
+	RequiredEnvVars []string `json:"required_env_vars"`
+	CreatedAt       string   `json:"created_at"`
+	UpdatedAt       string   `json:"updated_at"`
+}
+
+func skillToResponse(s database.Skill) skillResponse {
+	return skillResponse{
+		ID:              s.ID,
+		Slug:            s.Slug,
+		Name:            s.Name,
+		Summary:         s.Summary,
+		RequiredEnvVars: parseRequiredEnvVars(s.RequiredEnvVars),
+		CreatedAt:       s.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:       s.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+	}
+}
+
+func parseRequiredEnvVars(raw string) []string {
+	if raw == "" || raw == "[]" {
+		return []string{}
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(raw), &names); err != nil || names == nil {
+		return []string{}
+	}
+	return names
+}
+
+func encodeRequiredEnvVars(names []string) string {
+	if len(names) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(names)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
 func ListSkills(w http.ResponseWriter, r *http.Request) {
 	var skills []database.Skill
 	if err := database.DB.Order("created_at desc").Find(&skills).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to list skills")
 		return
 	}
-	writeJSON(w, http.StatusOK, skills)
+	resp := make([]skillResponse, len(skills))
+	for i, s := range skills {
+		resp[i] = skillToResponse(s)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // ---------------------------------------------------------------------------
@@ -297,9 +346,10 @@ func UploadSkill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	skill := database.Skill{
-		Slug:    slug,
-		Name:    fm.Name,
-		Summary: fm.Description,
+		Slug:            slug,
+		Name:            fm.Name,
+		Summary:         fm.Description,
+		RequiredEnvVars: encodeRequiredEnvVars(fm.RequiredEnvVars),
 	}
 	if err := database.DB.Create(&skill).Error; err != nil {
 		os.RemoveAll(destDir)
@@ -307,7 +357,7 @@ func UploadSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, skill)
+	writeJSON(w, http.StatusCreated, skillToResponse(skill))
 }
 
 // detectZipPrefix returns a common top-level directory prefix if all files share one.
@@ -370,9 +420,10 @@ type deploySkillRequest struct {
 }
 
 type deploySkillResult struct {
-	InstanceID uint   `json:"instance_id"`
-	Status     string `json:"status"`
-	Error      string `json:"error,omitempty"`
+	InstanceID     uint     `json:"instance_id"`
+	Status         string   `json:"status"`
+	Error          string   `json:"error,omitempty"`
+	MissingEnvVars []string `json:"missing_env_vars,omitempty"`
 }
 
 func DeploySkill(w http.ResponseWriter, r *http.Request) {
@@ -397,18 +448,64 @@ func DeploySkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Determine the env var names this skill declares it needs. We parse the
+	// frontmatter from the fileMap so the check works for both library and
+	// clawhub sources without a DB lookup.
+	var requiredEnvVars []string
+	if skillMD, ok := fileMap["SKILL.md"]; ok {
+		if fm, err := parseSkillFrontmatter(skillMD); err == nil {
+			requiredEnvVars = fm.RequiredEnvVars
+		}
+	}
+
+	// Globally-defined env var names (shared across all instances) — only the
+	// names are needed, not the values, so we skip decryption.
+	globalEnvNames := map[string]struct{}{}
+	for _, k := range LoadGlobalEnvVarKeys() {
+		globalEnvNames[k] = struct{}{}
+	}
+
 	results := make([]deploySkillResult, len(req.InstanceIDs))
 	var wg sync.WaitGroup
 	for i, instID := range req.InstanceIDs {
 		wg.Add(1)
 		go func(idx int, instanceID uint) {
 			defer wg.Done()
-			results[idx] = deployToInstance(instanceID, slug, fileMap)
+			result := deployToInstance(instanceID, slug, fileMap)
+			result.MissingEnvVars = computeMissingEnvVars(instanceID, requiredEnvVars, globalEnvNames)
+			results[idx] = result
 		}(i, instID)
 	}
 	wg.Wait()
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"results": results})
+}
+
+// computeMissingEnvVars returns the subset of requiredEnvVars that is neither
+// defined globally nor per-instance. Missing env vars are a warning, not a
+// failure — the deploy still proceeds.
+func computeMissingEnvVars(instanceID uint, requiredEnvVars []string, globalEnvNames map[string]struct{}) []string {
+	if len(requiredEnvVars) == 0 {
+		return nil
+	}
+	instNames := map[string]struct{}{}
+	var inst database.Instance
+	if err := database.DB.First(&inst, instanceID).Error; err == nil {
+		for k := range decodeEncryptedEnvVarsJSON(inst.EnvVars) {
+			instNames[k] = struct{}{}
+		}
+	}
+	var missing []string
+	for _, name := range requiredEnvVars {
+		if _, ok := globalEnvNames[name]; ok {
+			continue
+		}
+		if _, ok := instNames[name]; ok {
+			continue
+		}
+		missing = append(missing, name)
+	}
+	return missing
 }
 
 func buildSkillFileMap(ctx context.Context, slug, source, version string) (map[string][]byte, error) {

@@ -13,6 +13,12 @@ const IMAGES: Record<string, string> = {
   brave: process.env.AGENT_BRAVE_TEST_IMAGE ?? "openclaw-vnc-brave:test",
 };
 
+// CI builds multi-arch images and standardises tests on linux/amd64 to match
+// how production clusters are provisioned. On dev machines (e.g. Apple
+// silicon) you can set AGENT_TEST_PLATFORM=linux/arm64 or leave it empty to
+// let Docker auto-select.
+const PLATFORM = process.env.AGENT_TEST_PLATFORM ?? "linux/amd64";
+
 const BROWSER_PROCESS_PATTERNS: Record<string, string> = {
   chromium: "chromium",
   chrome: "google-chrome",
@@ -102,6 +108,39 @@ function dumpDiagnostics(container: string): void {
   console.error(exec(container, ["ps", "aux"]).stdout || "(empty)");
 }
 
+/**
+ * Generate an ed25519 keypair inside the container and install the public key
+ * into /root/.ssh/authorized_keys. The private key lives at
+ * /root/.ssh/test_key inside the container — env-vars.test.ts SSHes from
+ * `docker exec <ct> ssh -i /root/.ssh/test_key root@127.0.0.1`, so there is
+ * no need to extract the key to the host.
+ */
+function provisionRootSSHKey(container: string): void {
+  execFileSync("docker", [
+    "exec", container, "bash", "-c",
+    [
+      "set -e",
+      "mkdir -p /root/.ssh",
+      "chmod 700 /root/.ssh",
+      "ssh-keygen -t ed25519 -f /root/.ssh/test_key -N '' -q",
+      "cat /root/.ssh/test_key.pub >> /root/.ssh/authorized_keys",
+      "chmod 600 /root/.ssh/authorized_keys",
+    ].join(" && "),
+  ], { encoding: "utf-8" });
+}
+
+async function waitForSSHD(container: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = exec(container, [
+      "bash", "-c", "(>/dev/tcp/127.0.0.1/22) 2>/dev/null && echo ok",
+    ]);
+    if (result.stdout.trim() === "ok") return;
+    await sleep(1_000);
+  }
+  throw new Error(`[global-setup] sshd did not start on ${container} within ${timeoutMs}ms`);
+}
+
 // ── Global lifecycle ────────────────────────────────────────────────────
 
 const launched: ContainerMap = {};
@@ -122,15 +161,19 @@ export async function setup(): Promise<void> {
     } catch {
       // ignore
     }
-    execFileSync(
-      "docker",
-      [
-        "run", "-d", "--privileged", "--platform", "linux/amd64",
-        "-e", "OPENCLAW_GATEWAY_TOKEN=zzzbbb",
-        "--name", name, image,
-      ],
-      { encoding: "utf-8" },
-    );
+    const runArgs = [
+      "run", "-d", "--privileged",
+      ...(PLATFORM ? ["--platform", PLATFORM] : []),
+      "-e", "OPENCLAW_GATEWAY_TOKEN=zzzbbb",
+      // Test env vars consumed by env-vars.test.ts. Covers plain value,
+      // embedded space, and shell-special characters so we can verify
+      // the `printf %q` quoting in /etc/profile.d/claworc-env.sh.
+      "-e", "TEST_ENV_PLAIN=plain_value",
+      "-e", "TEST_ENV_SPACED=has spaces in it",
+      "-e", "TEST_ENV_SPECIAL=a!b#c$d",
+      "--name", name, image,
+    ];
+    execFileSync("docker", runArgs, { encoding: "utf-8" });
     launched[browser] = { name, image };
     console.log(`[global-setup] Started ${browser} container: ${name}`);
   }
@@ -158,6 +201,13 @@ export async function setup(): Promise<void> {
     // `openclaw doctor --fix` + `openclaw config set` commands are extremely
     // slow under QEMU emulation (~10+ minutes with concurrent containers).
     // The openclaw.test.ts file handles its own gateway wait in beforeAll.
+
+    // Provision an in-container SSH keypair so env-vars.test.ts can open a
+    // real SSH session back to 127.0.0.1. This reproduces the path used by
+    // the control plane's SSH tunnel (connects as root) without needing host
+    // port mapping. Idempotent: a re-run of setup() would overwrite the key.
+    provisionRootSSHKey(name);
+    await waitForSSHD(name, 60_000);
 
     console.log(`[global-setup] ${browser} container ready`);
   });
