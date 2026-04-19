@@ -10,6 +10,7 @@ import {
   type KanbanComment,
 } from "@/api/kanban";
 import { fetchProviders } from "@/api/llm";
+import { useInstances } from "@/hooks/useInstances";
 import { successToast, errorToast } from "@/utils/toast";
 
 // ---------------------------------------------------------------------------
@@ -429,7 +430,7 @@ export default function KanbanPage() {
           <button
             type="button"
             onClick={() => setShowNewBoard(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
           >
             + New Board
           </button>
@@ -440,7 +441,7 @@ export default function KanbanPage() {
               <button
                 type="button"
                 onClick={() => setShowArchived((v) => !v)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
               >
                 <Archive size={13} />
                 {showArchived ? "Hide archived" : `View archived (${archivedTasks.length})`}

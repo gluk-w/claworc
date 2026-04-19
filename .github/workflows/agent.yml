@@ -6,6 +6,9 @@ on:
     paths:
       - 'agent/**'
       - '.github/workflows/agent.yml'
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
 
 jobs:
   agent:
