@@ -23,7 +23,7 @@
     "@iconify-json/lucide": "^1.2.98",
     "@iconify-json/simple-icons": "^1.2.74",
     "@iconify/react": "^6.0.2",
-    "astro": "6.0.0",
+    "astro": "6.1.8",
     "astro-icon": "^1.1.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
