@@ -28,6 +28,13 @@ If you don't select any paths, `HOME` is used by default. You can also enter any
 
 System directories such as `/proc`, `/sys`, `/dev`, `/tmp`, and `/run` are always excluded.
 
+## Where backups are stored
+
+By default, backup archives are written under `<CLAWORC_DATA_PATH>/backups` on the
+control plane. To direct backups to a different volume — for example, a larger or
+cheaper disk — set `CLAWORC_BACKUPS_PATH` to the desired directory. See
+[Environment variables](/environment-variables) for details.
+
 ## Creating a manual backup
 
 1. Open **Backups** in the sidebar.

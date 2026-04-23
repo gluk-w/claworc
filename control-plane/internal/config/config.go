@@ -8,6 +8,7 @@ import (
 
 type Settings struct {
 	DataPath     string   `envconfig:"DATA_PATH" default:"/app/data"`
+	BackupsPath  string   `envconfig:"BACKUPS_PATH" default:""`
 	K8sNamespace string   `envconfig:"K8S_NAMESPACE" default:"claworc"`
 	DockerHost   string   `envconfig:"DOCKER_HOST" default:""`
 	AuthDisabled bool     `envconfig:"AUTH_DISABLED" default:"false"`

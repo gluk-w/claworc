@@ -29,11 +29,19 @@ spec:
           env:
             - name: CLAWORC_DATA_PATH
               value: {{ .Values.config.dataPath | quote }}
+            {{- if .Values.config.backupsPath }}
+            - name: CLAWORC_BACKUPS_PATH
+              value: {{ .Values.config.backupsPath | quote }}
+            {{- end }}
             - name: CLAWORC_K8S_NAMESPACE
               value: {{ .Values.config.k8sNamespace | quote }}
           volumeMounts:
             - name: data
               mountPath: /app/data
+            {{- if and .Values.backupsPersistence.enabled .Values.config.backupsPath }}
+            - name: backups
+              mountPath: {{ .Values.config.backupsPath | quote }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.liveness.path }}
@@ -58,3 +66,8 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if and .Values.backupsPersistence.enabled .Values.config.backupsPath }}
+        - name: backups
+          persistentVolumeClaim:
+            claimName: {{ include "claworc.fullname" . }}-backups
+        {{- end }}

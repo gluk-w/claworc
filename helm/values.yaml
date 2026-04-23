@@ -2,6 +2,11 @@ replicaCount: 1
 
 config:
   dataPath: /app/data
+  # backupsPath: when set, backup archives are stored here instead of under
+  # <dataPath>/backups. Useful for directing backups to cheaper/slower storage.
+  # Set together with backupsPersistence.enabled=true to back this path with a
+  # separate PVC.
+  backupsPath: ""
   k8sNamespace: claworc
 
 service:
@@ -12,6 +17,15 @@ service:
 persistence:
   enabled: true
   size: 1Gi
+  storageClass: ""
+  accessMode: ReadWriteOnce
+
+# Optional separate PVC for backup archives. Requires config.backupsPath to be
+# set to the mount path (e.g. /app/backups). Leave disabled to keep backups on
+# the main data volume.
+backupsPersistence:
+  enabled: false
+  size: 10Gi
   storageClass: ""
   accessMode: ReadWriteOnce
 

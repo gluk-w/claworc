@@ -30,7 +30,13 @@ var pathAliases = map[string]string{
 }
 
 // BackupDir returns the root directory for backup archives.
+// When CLAWORC_BACKUPS_PATH is set, it is used verbatim (allowing backups to
+// live on a separate volume or slower disk). Otherwise backups are colocated
+// under CLAWORC_DATA_PATH/backups.
 func BackupDir() string {
+	if config.Cfg.BackupsPath != "" {
+		return config.Cfg.BackupsPath
+	}
 	return filepath.Join(config.Cfg.DataPath, "backups")
 }
 

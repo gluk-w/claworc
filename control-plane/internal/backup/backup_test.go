@@ -80,6 +80,34 @@ func setupTestDataPath(t *testing.T) string {
 	return dir
 }
 
+// --- BackupDir ---
+
+func TestBackupDir_DefaultUnderDataPath(t *testing.T) {
+	origData, origBackups := config.Cfg.DataPath, config.Cfg.BackupsPath
+	t.Cleanup(func() {
+		config.Cfg.DataPath = origData
+		config.Cfg.BackupsPath = origBackups
+	})
+	config.Cfg.DataPath = "/app/data"
+	config.Cfg.BackupsPath = ""
+	if got := BackupDir(); got != "/app/data/backups" {
+		t.Errorf("BackupDir() = %q, want /app/data/backups", got)
+	}
+}
+
+func TestBackupDir_OverrideWithBackupsPath(t *testing.T) {
+	origData, origBackups := config.Cfg.DataPath, config.Cfg.BackupsPath
+	t.Cleanup(func() {
+		config.Cfg.DataPath = origData
+		config.Cfg.BackupsPath = origBackups
+	})
+	config.Cfg.DataPath = "/app/data"
+	config.Cfg.BackupsPath = "/mnt/cold-storage/claworc"
+	if got := BackupDir(); got != "/mnt/cold-storage/claworc" {
+		t.Errorf("BackupDir() = %q, want /mnt/cold-storage/claworc", got)
+	}
+}
+
 // --- ResolvePaths ---
 
 func TestResolvePaths_Empty(t *testing.T) {
