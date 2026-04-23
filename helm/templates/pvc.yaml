@@ -16,3 +16,22 @@ spec:
     requests:
       storage: {{ .Values.persistence.size }}
 {{- end }}
+{{- if and .Values.backupsPersistence.enabled .Values.config.backupsPath }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "claworc.fullname" . }}-backups
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "claworc.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.backupsPersistence.accessMode }}
+  {{- if .Values.backupsPersistence.storageClass }}
+  storageClassName: {{ .Values.backupsPersistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.backupsPersistence.size }}
+{{- end }}

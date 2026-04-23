@@ -64,6 +64,7 @@ Axios for API calls. The `@` import alias maps to `src/`.
 
 Backend settings use `envconfig` with `CLAWORC_` env prefix (see `internal/config/config.go`):
 - `CLAWORC_DATA_PATH` - Data directory for SQLite database and SSH keys (default: `/app/data`)
+- `CLAWORC_BACKUPS_PATH` - Directory for backup archives (default: empty, falls back to `<DATA_PATH>/backups`)
 - `CLAWORC_K8S_NAMESPACE` - Target namespace (default: `claworc`)
 - `CLAWORC_TERMINAL_HISTORY_LINES` - Scrollback buffer size in lines (default: `1000`, `0` to disable)
 - `CLAWORC_TERMINAL_RECORDING_DIR` - Directory for audit recordings (default: empty, disabled)
