@@ -19,18 +19,26 @@ func ListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type userResponse struct {
-		ID        uint   `json:"id"`
-		Username  string `json:"username"`
-		Role      string `json:"role"`
-		CreatedAt string `json:"created_at"`
+		ID                 uint   `json:"id"`
+		Username           string `json:"username"`
+		Role               string `json:"role"`
+		CanCreateInstances bool   `json:"can_create_instances"`
+		LastLoginAt        string `json:"last_login_at"`
+		CreatedAt          string `json:"created_at"`
 	}
 	result := make([]userResponse, 0, len(users))
 	for _, u := range users {
+		lastLogin := ""
+		if u.LastLoginAt != nil {
+			lastLogin = formatTimestamp(*u.LastLoginAt)
+		}
 		result = append(result, userResponse{
-			ID:        u.ID,
-			Username:  u.Username,
-			Role:      u.Role,
-			CreatedAt: formatTimestamp(u.CreatedAt),
+			ID:                 u.ID,
+			Username:           u.Username,
+			Role:               u.Role,
+			CanCreateInstances: u.CanCreateInstances,
+			LastLoginAt:        lastLogin,
+			CreatedAt:          formatTimestamp(u.CreatedAt),
 		})
 	}
 
@@ -39,9 +47,10 @@ func ListUsers(w http.ResponseWriter, r *http.Request) {
 
 func CreateUser(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
+		Username           string `json:"username"`
+		Password           string `json:"password"`
+		Role               string `json:"role"`
+		CanCreateInstances bool   `json:"can_create_instances"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
@@ -67,10 +76,17 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Admins always can; the flag is only meaningful for the "user" role.
+	canCreate := body.CanCreateInstances
+	if body.Role == "admin" {
+		canCreate = false
+	}
+
 	user := &database.User{
-		Username:     body.Username,
-		PasswordHash: hash,
-		Role:         body.Role,
+		Username:           body.Username,
+		PasswordHash:       hash,
+		Role:               body.Role,
+		CanCreateInstances: canCreate,
 	}
 	if err := database.CreateUser(user); err != nil {
 		writeError(w, http.StatusConflict, "Username already exists")
@@ -78,10 +94,44 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"id":       user.ID,
-		"username": user.Username,
-		"role":     user.Role,
+		"id":                   user.ID,
+		"username":             user.Username,
+		"role":                 user.Role,
+		"can_create_instances": user.CanCreateInstances,
 	})
+}
+
+// UpdateUserPermissions toggles per-user permission flags (e.g. CanCreateInstances).
+func UpdateUserPermissions(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "userId"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid user ID")
+		return
+	}
+
+	var body struct {
+		CanCreateInstances *bool `json:"can_create_instances,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	updates := map[string]interface{}{}
+	if body.CanCreateInstances != nil {
+		updates["can_create_instances"] = *body.CanCreateInstances
+	}
+	if len(updates) == 0 {
+		writeError(w, http.StatusBadRequest, "No fields to update")
+		return
+	}
+
+	if err := database.DB.Model(&database.User{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to update permissions")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func DeleteUser(w http.ResponseWriter, r *http.Request) {

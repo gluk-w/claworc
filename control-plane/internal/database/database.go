@@ -196,6 +196,12 @@ func UpdateUserPassword(id uint, hash string) error {
 	return DB.Model(&User{}).Where("id = ?", id).Update("password_hash", hash).Error
 }
 
+// TouchUserLastLogin records the current time as the user's last login.
+func TouchUserLastLogin(id uint) error {
+	now := time.Now()
+	return DB.Model(&User{}).Where("id = ?", id).Update("last_login_at", &now).Error
+}
+
 func ListUsers() ([]User, error) {
 	var users []User
 	if err := DB.Order("id").Find(&users).Error; err != nil {

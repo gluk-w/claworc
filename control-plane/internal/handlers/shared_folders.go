@@ -35,6 +35,20 @@ func isValidMountPath(p string) bool {
 	return true
 }
 
+// mountPathTaken reports whether any shared folder other than excludeID already
+// uses the given mount path. excludeID = 0 means no exclusion (use for create).
+func mountPathTaken(mountPath string, excludeID uint) (bool, error) {
+	var count int64
+	q := database.DB.Model(&database.SharedFolder{}).Where("mount_path = ?", mountPath)
+	if excludeID != 0 {
+		q = q.Where("id <> ?", excludeID)
+	}
+	if err := q.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func ListSharedFolders(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
 	if user == nil {
@@ -93,6 +107,15 @@ func CreateSharedFolder(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isValidMountPath(body.MountPath) {
 		writeError(w, http.StatusBadRequest, "Invalid mount path: must be absolute and not conflict with system paths")
+		return
+	}
+	taken, err := mountPathTaken(body.MountPath, 0)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to validate mount path")
+		return
+	}
+	if taken {
+		writeError(w, http.StatusConflict, "Mount path already in use by another shared folder")
 		return
 	}
 
@@ -191,6 +214,15 @@ func UpdateSharedFolder(w http.ResponseWriter, r *http.Request) {
 	if body.MountPath != nil {
 		if !isValidMountPath(*body.MountPath) {
 			writeError(w, http.StatusBadRequest, "Invalid mount path: must be absolute and not conflict with system paths")
+			return
+		}
+		taken, err := mountPathTaken(*body.MountPath, sf.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to validate mount path")
+			return
+		}
+		if taken {
+			writeError(w, http.StatusConflict, "Mount path already in use by another shared folder")
 			return
 		}
 		updates["mount_path"] = *body.MountPath

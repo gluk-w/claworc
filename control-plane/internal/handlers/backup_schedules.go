@@ -7,8 +7,43 @@ import (
 
 	"github.com/gluk-w/claworc/control-plane/internal/backup"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/go-chi/chi/v5"
 )
+
+// scheduleInstanceIDs parses the schedule's instance_ids field, which may be a
+// JSON array (e.g. "[1,2]") or a single numeric string for legacy callers.
+func scheduleInstanceIDs(raw string) []uint {
+	if raw == "" {
+		return nil
+	}
+	var ids []uint
+	if err := json.Unmarshal([]byte(raw), &ids); err == nil {
+		return ids
+	}
+	// Fallback: single integer
+	if n, err := strconv.Atoi(raw); err == nil {
+		return []uint{uint(n)}
+	}
+	return nil
+}
+
+// canAccessAllScheduleInstances returns true if the caller has access to every
+// instance referenced by the schedule's instance_ids field.
+func canAccessAllScheduleInstances(r *http.Request, raw string) bool {
+	ids := scheduleInstanceIDs(raw)
+	if len(ids) == 0 {
+		// A schedule with no resolvable instances is admin-only by default.
+		user := middleware.GetUser(r)
+		return user != nil && user.Role == "admin"
+	}
+	for _, id := range ids {
+		if !middleware.CanAccessInstance(r, id) {
+			return false
+		}
+	}
+	return true
+}
 
 type scheduleCreateRequest struct {
 	InstanceIDs    string   `json:"instance_ids"`
@@ -39,6 +74,11 @@ func CreateBackupSchedule(w http.ResponseWriter, r *http.Request) {
 
 	if req.InstanceIDs == "" {
 		writeError(w, http.StatusBadRequest, "instance_ids is required")
+		return
+	}
+
+	if !canAccessAllScheduleInstances(r, req.InstanceIDs) {
+		writeError(w, http.StatusForbidden, "You do not have access to all instances in this schedule")
 		return
 	}
 
@@ -78,12 +118,24 @@ func CreateBackupSchedule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, s)
 }
 
-// ListBackupSchedules returns all backup schedules.
+// ListBackupSchedules returns all backup schedules. Non-admin users only see
+// schedules whose instances are all assigned to them.
 func ListBackupSchedules(w http.ResponseWriter, r *http.Request) {
 	schedules, err := database.ListBackupSchedules()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to list schedules")
 		return
+	}
+
+	user := middleware.GetUser(r)
+	if user != nil && user.Role != "admin" {
+		filtered := schedules[:0]
+		for _, s := range schedules {
+			if canAccessAllScheduleInstances(r, s.InstanceIDs) {
+				filtered = append(filtered, s)
+			}
+		}
+		schedules = filtered
 	}
 
 	writeJSON(w, http.StatusOK, schedules)
@@ -97,8 +149,13 @@ func UpdateBackupSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := database.GetBackupSchedule(uint(id)); err != nil {
+	existing, err := database.GetBackupSchedule(uint(id))
+	if err != nil {
 		writeError(w, http.StatusNotFound, "Schedule not found")
+		return
+	}
+	if !canAccessAllScheduleInstances(r, existing.InstanceIDs) {
+		writeError(w, http.StatusForbidden, "You do not have access to this schedule")
 		return
 	}
 
@@ -111,6 +168,10 @@ func UpdateBackupSchedule(w http.ResponseWriter, r *http.Request) {
 	updates := map[string]interface{}{}
 
 	if req.InstanceIDs != nil {
+		if !canAccessAllScheduleInstances(r, *req.InstanceIDs) {
+			writeError(w, http.StatusForbidden, "You do not have access to all instances in this schedule")
+			return
+		}
 		updates["instance_ids"] = *req.InstanceIDs
 	}
 
@@ -159,8 +220,13 @@ func DeleteBackupSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := database.GetBackupSchedule(uint(id)); err != nil {
+	existing, err := database.GetBackupSchedule(uint(id))
+	if err != nil {
 		writeError(w, http.StatusNotFound, "Schedule not found")
+		return
+	}
+	if !canAccessAllScheduleInstances(r, existing.InstanceIDs) {
+		writeError(w, http.StatusForbidden, "You do not have access to this schedule")
 		return
 	}
 

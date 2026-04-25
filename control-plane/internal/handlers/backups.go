@@ -11,6 +11,7 @@ import (
 
 	"github.com/gluk-w/claworc/control-plane/internal/backup"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/taskmanager"
 	"github.com/go-chi/chi/v5"
@@ -26,6 +27,11 @@ func CreateBackup(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, uint(id)) {
+		writeError(w, http.StatusForbidden, "You do not have access to this instance")
 		return
 	}
 
@@ -67,6 +73,11 @@ func ListInstanceBackups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !middleware.CanAccessInstance(r, uint(id)) {
+		writeError(w, http.StatusForbidden, "You do not have access to this instance")
+		return
+	}
+
 	backups, err := database.ListBackups(uint(id))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to list backups")
@@ -76,12 +87,24 @@ func ListInstanceBackups(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, backups)
 }
 
-// ListAllBackups returns all backups across all instances.
+// ListAllBackups returns backups across all instances. Admins see everything;
+// non-admin users only see backups for instances assigned to them.
 func ListAllBackups(w http.ResponseWriter, r *http.Request) {
 	backups, err := database.ListAllBackups()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to list backups")
 		return
+	}
+
+	user := middleware.GetUser(r)
+	if user != nil && user.Role != "admin" {
+		filtered := backups[:0]
+		for _, b := range backups {
+			if database.IsUserAssignedToInstance(user.ID, b.InstanceID) {
+				filtered = append(filtered, b)
+			}
+		}
+		backups = filtered
 	}
 
 	writeJSON(w, http.StatusOK, backups)
@@ -101,6 +124,11 @@ func GetBackupDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !middleware.CanAccessInstance(r, b.InstanceID) {
+		writeError(w, http.StatusForbidden, "You do not have access to this backup")
+		return
+	}
+
 	writeJSON(w, http.StatusOK, b)
 }
 
@@ -116,6 +144,10 @@ func CancelBackupHandler(w http.ResponseWriter, r *http.Request) {
 	b, err := database.GetBackup(uint(id))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "Backup not found")
+		return
+	}
+	if !middleware.CanAccessInstance(r, b.InstanceID) {
+		writeError(w, http.StatusForbidden, "You do not have access to this backup")
 		return
 	}
 	if b.Status != "running" {
@@ -157,6 +189,16 @@ func DeleteBackupHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	b, err := database.GetBackup(uint(id))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Backup not found")
+		return
+	}
+	if !middleware.CanAccessInstance(r, b.InstanceID) {
+		writeError(w, http.StatusForbidden, "You do not have access to this backup")
+		return
+	}
+
 	if err := backup.DeleteBackup(uint(id)); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -177,6 +219,16 @@ func RestoreBackupHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	b, err := database.GetBackup(uint(id))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Backup not found")
+		return
+	}
+	if !middleware.CanAccessInstance(r, b.InstanceID) {
+		writeError(w, http.StatusForbidden, "You do not have access to this backup")
+		return
+	}
+
 	var req restoreRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
@@ -185,6 +237,11 @@ func RestoreBackupHandler(w http.ResponseWriter, r *http.Request) {
 
 	if req.InstanceID == 0 {
 		writeError(w, http.StatusBadRequest, "instance_id is required")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, req.InstanceID) {
+		writeError(w, http.StatusForbidden, "You do not have access to the target instance")
 		return
 	}
 
@@ -221,6 +278,11 @@ func DownloadBackup(w http.ResponseWriter, r *http.Request) {
 	b, err := database.GetBackup(uint(id))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "Backup not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, b.InstanceID) {
+		writeError(w, http.StatusForbidden, "You do not have access to this backup")
 		return
 	}
 

@@ -83,6 +83,8 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_ = database.TouchUserLastLogin(user.ID)
+
 	setSessionCookie(w, r, sessionID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"id":       user.ID,
@@ -168,6 +170,8 @@ func SetupCreateAdmin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Failed to create session")
 		return
 	}
+
+	_ = database.TouchUserLastLogin(user.ID)
 
 	setSessionCookie(w, r, sessionID)
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
@@ -354,6 +358,8 @@ func WebAuthnLoginFinish(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Failed to create session")
 		return
 	}
+
+	_ = database.TouchUserLastLogin(user.ID)
 
 	setSessionCookie(w, r, sessionID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{

@@ -16,6 +16,7 @@ interface AuthContextValue {
   user: User | null;
   isLoading: boolean;
   isAdmin: boolean;
+  canCreateInstances: boolean;
   login: (data: LoginRequest) => Promise<User>;
   logout: () => Promise<void>;
   refetch: () => void;
@@ -58,6 +59,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user: user ?? null,
         isLoading,
         isAdmin: user?.role === "admin",
+        canCreateInstances:
+          user?.role === "admin" || user?.can_create_instances === true,
         login,
         logout,
         refetch: () => {

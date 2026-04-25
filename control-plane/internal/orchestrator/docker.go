@@ -132,19 +132,19 @@ func (d *DockerOrchestrator) ensureImage(ctx context.Context, img string) error 
 	// Check if image exists locally first
 	_, _, err := d.client.ImageInspectWithRaw(ctx, img)
 	if err == nil {
-		log.Printf("Image %s found locally", img)
+		log.Printf("Image %s found locally", utils.SanitizeForLog(img))
 		return nil
 	}
 
 	// Image not found locally, try to pull
-	log.Printf("Image %s not found locally, pulling...", img)
+	log.Printf("Image %s not found locally, pulling...", utils.SanitizeForLog(img))
 	reader, err := d.client.ImagePull(ctx, img, image.PullOptions{})
 	if err != nil {
 		return fmt.Errorf("pull image %s: %w", img, err)
 	}
 	defer reader.Close()
 	io.Copy(io.Discard, reader)
-	log.Printf("Image %s pulled successfully", img)
+	log.Printf("Image %s pulled successfully", utils.SanitizeForLog(img))
 	return nil
 }
 

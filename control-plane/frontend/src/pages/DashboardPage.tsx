@@ -51,7 +51,7 @@ export default function DashboardPage() {
   };
 
   const loadingInstanceId = getLoadingInstanceId();
-  const { isAdmin } = useAuth();
+  const { canCreateInstances } = useAuth();
 
   return (
     <div>
@@ -60,7 +60,7 @@ export default function DashboardPage() {
       ) : !instances || instances.length === 0 ? (
         <div className="text-center py-12">
           <p data-testid="empty-state-message" className="text-gray-500 mb-4">No instances yet.</p>
-          {isAdmin ? (
+          {canCreateInstances ? (
             <Link
               to="/instances/new"
               className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"

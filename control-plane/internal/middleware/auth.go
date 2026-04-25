@@ -69,6 +69,24 @@ func RequireAdmin(next http.Handler) http.Handler {
 	})
 }
 
+// RequireInstanceCreator allows admins, or users whose CanCreateInstances flag
+// is set. It is used for routes that create new instances or restore backups
+// (which effectively replaces an instance's data).
+func RequireInstanceCreator(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := GetUser(r)
+		if user == nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"detail": "Authentication required"})
+			return
+		}
+		if user.Role != "admin" && !user.CanCreateInstances {
+			writeJSON(w, http.StatusForbidden, map[string]string{"detail": "Instance creation permission required"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func GetUser(r *http.Request) *database.User {
 	user, _ := r.Context().Value(userContextKey).(*database.User)
 	return user

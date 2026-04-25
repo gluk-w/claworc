@@ -768,6 +768,14 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Auto-assign the new instance to the creator if they are a non-admin user.
+	// Admins implicitly access all instances and don't need a UserInstance row.
+	if caller := middleware.GetUser(r); caller != nil && caller.Role != "admin" {
+		if err := database.DB.Create(&database.UserInstance{UserID: caller.ID, InstanceID: inst.ID}).Error; err != nil {
+			log.Printf("Failed to auto-assign instance %d to creator %d: %s", inst.ID, caller.ID, utils.SanitizeForLog(err.Error()))
+		}
+	}
+
 	effectiveImage := getEffectiveImage(inst)
 	effectiveResolution := getEffectiveResolution(inst)
 	effectiveTimezone := getEffectiveTimezone(inst)

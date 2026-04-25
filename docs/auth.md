@@ -18,27 +18,32 @@ kubectl exec deploy/claworc -n claworc -- /app/claworc --create-admin --username
 
 ## Roles
 
-There are two roles: **admin** and **user**.
+There are two roles: **admin** and **user**. The `user` role additionally has a per-user **Can create instances** flag that grants self-service instance creation and backup restore.
 
-| Capability | Admin | User |
-|---|---|---|
-| View instances | All | Assigned only |
-| Start / stop / restart instances | All | Assigned only |
-| Access instance chat, terminal, VNC, files, logs, config | All | Assigned only |
-| Create / delete instances | Yes | No |
-| Manage settings | Yes | No |
-| Manage users | Yes | No |
-| Register passkeys | Yes | Yes |
+| Capability | Admin | User | User w/ "Can create instances" |
+|---|---|---|---|
+| View instances | All | Assigned only | Assigned only |
+| Start / stop / restart instances | All | Assigned only | Assigned only |
+| Access instance chat, terminal, VNC, files, logs, config | All | Assigned only | Assigned only |
+| Create / list / download / delete backups | All instances | Assigned only | Assigned only |
+| Manage backup schedules | All | Schedules whose instances are all assigned | Schedules whose instances are all assigned |
+| Create instances (creator auto-assigned to the new instance) | Yes | No | Yes |
+| Restore from backup | Yes | No | Yes (assigned target only) |
+| Delete instances | Yes | No | No |
+| Manage settings | Yes | No | No |
+| Manage users | Yes | No | No |
+| Register passkeys | Yes | Yes | Yes |
 
 ## User Management
 
 Admins can manage users from the **Users** page in the dashboard:
 
-- **Create User** — set username, password, and role (admin or user).
+- **Create User** — set username, password, role (admin or user), and (for the "user" role) the **Can create instances** flag.
 - **Delete User** — removes the user and invalidates their sessions.
 - **Change Role** — promote a user to admin or demote to user.
+- **Toggle Can-create-instances** — grant or revoke self-service instance creation and backup restore for a non-admin user.
 - **Reset Password** — set a new password and invalidate all sessions for that user.
-- **Assign Instances** — for users with the "user" role, assign which instances they can access.
+- **Assign Instances** — for users with the "user" role, assign which instances they can access. New instances created by a user with **Can create instances** are auto-assigned to the creator.
 
 ## Instance Assignment
 
@@ -140,14 +145,37 @@ CLAWORC_RP_ID=claworc.example.com
 | GET | `/api/v1/auth/webauthn/credentials` | List registered passkeys |
 | DELETE | `/api/v1/auth/webauthn/credentials/{id}` | Delete a passkey |
 
+### Authenticated (per-instance access enforced)
+
+Backup endpoints require authentication; non-admin callers must be assigned to the instance referenced (directly or via the backup row). `POST /api/v1/backups/{id}/restore` and `POST /api/v1/instances` additionally require the **Can create instances** flag (or admin).
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/v1/instances` | Create a new instance (creator auto-assigned) |
+| POST | `/api/v1/instances/{id}/clone` | Clone an instance |
+| POST | `/api/v1/instances/{id}/backups` | Create a backup |
+| GET | `/api/v1/instances/{id}/backups` | List backups for an instance |
+| GET | `/api/v1/backups` | List backups (admins see all; users see assigned only) |
+| GET | `/api/v1/backups/{id}` | Get backup details |
+| DELETE | `/api/v1/backups/{id}` | Delete a backup |
+| POST | `/api/v1/backups/{id}/cancel` | Cancel a running backup |
+| POST | `/api/v1/backups/{id}/restore` | Restore a backup (requires "Can create instances") |
+| GET | `/api/v1/backups/{id}/download` | Download the backup archive |
+| POST | `/api/v1/backup-schedules` | Create a backup schedule |
+| GET | `/api/v1/backup-schedules` | List schedules accessible to the caller |
+| PUT | `/api/v1/backup-schedules/{id}` | Update a schedule |
+| DELETE | `/api/v1/backup-schedules/{id}` | Delete a schedule |
+
 ### Admin Only
 
 | Method | Endpoint | Description |
 |---|---|---|
+| DELETE | `/api/v1/instances/{id}` | Delete an instance |
 | GET | `/api/v1/users` | List all users |
 | POST | `/api/v1/users` | Create a user |
 | DELETE | `/api/v1/users/{id}` | Delete a user |
 | PUT | `/api/v1/users/{id}/role` | Update user role |
+| PUT | `/api/v1/users/{id}/permissions` | Update user permission flags (e.g. `can_create_instances`) |
 | GET | `/api/v1/users/{id}/instances` | Get assigned instances |
 | PUT | `/api/v1/users/{id}/instances` | Set assigned instances |
 | POST | `/api/v1/users/{id}/reset-password` | Reset user password |
