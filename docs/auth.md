@@ -107,13 +107,13 @@ The following environment variables configure authentication behavior:
 
 | Variable | Default | Description |
 |---|---|---|
-| `CLAWORC_RP_ORIGIN` | `http://localhost:8000` | WebAuthn relying party origin (your dashboard URL) |
+| `CLAWORC_RP_ORIGINS` | `http://localhost:8000` | WebAuthn relying party origins (your dashboard URL). Comma-separated for multiple values. |
 | `CLAWORC_RP_ID` | `localhost` | WebAuthn relying party ID (your domain name) |
 
 For production deployments, set these to match your actual domain:
 
 ```bash
-CLAWORC_RP_ORIGIN=https://claworc.example.com
+CLAWORC_RP_ORIGINS=https://claworc.example.com
 CLAWORC_RP_ID=claworc.example.com
 ```
 

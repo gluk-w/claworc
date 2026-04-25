@@ -60,6 +60,13 @@ A rough guide based on typical workloads:
 
 You can adjust CPU and memory after creation on the instance **Settings** tab. See [Resources](#resources) for details.
 
+<Note>
+  CPU and memory defaults configured in **Settings → Default Resource Limits**
+  are applied only when a new instance is created. Changing them later does not
+  affect existing instances. To update resources on an existing instance, edit
+  it on the instance **Settings → Resources** card.
+</Note>
+
 ## Instance status
 
 Each instance shows a status from the orchestrator (Kubernetes or Docker), alongside a live connection indicator:

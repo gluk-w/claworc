@@ -298,7 +298,10 @@ export default function SettingsPage() {
         </div>
 
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-sm font-medium text-gray-900 mb-4">Default Resource Limits</h3>
+          <h3 className="text-sm font-medium text-gray-900 mb-1">Default Resource Limits</h3>
+          <p className="text-xs text-gray-500 mb-4">
+            Applied only when a new instance is created. Changing these values does not affect existing instances.
+          </p>
           <div className="grid grid-cols-2 gap-4">
             {resourceFields.map((field) => (
               <div key={field.key}>

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/backup"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/taskmanager"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -100,6 +102,51 @@ func GetBackupDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, b)
+}
+
+// CancelBackupHandler aborts an in-flight backup. It looks up the active
+// backup.create task by resource_id, calls Manager.Cancel which fires the
+// OnCancel cleanup (delete partial file, mark row canceled), and returns.
+func CancelBackupHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "backupId"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid backup ID")
+		return
+	}
+	b, err := database.GetBackup(uint(id))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Backup not found")
+		return
+	}
+	if b.Status != "running" {
+		writeError(w, http.StatusConflict, "Backup is not running")
+		return
+	}
+	if TaskMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "Task manager not initialized")
+		return
+	}
+	tasks := TaskMgr.List(taskmanager.Filter{
+		Type:       taskmanager.TaskBackupCreate,
+		ResourceID: strconv.Itoa(id),
+		OnlyActive: true,
+	})
+	if len(tasks) == 0 {
+		writeError(w, http.StatusNotFound, "No active task for this backup")
+		return
+	}
+	if err := TaskMgr.Cancel(tasks[0].ID); err != nil {
+		switch {
+		case errors.Is(err, taskmanager.ErrAlreadyTerminal):
+			writeError(w, http.StatusConflict, "Task already finished")
+		case errors.Is(err, taskmanager.ErrNotCancellable):
+			writeError(w, http.StatusMethodNotAllowed, "Task is not cancellable")
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "Backup cancellation requested"})
 }
 
 // DeleteBackupHandler removes a backup and its file.

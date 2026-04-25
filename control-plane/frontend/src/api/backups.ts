@@ -42,6 +42,10 @@ export async function deleteBackup(backupId: number): Promise<void> {
   await client.delete(`/backups/${backupId}`);
 }
 
+export async function cancelBackup(backupId: number): Promise<void> {
+  await client.post(`/backups/${backupId}/cancel`);
+}
+
 export async function restoreBackup(
   backupId: number,
   payload: BackupRestorePayload,

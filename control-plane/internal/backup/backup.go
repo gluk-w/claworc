@@ -8,13 +8,19 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/taskmanager"
 )
+
+// TaskMgr is the global task manager. Wired from main.go so this package
+// stays import-cycle-free (handlers and main both use it).
+var TaskMgr *taskmanager.Manager
 
 // Paths excluded from backup archives.
 var defaultExclusions = []string{
@@ -95,14 +101,63 @@ func CreateFullBackup(ctx context.Context, orch orchestrator.ContainerOrchestrat
 		return b.ID, fmt.Errorf("update backup path: %w", err)
 	}
 
-	go func() {
-		if err := runFullBackup(context.Background(), orch, instanceName, absPath, b.ID, resolvedPaths); err != nil {
-			log.Printf("backup %d failed: %v", b.ID, err)
-			finishBackup(b.ID, 0, err)
-		}
-	}()
+	if TaskMgr != nil {
+		TaskMgr.Start(taskmanager.StartOpts{
+			Type:         taskmanager.TaskBackupCreate,
+			InstanceID:   instanceID,
+			ResourceID:   strconv.FormatUint(uint64(b.ID), 10),
+			ResourceName: fmt.Sprintf("%s backup", instanceName),
+			OnCancel:     backupOnCancel(b.ID, absPath),
+			Run: func(taskCtx context.Context, h *taskmanager.Handle) error {
+				h.UpdateMessage("archiving filesystem")
+				err := runFullBackup(taskCtx, orch, instanceName, absPath, b.ID, resolvedPaths)
+				if err != nil {
+					// If the task was canceled, OnCancel handles the DB row
+					// and partial-file cleanup; do not overwrite with "failed".
+					if taskCtx.Err() != nil {
+						return err
+					}
+					log.Printf("backup %d failed: %v", b.ID, err)
+					finishBackup(b.ID, 0, err)
+					return err
+				}
+				return nil
+			},
+		})
+	} else {
+		// Fallback (tests/CLI): preserve previous fire-and-forget behavior.
+		go func() {
+			if err := runFullBackup(context.Background(), orch, instanceName, absPath, b.ID, resolvedPaths); err != nil {
+				log.Printf("backup %d failed: %v", b.ID, err)
+				finishBackup(b.ID, 0, err)
+			}
+		}()
+	}
 
 	return b.ID, nil
+}
+
+// backupOnCancel returns a cleanup function suitable for taskmanager.OnCancel.
+// It removes the partial archive file (if any) and marks the backup row as
+// canceled. The running goroutine sees ctx.Done() and exits before this runs;
+// the manager calls OnCancel exactly once.
+func backupOnCancel(backupID uint, absPath string) taskmanager.OnCancel {
+	return func(ctx context.Context) {
+		if absPath != "" {
+			if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
+				log.Printf("backup %d: remove partial file %s: %v", backupID, absPath, err)
+			}
+		}
+		now := time.Now().UTC()
+		if err := database.UpdateBackup(backupID, map[string]interface{}{
+			"status":        "canceled",
+			"error_message": "canceled by user",
+			"completed_at":  &now,
+			"size_bytes":    0,
+		}); err != nil {
+			log.Printf("backup %d: mark canceled: %v", backupID, err)
+		}
+	}
 }
 
 func runFullBackup(ctx context.Context, orch orchestrator.ContainerOrchestrator, instanceName, absPath string, backupID uint, paths []string) error {

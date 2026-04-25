@@ -5,6 +5,7 @@ import {
   fetchInstanceBackups,
   createBackup,
   deleteBackup,
+  cancelBackup,
   restoreBackup,
   fetchBackupSchedules,
   createBackupSchedule,
@@ -51,7 +52,8 @@ export function useCreateBackup() {
     }: BackupCreatePayload & { instanceId: number }) =>
       createBackup(instanceId, payload),
     onSuccess: () => {
-      successToast("Backup started");
+      // No success toast here — the TaskManager-driven loading toast covers
+      // backup progress and final state via /api/v1/tasks/events.
       qc.invalidateQueries({ queryKey: ["backups"] });
     },
     onError: (err) => {
@@ -70,6 +72,20 @@ export function useDeleteBackup() {
     },
     onError: (err) => {
       errorToast("Failed to delete backup", err);
+    },
+  });
+}
+
+export function useCancelBackup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (backupId: number) => cancelBackup(backupId),
+    onSuccess: () => {
+      successToast("Cancellation requested");
+      qc.invalidateQueries({ queryKey: ["backups"] });
+    },
+    onError: (err) => {
+      errorToast("Failed to cancel backup", err);
     },
   });
 }

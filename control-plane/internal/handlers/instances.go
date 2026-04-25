@@ -20,9 +20,38 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
+	"github.com/gluk-w/claworc/control-plane/internal/taskmanager"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	"github.com/go-chi/chi/v5"
 )
+
+// startInstanceTask registers a long-running instance operation with the
+// TaskManager so it appears in the SSE task stream and toast UI. These
+// tasks are not user-cancellable (OnCancel nil per scope decision —
+// aborting mid-K8s call is too risky). If TaskMgr is nil (test scaffolding
+// without a wired manager), the work falls back to a plain goroutine.
+//
+// The goroutine bodies still update the instance DB row themselves; the
+// task return value is informational for toast UX. We infer "failed" from
+// the in-memory status message ("Failed: ...") so the toast turns red.
+func startInstanceTask(taskType taskmanager.TaskType, instanceID uint, displayName string, work func(ctx context.Context)) {
+	if TaskMgr == nil {
+		go work(context.Background())
+		return
+	}
+	TaskMgr.Start(taskmanager.StartOpts{
+		Type:         taskType,
+		InstanceID:   instanceID,
+		ResourceName: displayName,
+		Run: func(ctx context.Context, h *taskmanager.Handle) error {
+			work(ctx)
+			if msg := getStatusMessage(instanceID); strings.HasPrefix(msg, "Failed") {
+				return fmt.Errorf("%s", msg)
+			}
+			return nil
+		},
+	})
+}
 
 // In-memory status messages for instance creation progress.
 var statusMessages sync.Map
@@ -67,41 +96,41 @@ type modelsResponse struct {
 }
 
 type instanceResponse struct {
-	ID                    uint            `json:"id"`
-	Name                  string          `json:"name"`
-	DisplayName           string          `json:"display_name"`
-	Status                string          `json:"status"`
-	CPURequest            string          `json:"cpu_request"`
-	CPULimit              string          `json:"cpu_limit"`
-	MemoryRequest         string          `json:"memory_request"`
-	MemoryLimit           string          `json:"memory_limit"`
-	StorageHomebrew       string          `json:"storage_homebrew"`
-	StorageHome           string          `json:"storage_home"`
-	HasBraveOverride      bool            `json:"has_brave_override"`
-	Models                *modelsResponse `json:"models"`
-	DefaultModel          string          `json:"default_model"`
-	ContainerImage        *string         `json:"container_image"`
-	HasImageOverride      bool            `json:"has_image_override"`
-	VNCResolution         *string         `json:"vnc_resolution"`
-	HasResolutionOverride bool            `json:"has_resolution_override"`
-	Timezone              *string         `json:"timezone"`
-	HasTimezoneOverride   bool            `json:"has_timezone_override"`
-	UserAgent             *string         `json:"user_agent"`
-	HasUserAgentOverride  bool            `json:"has_user_agent_override"`
+	ID                    uint              `json:"id"`
+	Name                  string            `json:"name"`
+	DisplayName           string            `json:"display_name"`
+	Status                string            `json:"status"`
+	CPURequest            string            `json:"cpu_request"`
+	CPULimit              string            `json:"cpu_limit"`
+	MemoryRequest         string            `json:"memory_request"`
+	MemoryLimit           string            `json:"memory_limit"`
+	StorageHomebrew       string            `json:"storage_homebrew"`
+	StorageHome           string            `json:"storage_home"`
+	HasBraveOverride      bool              `json:"has_brave_override"`
+	Models                *modelsResponse   `json:"models"`
+	DefaultModel          string            `json:"default_model"`
+	ContainerImage        *string           `json:"container_image"`
+	HasImageOverride      bool              `json:"has_image_override"`
+	VNCResolution         *string           `json:"vnc_resolution"`
+	HasResolutionOverride bool              `json:"has_resolution_override"`
+	Timezone              *string           `json:"timezone"`
+	HasTimezoneOverride   bool              `json:"has_timezone_override"`
+	UserAgent             *string           `json:"user_agent"`
+	HasUserAgentOverride  bool              `json:"has_user_agent_override"`
 	EnvVars               map[string]string `json:"env_vars"`
-	HasEnvOverride        bool            `json:"has_env_override"`
-	RequiresRestart       bool            `json:"requires_restart,omitempty"`
-	Restarting            bool            `json:"restarting,omitempty"`
-	LiveImageInfo         *string         `json:"live_image_info,omitempty"`
-	StatusMessage         string          `json:"status_message,omitempty"`
-	AllowedSourceIPs      string          `json:"allowed_source_ips"`
-	EnabledProviders      []uint          `json:"enabled_providers"`
-	InstanceProviders     []providerResp  `json:"instance_providers"`
-	ControlURL            string          `json:"control_url"`
-	GatewayToken          string          `json:"gateway_token"`
-	SortOrder             int             `json:"sort_order"`
-	CreatedAt             string          `json:"created_at"`
-	UpdatedAt             string          `json:"updated_at"`
+	HasEnvOverride        bool              `json:"has_env_override"`
+	RequiresRestart       bool              `json:"requires_restart,omitempty"`
+	Restarting            bool              `json:"restarting,omitempty"`
+	LiveImageInfo         *string           `json:"live_image_info,omitempty"`
+	StatusMessage         string            `json:"status_message,omitempty"`
+	AllowedSourceIPs      string            `json:"allowed_source_ips"`
+	EnabledProviders      []uint            `json:"enabled_providers"`
+	InstanceProviders     []providerResp    `json:"instance_providers"`
+	ControlURL            string            `json:"control_url"`
+	GatewayToken          string            `json:"gateway_token"`
+	SortOrder             int               `json:"sort_order"`
+	CreatedAt             string            `json:"created_at"`
+	UpdatedAt             string            `json:"updated_at"`
 }
 
 func generateName(displayName string) string {
@@ -500,16 +529,17 @@ func restartInstanceAsync(inst database.Instance) {
 		"updated_at": time.Now().UTC(),
 	})
 
-	go func() {
+	startInstanceTask(taskmanager.TaskInstanceRestart, inst.ID, inst.DisplayName, func(ctx context.Context) {
 		params := buildCreateParams(inst)
-		if err := orch.RestartInstance(context.Background(), inst.Name, params); err != nil {
+		if err := orch.RestartInstance(ctx, inst.Name, params); err != nil {
 			log.Printf("Failed to restart instance %d: %v", inst.ID, err)
+			setStatusMessage(inst.ID, fmt.Sprintf("Failed: %v", err))
 			database.DB.Model(&database.Instance{}).Where("id = ?", inst.ID).Updates(map[string]interface{}{
 				"status":     "error",
 				"updated_at": time.Now().UTC(),
 			})
 		}
-	}()
+	})
 }
 
 // buildCreateParams constructs orchestrator.CreateParams from a database Instance.
@@ -768,8 +798,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	initialProvidersJSON, _ := buildOpenClawProvidersJSON(models, gatewayProviders, config.Cfg.LLMGatewayPort)
 
 	// Launch container creation asynchronously (image pull can take minutes)
-	go func() {
-		ctx := context.Background()
+	startInstanceTask(taskmanager.TaskInstanceCreate, inst.ID, inst.DisplayName, func(ctx context.Context) {
 		orch := orchestrator.Get()
 		if orch == nil {
 			setStatusMessage(inst.ID, "Failed: no orchestrator available")
@@ -831,7 +860,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), inst.Name, models, gatewayProviders, config.Cfg.LLMGatewayPort)
-	}()
+	})
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
 }
@@ -1291,8 +1320,7 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 
 	instID := inst.ID
 	instName := inst.Name
-	go func() {
-		ctx := context.Background()
+	startInstanceTask(taskmanager.TaskInstanceImageUpdate, inst.ID, inst.DisplayName, func(ctx context.Context) {
 		err := orch.UpdateImage(ctx, instName, orchestrator.CreateParams{
 			Name:               instName,
 			CPURequest:         inst.CPURequest,
@@ -1325,7 +1353,7 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 			"status":     "running",
 			"updated_at": time.Now().UTC(),
 		})
-	}()
+	})
 
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "restarting"})
 }
@@ -1668,8 +1696,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Run the full clone operation asynchronously
-	go func() {
-		ctx := context.Background()
+	startInstanceTask(taskmanager.TaskInstanceClone, inst.ID, inst.DisplayName, func(ctx context.Context) {
 		orch := orchestrator.Get()
 		if orch == nil {
 			setStatusMessage(inst.ID, "Failed: no orchestrator available")
@@ -1736,7 +1763,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.LLMGatewayPort)
-	}()
+	})
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
 }

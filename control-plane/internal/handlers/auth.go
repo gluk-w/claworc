@@ -2,15 +2,32 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/auth"
+	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/go-webauthn/webauthn/protocol"
 )
+
+// logWebAuthnError logs a WebAuthn protocol error with the configured RP
+// origins/ID so origin-mismatch misconfigurations are obvious in logs. The
+// HTTP response stays generic — only the server log gets the extra detail.
+func logWebAuthnError(op string, err error) {
+	var perr *protocol.Error
+	if errors.As(err, &perr) {
+		log.Printf("webauthn %s failed: %s (details: %s); configured RPOrigins=%v RPID=%q",
+			op, perr.Type, perr.DevInfo, config.Cfg.RPOrigins, config.Cfg.RPID)
+		return
+	}
+	log.Printf("webauthn %s failed: %v; configured RPOrigins=%v RPID=%q",
+		op, err, config.Cfg.RPOrigins, config.Cfg.RPID)
+}
 
 // SessionStore is set from main.go during init.
 var SessionStore *auth.SessionStore
@@ -263,6 +280,7 @@ func WebAuthnRegisterFinish(w http.ResponseWriter, r *http.Request) {
 
 	cred, err := auth.WebAuthn.FinishRegistration(wau, *session, r)
 	if err != nil {
+		logWebAuthnError("register", err)
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("Registration failed: %v", err))
 		return
 	}
@@ -309,6 +327,7 @@ func WebAuthnLoginFinish(w http.ResponseWriter, r *http.Request) {
 		r,
 	)
 	if err != nil {
+		logWebAuthnError("login", err)
 		writeError(w, http.StatusUnauthorized, fmt.Sprintf("Login failed: %v", err))
 		return
 	}

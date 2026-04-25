@@ -1,8 +1,7 @@
-import { useEffect, useRef, createElement } from "react";
+import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { successToast, errorToast, infoToast } from "@/utils/toast";
-import AppToast from "@/components/AppToast";
 import {
   fetchInstances,
   fetchInstance,
@@ -159,48 +158,6 @@ export function useRestartedToast(instances: Instance[] | undefined) {
         successToast("Instance stopped", inst.display_name);
       }
       prev.set(inst.id, inst.status);
-    }
-  }, [instances]);
-}
-
-/** Show a persistent toast tracking creation progress for instances in "creating" status. */
-export function useCreationToast(instances: Instance[] | undefined) {
-  const activeRef = useRef<Map<number, string>>(new Map());
-
-  useEffect(() => {
-    if (!instances) return;
-    const active = activeRef.current;
-    const currentIds = new Set<number>();
-
-    for (const inst of instances) {
-      if (inst.status === "creating") {
-        currentIds.add(inst.id);
-        const toastId = `creation-${inst.id}`;
-        active.set(inst.id, toastId);
-        toast.custom(
-          createElement(AppToast, {
-            title: inst.display_name,
-            description: inst.status_message || "Starting...",
-            status: "loading",
-            toastId,
-          }),
-          { id: toastId, duration: Infinity },
-        );
-      } else if (active.has(inst.id)) {
-        // Transitioned away from "creating" — show final state briefly
-        const toastId = active.get(inst.id)!;
-        const isSuccess = inst.status === "running";
-        toast.custom(
-          createElement(AppToast, {
-            title: inst.display_name,
-            description: isSuccess ? "Instance ready" : (inst.status_message || "Creation failed"),
-            status: isSuccess ? "success" : "error",
-            toastId,
-          }),
-          { id: toastId, duration: isSuccess ? 4000 : 8000 },
-        );
-        active.delete(inst.id);
-      }
     }
   }, [instances]);
 }

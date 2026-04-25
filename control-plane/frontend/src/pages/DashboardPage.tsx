@@ -11,7 +11,6 @@ import {
   useCloneInstance,
   useDeleteInstance,
   useRestartedToast,
-  useCreationToast,
   useReorderInstances,
 } from "@/hooks/useInstances";
 import { useAuth } from "@/contexts/AuthContext";
@@ -20,7 +19,6 @@ import type { Instance } from "@/types/instance";
 export default function DashboardPage() {
   const { data: instances, isLoading } = useInstances();
   useRestartedToast(instances);
-  useCreationToast(instances);
   const startMutation = useStartInstance();
   const stopMutation = useStopInstance();
   const restartMutation = useRestartInstance();

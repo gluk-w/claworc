@@ -1,6 +1,6 @@
 import { useState, useMemo, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Trash2, Download, Loader2, Pencil } from "lucide-react";
+import { Trash2, Download, Loader2, Pencil, Square } from "lucide-react";
 import FolderInput from "@/components/FolderInput";
 import MultiSelect, { type MultiSelectOption } from "@/components/MultiSelect";
 import SingleSelect, { type SingleSelectOption } from "@/components/SingleSelect";
@@ -8,6 +8,7 @@ import {
   useAllBackups,
   useCreateBackup,
   useDeleteBackup,
+  useCancelBackup,
   useBackupSchedules,
   useCreateSchedule,
   useUpdateSchedule,
@@ -205,7 +206,9 @@ export default function BackupsPage() {
                               <Download size={14} />
                             </a>
                           )}
-                          {confirmDelete === b.id ? (
+                          {b.status === "running" ? (
+                            <CancelRunningBackupButton id={b.id} />
+                          ) : confirmDelete === b.id ? (
                             <ConfirmDeleteBackupInline
                               id={b.id}
                               onCancel={() => setConfirmDelete(null)}
@@ -215,7 +218,6 @@ export default function BackupsPage() {
                               onClick={() => setConfirmDelete(b.id)}
                               className="p-1 text-gray-400 hover:text-red-600 transition-colors"
                               title="Delete"
-                              disabled={b.status === "running"}
                             >
                               <Trash2 size={14} />
                             </button>
@@ -307,6 +309,20 @@ function SchedulePaths({ paths }: { paths: string }) {
   } catch {
     return <span>{paths}</span>;
   }
+}
+
+function CancelRunningBackupButton({ id }: { id: number }) {
+  const cancelMutation = useCancelBackup();
+  return (
+    <button
+      onClick={() => cancelMutation.mutate(id)}
+      disabled={cancelMutation.isPending}
+      className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+      title="Cancel backup"
+    >
+      <Square size={14} />
+    </button>
+  );
 }
 
 function ConfirmDeleteBackupInline({
@@ -499,7 +515,7 @@ function ScheduleModal({
   );
   const [cronExpression, setCronExpression] = useState(schedule?.cron_expression || "0 2 * * *");
   const [paths, setPaths] = useState<string[]>(parsePaths());
-  const [retentionDays, setRetentionDays] = useState<number>(schedule?.retention_days ?? 0);
+  const [retentionDays, setRetentionDays] = useState<string>(String(schedule?.retention_days ?? 0));
 
   const instanceOptions = useMemo<MultiSelectOption[]>(
     () => instances.map((i) => ({ value: i.id, label: i.display_name })),
@@ -515,6 +531,7 @@ function ScheduleModal({
       ? "ALL"
       : JSON.stringify(selectedOptions.map((o) => o.value));
     const cleanPaths = paths.filter((p) => p.trim() !== "");
+    const retentionDaysValue = Math.max(0, parseInt(retentionDays, 10) || 0);
 
     if (isEdit && schedule) {
       updateMutation.mutate(
@@ -523,7 +540,7 @@ function ScheduleModal({
           instance_ids: instanceIdsValue,
           cron_expression: cronExpression,
           paths: cleanPaths.length > 0 ? cleanPaths : ["HOME"],
-          retention_days: retentionDays,
+          retention_days: retentionDaysValue,
         },
         { onSuccess: () => onClose() },
       );
@@ -533,7 +550,7 @@ function ScheduleModal({
           instance_ids: instanceIdsValue,
           cron_expression: cronExpression,
           paths: cleanPaths.length > 0 ? cleanPaths : ["HOME"],
-          retention_days: retentionDays,
+          retention_days: retentionDaysValue,
         },
         { onSuccess: () => onClose() },
       );
@@ -612,9 +629,7 @@ function ScheduleModal({
               type="number"
               min={0}
               value={retentionDays}
-              onChange={(e) =>
-                setRetentionDays(Math.max(0, parseInt(e.target.value, 10) || 0))
-              }
+              onChange={(e) => setRetentionDays(e.target.value.replace(/[^0-9]/g, ""))}
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <p className="mt-1 text-xs text-gray-500">
