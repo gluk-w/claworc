@@ -72,7 +72,7 @@ func ResolvePaths(aliases []string) []string {
 
 // CreateFullBackup creates a full backup of the specified paths in the given instance.
 // It runs asynchronously — the backup is created in a goroutine.
-func CreateFullBackup(ctx context.Context, orch orchestrator.ContainerOrchestrator, instanceName string, instanceID uint, note string, paths []string) (uint, error) {
+func CreateFullBackup(ctx context.Context, orch orchestrator.ContainerOrchestrator, instanceName string, instanceID, userID uint, note string, paths []string) (uint, error) {
 	now := time.Now().UTC()
 	dir := filepath.Join(BackupDir(), instanceName)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -105,6 +105,7 @@ func CreateFullBackup(ctx context.Context, orch orchestrator.ContainerOrchestrat
 		TaskMgr.Start(taskmanager.StartOpts{
 			Type:         taskmanager.TaskBackupCreate,
 			InstanceID:   instanceID,
+			UserID:       userID,
 			ResourceID:   strconv.FormatUint(uint64(b.ID), 10),
 			ResourceName: fmt.Sprintf("%s backup", instanceName),
 			OnCancel:     backupOnCancel(b.ID, absPath),

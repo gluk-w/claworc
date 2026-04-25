@@ -234,7 +234,7 @@ func TestCreateFullBackup_Success(t *testing.T) {
 	inst := database.Instance{Name: "test-inst", DisplayName: "Test", Status: "running"}
 	database.DB.Create(&inst)
 
-	backupID, err := CreateFullBackup(context.Background(), orch, inst.Name, inst.ID, "test note", []string{"HOME"})
+	backupID, err := CreateFullBackup(context.Background(), orch, inst.Name, inst.ID, 0, "test note", []string{"HOME"})
 	if err != nil {
 		t.Fatalf("CreateFullBackup failed: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestCreateFullBackup_StreamError(t *testing.T) {
 	inst := database.Instance{Name: "test-err", DisplayName: "Test", Status: "running"}
 	database.DB.Create(&inst)
 
-	backupID, err := CreateFullBackup(context.Background(), orch, inst.Name, inst.ID, "", nil)
+	backupID, err := CreateFullBackup(context.Background(), orch, inst.Name, inst.ID, 0, "", nil)
 	if err != nil {
 		t.Fatalf("CreateFullBackup should not fail synchronously: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestCreateFullBackup_TarExitCode2(t *testing.T) {
 	inst := database.Instance{Name: "test-tar2", DisplayName: "Test", Status: "running"}
 	database.DB.Create(&inst)
 
-	backupID, _ := CreateFullBackup(context.Background(), orch, inst.Name, inst.ID, "", nil)
+	backupID, _ := CreateFullBackup(context.Background(), orch, inst.Name, inst.ID, 0, "", nil)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -378,7 +378,7 @@ func TestCreateFullBackup_TarExitCode1_Accepted(t *testing.T) {
 	inst := database.Instance{Name: "test-tar1", DisplayName: "Test", Status: "running"}
 	database.DB.Create(&inst)
 
-	backupID, _ := CreateFullBackup(context.Background(), orch, inst.Name, inst.ID, "", nil)
+	backupID, _ := CreateFullBackup(context.Background(), orch, inst.Name, inst.ID, 0, "", nil)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -414,7 +414,7 @@ func TestCreateFullBackup_DefaultPaths(t *testing.T) {
 	inst := database.Instance{Name: "test-default", DisplayName: "Test", Status: "running"}
 	database.DB.Create(&inst)
 
-	CreateFullBackup(context.Background(), orch, inst.Name, inst.ID, "", nil)
+	CreateFullBackup(context.Background(), orch, inst.Name, inst.ID, 0, "", nil)
 
 	// Wait for goroutine to start and capture the command
 	deadline := time.Now().Add(5 * time.Second)

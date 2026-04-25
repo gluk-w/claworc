@@ -265,7 +265,7 @@ func UpdateSharedFolder(w http.ResponseWriter, r *http.Request) {
 			if err := database.DB.First(&inst, instID).Error; err != nil {
 				continue
 			}
-			restartInstanceAsync(inst)
+			restartInstanceAsync(inst, callerID(r))
 		}
 	}
 
@@ -326,7 +326,7 @@ func DeleteSharedFolder(w http.ResponseWriter, r *http.Request) {
 		if err := database.DB.First(&inst, instID).Error; err != nil {
 			continue
 		}
-		restartInstanceAsync(inst)
+		restartInstanceAsync(inst, callerID(r))
 	}
 
 	// Delete the backing volume in the background (after instances have unmounted it)

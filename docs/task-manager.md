@@ -29,10 +29,15 @@ historical record while the live in-memory `Task` is authoritative.
   sessions. **A nil `OnCancel` means the task is not user-cancellable**:
   `Manager.Cancel` returns `ErrNotCancellable` and the REST handler maps
   that to **405 Method Not Allowed**.
-- **`InstanceID`** on a Task is the canonical RBAC anchor. Tasks with
-  `InstanceID == 0` are admin-only; all current task types carry an
-  instance ID (for `backup.create` we resolve `Backup.InstanceID` at task
-  creation time).
+- **`InstanceID`** on a Task is metadata used for filtering
+  (`?instance_id=`) and the toast subject line. It is **not** the access
+  predicate.
+- **`UserID`** on a Task is the visibility anchor — the ID of the user
+  who initiated the work. Non-admins only see tasks where
+  `Task.UserID == caller.ID`. `UserID == 0` denotes a system-initiated
+  task (e.g. scheduled backup) and is admin-only. Always pass
+  `callerID(r)` from the HTTP handler so toasts surface to the user who
+  clicked the button — not to everyone with access to the same instance.
 
 ## Usage from a handler
 
@@ -48,6 +53,7 @@ import (
 handlers.TaskMgr.Start(taskmanager.StartOpts{
     Type:         taskmanager.TaskBackupCreate,
     InstanceID:   inst.ID,
+    UserID:       callerID(r), // visibility — toast goes only to this user
     ResourceID:   strconv.FormatUint(uint64(b.ID), 10),
     ResourceName: fmt.Sprintf("%s backup", inst.Name),
     OnCancel:     backupOnCancel(b.ID, absPath), // nil = not cancellable
@@ -97,19 +103,20 @@ All endpoints are mounted under `/api/v1/tasks` and require auth.
 | `POST` | `/api/v1/tasks/{id}/cancel` | Cancel; 405 if not cancellable, 409 if already terminal |
 | `GET` | `/api/v1/tasks/events` | SSE stream of `{type, task}` JSON |
 
-### RBAC
+### Visibility
 
-Mirrors the existing instance access model exactly (no new auth concepts):
+Tasks belong to the user who started them. A toast for "Restarting bot-foo"
+should surface to the user who clicked Restart — not to every other user
+who happens to have access to that instance.
 
-- Admin (`User.Role == "admin"`): sees and acts on every task.
-- Non-admin: sees only tasks whose `InstanceID` is in
-  `database.GetUserInstances(user.ID)`. `InstanceID == 0` tasks are
-  admin-only.
-- The same predicate gates `GET /tasks/{id}`, `POST /tasks/{id}/cancel`,
-  and the per-event filter on `/tasks/events`. Each SSE subscriber
-  captures `(isAdmin, allowedInstanceIDs)` at connect time; instance
-  assignment changes require a reconnect to take effect (matches the
-  polling cadence of `GET /instances`).
+- Admin (`User.Role == "admin"`): sees and acts on every task, including
+  system-initiated tasks (`UserID == 0`).
+- Non-admin: sees only tasks where `Task.UserID == User.ID`. Tasks with
+  `UserID == 0` are admin-only.
+- The same predicate gates `GET /tasks`, `GET /tasks/{id}`,
+  `POST /tasks/{id}/cancel`, and the per-event filter on `/tasks/events`.
+  Each SSE subscriber captures `(isAdmin, userID)` at connect time;
+  changing roles requires a reconnect to take effect.
 
 ### SSE event shape
 
@@ -144,8 +151,10 @@ rows as history and let the user retry.
    `backup.TaskMgr.Start` if you're inside the `backup` package).
 3. Decide cancellability: provide an `OnCancel` (cleanup) or leave it nil
    (not user-cancellable, returns 405).
-4. Set `InstanceID` for RBAC. Use 0 only for system-level tasks that
-   should be admin-only.
+4. Set `UserID` from the request (`callerID(r)`) so the toast surfaces
+   only to the user who triggered the action. Use 0 only for
+   system-initiated work (e.g. cron / scheduler), which is admin-only.
+   Set `InstanceID` for filtering and toast labels.
 5. On the frontend, add a label in `TaskToasts.tsx` (`TYPE_LABEL` map) so
    the toast says something humans recognise.
 6. If you added a new failure mode that can leave a DB row stuck, extend

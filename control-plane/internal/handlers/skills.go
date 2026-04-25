@@ -501,6 +501,7 @@ func DeploySkill(w http.ResponseWriter, r *http.Request) {
 		taskID := TaskMgr.Start(taskmanager.StartOpts{
 			Type:         taskmanager.TaskSkillDeploy,
 			InstanceID:   instanceID,
+			UserID:       callerID(r),
 			ResourceID:   slug,
 			ResourceName: displayName,
 			Run: func(ctx context.Context, h *taskmanager.Handle) error {
