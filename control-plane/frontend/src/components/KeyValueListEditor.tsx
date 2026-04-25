@@ -54,6 +54,7 @@ export default function KeyValueListEditor({
   const [newName, setNewName] = useState("");
   const [newValue, setNewValue] = useState("");
   const [showNew, setShowNew] = useState(false);
+  const [showNewValue, setShowNewValue] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
   const allNames = Array.from(
@@ -89,6 +90,7 @@ export default function KeyValueListEditor({
     setNewName("");
     setNewValue("");
     setShowNew(false);
+    setShowNewValue(false);
     setAddError(null);
   };
 
@@ -215,6 +217,7 @@ export default function KeyValueListEditor({
                   if (e.key === "Enter") commitAdd();
                   if (e.key === "Escape") {
                     setShowNew(false);
+                    setShowNewValue(false);
                     setAddError(null);
                     setNewName("");
                     setNewValue("");
@@ -227,7 +230,7 @@ export default function KeyValueListEditor({
             </div>
             <div className="relative">
               <input
-                type={showNew ? "text" : "password"}
+                type={showNewValue ? "text" : "password"}
                 value={newValue}
                 onChange={(e) => setNewValue(e.target.value)}
                 onKeyDown={(e) => {
@@ -236,6 +239,13 @@ export default function KeyValueListEditor({
                 placeholder="value"
                 className="w-full px-3 py-1.5 pr-9 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+              <button
+                type="button"
+                onClick={() => setShowNewValue((s) => !s)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                {showNewValue ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
             </div>
             <button
               type="button"
@@ -248,6 +258,7 @@ export default function KeyValueListEditor({
               type="button"
               onClick={() => {
                 setShowNew(false);
+                setShowNewValue(false);
                 setAddError(null);
                 setNewName("");
                 setNewValue("");
