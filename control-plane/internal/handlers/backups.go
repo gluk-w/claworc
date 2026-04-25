@@ -53,7 +53,7 @@ func CreateBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backupID, err := backup.CreateFullBackup(r.Context(), orch, inst.Name, inst.ID, req.Note, req.Paths)
+	backupID, err := backup.CreateFullBackup(r.Context(), orch, inst.Name, inst.ID, callerID(r), req.Note, req.Paths)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to start backup: %v", err))
 		return

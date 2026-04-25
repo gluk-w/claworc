@@ -79,7 +79,7 @@ func executeSchedule(ctx context.Context, orch orchestrator.ContainerOrchestrato
 			log.Printf("backup scheduler: schedule %d: instance %d not found: %v", s.ID, instID, err)
 			continue
 		}
-		if _, err := CreateFullBackup(ctx, orch, inst.Name, inst.ID, "scheduled", paths); err != nil {
+		if _, err := CreateFullBackup(ctx, orch, inst.Name, inst.ID, 0, "scheduled", paths); err != nil {
 			log.Printf("backup scheduler: schedule %d: backup for instance %s failed: %v", s.ID, inst.Name, err)
 		}
 	}

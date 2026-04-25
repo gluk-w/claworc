@@ -192,6 +192,37 @@ func TestListFilters(t *testing.T) {
 	_ = m.Cancel(idA)
 }
 
+func TestUserIDFilterAndStamping(t *testing.T) {
+	m := newTestManager(t)
+	idAlice := m.Start(StartOpts{Type: TaskInstanceCreate, InstanceID: 1, UserID: 7,
+		Run: func(ctx context.Context, h *Handle) error { return nil }})
+	idBob := m.Start(StartOpts{Type: TaskInstanceCreate, InstanceID: 1, UserID: 9,
+		Run: func(ctx context.Context, h *Handle) error { return nil }})
+	idSystem := m.Start(StartOpts{Type: TaskBackupCreate, InstanceID: 1,
+		Run: func(ctx context.Context, h *Handle) error { return nil }})
+
+	for _, id := range []string{idAlice, idBob, idSystem} {
+		waitFor(t, func() bool {
+			tk, _ := m.Get(id)
+			return tk.State == StateSucceeded
+		}, time.Second, "task finished")
+	}
+
+	alice, _ := m.Get(idAlice)
+	if alice.UserID != 7 {
+		t.Fatalf("UserID not stamped on Task: got %d, want 7", alice.UserID)
+	}
+	system, _ := m.Get(idSystem)
+	if system.UserID != 0 {
+		t.Fatalf("system task UserID should be 0, got %d", system.UserID)
+	}
+
+	mine := m.List(Filter{UserID: 7})
+	if len(mine) != 1 || mine[0].ID != idAlice {
+		t.Fatalf("UserID filter wrong: %+v", mine)
+	}
+}
+
 func TestSubscriberBackpressureDoesNotBlock(t *testing.T) {
 	m := newTestManager(t)
 	// Subscriber that never reads — its channel will fill and events drop.
