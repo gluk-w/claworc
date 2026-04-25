@@ -506,7 +506,6 @@ func DeploySkill(w http.ResponseWriter, r *http.Request) {
 			Run: func(ctx context.Context, h *taskmanager.Handle) error {
 				h.UpdateMessage("uploading skill files")
 				result := deployToInstance(instanceID, slug, fileMap)
-				result.MissingEnvVars = computeMissingEnvVars(instanceID, requiredEnvVars, globalEnvNames)
 				if result.Status != "ok" {
 					if result.Error != "" {
 						return fmt.Errorf("%s", result.Error)
