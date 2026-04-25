@@ -14,13 +14,21 @@ export async function fetchUsers(): Promise<UserListItem[]> {
   return res.data;
 }
 
+export interface CreatedUser {
+  id: number;
+  username: string;
+  role: string;
+  can_create_instances: boolean;
+}
+
 export async function createUser(data: {
   username: string;
   password: string;
   role: string;
   can_create_instances?: boolean;
-}): Promise<void> {
-  await client.post("/users", data);
+}): Promise<CreatedUser> {
+  const res = await client.post("/users", data);
+  return res.data;
 }
 
 export async function updateUserPermissions(

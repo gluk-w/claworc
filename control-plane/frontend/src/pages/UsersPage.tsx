@@ -1,20 +1,15 @@
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Trash2, ShieldCheck, Shield, Key, Server } from "lucide-react";
+import { Trash2, ShieldCheck, Shield, Key } from "lucide-react";
 import { successToast, errorToast } from "@/utils/toast";
 import {
   fetchUsers,
-  createUser,
   deleteUser,
-  updateUserRole,
-  updateUserPermissions,
   resetUserPassword,
-  getUserInstances,
-  setUserInstances,
   type UserListItem,
 } from "@/api/users";
-import { fetchInstances } from "@/api/instances";
-import MultiSelect from "@/components/MultiSelect";
+import UserModal from "@/components/UserModal";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 export default function UsersPage() {
   const queryClient = useQueryClient();
@@ -24,11 +19,22 @@ export default function UsersPage() {
   });
 
   const [showCreate, setShowCreate] = useState(false);
+  const [editTarget, setEditTarget] = useState<UserListItem | null>(null);
   const [resetTarget, setResetTarget] = useState<UserListItem | null>(null);
-  const [assignTarget, setAssignTarget] = useState<UserListItem | null>(null);
-  const [editRoleTarget, setEditRoleTarget] = useState<UserListItem | null>(
-    null,
-  );
+  const [deleteTarget, setDeleteTarget] = useState<UserListItem | null>(null);
+
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => deleteUser(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      successToast("User deleted");
+      setDeleteTarget(null);
+    },
+    onError: (error) => {
+      errorToast("Failed to delete user", error);
+      setDeleteTarget(null);
+    },
+  });
 
   if (isLoading) {
     return <div className="text-gray-500">Loading users...</div>;
@@ -72,10 +78,9 @@ export default function UsersPage() {
               <UserRow
                 key={user.id}
                 user={user}
+                onEdit={() => setEditTarget(user)}
                 onResetPassword={() => setResetTarget(user)}
-                onAssignInstances={() => setAssignTarget(user)}
-                onEditRole={() => setEditRoleTarget(user)}
-                queryClient={queryClient}
+                onDelete={() => setDeleteTarget(user)}
               />
             ))}
           </tbody>
@@ -83,9 +88,16 @@ export default function UsersPage() {
       </div>
 
       {showCreate && (
-        <CreateUserDialog
+        <UserModal
+          mode={{ kind: "create" }}
           onClose={() => setShowCreate(false)}
-          queryClient={queryClient}
+        />
+      )}
+
+      {editTarget && (
+        <UserModal
+          mode={{ kind: "edit", user: editTarget }}
+          onClose={() => setEditTarget(null)}
         />
       )}
 
@@ -97,18 +109,12 @@ export default function UsersPage() {
         />
       )}
 
-      {assignTarget && (
-        <AssignInstancesDialog
-          user={assignTarget}
-          onClose={() => setAssignTarget(null)}
-        />
-      )}
-
-      {editRoleTarget && (
-        <EditRoleDialog
-          user={editRoleTarget}
-          onClose={() => setEditRoleTarget(null)}
-          queryClient={queryClient}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete user"
+          message={`Delete user "${deleteTarget.username}"? This action cannot be undone.`}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => deleteMut.mutate(deleteTarget.id)}
         />
       )}
     </div>
@@ -117,29 +123,25 @@ export default function UsersPage() {
 
 function UserRow({
   user,
+  onEdit,
   onResetPassword,
-  onAssignInstances,
-  onEditRole,
-  queryClient,
+  onDelete,
 }: {
   user: UserListItem;
+  onEdit: () => void;
   onResetPassword: () => void;
-  onAssignInstances: () => void;
-  onEditRole: () => void;
-  queryClient: ReturnType<typeof useQueryClient>;
+  onDelete: () => void;
 }) {
-  const deleteMut = useMutation({
-    mutationFn: () => deleteUser(user.id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["users"] });
-      successToast("User deleted");
-    },
-    onError: (error) => errorToast("Failed to delete user", error),
-  });
-
   return (
     <tr className="border-b border-gray-100 last:border-0">
-      <td className="px-4 py-3 font-medium text-gray-900">{user.username}</td>
+      <td className="px-4 py-3">
+        <button
+          onClick={onEdit}
+          className="font-medium text-blue-600 hover:text-blue-800"
+        >
+          {user.username}
+        </button>
+      </td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-1.5 flex-wrap">
           <span
@@ -182,28 +184,6 @@ function UserRow({
       </td>
       <td className="px-4 py-3 text-right">
         <div className="flex items-center justify-end gap-1">
-          {user.role === "user" && (
-            <button
-              onClick={onAssignInstances}
-              className="p-1.5 text-gray-400 hover:text-gray-600 rounded"
-              title="Assign instances to this user"
-              aria-label="Assign instances to this user"
-            >
-              <Server size={16} />
-            </button>
-          )}
-          <button
-            onClick={onEditRole}
-            className="p-1.5 text-gray-400 hover:text-gray-600 rounded"
-            title="Edit role and permissions"
-            aria-label="Edit role and permissions"
-          >
-            {user.role === "admin" ? (
-              <ShieldCheck size={16} />
-            ) : (
-              <Shield size={16} />
-            )}
-          </button>
           <button
             onClick={onResetPassword}
             className="p-1.5 text-gray-400 hover:text-gray-600 rounded"
@@ -213,11 +193,7 @@ function UserRow({
             <Key size={16} />
           </button>
           <button
-            onClick={() => {
-              if (confirm(`Delete user "${user.username}"?`)) {
-                deleteMut.mutate();
-              }
-            }}
+            onClick={onDelete}
             className="p-1.5 text-gray-400 hover:text-red-600 rounded"
             title="Delete user"
             aria-label="Delete user"
@@ -227,204 +203,6 @@ function UserRow({
         </div>
       </td>
     </tr>
-  );
-}
-
-function AssignInstancesDialog({
-  user,
-  onClose,
-}: {
-  user: UserListItem;
-  onClose: () => void;
-}) {
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const { data: instances = [] } = useQuery({
-    queryKey: ["instances"],
-    queryFn: fetchInstances,
-  });
-
-  useEffect(() => {
-    getUserInstances(user.id)
-      .then((res) => {
-        setSelectedIds(res.instance_ids || []);
-      })
-      .catch(() => {
-        errorToast("Failed to load user instances");
-      })
-      .finally(() => setLoading(false));
-  }, [user.id]);
-
-  const mutation = useMutation({
-    mutationFn: () => setUserInstances(user.id, selectedIds),
-    onSuccess: () => {
-      successToast("Instances assigned");
-      onClose();
-    },
-    onError: (error) => errorToast("Failed to assign instances", error),
-  });
-
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    mutation.mutate();
-  };
-
-  const options = instances.map((inst) => ({
-    value: inst.id,
-    label: inst.display_name || inst.name,
-  }));
-  const selected = options.filter((o) => selectedIds.includes(o.value));
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
-        <h2 className="text-base font-semibold text-gray-900 mb-4">
-          Instances assigned to {user.username}
-        </h2>
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">
-              Instances
-            </label>
-            <MultiSelect
-              options={options}
-              value={selected}
-              onChange={(sel) => setSelectedIds(sel.map((s) => s.value))}
-              placeholder={loading ? "Loading..." : "Select instances..."}
-              isDisabled={loading}
-              isLoading={loading}
-              noOptionsMessage={() => "No instances available"}
-            />
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={mutation.isPending || loading}
-              className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
-            >
-              Save
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function CreateUserDialog({
-  onClose,
-  queryClient,
-}: {
-  onClose: () => void;
-  queryClient: ReturnType<typeof useQueryClient>;
-}) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [role, setRole] = useState("user");
-  const [canCreateInstances, setCanCreateInstances] = useState(false);
-
-  const mutation = useMutation({
-    mutationFn: () =>
-      createUser({
-        username,
-        password,
-        role,
-        can_create_instances: role === "user" ? canCreateInstances : false,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["users"] });
-      successToast("User created");
-      onClose();
-    },
-    onError: (error) => errorToast("Failed to create user", error),
-  });
-
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    mutation.mutate();
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-sm p-6">
-        <h2 className="text-lg font-semibold mb-4">Create User</h2>
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Username
-            </label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-              required
-              autoFocus
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Password
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Role
-            </label>
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-            >
-              <option value="user">User</option>
-              <option value="admin">Admin</option>
-            </select>
-          </div>
-          {role === "user" && (
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={canCreateInstances}
-                onChange={(e) => setCanCreateInstances(e.target.checked)}
-                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              Can create instances and restore from backups
-            </label>
-          )}
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={mutation.isPending}
-              className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
-            >
-              Create
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
   );
 }
 
@@ -460,144 +238,51 @@ function ResetPasswordDialog({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-sm p-6">
-        <h2 className="text-lg font-semibold mb-4">
-          Reset Password: {user.username}
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 mx-4">
+        <h2 className="text-base font-semibold text-gray-900 mb-4">
+          Reset password: {user.username}
         </h2>
-        <form onSubmit={handleSubmit} className="space-y-3">
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              New Password
+            <label className="block text-xs text-gray-500 mb-1">
+              New password *
             </label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
               autoFocus
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Confirm Password
+            <label className="block text-xs text-gray-500 mb-1">
+              Confirm password *
             </label>
             <input
               type="password"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
             />
           </div>
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex items-center justify-between pt-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+              className="px-3 py-1.5 text-xs text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={mutation.isPending}
-              className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+              className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
             >
-              Reset
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function EditRoleDialog({
-  user,
-  onClose,
-  queryClient,
-}: {
-  user: UserListItem;
-  onClose: () => void;
-  queryClient: ReturnType<typeof useQueryClient>;
-}) {
-  const [role, setRole] = useState<string>(user.role);
-  const [canCreateInstances, setCanCreateInstances] = useState<boolean>(
-    user.can_create_instances,
-  );
-
-  const mutation = useMutation({
-    mutationFn: async () => {
-      if (role !== user.role) {
-        await updateUserRole(user.id, role);
-      }
-      const effectiveCanCreate = role === "user" ? canCreateInstances : false;
-      if (effectiveCanCreate !== user.can_create_instances) {
-        await updateUserPermissions(user.id, {
-          can_create_instances: effectiveCanCreate,
-        });
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["users"] });
-      successToast("User updated");
-      onClose();
-    },
-    onError: (error) => errorToast("Failed to update user", error),
-  });
-
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    mutation.mutate();
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-sm p-6">
-        <h2 className="text-lg font-semibold mb-4">
-          Edit role: {user.username}
-        </h2>
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Role
-            </label>
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-              autoFocus
-            >
-              <option value="user">User</option>
-              <option value="admin">Admin</option>
-            </select>
-          </div>
-          {role === "user" && (
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={canCreateInstances}
-                onChange={(e) => setCanCreateInstances(e.target.checked)}
-                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              Can create instances and restore from backups
-            </label>
-          )}
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={mutation.isPending}
-              className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
-            >
-              Save
+              {mutation.isPending ? "Resetting..." : "Reset"}
             </button>
           </div>
         </form>
