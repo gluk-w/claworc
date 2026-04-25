@@ -35,9 +35,21 @@ Claworc has two roles:
 ### User
 
 - Read and write access to assigned instances only
+- Can create, list, download, and delete backups for assigned instances
+- Can manage backup schedules whose instances are all assigned to them
 - No access to the Settings page
 - Cannot view or manage other users
 - Cannot see instances not assigned to them
+- Cannot create new instances or restore from a backup unless the admin grants the **Can create instances** permission
+
+### Can create instances (per-user permission)
+
+Admins can grant any user the **Can create instances** permission. A user with this flag can:
+
+- Create new OpenClaw instances from the dashboard. The new instance is automatically assigned to the user.
+- Restore an assigned instance from one of its backups.
+
+The flag has no effect on admins (admins always can).
 
 ---
 
@@ -49,6 +61,7 @@ Admins manage users from **Settings** → **Users**:
 |--------|-----|
 | Create user | Click **Add user**, enter username and password |
 | Change role | Edit user → change Role dropdown |
+| Toggle Can-create-instances | Tick or untick the **Can create instances** checkbox in the user row |
 | Assign instances | Edit user → select instances from the list |
 | Reset password | Edit user → click **Reset password** |
 | Delete user | Edit user → click **Delete** |

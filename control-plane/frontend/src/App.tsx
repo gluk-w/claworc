@@ -30,6 +30,13 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function InstanceCreatorRoute({ children }: { children: React.ReactNode }) {
+  const { canCreateInstances, isLoading } = useAuth();
+  if (isLoading) return null;
+  if (!canCreateInstances) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -61,9 +68,9 @@ export default function App() {
         <Route
           path="/instances/new"
           element={
-            <AdminRoute>
+            <InstanceCreatorRoute>
               <CreateInstancePage />
-            </AdminRoute>
+            </InstanceCreatorRoute>
           }
         />
         <Route path="/instances/:id" element={<InstanceDetailPage />} />
@@ -105,9 +112,9 @@ export default function App() {
         <Route
           path="/backups"
           element={
-            <AdminRoute>
+            <ProtectedRoute>
               <BackupsPage />
-            </AdminRoute>
+            </ProtectedRoute>
           }
         />
       </Route>

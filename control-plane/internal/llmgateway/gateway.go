@@ -259,14 +259,33 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// Copy response headers
-	isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
+	// Copy response headers, skipping headers that could enable XSS or cache poisoning.
+	// Content-Type is overridden below with a validated safe value.
+	upstreamCT := resp.Header.Get("Content-Type")
+	isStreaming := strings.Contains(upstreamCT, "text/event-stream")
+	skipHeaders := map[string]bool{
+		"content-type":           true, // overridden below with a safe allowlisted value
+		"x-content-type-options": true, // set explicitly below
+		"set-cookie":             true, // never forward upstream cookies to our clients
+	}
 	for k, vs := range resp.Header {
+		if skipHeaders[strings.ToLower(k)] {
+			continue
+		}
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}
 	}
-	// Prevent browsers from MIME-sniffing the response into an executable content type (XSS mitigation).
+	// Enforce a safe Content-Type regardless of what the upstream returned.
+	// LLM APIs legitimately return only application/json or text/event-stream;
+	// forwarding text/html would allow a compromised upstream to inject HTML/JS
+	// into responses rendered by a browser (reflected XSS via proxy).
+	safeCT := "application/json"
+	if isStreaming {
+		safeCT = "text/event-stream"
+	}
+	w.Header().Set("Content-Type", safeCT)
+	// Prevent browsers from MIME-sniffing the response into an executable content type.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if isStreaming {
 		w.Header().Set("X-Accel-Buffering", "no")

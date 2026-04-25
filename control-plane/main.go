@@ -330,12 +330,35 @@ func main() {
 			r.Put("/shared-folders/{id}", handlers.UpdateSharedFolder)
 			r.Delete("/shared-folders/{id}", handlers.DeleteSharedFolder)
 
+			// Backups — per-handler CanAccessInstance check restricts non-admins
+			// to backups for instances they're assigned to.
+			r.Post("/instances/{id}/backups", handlers.CreateBackup)
+			r.Get("/instances/{id}/backups", handlers.ListInstanceBackups)
+			r.Get("/backups", handlers.ListAllBackups)
+			r.Get("/backups/{backupId}", handlers.GetBackupDetail)
+			r.Delete("/backups/{backupId}", handlers.DeleteBackupHandler)
+			r.Post("/backups/{backupId}/cancel", handlers.CancelBackupHandler)
+			r.Get("/backups/{backupId}/download", handlers.DownloadBackup)
+
+			// Backup Schedules — handlers filter/authorize by assigned instances.
+			r.Post("/backup-schedules", handlers.CreateBackupSchedule)
+			r.Get("/backup-schedules", handlers.ListBackupSchedules)
+			r.Put("/backup-schedules/{id}", handlers.UpdateBackupSchedule)
+			r.Delete("/backup-schedules/{id}", handlers.DeleteBackupSchedule)
+
+			// Instance creators (admin or users with can_create_instances=true).
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequireInstanceCreator)
+
+				r.Post("/instances", handlers.CreateInstance)
+				r.Post("/instances/{id}/clone", handlers.CloneInstance)
+				r.Post("/backups/{backupId}/restore", handlers.RestoreBackupHandler)
+			})
+
 			// Admin-only routes
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequireAdmin)
 
-				r.Post("/instances", handlers.CreateInstance)
-				r.Post("/instances/{id}/clone", handlers.CloneInstance)
 				r.Delete("/instances/{id}", handlers.DeleteInstance)
 
 				// Settings
@@ -360,22 +383,6 @@ func main() {
 				r.Get("/llm/catalog", handlers.GetCatalogProviders)
 				r.Get("/llm/catalog/{key}", handlers.GetCatalogProviderDetail)
 
-				// Backups
-				r.Post("/instances/{id}/backups", handlers.CreateBackup)
-				r.Get("/instances/{id}/backups", handlers.ListInstanceBackups)
-				r.Get("/backups", handlers.ListAllBackups)
-				r.Get("/backups/{backupId}", handlers.GetBackupDetail)
-				r.Delete("/backups/{backupId}", handlers.DeleteBackupHandler)
-				r.Post("/backups/{backupId}/cancel", handlers.CancelBackupHandler)
-				r.Post("/backups/{backupId}/restore", handlers.RestoreBackupHandler)
-				r.Get("/backups/{backupId}/download", handlers.DownloadBackup)
-
-				// Backup Schedules
-				r.Post("/backup-schedules", handlers.CreateBackupSchedule)
-				r.Get("/backup-schedules", handlers.ListBackupSchedules)
-				r.Put("/backup-schedules/{id}", handlers.UpdateBackupSchedule)
-				r.Delete("/backup-schedules/{id}", handlers.DeleteBackupSchedule)
-
 				// Skills
 				r.Get("/skills", handlers.ListSkills)
 				r.Post("/skills", handlers.UploadSkill)
@@ -388,6 +395,7 @@ func main() {
 				r.Post("/users", handlers.CreateUser)
 				r.Delete("/users/{userId}", handlers.DeleteUser)
 				r.Put("/users/{userId}/role", handlers.UpdateUserRole)
+				r.Put("/users/{userId}/permissions", handlers.UpdateUserPermissions)
 				r.Get("/users/{userId}/instances", handlers.GetUserAssignedInstances)
 				r.Put("/users/{userId}/instances", handlers.SetUserAssignedInstances)
 				r.Post("/users/{userId}/reset-password", handlers.ResetUserPassword)

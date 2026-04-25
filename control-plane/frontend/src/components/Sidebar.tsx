@@ -19,7 +19,7 @@ export default function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { data: health } = useHealth();
-  const { user, isAdmin, logout } = useAuth();
+  const { user, isAdmin, canCreateInstances, logout } = useAuth();
 
   const orchLabel =
     health?.orchestrator_backend === "kubernetes"
@@ -68,7 +68,7 @@ export default function Sidebar() {
       </div>
 
       {/* New Instance */}
-      {isAdmin && (
+      {canCreateInstances && (
         <div className="px-3 mt-3 shrink-0">
           <Link
             data-testid="new-instance-link"
@@ -119,14 +119,12 @@ export default function Sidebar() {
             Shared Folders
           </span>
         </Link>
-        {isAdmin && (
-          <Link to="/backups" className={navLinkClass("/backups")}>
-            <HardDrive size={18} className="shrink-0" />
-            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
-              Backups
-            </span>
-          </Link>
-        )}
+        <Link to="/backups" className={navLinkClass("/backups")}>
+          <HardDrive size={18} className="shrink-0" />
+          <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
+            Backups
+          </span>
+        </Link>
       </div>
 
       {/* Spacer */}

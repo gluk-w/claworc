@@ -220,6 +220,18 @@ function FolderModal({
     queryFn: fetchInstances,
   });
 
+  const { data: existingFolders = [] } = useQuery({
+    queryKey: ["shared-folders"],
+    queryFn: fetchSharedFolders,
+  });
+
+  const trimmedMountPath = mountPath.trim();
+  const duplicateMountPath =
+    trimmedMountPath !== "" &&
+    existingFolders.some(
+      (f) => f.mount_path === trimmedMountPath && f.id !== folder?.id,
+    );
+
   const createMutation = useMutation({
     mutationFn: () => createSharedFolder({ name, mount_path: mountPath }),
     onSuccess: (created) => {
@@ -255,7 +267,8 @@ function FolderModal({
   });
 
   const isPending = createMutation.isPending || updateMutation.isPending;
-  const canSave = name.trim() !== "" && mountPath.startsWith("/");
+  const canSave =
+    name.trim() !== "" && mountPath.startsWith("/") && !duplicateMountPath;
 
   const origIds = folder?.instance_ids ?? [];
   const hasInstanceChanges =
@@ -317,9 +330,16 @@ function FolderModal({
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="/shared/data"
             />
-            <p className="text-xs text-gray-400 mt-1">
-              Same path on all mapped instances
-            </p>
+            {duplicateMountPath ? (
+              <p className="text-xs text-red-600 mt-1">
+                Another shared folder already uses this mount path.
+              </p>
+            ) : (
+              <p className="text-xs text-gray-400 mt-1">
+                Same path on all mapped instances. Must be unique across shared
+                folders.
+              </p>
+            )}
           </div>
 
           <div>

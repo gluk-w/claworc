@@ -35,6 +35,12 @@ The mount path must start with `/` and cannot overlap with these reserved paths:
 
 Recommended mount paths: `/shared/<name>` or `/data/<name>`.
 
+<Note>
+  Each shared folder must have a unique mount path. Two folders cannot share the
+  same path, even if they are mapped to different instances. This prevents mount
+  conflicts when multiple folders are later assigned to the same instance.
+</Note>
+
 ## Mapping instances
 
 1. Open the shared folder by clicking **Edit** in the table row.

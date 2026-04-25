@@ -4,6 +4,8 @@ export interface UserListItem {
   id: number;
   username: string;
   role: string;
+  can_create_instances: boolean;
+  last_login_at: string;
   created_at: string;
 }
 
@@ -16,8 +18,16 @@ export async function createUser(data: {
   username: string;
   password: string;
   role: string;
+  can_create_instances?: boolean;
 }): Promise<void> {
   await client.post("/users", data);
+}
+
+export async function updateUserPermissions(
+  id: number,
+  permissions: { can_create_instances?: boolean },
+): Promise<void> {
+  await client.put(`/users/${id}/permissions`, permissions);
 }
 
 export async function deleteUser(id: number): Promise<void> {

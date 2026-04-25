@@ -133,12 +133,14 @@ type Setting struct {
 }
 
 type User struct {
-	ID           uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	Username     string    `gorm:"uniqueIndex;not null;size:64" json:"username"`
-	PasswordHash string    `gorm:"not null" json:"-"`
-	Role         string    `gorm:"not null;default:user" json:"role"`
-	CreatedAt    time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt    time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	ID                 uint       `gorm:"primaryKey;autoIncrement" json:"id"`
+	Username           string     `gorm:"uniqueIndex;not null;size:64" json:"username"`
+	PasswordHash       string     `gorm:"not null" json:"-"`
+	Role               string     `gorm:"not null;default:user" json:"role"`
+	CanCreateInstances bool       `gorm:"not null;default:false" json:"can_create_instances"`
+	LastLoginAt        *time.Time `json:"last_login_at,omitempty"`
+	CreatedAt          time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt          time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 type UserInstance struct {

@@ -8,6 +8,7 @@ import {
   useRestoreBackup,
 } from "@/hooks/useBackups";
 import { getBackupDownloadUrl } from "@/api/backups";
+import { useAuth } from "@/contexts/AuthContext";
 import type { Backup } from "@/types/backup";
 
 function formatBytes(bytes: number): string {
@@ -32,6 +33,7 @@ export default function BackupPanel({ instanceId }: Props) {
   const deleteMutation = useDeleteBackup(instanceId);
   const cancelMutation = useCancelBackup();
   const restoreMutation = useRestoreBackup(instanceId);
+  const { canCreateInstances } = useAuth();
   const [note, setNote] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [confirmRestore, setConfirmRestore] = useState<number | null>(null);
@@ -127,29 +129,31 @@ export default function BackupPanel({ instanceId }: Props) {
                           >
                             <Download className="w-4 h-4" />
                           </a>
-                          {confirmRestore === b.id ? (
-                            <span className="flex items-center gap-1">
+                          {canCreateInstances && (
+                            confirmRestore === b.id ? (
+                              <span className="flex items-center gap-1">
+                                <button
+                                  onClick={() => { restoreMutation.mutate(b.id); setConfirmRestore(null); }}
+                                  className="text-xs text-orange-600 hover:text-orange-800 font-medium"
+                                >
+                                  Confirm
+                                </button>
+                                <button
+                                  onClick={() => setConfirmRestore(null)}
+                                  className="text-xs text-gray-500 hover:text-gray-700"
+                                >
+                                  Cancel
+                                </button>
+                              </span>
+                            ) : (
                               <button
-                                onClick={() => { restoreMutation.mutate(b.id); setConfirmRestore(null); }}
-                                className="text-xs text-orange-600 hover:text-orange-800 font-medium"
+                                onClick={() => setConfirmRestore(b.id)}
+                                className="p-1 text-gray-400 hover:text-orange-600"
+                                title="Restore"
                               >
-                                Confirm
+                                <RotateCcw className="w-4 h-4" />
                               </button>
-                              <button
-                                onClick={() => setConfirmRestore(null)}
-                                className="text-xs text-gray-500 hover:text-gray-700"
-                              >
-                                Cancel
-                              </button>
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => setConfirmRestore(b.id)}
-                              className="p-1 text-gray-400 hover:text-orange-600"
-                              title="Restore"
-                            >
-                              <RotateCcw className="w-4 h-4" />
-                            </button>
+                            )
                           )}
                         </>
                       )}
