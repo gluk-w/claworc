@@ -19,6 +19,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
+	"github.com/gluk-w/claworc/control-plane/internal/taskmanager"
 	"github.com/go-chi/chi/v5"
 	"gopkg.in/yaml.v3"
 )
@@ -465,20 +466,58 @@ func DeploySkill(w http.ResponseWriter, r *http.Request) {
 		globalEnvNames[k] = struct{}{}
 	}
 
-	results := make([]deploySkillResult, len(req.InstanceIDs))
-	var wg sync.WaitGroup
-	for i, instID := range req.InstanceIDs {
-		wg.Add(1)
-		go func(idx int, instanceID uint) {
-			defer wg.Done()
-			result := deployToInstance(instanceID, slug, fileMap)
-			result.MissingEnvVars = computeMissingEnvVars(instanceID, requiredEnvVars, globalEnvNames)
-			results[idx] = result
-		}(i, instID)
+	// Async: register one task per target instance and return 202 with the
+	// task IDs immediately. Per-instance results arrive over the SSE stream
+	// driven by the TaskManager; the frontend renders them as toasts and
+	// updates its skills page when the matching tasks end.
+	taskIDs := make([]string, 0, len(req.InstanceIDs))
+	if TaskMgr == nil {
+		// Fallback for tests without a wired TaskMgr: keep synchronous
+		// behaviour so unit tests don't need a manager.
+		results := make([]deploySkillResult, len(req.InstanceIDs))
+		var wg sync.WaitGroup
+		for i, instID := range req.InstanceIDs {
+			wg.Add(1)
+			go func(idx int, instanceID uint) {
+				defer wg.Done()
+				result := deployToInstance(instanceID, slug, fileMap)
+				result.MissingEnvVars = computeMissingEnvVars(instanceID, requiredEnvVars, globalEnvNames)
+				results[idx] = result
+			}(i, instID)
+		}
+		wg.Wait()
+		writeJSON(w, http.StatusOK, map[string]interface{}{"results": results})
+		return
 	}
-	wg.Wait()
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{"results": results})
+	for _, instID := range req.InstanceIDs {
+		instanceID := instID
+		var displayName string
+		var inst database.Instance
+		if err := database.DB.Select("display_name").First(&inst, instanceID).Error; err == nil {
+			displayName = fmt.Sprintf("%s — %s", inst.DisplayName, slug)
+		} else {
+			displayName = fmt.Sprintf("instance %d — %s", instanceID, slug)
+		}
+		taskID := TaskMgr.Start(taskmanager.StartOpts{
+			Type:         taskmanager.TaskSkillDeploy,
+			InstanceID:   instanceID,
+			ResourceID:   slug,
+			ResourceName: displayName,
+			Run: func(ctx context.Context, h *taskmanager.Handle) error {
+				h.UpdateMessage("uploading skill files")
+				result := deployToInstance(instanceID, slug, fileMap)
+				if result.Status != "ok" {
+					if result.Error != "" {
+						return fmt.Errorf("%s", result.Error)
+					}
+					return fmt.Errorf("deploy failed")
+				}
+				return nil
+			},
+		})
+		taskIDs = append(taskIDs, taskID)
+	}
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{"task_ids": taskIDs})
 }
 
 // computeMissingEnvVars returns the subset of requiredEnvVars that is neither

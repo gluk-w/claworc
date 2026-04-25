@@ -20,6 +20,7 @@ dist
 dev-dist
 goreman
 air
+*.tsbuildinfo
 
 test-results/
 playwright-report/

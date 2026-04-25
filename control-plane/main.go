@@ -27,6 +27,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/sshterminal"
+	"github.com/gluk-w/claworc/control-plane/internal/taskmanager"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
@@ -140,6 +141,14 @@ func main() {
 		log.Printf("WARNING: %v", err)
 	}
 
+	// Initialize the TaskManager. It owns every long-running goroutine
+	// started by user actions (instance create/restart/clone/update-image,
+	// backup create, skill deploy). See docs/task-manager.md.
+	taskMgr := taskmanager.New(taskmanager.Config{})
+	handlers.TaskMgr = taskMgr
+	backup.TaskMgr = taskMgr
+	reconcileStuckTasks()
+
 	// Start LLM gateway (internal only, reachable via SSH agent-listener tunnel)
 	if err := llmgateway.Start(ctx, "127.0.0.1", config.Cfg.LLMGatewayPort); err != nil {
 		log.Printf("WARNING: LLM gateway failed to start: %v", err)
@@ -247,6 +256,12 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireAuth(sessionStore))
 
+			// Tasks (long-running goroutine registry)
+			r.Get("/tasks", handlers.ListTasks)
+			r.Get("/tasks/events", handlers.StreamTaskEvents)
+			r.Get("/tasks/{id}", handlers.GetTask)
+			r.Post("/tasks/{id}/cancel", handlers.CancelTask)
+
 			// Instances (ListInstances filters by role internally)
 			r.Get("/instances", handlers.ListInstances)
 			r.Put("/instances/reorder", handlers.ReorderInstances)
@@ -351,6 +366,7 @@ func main() {
 				r.Get("/backups", handlers.ListAllBackups)
 				r.Get("/backups/{backupId}", handlers.GetBackupDetail)
 				r.Delete("/backups/{backupId}", handlers.DeleteBackupHandler)
+				r.Post("/backups/{backupId}/cancel", handlers.CancelBackupHandler)
 				r.Post("/backups/{backupId}/restore", handlers.RestoreBackupHandler)
 				r.Get("/backups/{backupId}/download", handlers.DownloadBackup)
 
@@ -415,6 +431,8 @@ func main() {
 	if err := sshMgr.CloseAll(); err != nil {
 		log.Printf("SSH manager shutdown: %v", err)
 	}
+
+	taskMgr.Close()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

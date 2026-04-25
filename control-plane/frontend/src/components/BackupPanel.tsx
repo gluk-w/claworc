@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Download, Trash2, RotateCcw, Loader2 } from "lucide-react";
+import { Download, Trash2, RotateCcw, Loader2, Square } from "lucide-react";
 import {
   useInstanceBackups,
   useCreateBackup,
   useDeleteBackup,
+  useCancelBackup,
   useRestoreBackup,
 } from "@/hooks/useBackups";
 import { getBackupDownloadUrl } from "@/api/backups";
@@ -29,6 +30,7 @@ export default function BackupPanel({ instanceId }: Props) {
   const { data: backups, isLoading } = useInstanceBackups(instanceId);
   const createMutation = useCreateBackup(instanceId);
   const deleteMutation = useDeleteBackup(instanceId);
+  const cancelMutation = useCancelBackup();
   const restoreMutation = useRestoreBackup(instanceId);
   const [note, setNote] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
@@ -151,7 +153,15 @@ export default function BackupPanel({ instanceId }: Props) {
                           )}
                         </>
                       )}
-                      {confirmDelete === b.id ? (
+                      {b.status === "running" ? (
+                        <button
+                          onClick={() => cancelMutation.mutate(b.id)}
+                          className="p-1 text-gray-400 hover:text-red-600"
+                          title="Cancel backup"
+                        >
+                          <Square className="w-4 h-4" />
+                        </button>
+                      ) : confirmDelete === b.id ? (
                         <span className="flex items-center gap-1">
                           <button
                             onClick={() => { deleteMutation.mutate(b.id); setConfirmDelete(null); }}
@@ -171,7 +181,6 @@ export default function BackupPanel({ instanceId }: Props) {
                           onClick={() => setConfirmDelete(b.id)}
                           className="p-1 text-gray-400 hover:text-red-600"
                           title="Delete"
-                          disabled={b.status === "running"}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
