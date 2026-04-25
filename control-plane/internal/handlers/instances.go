@@ -34,7 +34,7 @@ import (
 // The goroutine bodies still update the instance DB row themselves; the
 // task return value is informational for toast UX. We infer "failed" from
 // the in-memory status message ("Failed: ...") so the toast turns red.
-func startInstanceTask(taskType taskmanager.TaskType, instanceID uint, displayName string, work func(ctx context.Context)) {
+func startInstanceTask(taskType taskmanager.TaskType, instanceID, userID uint, displayName string, work func(ctx context.Context)) {
 	if TaskMgr == nil {
 		go work(context.Background())
 		return
@@ -42,6 +42,7 @@ func startInstanceTask(taskType taskmanager.TaskType, instanceID uint, displayNa
 	TaskMgr.Start(taskmanager.StartOpts{
 		Type:         taskType,
 		InstanceID:   instanceID,
+		UserID:       userID,
 		ResourceName: displayName,
 		Run: func(ctx context.Context, h *taskmanager.Handle) error {
 			work(ctx)
@@ -51,6 +52,15 @@ func startInstanceTask(taskType taskmanager.TaskType, instanceID uint, displayNa
 			return nil
 		},
 	})
+}
+
+// callerID returns the authenticated caller's user ID, or 0 if no user is
+// in context. Used to stamp UserID onto tasks for visibility filtering.
+func callerID(r *http.Request) uint {
+	if u := middleware.GetUser(r); u != nil {
+		return u.ID
+	}
+	return 0
 }
 
 // In-memory status messages for instance creation progress.
@@ -505,7 +515,7 @@ func getEffectiveUserAgent(inst database.Instance) string {
 // restartInstanceAsync restarts a running instance in the background,
 // rebuilding its container with current config and shared folder mounts.
 // Safe to call for stopped instances (no-op if status is not "running").
-func restartInstanceAsync(inst database.Instance) {
+func restartInstanceAsync(inst database.Instance, userID uint) {
 	if inst.Status != "running" {
 		return
 	}
@@ -529,7 +539,7 @@ func restartInstanceAsync(inst database.Instance) {
 		"updated_at": time.Now().UTC(),
 	})
 
-	startInstanceTask(taskmanager.TaskInstanceRestart, inst.ID, inst.DisplayName, func(ctx context.Context) {
+	startInstanceTask(taskmanager.TaskInstanceRestart, inst.ID, userID, inst.DisplayName, func(ctx context.Context) {
 		params := buildCreateParams(inst)
 		if err := orch.RestartInstance(ctx, inst.Name, params); err != nil {
 			log.Printf("Failed to restart instance %d: %v", inst.ID, err)
@@ -806,7 +816,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	initialProvidersJSON, _ := buildOpenClawProvidersJSON(models, gatewayProviders, config.Cfg.LLMGatewayPort)
 
 	// Launch container creation asynchronously (image pull can take minutes)
-	startInstanceTask(taskmanager.TaskInstanceCreate, inst.ID, inst.DisplayName, func(ctx context.Context) {
+	startInstanceTask(taskmanager.TaskInstanceCreate, inst.ID, callerID(r), inst.DisplayName, func(ctx context.Context) {
 		orch := orchestrator.Get()
 		if orch == nil {
 			setStatusMessage(inst.ID, "Failed: no orchestrator available")
@@ -1200,7 +1210,7 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	// re-reads EnvVars from the DB, so it picks up what we just wrote.
 	restarting := false
 	if envVarsChanged && status == "running" {
-		restartInstanceAsync(inst)
+		restartInstanceAsync(inst, callerID(r))
 		restarting = true
 		status = "restarting"
 	}
@@ -1328,7 +1338,7 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 
 	instID := inst.ID
 	instName := inst.Name
-	startInstanceTask(taskmanager.TaskInstanceImageUpdate, inst.ID, inst.DisplayName, func(ctx context.Context) {
+	startInstanceTask(taskmanager.TaskInstanceImageUpdate, inst.ID, callerID(r), inst.DisplayName, func(ctx context.Context) {
 		err := orch.UpdateImage(ctx, instName, orchestrator.CreateParams{
 			Name:               instName,
 			CPURequest:         inst.CPURequest,
@@ -1704,7 +1714,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Run the full clone operation asynchronously
-	startInstanceTask(taskmanager.TaskInstanceClone, inst.ID, inst.DisplayName, func(ctx context.Context) {
+	startInstanceTask(taskmanager.TaskInstanceClone, inst.ID, callerID(r), inst.DisplayName, func(ctx context.Context) {
 		orch := orchestrator.Get()
 		if orch == nil {
 			setStatusMessage(inst.ID, "Failed: no orchestrator available")

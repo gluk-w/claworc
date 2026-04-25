@@ -57,7 +57,8 @@ type RunFunc func(ctx context.Context, h *Handle) error
 type Task struct {
 	ID           string     `json:"id"`
 	Type         TaskType   `json:"type"`
-	InstanceID   uint       `json:"instance_id,omitempty"` // RBAC anchor; 0 = admin-only
+	InstanceID   uint       `json:"instance_id,omitempty"` // metadata only — used for filtering and toast subject
+	UserID       uint       `json:"user_id,omitempty"`     // visibility anchor; 0 = system task (admin-only)
 	ResourceID   string     `json:"resource_id,omitempty"` // type-specific (backup id, etc.)
 	ResourceName string     `json:"resource_name,omitempty"`
 	State        State      `json:"state"`
@@ -70,6 +71,7 @@ type Task struct {
 type StartOpts struct {
 	Type         TaskType
 	InstanceID   uint
+	UserID       uint // initiating user; 0 = system task (admin-only visibility)
 	ResourceID   string
 	ResourceName string
 	OnCancel     OnCancel
@@ -114,6 +116,7 @@ type Event struct {
 type Filter struct {
 	Type       TaskType
 	InstanceID uint // 0 = any
+	UserID     uint // 0 = any
 	ResourceID string
 	State      State
 	OnlyActive bool // if true, exclude tasks that ended more than `since` ago
@@ -209,6 +212,7 @@ func (m *Manager) Start(opts StartOpts) string {
 			ID:           id,
 			Type:         opts.Type,
 			InstanceID:   opts.InstanceID,
+			UserID:       opts.UserID,
 			ResourceID:   opts.ResourceID,
 			ResourceName: opts.ResourceName,
 			State:        StateRunning,
@@ -263,6 +267,9 @@ func (m *Manager) List(f Filter) []Task {
 			continue
 		}
 		if f.InstanceID != 0 && t.InstanceID != f.InstanceID {
+			continue
+		}
+		if f.UserID != 0 && t.UserID != f.UserID {
 			continue
 		}
 		if f.ResourceID != "" && t.ResourceID != f.ResourceID {

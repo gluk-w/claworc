@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/taskmanager"
 	"github.com/go-chi/chi/v5"
@@ -15,11 +14,11 @@ import (
 // TaskMgr is the global task manager, wired from main.go.
 var TaskMgr *taskmanager.Manager
 
-// rbacFilter returns a predicate that decides whether a task is visible to
-// the caller. Admins see everything; non-admins see tasks whose InstanceID
-// is in the caller's assigned instance set. Tasks with InstanceID == 0
-// are admin-only.
-func rbacFilter(r *http.Request) (func(taskmanager.Task) bool, error) {
+// visibilityFilter returns a predicate that decides whether a task is
+// visible to the caller. Admins see everything; non-admins see only tasks
+// they themselves initiated (Task.UserID == caller.ID). Tasks with
+// UserID == 0 are system-initiated and admin-only.
+func visibilityFilter(r *http.Request) (func(taskmanager.Task) bool, error) {
 	user := middleware.GetUser(r)
 	if user == nil {
 		return nil, errors.New("no user")
@@ -27,20 +26,9 @@ func rbacFilter(r *http.Request) (func(taskmanager.Task) bool, error) {
 	if user.Role == "admin" {
 		return func(taskmanager.Task) bool { return true }, nil
 	}
-	ids, err := database.GetUserInstances(user.ID)
-	if err != nil {
-		return nil, err
-	}
-	allow := make(map[uint]struct{}, len(ids))
-	for _, id := range ids {
-		allow[id] = struct{}{}
-	}
+	uid := user.ID
 	return func(t taskmanager.Task) bool {
-		if t.InstanceID == 0 {
-			return false
-		}
-		_, ok := allow[t.InstanceID]
-		return ok
+		return t.UserID != 0 && t.UserID == uid
 	}, nil
 }
 
@@ -51,7 +39,7 @@ func ListTasks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []taskmanager.Task{})
 		return
 	}
-	allow, err := rbacFilter(r)
+	allow, err := visibilityFilter(r)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -90,7 +78,7 @@ func GetTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Task not found")
 		return
 	}
-	allow, err := rbacFilter(r)
+	allow, err := visibilityFilter(r)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -114,7 +102,7 @@ func CancelTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Task not found")
 		return
 	}
-	allow, err := rbacFilter(r)
+	allow, err := visibilityFilter(r)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -148,7 +136,7 @@ func StreamTaskEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "Task manager not initialized")
 		return
 	}
-	allow, err := rbacFilter(r)
+	allow, err := visibilityFilter(r)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

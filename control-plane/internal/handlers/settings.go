@@ -167,7 +167,7 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		var running []database.Instance
 		database.DB.Where("status = ?", "running").Find(&running)
 		for i := range running {
-			restartInstanceAsync(running[i])
+			restartInstanceAsync(running[i], callerID(r))
 			restartingInstances = append(restartingInstances, restartTarget{
 				ID:          running[i].ID,
 				Name:        running[i].Name,
