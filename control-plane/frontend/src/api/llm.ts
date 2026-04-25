@@ -47,13 +47,21 @@ export interface CatalogProviderDetail {
   }[];
 }
 
-export async function fetchCatalogProviders(): Promise<CatalogProviderSummary[]> {
-  const { data } = await client.get<CatalogProviderSummary[]>("/llm/catalog");
+export async function fetchCatalogProviders(source: string = "builtin", customUrl: string = ""): Promise<CatalogProviderSummary[]> {
+  const params = new URLSearchParams();
+  if (source && source !== "builtin") params.set("source", source);
+  if (source === "custom" && customUrl) params.set("url", customUrl);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const { data } = await client.get<CatalogProviderSummary[]>(`/llm/catalog${qs}`);
   return data;
 }
 
-export async function fetchCatalogProviderDetail(key: string): Promise<CatalogProviderDetail> {
-  const { data } = await client.get<CatalogProviderDetail>(`/llm/catalog/${encodeURIComponent(key)}`);
+export async function fetchCatalogProviderDetail(key: string, source: string = "builtin", customUrl: string = ""): Promise<CatalogProviderDetail> {
+  const params = new URLSearchParams();
+  if (source && source !== "builtin") params.set("source", source);
+  if (source === "custom" && customUrl) params.set("url", customUrl);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const { data } = await client.get<CatalogProviderDetail>(`/llm/catalog/${encodeURIComponent(key)}${qs}`);
   return data;
 }
 

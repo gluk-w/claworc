@@ -5,6 +5,26 @@ import (
 	"strings"
 )
 
+// hasVersionSuffix reports whether baseURL already ends with a version-like
+// path segment such as /v1, /v4, /v12, etc.
+func hasVersionSuffix(baseURL string) bool {
+	trimmed := strings.TrimRight(baseURL, "/")
+	i := strings.LastIndex(trimmed, "/")
+	if i < 0 {
+		return false
+	}
+	seg := trimmed[i+1:] // e.g. "v1", "v4"
+	if len(seg) < 2 || seg[0] != 'v' {
+		return false
+	}
+	for _, c := range seg[1:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // --- openAICompletions (default / fallback) ---
 
 type openAICompletions struct{}
@@ -29,7 +49,11 @@ func (openAICompletions) ParseStreamingUsage(body []byte) (int, int, int) {
 }
 
 func (openAICompletions) ProbeURL(baseURL string) string {
-	return strings.TrimRight(baseURL, "/") + "/v1/models"
+	trimmed := strings.TrimRight(baseURL, "/")
+	if hasVersionSuffix(trimmed) {
+		return trimmed + "/models"
+	}
+	return trimmed + "/v1/models"
 }
 
 func (openAICompletions) ProbeHeaders(*http.Request) {}

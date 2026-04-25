@@ -32,18 +32,18 @@ export function useUpdateProvider() {
   });
 }
 
-export function useCatalogProviders() {
+export function useCatalogProviders(source: string = "builtin", customUrl: string = "") {
   return useQuery({
-    queryKey: ["catalog-providers"],
-    queryFn: fetchCatalogProviders,
+    queryKey: ["catalog-providers", source, customUrl],
+    queryFn: () => fetchCatalogProviders(source, customUrl),
     staleTime: 5 * 60 * 1000,
   });
 }
 
-export function useCatalogProviderDetail(key: string | null) {
+export function useCatalogProviderDetail(key: string | null, source: string = "builtin", customUrl: string = "") {
   return useQuery({
-    queryKey: ["catalog-provider", key],
-    queryFn: () => fetchCatalogProviderDetail(key!),
+    queryKey: ["catalog-provider", key, source, customUrl],
+    queryFn: () => fetchCatalogProviderDetail(key!, source, customUrl),
     enabled: !!key && key !== "__custom__",
     staleTime: 5 * 60 * 1000,
   });

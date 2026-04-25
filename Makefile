@@ -25,7 +25,7 @@ HELM_NAMESPACE := claworc
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-docs \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
 	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models scrape-models test \
-	worker-deploy worker-test site-dev site-build site-deploy
+	worker-deploy worker-test site-dev site-build site-deploy generate-catalog
 
 agent: agent-base agent-build agent-test agent-push
 
@@ -153,6 +153,9 @@ extract-models:
 
 scrape-models:
 	python3 scripts/scrape_provider_docs.py
+
+generate-catalog:
+	node website/worker/build-models.mjs
 
 dev-docs:
 	cd website_docs && npx mint dev

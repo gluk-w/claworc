@@ -69,5 +69,11 @@ const providers = Array.from(providerMap.values()).sort((a, b) =>
   a.name.localeCompare(b.name)
 );
 
-writeFileSync(outPath, JSON.stringify(providers, null, 2));
+const json = JSON.stringify(providers, null, 2);
+writeFileSync(outPath, json);
 console.log(`Wrote ${providers.length} providers to ${outPath}`);
+
+// Also write the embedded catalog for the Go control plane
+const catalogPath = join(__dirname, "../../control-plane/internal/handlers/catalog_embed.json");
+writeFileSync(catalogPath, json);
+console.log(`Wrote ${providers.length} providers to ${catalogPath}`);

@@ -5,7 +5,7 @@ import ProviderModal from "@/components/ProviderModal";
 import EnvVarsEditor from "@/components/EnvVarsEditor";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
-import { useProviders } from "@/hooks/useProviders";
+import { useProviders, useCatalogProviders } from "@/hooks/useProviders";
 import { fetchSSHFingerprint, rotateSSHKey } from "@/api/ssh";
 import { syncAllProviders } from "@/api/llm";
 import { successToast, errorToast, envVarRestartToast } from "@/utils/toast";
@@ -18,6 +18,10 @@ export default function SettingsPage() {
   const { data: settings, isLoading } = useSettings();
   const updateMutation = useUpdateSettings();
   const { data: providers = [] } = useProviders();
+  const { data: catalogProviders = [] } = useCatalogProviders();
+  const catalogIconMap = Object.fromEntries(
+    catalogProviders.map((c) => [c.name, c.icon_key]).filter(([, v]) => v)
+  );
 
   // Provider modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -159,7 +163,7 @@ export default function SettingsPage() {
                       <div className="min-w-0 flex-1 flex items-center gap-3">
                         <div className="shrink-0 w-6 h-6 flex items-center justify-center">
                           {p.provider ? (
-                            <ProviderIcon provider={p.provider} size={22} />
+                            <ProviderIcon provider={catalogIconMap[p.provider] ?? p.provider} size={22} />
                           ) : (
                             <span className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-xs font-medium text-gray-500">
                               {p.name[0].toUpperCase()}

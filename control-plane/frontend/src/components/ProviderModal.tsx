@@ -46,7 +46,15 @@ export default function ProviderModal({
   const createProviderMutation = useCreateProvider();
   const updateProviderMutation = useUpdateProvider();
   const deleteProviderMutation = useDeleteProvider();
-  const { data: catalogProviders = [], isLoading: catalogLoading } = useCatalogProviders();
+
+  const [mCatalogSource, setMCatalogSource] = useState("builtin");
+  const [mCatalogUrl, setMCatalogUrl] = useState("");
+  const { data: catalogProviders = [], isLoading: catalogLoading } = useCatalogProviders(mCatalogSource, mCatalogUrl);
+  const customUrlMissing = mCatalogSource === "custom" && !mCatalogUrl.trim();
+
+  const catalogIconMap = Object.fromEntries(
+    catalogProviders.map((c) => [c.name, c.icon_key]).filter(([, v]) => v)
+  );
 
   const [mCatalogKey, setMCatalogKey] = useState("");
   const [mProvider, setMProvider] = useState("");
@@ -68,7 +76,9 @@ export default function ProviderModal({
   const [mShowOptionalFields, setMShowOptionalFields] = useState(false);
 
   const { data: catalogDetail } = useCatalogProviderDetail(
-    open && mode === "create" && mCatalogKey && mCatalogKey !== CUSTOM_PROVIDER ? mCatalogKey : null
+    open && mode === "create" && mCatalogKey && mCatalogKey !== CUSTOM_PROVIDER ? mCatalogKey : null,
+    mCatalogSource,
+    mCatalogUrl,
   );
 
   const testMutation = useMutation({
@@ -83,11 +93,21 @@ export default function ProviderModal({
     onError: (err) => errorToast("Test request failed", err),
   });
 
+  // Reset provider selection when catalog source changes
+  useEffect(() => {
+    setMCatalogKey("");
+    setMProvider("");
+    setMName("");
+    setMBaseURL("");
+  }, [mCatalogSource, mCatalogUrl]);
+
   useEffect(() => {
     if (!open) return;
     createProviderMutation.reset();
     updateProviderMutation.reset();
     deleteProviderMutation.reset();
+    setMCatalogSource("builtin");
+    setMCatalogUrl("");
     if (mode === "create") {
       setMCatalogKey("");
       setMProvider("");
@@ -296,10 +316,10 @@ export default function ProviderModal({
       <div className={`bg-white rounded-lg shadow-xl p-6 w-full mx-4 ${isCustomProvider ? "max-w-xl" : "max-w-md"}`}>
         <h2 className="text-base font-semibold text-gray-900 mb-4 flex items-center gap-2">
           {mode === "edit" && provider!.provider && (
-            <ProviderIcon provider={provider!.provider} size={22} />
+            <ProviderIcon provider={catalogIconMap[provider!.provider] ?? provider!.provider} size={22} />
           )}
           {mode === "create" && mCatalogKey && mCatalogKey !== CUSTOM_PROVIDER && (
-            <ProviderIcon provider={mCatalogKey} size={22} />
+            <ProviderIcon provider={catalogIconMap[mCatalogKey] ?? mCatalogKey} size={22} />
           )}
           {mode === "create" ? "Add Provider" : "Edit Provider"}
           {instanceId && (
@@ -310,8 +330,38 @@ export default function ProviderModal({
         <div className="space-y-4">
           {/* Provider picker — create mode only */}
           {mode === "create" && (
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Provider</label>
+            <>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label className="block text-xs text-gray-500 mb-1">Catalog Source</label>
+                  <select
+                    value={mCatalogSource}
+                    onChange={(e) => { setMCatalogSource(e.target.value); if (e.target.value !== "custom") setMCatalogUrl(""); }}
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  >
+                    <option value="builtin">Built-in</option>
+                    <option value="claworc">Claworc (official)</option>
+                    <option value="custom">Custom URL</option>
+                  </select>
+                </div>
+                {mCatalogSource === "custom" && (
+                  <div className="flex-1">
+                    <label className="block text-xs text-gray-500 mb-1">Catalog URL</label>
+                    <input
+                      type="text"
+                      value={mCatalogUrl}
+                      onChange={(e) => setMCatalogUrl(e.target.value)}
+                      placeholder="https://example.com/providers"
+                      className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Provider</label>
+              {customUrlMissing ? (
+                <p className="text-sm text-gray-400 italic py-1.5">Enter a catalog URL above to load providers</p>
+              ) : (
               <select
                 value={mCatalogKey}
                 onChange={(e) => handleCatalogKeyChange(e.target.value)}
@@ -328,7 +378,9 @@ export default function ProviderModal({
                 ))}
                 <option value={CUSTOM_PROVIDER}>Custom (self-hosted / unlisted)</option>
               </select>
+              )}
             </div>
+            </>
           )}
 
           {/* Name */}
