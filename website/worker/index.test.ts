@@ -68,7 +68,7 @@ vi.mock("./models.json", () => ({
 import worker from "./index";
 
 async function get(path: string): Promise<Response> {
-  return worker.fetch(new Request(`https://example.com${path}`));
+  return worker.fetch(new Request(`https://example.com${path}`), {} as any, {} as any);
 }
 
 describe("Provider list", () => {
@@ -126,6 +126,83 @@ describe("Provider list", () => {
     expect(m.cached_write_cost).toBeNull();
     expect(m.tag).toBe("flagship");
     expect(m.description).toBe("Most capable model");
+  });
+});
+
+describe("Analytics collect", () => {
+  function makeEnv() {
+    const points: any[] = [];
+    return {
+      env: {
+        ANALYTICS: {
+          writeDataPoint: (p: any) => points.push(p),
+        },
+      },
+      points,
+    };
+  }
+
+  async function post(path: string, body: unknown, env: any = {}) {
+    return worker.fetch(
+      new Request(`https://example.com${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: typeof body === "string" ? body : JSON.stringify(body),
+      }),
+      env,
+      {} as any,
+    );
+  }
+
+  const validPayload = {
+    installation_id: "a".repeat(32),
+    event: "instance_created",
+    props: { total_instances: 3 },
+    ts: 1700000000,
+    version: "1.2.3",
+  };
+
+  it("accepts a well-formed payload and writes one data point", async () => {
+    const { env, points } = makeEnv();
+    const res = await post("/stats/collect", validPayload, env);
+    expect(res.status).toBe(204);
+    expect(points.length).toBe(1);
+    expect(points[0].indexes).toEqual([validPayload.installation_id]);
+    expect(points[0].blobs?.[0]).toBe("instance_created");
+  });
+
+  it("rejects unknown events", async () => {
+    const { env, points } = makeEnv();
+    const res = await post("/stats/collect", { ...validPayload, event: "bogus_event" }, env);
+    expect(res.status).toBe(400);
+    expect(points.length).toBe(0);
+  });
+
+  it("rejects malformed installation_id", async () => {
+    const { env } = makeEnv();
+    const res = await post("/stats/collect", { ...validPayload, installation_id: "short" }, env);
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects malformed JSON", async () => {
+    const { env } = makeEnv();
+    const res = await post("/stats/collect", "{not-json", env);
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects GET", async () => {
+    const res = await worker.fetch(new Request("https://example.com/stats/collect"), {} as any, {} as any);
+    expect(res.status).toBe(405);
+  });
+
+  it("answers OPTIONS preflight", async () => {
+    const res = await worker.fetch(
+      new Request("https://example.com/stats/collect", { method: "OPTIONS" }),
+      {} as any,
+      {} as any,
+    );
+    expect(res.status).toBe(204);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
   });
 });
 

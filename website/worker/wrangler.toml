@@ -8,3 +8,11 @@ command = "node build-models.mjs"
 [[routes]]
 pattern = "claworc.com/providers/*"
 zone_name = "claworc.com"
+
+[[routes]]
+pattern = "claworc.com/stats/*"
+zone_name = "claworc.com"
+
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "claworc_events"
