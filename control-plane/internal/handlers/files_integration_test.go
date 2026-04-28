@@ -99,6 +99,7 @@ func fileURL(baseURL string, instID uint, endpoint string) string {
 }
 
 func TestIntegration_Files_BrowseDirectory(t *testing.T) {
+	t.Parallel()
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
@@ -123,6 +124,7 @@ func TestIntegration_Files_BrowseDirectory(t *testing.T) {
 }
 
 func TestIntegration_Files_BrowseNonExistent(t *testing.T) {
+	t.Parallel()
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
@@ -139,6 +141,7 @@ func TestIntegration_Files_BrowseNonExistent(t *testing.T) {
 }
 
 func TestIntegration_Files_CreateAndReadFile(t *testing.T) {
+	t.Parallel()
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
@@ -177,6 +180,7 @@ func TestIntegration_Files_CreateAndReadFile(t *testing.T) {
 }
 
 func TestIntegration_Files_CreateDirectory(t *testing.T) {
+	t.Parallel()
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
@@ -219,6 +223,7 @@ func TestIntegration_Files_CreateDirectory(t *testing.T) {
 }
 
 func TestIntegration_Files_UploadFile(t *testing.T) {
+	t.Parallel()
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
@@ -267,6 +272,7 @@ func TestIntegration_Files_UploadFile(t *testing.T) {
 }
 
 func TestIntegration_Files_DownloadFile(t *testing.T) {
+	t.Parallel()
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
@@ -297,6 +303,7 @@ func TestIntegration_Files_DownloadFile(t *testing.T) {
 }
 
 func TestIntegration_Files_DeleteFile(t *testing.T) {
+	t.Parallel()
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
@@ -330,6 +337,7 @@ func TestIntegration_Files_DeleteFile(t *testing.T) {
 }
 
 func TestIntegration_Files_DeleteDirectory(t *testing.T) {
+	t.Parallel()
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
@@ -371,6 +379,7 @@ func TestIntegration_Files_DeleteDirectory(t *testing.T) {
 }
 
 func TestIntegration_Files_RenameFile(t *testing.T) {
+	t.Parallel()
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
@@ -419,6 +428,7 @@ func TestIntegration_Files_RenameFile(t *testing.T) {
 }
 
 func TestIntegration_Files_SearchByName(t *testing.T) {
+	t.Parallel()
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
@@ -463,6 +473,7 @@ func TestIntegration_Files_SearchByName(t *testing.T) {
 }
 
 func TestIntegration_Files_FullWorkflow(t *testing.T) {
+	t.Parallel()
 	client := &http.Client{Timeout: 60 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 
@@ -550,6 +561,7 @@ func TestIntegration_Files_UnauthenticatedAccess(t *testing.T) {
 }
 
 func TestIntegration_Files_WrongInstance(t *testing.T) {
+	t.Parallel()
 	client := &http.Client{Timeout: 30 * time.Second}
 	instID := createFileTestInstance(t, sessionURL, client)
 

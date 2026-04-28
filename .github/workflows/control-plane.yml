@@ -16,6 +16,17 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: control-plane/go.mod
+          cache-dependency-path: control-plane/go.sum
+
+      - name: Cache Go build & test cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/Library/Caches/go-build
+          key: ${{ runner.os }}-gobuild-unit-${{ hashFiles('control-plane/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-gobuild-unit-
 
       - name: Run unit tests
         uses: robherley/go-test-action@v0
@@ -32,12 +43,23 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: control-plane/go.mod
+          cache-dependency-path: control-plane/go.sum
+
+      - name: Cache Go build & test cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/Library/Caches/go-build
+          key: ${{ runner.os }}-gobuild-integration-${{ hashFiles('control-plane/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-gobuild-integration-
 
       - name: Run integration tests
         uses: robherley/go-test-action@v0
         with:
           moduleDirectory: control-plane
-          testarguments: -tags docker_integration -timeout 1200s -count=1 ./internal/handlers/ -run TestIntegration
+          testarguments: -tags docker_integration -timeout 1200s -count=1 -parallel 4 ./internal/handlers/ -run TestIntegration
         env:
           CLAWORC_LLM_GATEWAY_PORT: 40001
 

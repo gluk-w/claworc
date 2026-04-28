@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,13 +21,27 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 )
 
-// withRunningInstance creates a provider and instance, waits for the instance
-// to reach "running" status, calls fn, then cleans up.
-func withRunningInstance(t *testing.T, fn func(instID uint, instName string)) {
-	t.Helper()
+// sharedEndpointInstance is created once and reused across all integration_endpoints
+// tests that just need a running, SSH-connected instance with an attached provider.
+// Building a Docker container takes ~60s, so a single shared instance saves
+// minutes of CI time across the suite.
+var (
+	sharedEndpointInstanceOnce sync.Once
+	sharedEndpointInstanceID   uint
+	sharedEndpointInstanceName string
+	sharedEndpointInstanceErr  error
+)
+
+func getSharedEndpointInstance() (uint, string, error) {
+	sharedEndpointInstanceOnce.Do(func() {
+		sharedEndpointInstanceID, sharedEndpointInstanceName, sharedEndpointInstanceErr = createSharedEndpointInstance()
+	})
+	return sharedEndpointInstanceID, sharedEndpointInstanceName, sharedEndpointInstanceErr
+}
+
+func createSharedEndpointInstance() (uint, string, error) {
 	client := &http.Client{Timeout: 60 * time.Second}
 
-	// Create provider
 	provBody, _ := json.Marshal(map[string]interface{}{
 		"key":      fmt.Sprintf("test-%d", time.Now().UnixNano()),
 		"name":     "Test Provider",
@@ -35,12 +50,12 @@ func withRunningInstance(t *testing.T, fn func(instID uint, instName string)) {
 	})
 	resp, err := client.Post(sessionURL+"/api/v1/llm/providers", "application/json", bytes.NewReader(provBody))
 	if err != nil {
-		t.Fatalf("create provider: %v", err)
+		return 0, "", fmt.Errorf("create provider: %w", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		t.Fatalf("create provider: expected 201, got %d: %s", resp.StatusCode, body)
+		return 0, "", fmt.Errorf("create provider: expected 201, got %d: %s", resp.StatusCode, body)
 	}
 	var provResp struct {
 		ID uint `json:"id"`
@@ -49,17 +64,6 @@ func withRunningInstance(t *testing.T, fn func(instID uint, instName string)) {
 	resp.Body.Close()
 	provID := provResp.ID
 
-	defer func() {
-		req, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/v1/llm/providers/%d", sessionURL, provID), nil)
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Logf("Warning: delete provider %d: %v", provID, err)
-			return
-		}
-		resp.Body.Close()
-	}()
-
-	// Create instance
 	displayName := fmt.Sprintf("eptest-%d", time.Now().UnixNano())
 	instBody, _ := json.Marshal(map[string]interface{}{
 		"display_name":      displayName,
@@ -67,12 +71,12 @@ func withRunningInstance(t *testing.T, fn func(instID uint, instName string)) {
 	})
 	resp, err = client.Post(sessionURL+"/api/v1/instances", "application/json", bytes.NewReader(instBody))
 	if err != nil {
-		t.Fatalf("create instance: %v", err)
+		return 0, "", fmt.Errorf("create instance: %w", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		t.Fatalf("create instance: expected 201, got %d: %s", resp.StatusCode, body)
+		return 0, "", fmt.Errorf("create instance: expected 201, got %d: %s", resp.StatusCode, body)
 	}
 	var instResp struct {
 		ID   uint   `json:"id"`
@@ -80,44 +84,39 @@ func withRunningInstance(t *testing.T, fn func(instID uint, instName string)) {
 	}
 	json.NewDecoder(resp.Body).Decode(&instResp)
 	resp.Body.Close()
-	instID := instResp.ID
-	instName := instResp.Name
-	t.Logf("Created instance id=%d name=%s", instID, instName)
 
-	defer func() {
-		req, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/v1/instances/%d", sessionURL, instID), nil)
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Logf("Warning: delete instance %d: %v", instID, err)
-			return
-		}
-		resp.Body.Close()
-		t.Logf("Deleted instance id=%d name=%s", instID, instName)
-	}()
-
-	// Poll until running
-	t.Log("Waiting for instance to reach 'running'...")
 	deadline := time.Now().Add(120 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(fmt.Sprintf("%s/api/v1/instances/%d", sessionURL, instID))
+		r, err := client.Get(fmt.Sprintf("%s/api/v1/instances/%d", sessionURL, instResp.ID))
 		if err != nil {
 			time.Sleep(2 * time.Second)
 			continue
 		}
 		var poll map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&poll)
-		resp.Body.Close()
+		json.NewDecoder(r.Body).Decode(&poll)
+		r.Body.Close()
 		status, _ := poll["status"].(string)
-		t.Logf("Instance status: %s", status)
 		if status == "running" {
-			break
+			return instResp.ID, instResp.Name, nil
 		}
 		if status == "error" {
-			t.Fatalf("Instance entered error status: %v", poll["status_message"])
+			return 0, "", fmt.Errorf("instance entered error status: %v", poll["status_message"])
 		}
 		time.Sleep(2 * time.Second)
 	}
+	return 0, "", fmt.Errorf("instance did not reach 'running' within 120s")
+}
 
+// withRunningInstance returns the shared running instance, creating it on first use.
+// All endpoint tests reuse the same container; do not perform destructive operations
+// (deletion, restart) on it.
+func withRunningInstance(t *testing.T, fn func(instID uint, instName string)) {
+	t.Helper()
+	instID, instName, err := getSharedEndpointInstance()
+	if err != nil {
+		t.Fatalf("shared endpoint instance: %v", err)
+	}
+	t.Logf("Using shared endpoint instance id=%d name=%s", instID, instName)
 	fn(instID, instName)
 }
 
@@ -149,6 +148,7 @@ func waitForSSHConnected(t *testing.T, instID uint, timeout time.Duration) {
 // ─── SSH Status ───────────────────────────────────────────────────────────────
 
 func TestIntegration_SSHStatus(t *testing.T) {
+	t.Parallel()
 	withRunningInstance(t, func(instID uint, _ string) {
 		waitForSSHConnected(t, instID, 90*time.Second)
 
@@ -242,6 +242,7 @@ func TestIntegration_SSHStatus(t *testing.T) {
 // ─── Terminal WebSocket ───────────────────────────────────────────────────────
 
 func TestIntegration_Terminal(t *testing.T) {
+	t.Parallel()
 	withRunningInstance(t, func(instID uint, _ string) {
 		waitForSSHConnected(t, instID, 90*time.Second)
 
@@ -388,6 +389,7 @@ func TestIntegration_Terminal(t *testing.T) {
 // ─── Logs Streaming ───────────────────────────────────────────────────────────
 
 func TestIntegration_LogsStreaming(t *testing.T) {
+	t.Parallel()
 	withRunningInstance(t, func(instID uint, _ string) {
 		waitForSSHConnected(t, instID, 90*time.Second)
 
@@ -455,6 +457,7 @@ func TestIntegration_LLMGateway(t *testing.T) {
 	if sessionGatewayPort != 40001 {
 		t.Skipf("gateway port is %d, not 40001; LLMProxy tunnel disabled (port in use at startup)", sessionGatewayPort)
 	}
+	t.Parallel()
 
 	withRunningInstance(t, func(instID uint, instName string) {
 		waitForSSHConnected(t, instID, 90*time.Second)
