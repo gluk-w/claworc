@@ -22,7 +22,11 @@ RUN CGO_ENABLED=1 go build -ldflags "-X main.BuildDate=$(date -u +%Y-%m-%dT%H:%M
 
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates sqlite-libs
+ARG USE_CHINA_MIRRORS=false
+RUN if [ "$USE_CHINA_MIRRORS" = "true" ]; then \
+      sed -i "s|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g" /etc/apk/repositories; \
+    fi && \
+    apk add --no-cache ca-certificates sqlite-libs
 
 WORKDIR /app
 
