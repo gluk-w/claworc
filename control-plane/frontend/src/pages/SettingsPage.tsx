@@ -3,9 +3,12 @@ import { AlertTriangle, Eye, EyeOff, Key, Pencil, Plus, RefreshCw } from "lucide
 import ProviderIcon from "@/components/ProviderIcon";
 import ProviderModal from "@/components/ProviderModal";
 import EnvVarsEditor from "@/components/EnvVarsEditor";
+import SimpleKVEditor from "@/components/SimpleKVEditor";
+import TolerationsEditor from "@/components/TolerationsEditor";
 import StickyActionBar from "@/components/StickyActionBar";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
+import { useHealth } from "@/hooks/useHealth";
 import { useProviders } from "@/hooks/useProviders";
 import { fetchSSHFingerprint, rotateSSHKey } from "@/api/ssh";
 import { syncAllProviders } from "@/api/llm";
@@ -19,6 +22,8 @@ export default function SettingsPage() {
   const { data: settings, isLoading } = useSettings();
   const updateMutation = useUpdateSettings();
   const { data: providers = [] } = useProviders();
+  const { data: health } = useHealth();
+  const isKubernetes = health?.orchestrator_backend === "kubernetes";
 
   // Provider modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -57,6 +62,10 @@ export default function SettingsPage() {
   const [braveValue, setBraveValue] = useState("");
   const [showBrave, setShowBrave] = useState(false);
   const [resetKey, setResetKey] = useState(0);
+
+  const [editingGlobalAffinity, setEditingGlobalAffinity] = useState(false);
+  const [pendingGlobalAffinity, setPendingGlobalAffinity] = useState("");
+  const [globalAffinityError, setGlobalAffinityError] = useState<string | null>(null);
 
   if (isLoading || !settings) {
     return <div className="text-center py-12 text-gray-500">Loading...</div>;
@@ -105,6 +114,37 @@ export default function SettingsPage() {
     if (Object.keys(delta.set).length > 0) payload.env_vars_set = delta.set;
     if (delta.unset.length > 0) payload.env_vars_unset = delta.unset;
     await updateMutation.mutateAsync(payload);
+  };
+
+  const handleSaveGlobalAnnotations = async (next: Record<string, string>) => {
+    await updateMutation.mutateAsync({ default_pod_annotations: next });
+  };
+
+  const handleSaveGlobalNodeSelector = async (next: Record<string, string>) => {
+    await updateMutation.mutateAsync({ default_node_selector: next });
+  };
+
+  const handleSaveGlobalTolerations = async (next: import("@/types/instance").Toleration[]) => {
+    await updateMutation.mutateAsync({ default_tolerations: next });
+  };
+
+  const handleSaveGlobalAffinity = async () => {
+    const trimmed = pendingGlobalAffinity.trim();
+    if (trimmed !== "") {
+      try {
+        JSON.parse(trimmed);
+      } catch {
+        setGlobalAffinityError("Invalid JSON — check syntax and try again.");
+        return;
+      }
+    }
+    try {
+      await updateMutation.mutateAsync({ default_affinity: trimmed });
+      setEditingGlobalAffinity(false);
+      setGlobalAffinityError(null);
+    } catch (err) {
+      setGlobalAffinityError(err instanceof Error ? err.message : "Failed to save.");
+    }
   };
 
   const resourceFields: { key: string; label: string }[] = [
@@ -372,6 +412,119 @@ export default function SettingsPage() {
           isSaving={updateMutation.isPending}
           emptyMessage="No global environment variables set."
         />
+
+        {/* Pod Placement — Kubernetes only */}
+        {isKubernetes && <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+          <div>
+            <h3 className="text-sm font-medium text-gray-900 mb-0.5">Pod Placement</h3>
+            <p className="text-xs text-gray-500">
+              Applied to every instance. Per-instance values merge on top (annotations &amp; node selector) or are appended (tolerations). Affinity falls back to global when no per-instance value is set.
+            </p>
+          </div>
+
+          <SimpleKVEditor
+            values={settings.default_pod_annotations ?? {}}
+            title="Pod Annotations"
+            description="Metadata annotations added to every pod template."
+            onSave={handleSaveGlobalAnnotations}
+            isSaving={updateMutation.isPending}
+            emptyMessage="No global pod annotations configured."
+            keyPlaceholder="karpenter.sh/do-not-disrupt"
+            valuePlaceholder="true"
+          />
+
+          <SimpleKVEditor
+            values={settings.default_node_selector ?? {}}
+            title="Node Selector"
+            description="Schedule pods only on nodes matching all these labels."
+            onSave={handleSaveGlobalNodeSelector}
+            isSaving={updateMutation.isPending}
+            emptyMessage="No global node selector configured."
+            keyPlaceholder="topology.kubernetes.io/zone"
+            valuePlaceholder="us-east-1a"
+          />
+
+          <TolerationsEditor
+            values={settings.default_tolerations ?? []}
+            onSave={handleSaveGlobalTolerations}
+            isSaving={updateMutation.isPending}
+          />
+
+          {/* Global Affinity */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium text-gray-700">Affinity (JSON)</span>
+              {!editingGlobalAffinity && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingGlobalAffinity(settings.default_affinity ?? "");
+                    setGlobalAffinityError(null);
+                    setEditingGlobalAffinity(true);
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mb-2">
+              Raw K8s affinity spec. Used when an instance has no per-instance affinity set.
+            </p>
+            {!editingGlobalAffinity ? (
+              settings.default_affinity ? (
+                <pre className="text-xs font-mono text-gray-700 bg-gray-50 rounded p-3 overflow-x-auto whitespace-pre-wrap break-all">
+                  {(() => {
+                    try {
+                      return JSON.stringify(JSON.parse(settings.default_affinity), null, 2);
+                    } catch {
+                      return settings.default_affinity;
+                    }
+                  })()}
+                </pre>
+              ) : (
+                <p className="text-sm text-gray-400 italic">No global affinity configured.</p>
+              )
+            ) : (
+              <div>
+                <textarea
+                  value={pendingGlobalAffinity}
+                  onChange={(e) => {
+                    setPendingGlobalAffinity(e.target.value);
+                    setGlobalAffinityError(null);
+                  }}
+                  rows={8}
+                  placeholder={'{\n  "nodeAffinity": {\n    ...\n  }\n}'}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                />
+                {globalAffinityError && (
+                  <p className="text-xs text-red-600 mt-1">{globalAffinityError}</p>
+                )}
+                <div className="flex justify-end gap-3 mt-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingGlobalAffinity(false);
+                      setGlobalAffinityError(null);
+                    }}
+                    disabled={updateMutation.isPending}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveGlobalAffinity}
+                    disabled={updateMutation.isPending}
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {updateMutation.isPending ? "Saving..." : "Save"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>}
 
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-2">

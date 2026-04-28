@@ -531,6 +531,11 @@ func (d *DockerOrchestrator) GetSSHAddress(ctx context.Context, instanceID uint)
 	return "", 0, fmt.Errorf("cannot determine SSH address for instance %d", instanceID)
 }
 
+func (d *DockerOrchestrator) UpdatePlacementConfig(_ context.Context, name string, _ UpdatePlacementParams) error {
+	log.Printf("UpdatePlacementConfig: Docker orchestrator does not support pod placement for %s; ignoring", name)
+	return nil
+}
+
 func (d *DockerOrchestrator) UpdateResources(ctx context.Context, name string, params UpdateResourcesParams) error {
 	updateCfg := container.UpdateConfig{
 		Resources: container.Resources{

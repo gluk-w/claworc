@@ -56,6 +56,10 @@ type Instance struct {
 	Timezone         string `gorm:"default:''" json:"timezone"`
 	UserAgent        string `gorm:"default:''" json:"user_agent"`
 	EnvVars          string `gorm:"type:text;default:'{}'" json:"-"` // JSON map KEY -> fernet-encrypted value
+	PodAnnotations   string `gorm:"type:text;default:'{}'" json:"pod_annotations"` // JSON map[string]string
+	NodeSelector     string `gorm:"type:text;default:'{}'" json:"node_selector"`   // JSON map[string]string
+	Tolerations      string `gorm:"type:text;default:'[]'" json:"tolerations"`     // JSON []Toleration
+	Affinity         string `gorm:"type:text;default:''"   json:"affinity"`        // JSON corev1.Affinity or ""
 	SortOrder        int    `gorm:"not null;default:0" json:"sort_order"`
 	// On-demand browser-pod fields. Only consulted when ContainerImage does
 	// not match IsLegacyEmbedded(). All four are optional and fall back to

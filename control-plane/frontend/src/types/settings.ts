@@ -4,6 +4,8 @@ export interface RestartingInstance {
   display_name: string;
 }
 
+import type { Toleration } from "./instance";
+
 export interface Settings {
   brave_api_key: string;
   default_models: string[];
@@ -25,6 +27,14 @@ export interface Settings {
   analytics_consent: "unset" | "opt_in" | "opt_out";
   /** Random 32-char hex ID reported alongside anonymous events. Read-only. */
   installation_id: string;
+  /** Global pod annotations applied to every instance. Per-instance values merge on top. */
+  default_pod_annotations: Record<string, string>;
+  /** Global node selector applied to every instance. Per-instance values merge on top. */
+  default_node_selector: Record<string, string>;
+  /** Global tolerations prepended to per-instance tolerations. */
+  default_tolerations: Toleration[];
+  /** Global affinity JSON, used when an instance has no per-instance affinity. */
+  default_affinity: string;
   /**
    * Only populated on the PUT response when env vars changed: the set of
    * running instances the backend kicked a restart on to apply the change.
@@ -50,6 +60,10 @@ export interface SettingsUpdatePayload {
   env_vars_set?: Record<string, string>;
   /** Env var names to remove. */
   env_vars_unset?: string[];
+  default_pod_annotations?: Record<string, string>;
+  default_node_selector?: Record<string, string>;
+  default_tolerations?: Toleration[];
+  default_affinity?: string;
 }
 
 // Keep backward compat alias
