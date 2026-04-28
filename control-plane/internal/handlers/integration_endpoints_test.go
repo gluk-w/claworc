@@ -202,14 +202,14 @@ func TestIntegration_SSHStatus(t *testing.T) {
 			t.Logf("metrics.connected_at = %q, uptime = %q ✓", body.Metrics.ConnectedAt, body.Metrics.Uptime)
 		}
 
-		// Expect VNC and Gateway reverse tunnels to be present and active
+		// Expect CDP and Gateway reverse tunnels to be present and active
 		if len(body.Tunnels) == 0 {
-			t.Error("tunnels is empty, expected at least VNC and Gateway tunnels")
+			t.Error("tunnels is empty, expected at least CDP and Gateway tunnels")
 		} else {
 			for _, tun := range body.Tunnels {
 				t.Logf("tunnel: label=%q status=%q", tun.Label, tun.Status)
 			}
-			for _, wantLabel := range []string{"VNC", "Gateway"} {
+			for _, wantLabel := range []string{"CDP", "Gateway"} {
 				found := false
 				for _, tun := range body.Tunnels {
 					if tun.Label == wantLabel {

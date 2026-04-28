@@ -203,8 +203,9 @@ func TestSecurity_TCPForwardingEnabled(t *testing.T) {
 }
 
 // TestSecurity_PermitListenRestrictedToLoopback verifies that the PermitListen
-// directive restricts the LLM proxy listener to loopback only, exactly matching
-// the address the Go SSH client requests (127.0.0.1:40001).
+// directive restricts the SSH listeners to loopback addresses only. The agent
+// permits two listen addresses: 127.0.0.1:9222 (CDP for on-demand browser
+// provider) and 127.0.0.1:40001 (LLM proxy). Both must be loopback-restricted.
 func TestSecurity_PermitListenRestrictedToLoopback(t *testing.T) {
 	config := loadSSHDConfig(t)
 
@@ -212,8 +213,25 @@ func TestSecurity_PermitListenRestrictedToLoopback(t *testing.T) {
 	if !ok {
 		t.Fatal("SECURITY: PermitListen directive not found")
 	}
-	if val != "127.0.0.1:40001" {
-		t.Errorf("SECURITY: PermitListen = %q, want '127.0.0.1:40001'", val)
+	// Each token must be loopback-bound.
+	for _, tok := range strings.Fields(val) {
+		if !strings.HasPrefix(tok, "127.0.0.1:") {
+			t.Errorf("SECURITY: PermitListen token %q is not loopback-restricted (full value: %q)", tok, val)
+		}
+	}
+	// Ensure the two required listeners are present.
+	required := []string{"127.0.0.1:9222", "127.0.0.1:40001"}
+	for _, want := range required {
+		found := false
+		for _, tok := range strings.Fields(val) {
+			if tok == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("SECURITY: PermitListen missing required entry %q (full value: %q)", want, val)
+		}
 	}
 }
 
