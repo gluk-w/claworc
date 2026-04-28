@@ -191,11 +191,12 @@ export default function ChatPanel({
 
   return (
     <div className="flex flex-col absolute inset-0">
-      {/* Header bar — matches LogViewer */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-gray-800 border-b border-gray-700">
+      {/* Header bar — fixed h-9 + h-6 buttons to match the VNC panel toolbar
+          and stay stable as buttons swap in/out. */}
+      <div className="flex items-center gap-2 px-3 h-9 bg-gray-800 border-b border-gray-700">
         <button
           onClick={onNewChat}
-          className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded"
+          className="flex items-center gap-1 h-6 px-1.5 text-xs text-gray-400 hover:text-white rounded"
           title="New chat"
         >
           <Plus size={14} /> New chat
@@ -203,7 +204,7 @@ export default function ChatPanel({
         {onViewModeChange && (
           <button
             onClick={() => onViewModeChange(viewMode === "chat-browser" ? "chat-only" : "chat-browser")}
-            className={`flex items-center gap-1 px-1.5 py-1 text-xs rounded ${viewMode === "chat-browser" ? "text-blue-400" : "text-gray-400 hover:text-white"}`}
+            className={`flex items-center gap-1 h-6 px-1.5 text-xs rounded ${viewMode === "chat-browser" ? "text-blue-400" : "text-gray-400 hover:text-white"}`}
             title="Show/Hide browser"
           >
             {viewMode === "chat-browser" ? <ToggleRight size={14} /> : <ToggleLeft size={14} />} Browser
@@ -212,7 +213,7 @@ export default function ChatPanel({
         {(connectionState === "disconnected" || connectionState === "error") && (
           <button
             onClick={onReconnect}
-            className="p-1 text-gray-400 hover:text-white rounded"
+            className="flex items-center gap-1 h-6 px-1.5 text-xs text-gray-400 hover:text-white rounded"
             title="Reconnect"
           >
             <RefreshCw size={14} />

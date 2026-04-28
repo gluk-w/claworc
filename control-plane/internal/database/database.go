@@ -46,7 +46,7 @@ func Init() error {
 		return fmt.Errorf("set busy timeout: %w", err)
 	}
 
-	if err := DB.AutoMigrate(&Instance{}, &Setting{}, &User{}, &UserInstance{}, &WebAuthnCredential{}, &LLMProvider{}, &LLMGatewayKey{}, &Skill{}, &Backup{}, &BackupSchedule{}, &SharedFolder{}, &KanbanBoard{}, &KanbanTask{}, &KanbanComment{}, &KanbanArtifact{}, &InstanceSoul{}); err != nil {
+	if err := DB.AutoMigrate(&Instance{}, &Setting{}, &User{}, &UserInstance{}, &WebAuthnCredential{}, &LLMProvider{}, &LLMGatewayKey{}, &Skill{}, &Backup{}, &BackupSchedule{}, &SharedFolder{}, &KanbanBoard{}, &KanbanTask{}, &KanbanComment{}, &KanbanArtifact{}, &InstanceSoul{}, &BrowserSession{}); err != nil {
 		return fmt.Errorf("auto-migrate: %w", err)
 	}
 
@@ -118,6 +118,15 @@ func seedDefaults() error {
 		"default_timezone":             "America/New_York",
 		"default_user_agent":           "",
 		"default_env_vars":             "{}",
+		// On-demand browser pod defaults. New instances created from now on use
+		// the slim agent image; the browser variant is launched lazily as a
+		// separate pod/container by the configured provider.
+		"default_agent_image":           "glukw/claworc-agent:latest",
+		"default_browser_image":         "glukw/claworc-browser-chromium:latest",
+		"default_browser_provider":      "auto",
+		"default_browser_idle_minutes":  "15",
+		"default_browser_ready_seconds": "60",
+		"default_browser_storage":       "10Gi",
 	}
 
 	for key, value := range defaults {
@@ -412,4 +421,62 @@ func ListDueSchedules() ([]BackupSchedule, error) {
 		return nil, err
 	}
 	return schedules, nil
+}
+
+// BrowserSession helpers
+
+// GetBrowserSession returns the browser session row for the given instance,
+// or nil with err == gorm.ErrRecordNotFound if none exists.
+func GetBrowserSession(instanceID uint) (*BrowserSession, error) {
+	var s BrowserSession
+	if err := DB.Where("instance_id = ?", instanceID).First(&s).Error; err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// UpsertBrowserSession creates the row if missing, otherwise updates the
+// provided fields. Caller is expected to set Status, Provider, Image, etc.
+func UpsertBrowserSession(s *BrowserSession) error {
+	return DB.Save(s).Error
+}
+
+// UpdateBrowserSessionStatus is a focused helper for the spawn/reaper paths.
+func UpdateBrowserSessionStatus(instanceID uint, status string, errMsg string) error {
+	updates := map[string]interface{}{
+		"status":    status,
+		"error_msg": errMsg,
+	}
+	if status == "running" {
+		updates["started_at"] = time.Now().UTC()
+		updates["stopped_at"] = nil
+	}
+	if status == "stopped" {
+		now := time.Now().UTC()
+		updates["stopped_at"] = &now
+	}
+	return DB.Model(&BrowserSession{}).Where("instance_id = ?", instanceID).Updates(updates).Error
+}
+
+// TouchBrowserSession bumps last_used_at to now. Used by the activity flusher
+// to mark sessions still active so the idle reaper does not reap them.
+func TouchBrowserSession(instanceID uint) error {
+	return DB.Model(&BrowserSession{}).Where("instance_id = ?", instanceID).
+		Update("last_used_at", time.Now().UTC()).Error
+}
+
+// ListIdleBrowserSessions returns all running browser sessions whose
+// last_used_at is older than the given cutoff. Used by the reaper.
+func ListIdleBrowserSessions(cutoff time.Time) ([]BrowserSession, error) {
+	var rows []BrowserSession
+	if err := DB.Where("status = ? AND last_used_at < ?", "running", cutoff).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// DeleteBrowserSession removes the session row. Called when an instance is
+// fully deleted; idle reaping keeps the row but flips status to "stopped".
+func DeleteBrowserSession(instanceID uint) error {
+	return DB.Where("instance_id = ?", instanceID).Delete(&BrowserSession{}).Error
 }

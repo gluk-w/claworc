@@ -1,13 +1,14 @@
-import { Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import type { Skill, ClawhubResult } from "@/types/skills";
 
 interface LibraryCardProps {
   skill: Skill;
   onDeploy: (slug: string, displayName: string) => void;
+  onEdit: (slug: string) => void;
   onDelete: (slug: string) => void;
 }
 
-export function LibrarySkillCard({ skill, onDeploy, onDelete }: LibraryCardProps) {
+export function LibrarySkillCard({ skill, onDeploy, onEdit, onDelete }: LibraryCardProps) {
   return (
     <div
       className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col gap-2 hover:shadow-sm hover:border-blue-300 hover:bg-blue-50 transition-all cursor-pointer"
@@ -23,8 +24,16 @@ export function LibrarySkillCard({ skill, onDeploy, onDelete }: LibraryCardProps
             {new Date(skill.created_at).toLocaleDateString()}
           </span>
           <button
+            onClick={(e) => { e.stopPropagation(); onEdit(skill.slug); }}
+            className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+            title="Edit"
+          >
+            <Pencil size={14} />
+          </button>
+          <button
             onClick={(e) => { e.stopPropagation(); onDelete(skill.slug); }}
             className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+            title="Delete"
           >
             <Trash2 size={14} />
           </button>

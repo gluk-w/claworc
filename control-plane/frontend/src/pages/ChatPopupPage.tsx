@@ -4,6 +4,7 @@ import ChatPanel from "@/components/ChatPanel";
 import VncPanel from "@/components/VncPanel";
 import { useChat } from "@/hooks/useChat";
 import { useDesktop } from "@/hooks/useDesktop";
+import { useChatViewMode } from "@/hooks/useChatViewMode";
 import { useInstance } from "@/hooks/useInstances";
 import type { ChatMessage } from "@/types/chat";
 
@@ -38,7 +39,7 @@ function useHistoryFromOpener(instanceId: number): ChatMessage[] | undefined {
 /** Inner component — only mounted once initial messages are resolved */
 function ChatPopupInner({ instanceId, initialMessages }: { instanceId: number; initialMessages: ChatMessage[] }) {
   const { data: instance, isLoading } = useInstance(instanceId);
-  const [chatViewMode, setChatViewMode] = useState<"chat-browser" | "chat-only">("chat-browser");
+  const [chatViewMode, setChatViewMode] = useChatViewMode(instanceId, instance?.browser_active);
   const chatHook = useChat(instanceId, instance?.status === "running", initialMessages);
   const desktopHook = useDesktop(instanceId, chatViewMode === "chat-browser" && instance?.status === "running");
 

@@ -12,7 +12,7 @@ modifying or creating UI must follow these conventions exactly. The Settings pag
 2. [Sections (Cards)](#2-sections-cards)
 3. [Form Elements](#3-form-elements)
 4. [Buttons](#4-buttons)
-5. [Save / Cancel Bar](#5-save--cancel-bar)
+5. [Sticky Action Bar](#5-sticky-action-bar)
 6. [Modals](#6-modals)
 7. [Banners and Notices](#7-banners-and-notices)
 8. [Typography](#8-typography)
@@ -289,15 +289,60 @@ for `text-sm` buttons. Icons are positioned with `inline-flex items-center gap-1
 
 ---
 
-## 5. Save / Cancel Bar
+## 5. Sticky Action Bar
+
+Long forms (Settings, Create Instance, anything with multiple cards stacked under `space-y-8`)
+must surface their primary action through `StickyActionBar`
+(`src/components/StickyActionBar.tsx`) instead of an inline button row at the bottom of the page.
+
+### Behavior
+
+- Fixed to the bottom of the viewport, spanning from the right edge of the sidebar (`left-16`)
+  to the right edge of the screen.
+- **Hidden by default** — only slides up when the page reports it has something to commit (i.e.,
+  dirty AND the action would be enabled). A pristine page shows nothing; there is no permanent footer.
+- Slides in/out via a 200 ms transform transition. When hidden, `pointer-events` is disabled so
+  invisible buttons can't be clicked.
+- Sits at `z-30` — below modals (`z-50`) and toasts, above page content.
+- The inner button row is constrained to `max-w-2xl mx-auto` so its buttons line up with the
+  form they belong to.
+
+### When to use
+
+- Pages with multiple stacked sections / cards where the user would otherwise have to scroll
+  to reach Save / Create.
+- Any new "Create / Edit Entity" form.
+- Settings-style pages with a single global Save action.
+
+### When NOT to use
+
+- **Modals** — they already have a fixed footer pattern (see Section 6); use that.
+- **Inline-edit fields** (e.g., `EditInput` rows in `InstanceDetailPage`) — they save on Enter
+  and don't need a bar.
+- **Sections that save independently** of the page-level action (e.g., `EnvVarsEditor` in
+  `SettingsPage` keeps its own in-card Save because env-var saves trigger instance restarts).
+- **Pages that immediately commit on toggle** (e.g., a single checkbox like Anonymous Analytics).
+
+### API
+
+```tsx
+type Props = {
+  visible: boolean;            // controls slide-in/out
+  children: React.ReactNode;   // typically Cancel + primary buttons
+};
+```
+
+The component does NOT manage button styling, dirty state, or labels — the parent owns all of
+that. Buttons use the same classes as elsewhere (see Section 4): `px-4 py-2 text-sm font-medium`,
+blue primary, white-bordered secondary. The component already wraps children in
+`flex justify-end gap-3`, so the parent supplies just the buttons.
 
 ### Page-level (single Save button)
 
-When a settings page has a single global save action, place a right-aligned save button **below**
-all sections, outside any card:
-
 ```tsx
-<div className="flex justify-end">
+const hasChanges = /* compare current state to initial values */;
+
+<StickyActionBar visible={hasChanges}>
   <button
     onClick={handleSave}
     disabled={updateMutation.isPending || !hasChanges}
@@ -305,39 +350,53 @@ all sections, outside any card:
   >
     {updateMutation.isPending ? "Saving..." : "Save Settings"}
   </button>
-</div>
+</StickyActionBar>
 ```
 
-- `justify-end` — Save sits on the right.
-- No Cancel button at the page level unless the page has a distinct "discard changes" concept.
-- Disable when there are no pending changes (`!hasChanges`).
+No Cancel button at the page level unless the page has a distinct "discard changes" concept;
+sidebar navigation is the implicit way out.
 
 ### Form-level (Cancel + Submit pair)
 
-For forms that create or edit an entity (new instance, new item):
+Place the bar inside the `<form>` so `type="submit"` continues to fire `handleSubmit`.
+`position: fixed` removes the bar from layout flow but does not break event bubbling.
 
 ```tsx
-<div className="flex justify-end gap-3">
-  <button
-    type="button"
-    onClick={onCancel}
-    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-  >
-    Cancel
-  </button>
-  <button
-    type="submit"
-    disabled={loading || !isValid}
-    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-  >
-    {loading ? "Creating..." : "Create"}
-  </button>
-</div>
+<form onSubmit={handleSubmit} className="space-y-8 pb-24">
+  {/* ...sections... */}
+
+  <StickyActionBar visible={isValid /* required-field check */}>
+    <button
+      type="button"
+      onClick={onCancel}
+      className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+    >
+      Cancel
+    </button>
+    <button
+      type="submit"
+      disabled={loading || !isValid}
+      className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      {loading ? "Creating..." : "Create"}
+    </button>
+  </StickyActionBar>
+</form>
 ```
 
-- **Cancel is on the left, primary action is on the right.**
-- Both buttons are `text-sm`, `px-4 py-2`.
-- Wrap in `flex justify-end gap-3`.
+Cancel on the left, primary action on the right.
+
+### Required parent adjustments
+
+- Add `pb-24` to the form / page's outer scroll container so the last section isn't clipped
+  behind the bar when it's visible.
+- For form-level usage, keep a back-link or breadcrumb at the top of the page so users can
+  leave a pristine form (the bar is hidden then, so there is no Cancel button reachable from it).
+
+### Reference implementations
+
+- `SettingsPage.tsx` — page-level pattern.
+- `InstanceForm.tsx` (used by `CreateInstancePage`) — form-level pattern.
 
 ---
 

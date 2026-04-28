@@ -1,0 +1,65 @@
+---
+title: "Anonymous analytics"
+description: "What Claworc collects when you opt in, what it never collects, and how to change your choice."
+---
+
+Claworc can send anonymous usage statistics to help us decide what to build
+next. It is **off by default**. You're asked once on first launch and can
+change your choice anytime in **Settings → Anonymous Analytics**.
+
+## What we collect
+
+When you opt in, Claworc sends a small event each time someone takes one of
+these actions in the dashboard:
+
+- Creating, updating, or deleting an instance
+- Uploading or removing a skill
+- Creating or removing a shared folder
+- Creating a backup or backup schedule
+- Adding or removing a user, changing a user's role or permissions, or changing a password
+- Adding or removing an LLM provider
+- Editing global or per-instance environment variables
+- Rotating the SSH key
+
+Each event includes:
+
+- A random 32-character **installation ID** (generated once, stored locally,
+  never tied to your account, your domain, or your IP)
+- The event name (for example, `instance_created`)
+- A handful of numeric or categorical attributes — for example, the number
+  of instances after the action, the CPU/memory limits chosen, or the
+  alias of the LLM provider you added
+- The Claworc version and a timestamp
+
+## What we never collect
+
+- API keys, gateway tokens, or any other secret
+- Environment variable **names** or **values** — only counts
+- Display names of instances, skills, or users
+- Prompts, conversation content, terminal output, or browser activity
+- File paths or folder contents
+- IP addresses or hostnames
+
+## Changing your choice
+
+Open **Settings** in the dashboard and scroll to **Anonymous Analytics**.
+
+- Toggle **Share anonymous usage statistics** on to opt in.
+- Toggle it off to opt out. Claworc records a single `opt_out` event so we
+  know you explicitly disabled it, then sends nothing further.
+
+The same section shows your installation ID — that's the only identifier
+attached to the events we receive.
+
+## Disabling at install time
+
+If you want analytics off before the first user logs in, set the consent
+state in the database directly:
+
+```sql
+INSERT INTO settings (key, value, updated_at)
+VALUES ('analytics_consent', 'opt_out', CURRENT_TIMESTAMP)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+```
+
+The first-launch consent prompt won't appear, and no events will be sent.

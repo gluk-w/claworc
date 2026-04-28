@@ -10,6 +10,7 @@ import TerminalPanel from "@/components/TerminalPanel";
 import VncPanel from "@/components/VncPanel";
 import ChatPanel from "@/components/ChatPanel";
 import FileBrowser from "@/components/FileBrowser";
+import { TabPlaceholder } from "@/components/TabPlaceholder";
 import EditInput from "@/components/EditInput";
 import { useInstanceBackups } from "@/hooks/useBackups";
 import SSHStatus from "@/components/SSHStatus";
@@ -37,14 +38,16 @@ import ProviderIcon from "@/components/ProviderIcon";
 import ProviderModelSelector from "@/components/ProviderModelSelector";
 import ProviderModal from "@/components/ProviderModal";
 import EnvVarsEditor from "@/components/EnvVarsEditor";
+import LegacyBrowserBanner from "@/components/LegacyBrowserBanner";
 import AppToast from "@/components/AppToast";
 import toast from "react-hot-toast";
-import { envVarRestartToast } from "@/utils/toast";
 import { useSSHStatus, useSSHEvents } from "@/hooks/useSSHStatus";
 import { useInstanceLogs } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useDesktop } from "@/hooks/useDesktop";
 import { useChat } from "@/hooks/useChat";
+import { useChatViewMode } from "@/hooks/useChatViewMode";
+import { stopBrowser } from "@/api/browser";
 import type { InstanceUpdatePayload } from "@/types/instance";
 import { buildSSHTooltip } from "@/utils/sshTooltip";
 
@@ -121,7 +124,7 @@ export default function InstanceDetailPage() {
   // Terminal/Chat are mounted once the user first visits the tab, then stay mounted
   const [terminalActivated, setTerminalActivated] = useState(getTabFromHash() === "terminal");
   const [chatActivated, setChatActivated] = useState(getTabFromHash() === "chat");
-  const [chatViewMode, setChatViewMode] = useState<"chat-browser" | "chat-only">("chat-browser");
+  const [chatViewMode, setChatViewMode] = useChatViewMode(instanceId, instance?.browser_active);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
   // SSH troubleshoot dialog
@@ -183,6 +186,24 @@ export default function InstanceDetailPage() {
   const termHook = useTerminal(instanceId, terminalActivated && instance?.status === "running");
   const desktopHook = useDesktop(instanceId, chatActivated && chatViewMode === "chat-browser" && instance?.status === "running");
   const chatHook = useChat(instanceId, chatActivated && instance?.status === "running");
+
+  // When the user hides the browser pane, also stop the on-demand browser pod
+  // so we don't burn resources on something nobody can see. Re-enabling the
+  // pane lets DesktopProxy/EnsureSession spin a fresh one back up automatically
+  // — no explicit start call needed here.
+  const lastViewModeRef = useRef(chatViewMode);
+  useEffect(() => {
+    if (!instance) return;
+    if (instance.is_legacy_embedded) return;
+    const prev = lastViewModeRef.current;
+    lastViewModeRef.current = chatViewMode;
+    if (prev === "chat-browser" && chatViewMode === "chat-only") {
+      stopBrowser(instanceId).catch(() => {
+        // Best-effort: a 404/stopped browser is fine; log nothing to avoid
+        // toast spam on a UI-only action.
+      });
+    }
+  }, [chatViewMode, instance, instanceId]);
 
   // Auto-send disabled — user sends first message manually
   // useEffect(() => { ... }, []);
@@ -331,10 +352,7 @@ export default function InstanceDetailPage() {
     const payload: InstanceUpdatePayload = {};
     if (Object.keys(delta.set).length > 0) payload.env_vars_set = delta.set;
     if (delta.unset.length > 0) payload.env_vars_unset = delta.unset;
-    const updated = await updateMutation.mutateAsync({ id: instanceId, payload });
-    if (updated?.restarting && instance) {
-      envVarRestartToast(instanceId, instance.display_name);
-    }
+    await updateMutation.mutateAsync({ id: instanceId, payload });
   };
 
   const handleUpdateImage = () => {
@@ -504,6 +522,9 @@ export default function InstanceDetailPage() {
 
   return (
     <div>
+      {instance.is_legacy_embedded && (
+        <LegacyBrowserBanner instanceId={instance.id} />
+      )}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-semibold text-gray-900">
@@ -977,7 +998,11 @@ export default function InstanceDetailPage() {
       {chatActivated && (
         <div
           ref={chatContainerRef}
-          className="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden h-[calc(100vh-142px)] min-h-[400px] flex flex-col"
+          className={
+            instance.status === "running"
+              ? "bg-gray-900 rounded-lg border border-gray-700 overflow-hidden h-[calc(100vh-142px)] min-h-[400px] flex flex-col"
+              : "h-[calc(100vh-142px)] min-h-[400px]"
+          }
           style={activeTab !== "chat" ? { display: "none" } : undefined}
         >
           {instance.status === "running" ? (
@@ -1047,16 +1072,18 @@ export default function InstanceDetailPage() {
               </div>
             </>
           ) : (
-            <div className="flex items-center justify-center h-full w-full text-gray-500 text-sm">
-              Instance must be running to use Chat.
-            </div>
+            <TabPlaceholder message="Instance must be running to use Chat." />
           )}
         </div>
       )}
 
       {terminalActivated && (
         <div
-          className="bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-142px)] min-h-[400px]"
+          className={
+            instance.status === "running"
+              ? "bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-142px)] min-h-[400px]"
+              : "h-[calc(100vh-142px)] min-h-[400px]"
+          }
           style={activeTab !== "terminal" ? { display: "none" } : undefined}
         >
           {instance.status === "running" ? (
@@ -1069,9 +1096,7 @@ export default function InstanceDetailPage() {
               visible={activeTab === "terminal"}
             />
           ) : (
-            <div className="flex items-center justify-center h-full text-gray-500 text-sm">
-              Instance must be running to use terminal.
-            </div>
+            <TabPlaceholder message="Instance must be running to use terminal." />
           )}
         </div>
       )}
@@ -1081,9 +1106,7 @@ export default function InstanceDetailPage() {
           {instance.status === "running" ? (
             <FileBrowser instanceId={instanceId} initialPath={getFilesPathFromHash()} onPathChange={handleFilesPathChange} />
           ) : (
-            <div className="flex items-center justify-center h-full text-gray-500 text-sm">
-              Instance must be running to browse files.
-            </div>
+            <TabPlaceholder message="Instance must be running to browse files." />
           )}
         </div>
       )}
@@ -1091,9 +1114,7 @@ export default function InstanceDetailPage() {
       {activeTab === "config" && (
         <div className="flex flex-col gap-4 h-[calc(100vh-142px)] min-h-[400px]">
           {instance.status !== "running" ? (
-            <div className="flex items-center justify-center flex-1 text-gray-500 text-sm bg-white rounded-lg border border-gray-200">
-              Instance must be running to edit config.
-            </div>
+            <TabPlaceholder message="Instance must be running to edit config." />
           ) : (
             <>
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden flex-1 min-h-0">
@@ -1132,14 +1153,24 @@ export default function InstanceDetailPage() {
       )}
 
       {activeTab === "logs" && (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-142px)] min-h-[400px]">
-          <LogViewer
-            logs={logsHook.logs}
-            isPaused={logsHook.isPaused}
-            isConnected={logsHook.isConnected}
-            onTogglePause={logsHook.togglePause}
-            onClear={logsHook.clearLogs}
-          />
+        <div
+          className={
+            instance.status === "running"
+              ? "bg-white rounded-lg border border-gray-200 overflow-hidden h-[calc(100vh-142px)] min-h-[400px]"
+              : "h-[calc(100vh-142px)] min-h-[400px]"
+          }
+        >
+          {instance.status === "running" ? (
+            <LogViewer
+              logs={logsHook.logs}
+              isPaused={logsHook.isPaused}
+              isConnected={logsHook.isConnected}
+              onTogglePause={logsHook.togglePause}
+              onClear={logsHook.clearLogs}
+            />
+          ) : (
+            <TabPlaceholder message="Instance must be running to view logs." />
+          )}
         </div>
       )}
       <ProviderModal

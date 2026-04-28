@@ -43,6 +43,14 @@ export interface Instance {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  /** True when the instance still uses the combined image (browser baked into agent). */
+  is_legacy_embedded: boolean;
+  /** On-demand browser pod settings (only meaningful when !is_legacy_embedded). */
+  browser_provider?: string;
+  browser_image?: string;
+  browser_idle_minutes?: number | null;
+  browser_storage?: string;
+  browser_active?: boolean;
 }
 
 // Keep as distinct type for future detail-only fields
@@ -65,6 +73,10 @@ export interface InstanceCreatePayload {
   user_agent?: string | null;
   enabled_providers?: number[];
   env_vars_set?: Record<string, string>;
+  browser_provider?: string;
+  browser_image?: string;
+  browser_idle_minutes?: number;
+  browser_storage?: string;
 }
 
 export interface InstanceUpdatePayload {
@@ -83,6 +95,10 @@ export interface InstanceUpdatePayload {
   vnc_resolution?: string;
   env_vars_set?: Record<string, string>;
   env_vars_unset?: string[];
+  browser_provider?: string;
+  browser_image?: string;
+  browser_idle_minutes?: number | null;
+  browser_storage?: string;
 }
 
 export interface InstanceStats {

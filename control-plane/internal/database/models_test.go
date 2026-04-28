@@ -94,6 +94,29 @@ func TestParseProviderModels_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestIsLegacyEmbedded(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		image string
+		want  bool
+	}{
+		{"glukw/openclaw-vnc-chromium:latest", true},
+		{"glukw/openclaw-vnc-chrome:v1.2.3", true},
+		{"glukw/openclaw-vnc-brave:latest", true},
+		{"docker.io/glukw/openclaw-vnc-chromium:latest", true},
+		{"glukw/claworc-agent:latest", false},
+		{"glukw/claworc-browser-chromium:latest", false},
+		{"", true},
+		{"random/image:tag", false},
+	}
+	for _, tc := range cases {
+		got := IsLegacyEmbedded(tc.image)
+		if got != tc.want {
+			t.Errorf("IsLegacyEmbedded(%q) = %v, want %v", tc.image, got, tc.want)
+		}
+	}
+}
+
 func TestParseEncodeSharedFolderInstanceIDs_Roundtrip(t *testing.T) {
 	t.Parallel()
 	original := []uint{1, 5, 100}

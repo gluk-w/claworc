@@ -1,0 +1,34 @@
+{{/*
+NetworkPolicy for on-demand browser pods. Browser pods are dynamically
+created by the control plane (per-instance, on first CDP/VNC use) with
+labels claworc-role=browser. They expose CDP on 9222 and noVNC on 3000;
+both must be reachable from the control plane and from nothing else —
+sibling agent pods, sibling browser pods, and any other workload in the
+namespace are denied.
+
+The base bot-instance-isolation policy in networkpolicy.yaml allows port 22
+ingress to all managed-by=claworc pods. Browser pods don't run sshd, so
+that rule has no effect for them; this policy is the one that actually
+opens 9222 and 3000.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bot-browser-isolation
+  namespace: {{ .Values.config.k8sNamespace }}
+spec:
+  podSelector:
+    matchLabels:
+      claworc-role: browser
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "claworc.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 9222
+        - protocol: TCP
+          port: 3000

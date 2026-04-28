@@ -3,7 +3,7 @@ import { Eye, EyeOff } from "lucide-react";
 import ProviderIcon from "@/components/ProviderIcon";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCreateProvider, useUpdateProvider, useDeleteProvider, useCatalogProviders, useCatalogProviderDetail } from "@/hooks/useProviders";
-import { testProviderKey } from "@/api/llm";
+import { syncAllProviders, testProviderKey } from "@/api/llm";
 import { successToast, errorToast } from "@/utils/toast";
 import toast from "react-hot-toast";
 import AppToast from "@/components/AppToast";
@@ -46,7 +46,8 @@ export default function ProviderModal({
   const createProviderMutation = useCreateProvider();
   const updateProviderMutation = useUpdateProvider();
   const deleteProviderMutation = useDeleteProvider();
-  const { data: catalogProviders = [], isLoading: catalogLoading } = useCatalogProviders();
+  const { data: catalogProviders = [], isLoading: catalogLoading, isFetching: catalogFetching } = useCatalogProviders();
+  const [syncingCatalog, setSyncingCatalog] = useState(false);
 
   const [mCatalogKey, setMCatalogKey] = useState("");
   const [mProvider, setMProvider] = useState("");
@@ -117,6 +118,32 @@ export default function ProviderModal({
     const baseUrl = catalogDetail.models.find((m) => m.base_url)?.base_url;
     if (baseUrl) setMBaseURL(baseUrl);
   }, [catalogDetail, mCatalogKey]);
+
+  // When opening the create modal, if the catalog dropdown comes back empty,
+  // trigger a sync to refresh it from claworc.com so the user has options.
+  useEffect(() => {
+    if (!open || mode !== "create") return;
+    if (catalogLoading || catalogFetching || syncingCatalog) return;
+    if (catalogProviders.length > 0) return;
+    let cancelled = false;
+    setSyncingCatalog(true);
+    syncAllProviders()
+      .then(() => {
+        if (cancelled) return;
+        queryClient.invalidateQueries({ queryKey: ["catalog-providers"] });
+        queryClient.invalidateQueries({ queryKey: ["llm-providers"] });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        errorToast("Failed to load provider catalog", err);
+      })
+      .finally(() => {
+        if (!cancelled) setSyncingCatalog(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, mode, catalogLoading, catalogFetching, catalogProviders.length, syncingCatalog, queryClient]);
 
   const effectiveKey =
     mode === "edit"
@@ -315,11 +342,11 @@ export default function ProviderModal({
               <select
                 value={mCatalogKey}
                 onChange={(e) => handleCatalogKeyChange(e.target.value)}
-                disabled={catalogLoading}
+                disabled={catalogLoading || syncingCatalog}
                 className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:opacity-50"
               >
                 <option value="" disabled hidden>
-                  {catalogLoading ? "Loading providers..." : ""}
+                  {catalogLoading || syncingCatalog ? "Loading providers..." : ""}
                 </option>
                 {catalogProviders.map((cat) => (
                   <option key={cat.name} value={cat.name}>

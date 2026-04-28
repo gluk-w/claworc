@@ -23,6 +23,9 @@ const (
 	TaskInstanceClone       TaskType = "instance.clone"
 	TaskBackupCreate        TaskType = "backup.create"
 	TaskSkillDeploy         TaskType = "skill.deploy"
+	// Browser-pod lifecycle tasks (on-demand browser feature).
+	TaskBrowserSpawn   TaskType = "browser.spawn"
+	TaskBrowserMigrate TaskType = "browser.migrate"
 )
 
 // State is the lifecycle position of a task.
@@ -55,25 +58,33 @@ type RunFunc func(ctx context.Context, h *Handle) error
 // Task is the public, JSON-serialisable view of a task. Internal fields
 // (cancel, onCancel, etc.) live on taskInternal.
 type Task struct {
-	ID           string     `json:"id"`
-	Type         TaskType   `json:"type"`
-	InstanceID   uint       `json:"instance_id,omitempty"` // metadata only — used for filtering and toast subject
-	UserID       uint       `json:"user_id,omitempty"`     // visibility anchor; 0 = system task (admin-only)
-	ResourceID   string     `json:"resource_id,omitempty"` // type-specific (backup id, etc.)
-	ResourceName string     `json:"resource_name,omitempty"`
-	State        State      `json:"state"`
-	Message      string     `json:"message,omitempty"`
-	StartedAt    time.Time  `json:"started_at"`
-	EndedAt      *time.Time `json:"ended_at,omitempty"`
+	ID           string   `json:"id"`
+	Type         TaskType `json:"type"`
+	InstanceID   uint     `json:"instance_id,omitempty"` // metadata only — used for filtering
+	UserID       uint     `json:"user_id,omitempty"`     // visibility anchor; 0 = system task (admin-only)
+	ResourceID   string   `json:"resource_id,omitempty"` // type-specific (backup id, etc.)
+	ResourceName string   `json:"resource_name,omitempty"`
+	Title        string   `json:"title"` // toast title, e.g. "Migrating instance foo"; the toast icon conveys success/error/canceled
+	State        State    `json:"state"`
+	Message      string   `json:"message,omitempty"`
+	// Cancellable tells clients whether they can show a Cancel UI for this
+	// task. Mirrors `OnCancel != nil` at Start time.
+	Cancellable bool       `json:"cancellable,omitempty"`
+	StartedAt   time.Time  `json:"started_at"`
+	EndedAt     *time.Time `json:"ended_at,omitempty"`
 }
 
-// StartOpts is the input to Manager.Start.
+// StartOpts is the input to Manager.Start. Title is required — the task
+// manager itself never derives toast text from Type. The same Title is shown
+// across running/succeeded/failed/canceled states; the toast icon (loading,
+// check, X, info) is what differentiates state on the UI.
 type StartOpts struct {
 	Type         TaskType
 	InstanceID   uint
 	UserID       uint // initiating user; 0 = system task (admin-only visibility)
 	ResourceID   string
 	ResourceName string
+	Title        string
 	OnCancel     OnCancel
 	Run          RunFunc
 }
@@ -204,6 +215,9 @@ func (m *Manager) Start(opts StartOpts) string {
 	if opts.Run == nil {
 		panic("taskmanager.Start: Run is required")
 	}
+	if opts.Title == "" {
+		panic("taskmanager.Start: Title is required")
+	}
 	id := uuid.NewString()
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -215,7 +229,9 @@ func (m *Manager) Start(opts StartOpts) string {
 			UserID:       opts.UserID,
 			ResourceID:   opts.ResourceID,
 			ResourceName: opts.ResourceName,
+			Title:        opts.Title,
 			State:        StateRunning,
+			Cancellable:  opts.OnCancel != nil,
 			StartedAt:    time.Now().UTC(),
 		},
 		cancel:   cancel,

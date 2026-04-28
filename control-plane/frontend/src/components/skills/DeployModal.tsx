@@ -2,11 +2,12 @@ import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, Loader2, XCircle } from "lucide-react";
 import { useInstances } from "@/hooks/useInstances";
+import StatusBadge from "@/components/StatusBadge";
 import { useSettings } from "@/hooks/useSettings";
 import { deploySkill } from "@/api/skills";
 import { updateInstance } from "@/api/instances";
 import type { DeployResult } from "@/types/skills";
-import { successToast, errorToast } from "@/utils/toast";
+import { errorToast } from "@/utils/toast";
 
 interface Props {
   slug: string;
@@ -124,32 +125,26 @@ export default function DeployModal({
 
     try {
       const res = await deploySkill(slug, ids, source, version);
+      // Async path: backend returns task_ids and per-instance results stream
+      // back via the TaskManager SSE/toasts. Close the modal silently —
+      // TaskToasts surfaces start/progress/end for each instance.
+      if (res.results === undefined) {
+        onClose();
+        return;
+      }
       const next: Record<number, InstanceState> = {};
-      let allOk = true;
       res.results.forEach((r: DeployResult) => {
         next[r.instance_id] = {
           status: r.status,
           error: r.error,
           missingEnvVars: r.missing_env_vars,
         };
-        if (r.status !== "ok") allOk = false;
       });
       setInstanceStates(next);
       setIsDone(true);
-      if (allOk) {
-        const anyMissing = res.results.some(
-          (r) => (r.missing_env_vars?.length ?? 0) > 0,
-        );
-        successToast(
-          `Deployed ${displayName} to ${ids.length} instance${ids.length !== 1 ? "s" : ""}`,
-          anyMissing
-            ? "Some instances are missing required env vars — see details."
-            : undefined,
-        );
-        if (!anyMissing) setTimeout(onClose, 1500);
-      }
     } catch (err) {
       errorToast("Deploy failed", err);
+      setInstanceStates({});
       setIsDeploying(false);
     }
   };
@@ -218,9 +213,12 @@ export default function DeployModal({
                     className="h-4 w-4 mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
                   <div className="flex-1 min-w-0">
-                    <span className="text-sm font-medium text-gray-800">
-                      {inst.display_name}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-800 truncate">
+                        {inst.display_name}
+                      </span>
+                      <StatusBadge status={inst.status} />
+                    </div>
                     {checked && !isDone && preMissing && preMissing.length > 0 && (
                       <div
                         className="mt-1.5 flex flex-col gap-1"

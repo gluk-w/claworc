@@ -26,19 +26,21 @@ type mockOrch struct {
 func (m *mockOrch) Initialize(_ context.Context) error                                  { return nil }
 func (m *mockOrch) IsAvailable(_ context.Context) bool                                  { return true }
 func (m *mockOrch) BackendName() string                                                 { return "mock" }
-func (m *mockOrch) CreateInstance(_ context.Context, _ orchestrator.CreateParams) error  { return nil }
+func (m *mockOrch) CreateInstance(_ context.Context, _ orchestrator.CreateParams) error { return nil }
 func (m *mockOrch) DeleteInstance(_ context.Context, _ string) error                    { return nil }
 func (m *mockOrch) StartInstance(_ context.Context, _ string) error                     { return nil }
 func (m *mockOrch) StopInstance(_ context.Context, _ string) error                      { return nil }
 func (m *mockOrch) RestartInstance(_ context.Context, _ string, _ orchestrator.CreateParams) error {
 	return nil
 }
-func (m *mockOrch) GetInstanceStatus(_ context.Context, _ string) (string, error)       { return "running", nil }
-func (m *mockOrch) GetInstanceImageInfo(_ context.Context, _ string) (string, error)    { return "", nil }
-func (m *mockOrch) UpdateInstanceConfig(_ context.Context, _, _ string) error           { return nil }
-func (m *mockOrch) CloneVolumes(_ context.Context, _, _ string) error                   { return nil }
-func (m *mockOrch) ConfigureSSHAccess(_ context.Context, _ uint, _ string) error        { return nil }
-func (m *mockOrch) GetSSHAddress(_ context.Context, _ uint) (string, int, error)        { return "", 0, nil }
+func (m *mockOrch) GetInstanceStatus(_ context.Context, _ string) (string, error) {
+	return "running", nil
+}
+func (m *mockOrch) GetInstanceImageInfo(_ context.Context, _ string) (string, error) { return "", nil }
+func (m *mockOrch) UpdateInstanceConfig(_ context.Context, _, _ string) error        { return nil }
+func (m *mockOrch) CloneVolumes(_ context.Context, _, _ string) error                { return nil }
+func (m *mockOrch) ConfigureSSHAccess(_ context.Context, _ uint, _ string) error     { return nil }
+func (m *mockOrch) GetSSHAddress(_ context.Context, _ uint) (string, int, error)     { return "", 0, nil }
 func (m *mockOrch) UpdateResources(_ context.Context, _ string, _ orchestrator.UpdateResourcesParams) error {
 	return nil
 }
@@ -58,6 +60,18 @@ func (m *mockOrch) StreamExecInInstance(ctx context.Context, name string, cmd []
 	return "", 0, nil
 }
 func (m *mockOrch) DeleteSharedVolume(_ context.Context, _ uint) error { return nil }
+func (m *mockOrch) EnsureBrowserPod(_ context.Context, _ uint, _ orchestrator.BrowserPodParams) (orchestrator.BrowserPodEndpoint, error) {
+	return orchestrator.BrowserPodEndpoint{}, nil
+}
+func (m *mockOrch) StopBrowserPod(_ context.Context, _ uint) error   { return nil }
+func (m *mockOrch) DeleteBrowserPod(_ context.Context, _ uint) error { return nil }
+func (m *mockOrch) GetBrowserPodStatus(_ context.Context, _ uint) (string, error) {
+	return "stopped", nil
+}
+func (m *mockOrch) GetBrowserPodEndpoint(_ context.Context, _ uint) (orchestrator.BrowserPodEndpoint, error) {
+	return orchestrator.BrowserPodEndpoint{}, nil
+}
+func (m *mockOrch) CloneBrowserVolume(_ context.Context, _, _ string) error { return nil }
 
 // --- test helpers ---
 

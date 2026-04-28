@@ -5,6 +5,7 @@ import (
 	"embed"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -14,8 +15,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/auth"
 	"github.com/gluk-w/claworc/control-plane/internal/backup"
+	"github.com/gluk-w/claworc/control-plane/internal/browserprov"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
@@ -59,6 +62,13 @@ func main() {
 
 	if err := database.InitLogsDB(config.Cfg.DataPath); err != nil {
 		log.Fatalf("Logs DB init: %v", err)
+	}
+
+	// Bootstrap the analytics installation ID so the very first telemetry
+	// event has a stable identity. Errors here are non-fatal — analytics is
+	// best-effort and never blocks the control plane from coming up.
+	if _, err := analytics.GetOrCreateInstallationID(); err != nil {
+		log.Printf("analytics installation id: %v", err)
 	}
 
 	log.Printf("Config: AuthDisabled=%v, RPID=%s, RPOrigins=%v", config.Cfg.AuthDisabled, config.Cfg.RPID, config.Cfg.RPOrigins)
@@ -174,6 +184,31 @@ func main() {
 		return sshproxy.NewSSHInstance(client), nil
 	}
 	orchestrator.SetInstanceFactory(instanceFactory)
+
+	// On-demand browser bridge. Wired before the tunnel reconciler so the CDP
+	// dial provider returns a usable closure for non-legacy instances during
+	// the very first reconcile pass.
+	if orch := orchestrator.Get(); orch != nil {
+		provider := browserprov.NewLocalProvider(orch)
+		bridge := browserprov.New(provider, taskMgr)
+		bridge.Start(ctx)
+		handlers.BrowserBridgeRef = bridge
+		handlers.BrowserStopper = browserprov.StopperAdapter{Provider: provider}
+		handlers.BrowserMigrator = browserprov.NewMigrator(taskMgr, orch, bridge)
+
+		tunnelMgr.SetCDPDialProvider(func(dctx context.Context, instanceID uint) (sshproxy.DialFunc, bool) {
+			var inst database.Instance
+			if err := database.DB.First(&inst, instanceID).Error; err != nil {
+				return nil, false
+			}
+			if database.IsLegacyEmbedded(inst.ContainerImage) {
+				return nil, false
+			}
+			return func(callCtx context.Context) (io.ReadWriteCloser, error) {
+				return bridge.DialCDP(callCtx, instanceID)
+			}, true
+		})
+	}
 
 	// Start background tunnel manager to maintain SSH tunnels for running instances
 	if orch := orchestrator.Get(); orch != nil {
@@ -307,6 +342,13 @@ func main() {
 			// Desktop proxy (noVNC/websockify)
 			r.HandleFunc("/instances/{id}/desktop/*", handlers.DesktopProxy)
 
+			// On-demand browser pod controls (status / start / stop / migrate).
+			r.Get("/instances/{id}/browser/status", handlers.BrowserStatus)
+			r.Post("/instances/{id}/browser/start", handlers.BrowserStart)
+			r.Post("/instances/{id}/browser/stop", handlers.BrowserStop)
+			r.Post("/instances/{id}/browser/migrate", handlers.BrowserMigrate)
+			r.Patch("/instances/{id}/browser-active", handlers.SetBrowserActive)
+
 			// Kanban
 			r.Get("/kanban/boards", handlers.ListKanbanBoards)
 			r.Post("/kanban/boards", handlers.CreateKanbanBoard)
@@ -389,6 +431,9 @@ func main() {
 				r.Delete("/skills/{slug}", handlers.DeleteSkill)
 				r.Get("/skills/clawhub/search", handlers.ClawhubSearch)
 				r.Post("/skills/{slug}/deploy", handlers.DeploySkill)
+				r.Get("/skills/{slug}/files", handlers.ListSkillFiles)
+				r.Get("/skills/{slug}/files/*", handlers.GetSkillFile)
+				r.Put("/skills/{slug}/files/*", handlers.PutSkillFile)
 
 				// User management
 				r.Get("/users", handlers.ListUsers)

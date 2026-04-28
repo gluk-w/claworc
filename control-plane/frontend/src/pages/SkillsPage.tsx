@@ -4,6 +4,7 @@ import { useSkills, useDeleteSkill, useClawhubSearch } from "@/hooks/useSkills";
 import { LibrarySkillCard, DiscoverSkillCard } from "@/components/skills/SkillCard";
 import DeployModal from "@/components/skills/DeployModal";
 import UploadSkillModal from "@/components/skills/UploadSkillModal";
+import SkillEditorModal from "@/components/skills/SkillEditorModal";
 
 type Tab = "library" | "discover";
 
@@ -20,6 +21,7 @@ export default function SkillsPage() {
   const [tab, setTab] = useState<Tab>("library");
   const [showUpload, setShowUpload] = useState(false);
   const [deployTarget, setDeployTarget] = useState<DeployTarget | null>(null);
+  const [editSlug, setEditSlug] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
@@ -67,6 +69,10 @@ export default function SkillsPage() {
       version,
       requiredEnvVars: [],
     });
+  };
+
+  const handleEdit = (slug: string) => {
+    setEditSlug(slug);
   };
 
   const handleDelete = (slug: string) => {
@@ -123,6 +129,7 @@ export default function SkillsPage() {
                   key={skill.id}
                   skill={skill}
                   onDeploy={handleDeployLibrary}
+                  onEdit={handleEdit}
                   onDelete={handleDelete}
                 />
               ))}
@@ -188,6 +195,16 @@ export default function SkillsPage() {
           onUploaded={() => setShowUpload(false)}
         />
       )}
+      {editSlug && (() => {
+        const skill = skills?.find((s) => s.slug === editSlug);
+        if (!skill) return null;
+        return (
+          <SkillEditorModal
+            skill={skill}
+            onClose={() => setEditSlug(null)}
+          />
+        );
+      })()}
       {deployTarget && (
         <DeployModal
           slug={deployTarget.slug}

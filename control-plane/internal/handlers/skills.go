@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
@@ -358,6 +359,12 @@ func UploadSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var totalSkills int64
+	database.DB.Model(&database.Skill{}).Count(&totalSkills)
+	analytics.Track(r.Context(), analytics.EventSkillUploaded, map[string]any{
+		"total_skills": totalSkills,
+	})
+
 	writeJSON(w, http.StatusCreated, skillToResponse(skill))
 }
 
@@ -380,6 +387,221 @@ func detectZipPrefix(files []*zip.File) string {
 		return prefix
 	}
 	return ""
+}
+
+// ---------------------------------------------------------------------------
+// Skill file editor (list / get / put)
+// ---------------------------------------------------------------------------
+
+type skillFileEntry struct {
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	Binary bool   `json:"binary"`
+}
+
+type skillFileContent struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+	Binary  bool   `json:"binary"`
+}
+
+type skillFilePutRequest struct {
+	Content string `json:"content"`
+}
+
+// isBinaryContent returns true if the first 8KB of data contains a NUL byte.
+func isBinaryContent(data []byte) bool {
+	limit := len(data)
+	if limit > 8192 {
+		limit = 8192
+	}
+	for i := 0; i < limit; i++ {
+		if data[i] == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveSkillFilePath validates the user-supplied relative path and returns
+// the absolute on-disk path. It rejects empty paths, "..", and any path that
+// would escape the skill directory.
+func resolveSkillFilePath(skillSlug, rel string) (string, string, error) {
+	if rel == "" {
+		return "", "", fmt.Errorf("path required")
+	}
+	if strings.Contains(rel, "..") {
+		return "", "", fmt.Errorf("invalid path")
+	}
+	cleanRel := filepath.ToSlash(filepath.Clean(rel))
+	if strings.HasPrefix(cleanRel, "/") || strings.HasPrefix(cleanRel, "..") {
+		return "", "", fmt.Errorf("invalid path")
+	}
+	root := filepath.Join(config.Cfg.DataPath, "skills", skillSlug)
+	abs := filepath.Join(root, filepath.FromSlash(cleanRel))
+	relCheck, err := filepath.Rel(root, abs)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid path")
+	}
+	if strings.HasPrefix(relCheck, "..") || relCheck == ".." {
+		return "", "", fmt.Errorf("invalid path")
+	}
+	return abs, cleanRel, nil
+}
+
+// lookupSkill loads the skill record and returns 404 if not found.
+func lookupSkill(w http.ResponseWriter, slug string) (*database.Skill, bool) {
+	var skill database.Skill
+	if err := database.DB.Where("slug = ?", slug).First(&skill).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Skill not found")
+		return nil, false
+	}
+	return &skill, true
+}
+
+// ListSkillFiles returns the list of files inside a skill's on-disk directory.
+func ListSkillFiles(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	skill, ok := lookupSkill(w, slug)
+	if !ok {
+		return
+	}
+
+	root := filepath.Join(config.Cfg.DataPath, "skills", skill.Slug)
+	var entries []skillFileEntry
+	err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		// Sniff first 8KB for binary detection.
+		f, err := os.Open(p)
+		if err != nil {
+			return err
+		}
+		buf := make([]byte, 8192)
+		n, _ := f.Read(buf)
+		f.Close()
+		entries = append(entries, skillFileEntry{
+			Path:   filepath.ToSlash(rel),
+			Size:   info.Size(),
+			Binary: isBinaryContent(buf[:n]),
+		})
+		return nil
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to list skill files")
+		return
+	}
+	if entries == nil {
+		entries = []skillFileEntry{}
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+// GetSkillFile returns the content of a single file inside a skill directory.
+func GetSkillFile(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	skill, ok := lookupSkill(w, slug)
+	if !ok {
+		return
+	}
+
+	abs, relPath, err := resolveSkillFilePath(skill.Slug, chi.URLParam(r, "*"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "File not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "Failed to read file")
+		return
+	}
+
+	resp := skillFileContent{Path: relPath, Binary: isBinaryContent(data)}
+	if !resp.Binary {
+		resp.Content = string(data)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// PutSkillFile writes new content to a file inside a skill directory. If the
+// file is SKILL.md the frontmatter is re-parsed and the DB record updated.
+func PutSkillFile(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	skill, ok := lookupSkill(w, slug)
+	if !ok {
+		return
+	}
+
+	abs, relPath, err := resolveSkillFilePath(skill.Slug, chi.URLParam(r, "*"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Refuse to overwrite an existing binary file via the text editor.
+	if existing, err := os.ReadFile(abs); err == nil && isBinaryContent(existing) {
+		writeError(w, http.StatusBadRequest, "Binary files cannot be edited as text")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+	var req skillFilePutRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	newContent := []byte(req.Content)
+
+	// SKILL.md must remain valid — re-parse before writing.
+	var newFrontmatter *skillFrontmatter
+	if relPath == "SKILL.md" {
+		fm, err := parseSkillFrontmatter(newContent)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "Invalid SKILL.md: "+err.Error())
+			return
+		}
+		newFrontmatter = fm
+	}
+
+	// Atomic write: tmp file + rename.
+	if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to create directory")
+		return
+	}
+	tmp := abs + ".tmp"
+	if err := os.WriteFile(tmp, newContent, 0644); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to write file")
+		return
+	}
+	if err := os.Rename(tmp, abs); err != nil {
+		os.Remove(tmp)
+		writeError(w, http.StatusInternalServerError, "Failed to commit file")
+		return
+	}
+
+	if newFrontmatter != nil {
+		skill.Name = newFrontmatter.Name
+		skill.Summary = newFrontmatter.Description
+		skill.RequiredEnvVars = encodeRequiredEnvVars(newFrontmatter.RequiredEnvVars)
+		if err := database.DB.Save(skill).Error; err != nil {
+			log.Printf("update skill record after SKILL.md edit: %v", err)
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +628,12 @@ func DeleteSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Failed to delete skill")
 		return
 	}
+
+	var remaining int64
+	database.DB.Model(&database.Skill{}).Count(&remaining)
+	analytics.Track(r.Context(), analytics.EventSkillDeleted, map[string]any{
+		"remaining_skills": remaining,
+	})
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -491,12 +719,14 @@ func DeploySkill(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, instID := range req.InstanceIDs {
 		instanceID := instID
-		var displayName string
+		var displayName, instanceLabel string
 		var inst database.Instance
 		if err := database.DB.Select("display_name").First(&inst, instanceID).Error; err == nil {
 			displayName = fmt.Sprintf("%s — %s", inst.DisplayName, slug)
+			instanceLabel = inst.DisplayName
 		} else {
 			displayName = fmt.Sprintf("instance %d — %s", instanceID, slug)
+			instanceLabel = fmt.Sprintf("instance %d", instanceID)
 		}
 		taskID := TaskMgr.Start(taskmanager.StartOpts{
 			Type:         taskmanager.TaskSkillDeploy,
@@ -504,6 +734,7 @@ func DeploySkill(w http.ResponseWriter, r *http.Request) {
 			UserID:       callerID(r),
 			ResourceID:   slug,
 			ResourceName: displayName,
+			Title:        fmt.Sprintf("Deploying %s to %s", slug, instanceLabel),
 			Run: func(ctx context.Context, h *taskmanager.Handle) error {
 				h.UpdateMessage("uploading skill files")
 				result := deployToInstance(instanceID, slug, fileMap)

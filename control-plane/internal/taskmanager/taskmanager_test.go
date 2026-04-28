@@ -39,7 +39,8 @@ func TestStartAndSucceed(t *testing.T) {
 
 	var ran atomic.Bool
 	id := m.Start(StartOpts{
-		Type: TaskInstanceCreate,
+		Type:  TaskInstanceCreate,
+		Title: "t",
 		Run: func(ctx context.Context, h *Handle) error {
 			ran.Store(true)
 			h.UpdateMessage("step 1")
@@ -81,7 +82,8 @@ func TestStartAndFail(t *testing.T) {
 	m := newTestManager(t)
 	boom := errors.New("boom")
 	id := m.Start(StartOpts{
-		Type: TaskBackupCreate,
+		Type:  TaskBackupCreate,
+		Title: "t",
 		Run: func(ctx context.Context, h *Handle) error {
 			return boom
 		},
@@ -102,7 +104,8 @@ func TestCancelRunsOnCancelAndMarksCanceled(t *testing.T) {
 	var onCancelCount atomic.Int32
 	started := make(chan struct{})
 	id := m.Start(StartOpts{
-		Type: TaskBackupCreate,
+		Type:  TaskBackupCreate,
+		Title: "t",
 		OnCancel: func(ctx context.Context) {
 			onCancelCount.Add(1)
 		},
@@ -137,7 +140,8 @@ func TestCancelNonCancellable(t *testing.T) {
 	started := make(chan struct{})
 	done := make(chan struct{})
 	id := m.Start(StartOpts{
-		Type: TaskInstanceCreate, // OnCancel nil
+		Type:  TaskInstanceCreate, // OnCancel nil
+		Title: "t",
 		Run: func(ctx context.Context, h *Handle) error {
 			close(started)
 			<-done
@@ -152,6 +156,42 @@ func TestCancelNonCancellable(t *testing.T) {
 	close(done)
 }
 
+// Cancellable mirrors `OnCancel != nil` and is exposed to clients (the
+// frontend uses it to decide whether to render a Cancel button on the toast).
+// We assert both the with-OnCancel and without-OnCancel cases here so a
+// future refactor can't silently break the contract.
+func TestCancellableFlag(t *testing.T) {
+	m := newTestManager(t)
+	done := make(chan struct{})
+	cancellableID := m.Start(StartOpts{
+		Type:     TaskInstanceClone,
+		Title:    "with-cancel",
+		OnCancel: func(ctx context.Context) {},
+		Run: func(ctx context.Context, h *Handle) error {
+			<-done
+			return nil
+		},
+	})
+	plainID := m.Start(StartOpts{
+		Type:  TaskInstanceCreate,
+		Title: "no-cancel",
+		Run: func(ctx context.Context, h *Handle) error {
+			<-done
+			return nil
+		},
+	})
+	t.Cleanup(func() { close(done) })
+
+	cancellable, ok := m.Get(cancellableID)
+	if !ok || !cancellable.Cancellable {
+		t.Fatalf("with-OnCancel task should be cancellable: %+v (ok=%v)", cancellable, ok)
+	}
+	plain, ok := m.Get(plainID)
+	if !ok || plain.Cancellable {
+		t.Fatalf("nil-OnCancel task must not be cancellable: %+v (ok=%v)", plain, ok)
+	}
+}
+
 func TestCancelNotFound(t *testing.T) {
 	m := newTestManager(t)
 	if err := m.Cancel("nope"); !errors.Is(err, ErrNotFound) {
@@ -161,10 +201,10 @@ func TestCancelNotFound(t *testing.T) {
 
 func TestListFilters(t *testing.T) {
 	m := newTestManager(t)
-	idA := m.Start(StartOpts{Type: TaskBackupCreate, InstanceID: 1, ResourceID: "b-1",
+	idA := m.Start(StartOpts{Type: TaskBackupCreate, InstanceID: 1, ResourceID: "b-1", Title: "t",
 		Run:      func(ctx context.Context, h *Handle) error { <-ctx.Done(); return nil },
 		OnCancel: func(ctx context.Context) {}})
-	idB := m.Start(StartOpts{Type: TaskInstanceCreate, InstanceID: 2,
+	idB := m.Start(StartOpts{Type: TaskInstanceCreate, InstanceID: 2, Title: "t",
 		Run: func(ctx context.Context, h *Handle) error { return nil }})
 
 	waitFor(t, func() bool {
@@ -194,11 +234,11 @@ func TestListFilters(t *testing.T) {
 
 func TestUserIDFilterAndStamping(t *testing.T) {
 	m := newTestManager(t)
-	idAlice := m.Start(StartOpts{Type: TaskInstanceCreate, InstanceID: 1, UserID: 7,
+	idAlice := m.Start(StartOpts{Type: TaskInstanceCreate, InstanceID: 1, UserID: 7, Title: "t",
 		Run: func(ctx context.Context, h *Handle) error { return nil }})
-	idBob := m.Start(StartOpts{Type: TaskInstanceCreate, InstanceID: 1, UserID: 9,
+	idBob := m.Start(StartOpts{Type: TaskInstanceCreate, InstanceID: 1, UserID: 9, Title: "t",
 		Run: func(ctx context.Context, h *Handle) error { return nil }})
-	idSystem := m.Start(StartOpts{Type: TaskBackupCreate, InstanceID: 1,
+	idSystem := m.Start(StartOpts{Type: TaskBackupCreate, InstanceID: 1, Title: "t",
 		Run: func(ctx context.Context, h *Handle) error { return nil }})
 
 	for _, id := range []string{idAlice, idBob, idSystem} {
@@ -235,7 +275,7 @@ func TestSubscriberBackpressureDoesNotBlock(t *testing.T) {
 		// Fire many tasks; if broadcast blocked on the saturated subscriber,
 		// these would stall.
 		for i := 0; i < 200; i++ {
-			m.Start(StartOpts{Type: TaskInstanceRestart,
+			m.Start(StartOpts{Type: TaskInstanceRestart, Title: "t",
 				Run: func(ctx context.Context, h *Handle) error { return nil }})
 		}
 	}()
@@ -248,7 +288,7 @@ func TestSubscriberBackpressureDoesNotBlock(t *testing.T) {
 
 func TestTerminalTaskGC(t *testing.T) {
 	m := newTestManager(t) // RetainTerminal=50ms, GCInterval=20ms
-	id := m.Start(StartOpts{Type: TaskSkillDeploy,
+	id := m.Start(StartOpts{Type: TaskSkillDeploy, Title: "t",
 		Run: func(ctx context.Context, h *Handle) error { return nil }})
 	waitFor(t, func() bool {
 		t, _ := m.Get(id)
@@ -266,6 +306,7 @@ func TestOnCancelDoesNotFireForSuccess(t *testing.T) {
 	var onCancel atomic.Int32
 	id := m.Start(StartOpts{
 		Type:     TaskBackupCreate,
+		Title:    "t",
 		OnCancel: func(ctx context.Context) { onCancel.Add(1) },
 		Run:      func(ctx context.Context, h *Handle) error { return nil },
 	})
@@ -282,7 +323,8 @@ func TestOnCancelDoesNotFireForSuccess(t *testing.T) {
 func TestRunPanicBecomesFailed(t *testing.T) {
 	m := newTestManager(t)
 	id := m.Start(StartOpts{
-		Type: TaskInstanceCreate,
+		Type:  TaskInstanceCreate,
+		Title: "t",
 		Run: func(ctx context.Context, h *Handle) error {
 			panic("kaboom")
 		},
@@ -302,6 +344,7 @@ func TestConcurrentStartCancel(t *testing.T) {
 			defer wg.Done()
 			id := m.Start(StartOpts{
 				Type:     TaskBackupCreate,
+				Title:    "t",
 				OnCancel: func(ctx context.Context) {},
 				Run: func(ctx context.Context, h *Handle) error {
 					<-ctx.Done()

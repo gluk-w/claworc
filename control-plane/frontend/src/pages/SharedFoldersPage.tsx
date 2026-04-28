@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { FolderOpen, Pencil, Trash2, AlertTriangle } from "lucide-react";
+import { FolderOpen, Trash2, AlertTriangle } from "lucide-react";
 import MultiSelect from "@/components/MultiSelect";
 import {
   fetchSharedFolders,
@@ -94,10 +94,15 @@ export default function SharedFoldersPage() {
                   className="border-b border-gray-100 last:border-0"
                 >
                   <td className="px-4 py-3 text-gray-900 font-medium">
-                    <span className="inline-flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setEditFolder(f)}
+                      className="inline-flex items-center gap-1.5 text-left text-blue-600 hover:text-blue-700 hover:underline transition-colors"
+                      title="Edit"
+                    >
                       <FolderOpen size={14} className="text-gray-400" />
                       {f.name}
-                    </span>
+                    </button>
                   </td>
                   <td className="px-4 py-3 text-gray-500 font-mono text-xs">
                     {f.mount_path}
@@ -114,22 +119,13 @@ export default function SharedFoldersPage() {
                     {new Date(f.created_at).toLocaleDateString()}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <div className="inline-flex items-center gap-2">
-                      <button
-                        onClick={() => setEditFolder(f)}
-                        className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
-                        title="Edit"
-                      >
-                        <Pencil size={14} />
-                      </button>
-                      <button
-                        onClick={() => setDeleteTarget(f)}
-                        className="p-1 text-gray-400 hover:text-red-600 transition-colors"
-                        title="Delete"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => setDeleteTarget(f)}
+                      className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+                      title="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -255,7 +251,6 @@ function FolderModal({
     mutationFn: () =>
       updateSharedFolder(folder!.id, {
         name,
-        mount_path: mountPath,
         instance_ids: selectedInstances,
       }),
     onSuccess: () => {
@@ -273,8 +268,7 @@ function FolderModal({
   const origIds = folder?.instance_ids ?? [];
   const hasInstanceChanges =
     selectedInstances.length !== origIds.length ||
-    selectedInstances.some((id) => !origIds.includes(id)) ||
-    mountPath !== (folder?.mount_path ?? "");
+    selectedInstances.some((id) => !origIds.includes(id));
 
   const handleSubmit = () => {
     if (isEdit) {
@@ -293,15 +287,20 @@ function FolderModal({
     selectedInstances.includes(opt.value),
   );
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      onClose();
+    } else if (e.key === "Enter" && canSave && !isPending && !e.shiftKey) {
+      handleSubmit();
+    }
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
-      <div
-        className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4"
-        onKeyDown={(e) => {
-          if (e.key === "Escape") onClose();
-          if (e.key === "Enter" && canSave && !isPending) handleSubmit();
-        }}
-      >
+    <div
+      className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center"
+      onKeyDown={handleKeyDown}
+    >
+      <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
         <h2 className="text-base font-semibold text-gray-900 mb-4">
           {isEdit ? "Edit Shared Folder" : "New Shared Folder"}
         </h2>
@@ -327,10 +326,17 @@ function FolderModal({
               type="text"
               value={mountPath}
               onChange={(e) => setMountPath(e.target.value)}
-              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+              readOnly={!!folder}
+              className={`w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                folder ? "bg-gray-50 text-gray-500 cursor-not-allowed" : ""
+              }`}
               placeholder="/shared/data"
             />
-            {duplicateMountPath ? (
+            {folder ? (
+              <p className="text-xs text-gray-400 mt-1">
+                Mount path cannot be changed after creation.
+              </p>
+            ) : duplicateMountPath ? (
               <p className="text-xs text-red-600 mt-1">
                 Another shared folder already uses this mount path.
               </p>

@@ -5,6 +5,8 @@ interface MonacoConfigEditorProps {
   onChange: (value: string | undefined) => void;
   height?: string;
   readOnly?: boolean;
+  language?: string;
+  path?: string;
 }
 
 export default function MonacoConfigEditor({
@@ -12,11 +14,14 @@ export default function MonacoConfigEditor({
   onChange,
   height = "400px",
   readOnly = false,
+  language = "json",
+  path,
 }: MonacoConfigEditorProps) {
   return (
     <Editor
       height={height}
-      defaultLanguage="json"
+      language={language}
+      path={path}
       value={value}
       onChange={onChange}
       options={{

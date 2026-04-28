@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 
 // Keep in sync with ReservedEnvVarNames in control-plane/internal/handlers/envvars.go.
@@ -23,12 +23,24 @@ interface Props {
   title: string;
   /** Help text rendered below the title. */
   description: string;
-  /** Called when the admin saves. Resolves after the server round-trip. */
-  onSave: (delta: EnvVarsDelta) => Promise<void> | void;
+  /**
+   * Called when the admin saves. Required in managed mode (the default);
+   * unused in inline mode.
+   */
+  onSave?: (delta: EnvVarsDelta) => Promise<void> | void;
   /** Disables the Save button; label flips to "Saving…". */
   isSaving?: boolean;
   /** Shown when values is empty and we're in display mode. */
   emptyMessage?: string;
+  /**
+   * When true, render the edit grid permanently (no display/edit toggle, no
+   * Save/Cancel buttons) and report the current name→value map via onChange.
+   * Used by forms (e.g. instance creation) where the parent owns the submit
+   * action.
+   */
+  inline?: boolean;
+  /** Inline-mode change callback; fires on every keystroke after validation. */
+  onChange?: (vars: Record<string, string>) => void;
 }
 
 interface EditRow {
@@ -63,10 +75,35 @@ export default function EnvVarsEditor({
   onSave,
   isSaving,
   emptyMessage = "No environment variables configured.",
+  inline = false,
+  onChange,
 }: Props) {
-  const [mode, setMode] = useState<"display" | "editing">("display");
-  const [rows, setRows] = useState<EditRow[]>([]);
+  const [mode, setMode] = useState<"display" | "editing">(inline ? "editing" : "display");
+  const [rows, setRows] = useState<EditRow[]>(() =>
+    inline ? buildInitialRows(values) : [],
+  );
   const [error, setError] = useState<string | null>(null);
+
+  // In inline mode, report the current valid map upward whenever rows change.
+  // We keep the previous emit in a ref to avoid pushing identical updates that
+  // would re-trigger parent state churn.
+  const lastEmitRef = useRef<string>("");
+  useEffect(() => {
+    if (!inline || !onChange) return;
+    const map: Record<string, string> = {};
+    for (const r of rows) {
+      if (r.name === "" && r.value === "") continue;
+      if (!NAME_REGEX.test(r.name)) continue;
+      if (RESERVED.has(r.name)) continue;
+      if (map[r.name] !== undefined) continue; // duplicate; skip
+      map[r.name] = r.value;
+    }
+    const serialized = JSON.stringify(map);
+    if (serialized !== lastEmitRef.current) {
+      lastEmitRef.current = serialized;
+      onChange(map);
+    }
+  }, [rows, inline, onChange]);
 
   const beginEdit = () => {
     setRows(buildInitialRows(values));
@@ -163,6 +200,7 @@ export default function EnvVarsEditor({
   };
 
   const handleSave = async () => {
+    if (!onSave) return;
     const result = computeDelta();
     if ("errorMessage" in result) {
       setError(result.errorMessage);
@@ -194,7 +232,7 @@ export default function EnvVarsEditor({
     <div className="bg-white rounded-lg border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-sm font-medium text-gray-900">{title}</h3>
-        {mode === "display" && (
+        {!inline && mode === "display" && (
           <button
             type="button"
             onClick={beginEdit}
@@ -271,24 +309,26 @@ export default function EnvVarsEditor({
 
           {error && <p className="text-xs text-red-600 mt-3">{error}</p>}
 
-          <div className="flex justify-end gap-3 mt-4">
-            <button
-              type="button"
-              onClick={cancel}
-              disabled={isSaving}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={isSaving}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isSaving ? "Saving..." : "Save"}
-            </button>
-          </div>
+          {!inline && (
+            <div className="flex justify-end gap-3 mt-4">
+              <button
+                type="button"
+                onClick={cancel}
+                disabled={isSaving}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={isSaving}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSaving ? "Saving..." : "Save"}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

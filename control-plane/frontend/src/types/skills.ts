@@ -31,5 +31,8 @@ export interface DeployResult {
 }
 
 export interface DeployResponse {
-  results: DeployResult[];
+  /** Synchronous fallback (no TaskMgr wired). */
+  results?: DeployResult[];
+  /** Async path: one task ID per target instance. Per-instance results arrive via SSE/toasts. */
+  task_ids?: string[];
 }

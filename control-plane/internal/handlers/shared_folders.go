@@ -10,10 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/go-chi/chi/v5"
 )
 
 // reservedMountPrefixes are paths that must not be used as shared folder mount paths.
@@ -129,13 +130,20 @@ func CreateSharedFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var totalFolders int64
+	database.DB.Model(&database.SharedFolder{}).Count(&totalFolders)
+	analytics.Track(r.Context(), analytics.EventSharedFolderCreated, map[string]any{
+		"total_folders":      totalFolders,
+		"agents_shared_with": len(database.ParseSharedFolderInstanceIDs(sf.InstanceIDs)),
+	})
+
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"id":          sf.ID,
-		"name":        sf.Name,
-		"mount_path":  sf.MountPath,
-		"owner_id":    sf.OwnerID,
+		"id":           sf.ID,
+		"name":         sf.Name,
+		"mount_path":   sf.MountPath,
+		"owner_id":     sf.OwnerID,
 		"instance_ids": []uint{},
-		"created_at":  sf.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		"created_at":   sf.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	})
 }
 
@@ -164,12 +172,12 @@ func GetSharedFolder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"id":          sf.ID,
-		"name":        sf.Name,
-		"mount_path":  sf.MountPath,
-		"owner_id":    sf.OwnerID,
+		"id":           sf.ID,
+		"name":         sf.Name,
+		"mount_path":   sf.MountPath,
+		"owner_id":     sf.OwnerID,
 		"instance_ids": database.ParseSharedFolderInstanceIDs(sf.InstanceIDs),
-		"created_at":  sf.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		"created_at":   sf.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	})
 }
 
@@ -227,8 +235,9 @@ func UpdateSharedFolder(w http.ResponseWriter, r *http.Request) {
 		}
 		updates["mount_path"] = *body.MountPath
 	}
-	var newInstanceIDs []uint
-	mountChanged := false
+	oldInstanceIDs := database.ParseSharedFolderInstanceIDs(sf.InstanceIDs)
+	newInstanceIDs := oldInstanceIDs
+	membershipChanged := false
 	if body.InstanceIDs != nil {
 		// Validate user has access to all specified instances
 		for _, instID := range *body.InstanceIDs {
@@ -239,37 +248,95 @@ func UpdateSharedFolder(w http.ResponseWriter, r *http.Request) {
 		}
 		newInstanceIDs = *body.InstanceIDs
 		updates["instance_ids"] = database.EncodeSharedFolderInstanceIDs(newInstanceIDs)
-		mountChanged = true
+		membershipChanged = true
 	}
-	if body.MountPath != nil {
-		mountChanged = true
-	}
+	mountPathChanged := body.MountPath != nil && *body.MountPath != sf.MountPath
 
 	if len(updates) == 0 {
 		writeError(w, http.StatusBadRequest, "No fields to update")
 		return
 	}
 
-	oldInstanceIDs := database.ParseSharedFolderInstanceIDs(sf.InstanceIDs)
-
 	if err := database.UpdateSharedFolder(sf.ID, updates); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to update shared folder")
 		return
 	}
 
-	// Auto-restart affected instances so mount changes take effect immediately
-	if mountChanged {
-		affectedIDs := mergeUintSets(oldInstanceIDs, newInstanceIDs)
-		for _, instID := range affectedIDs {
-			var inst database.Instance
-			if err := database.DB.First(&inst, instID).Error; err != nil {
-				continue
-			}
-			restartInstanceAsync(inst, callerID(r))
+	for _, target := range computeFolderUpdateRestartTargets(oldInstanceIDs, newInstanceIDs, mountPathChanged, membershipChanged) {
+		var inst database.Instance
+		if err := database.DB.First(&inst, target.InstanceID).Error; err != nil {
+			continue
 		}
+		restartInstanceAsyncWithToast(inst, callerID(r), target.ToastTitle,
+			fmt.Sprintf("%s is being restarted", inst.DisplayName))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// folderRestartTarget describes one instance that must restart in response to
+// a shared-folder update, and the toast title that explains why.
+type folderRestartTarget struct {
+	InstanceID uint
+	ToastTitle string
+}
+
+// computeFolderUpdateRestartTargets returns the instances that must restart
+// when a shared folder is updated, with the toast title for each.
+//
+//   - mount-path change affects every instance currently mapped (old ∪ new).
+//   - membership-only change affects only added or removed instances
+//     (old △ new); instances kept in the set see no change.
+//
+// Toast title is "Adding shared folder" when the instance is in the new set,
+// "Deleting shared folder" when it's only in the old set.
+func computeFolderUpdateRestartTargets(oldIDs, newIDs []uint, mountPathChanged, membershipChanged bool) []folderRestartTarget {
+	if !mountPathChanged && !membershipChanged {
+		return nil
+	}
+	newSet := map[uint]bool{}
+	for _, id := range newIDs {
+		newSet[id] = true
+	}
+	var ids []uint
+	if mountPathChanged {
+		ids = mergeUintSets(oldIDs, newIDs)
+	} else {
+		ids = symmetricDiffUint(oldIDs, newIDs)
+	}
+	out := make([]folderRestartTarget, 0, len(ids))
+	for _, id := range ids {
+		title := "Adding shared folder"
+		if !newSet[id] {
+			title = "Deleting shared folder"
+		}
+		out = append(out, folderRestartTarget{InstanceID: id, ToastTitle: title})
+	}
+	return out
+}
+
+// symmetricDiffUint returns elements present in exactly one of a or b.
+func symmetricDiffUint(a, b []uint) []uint {
+	inA := map[uint]bool{}
+	for _, v := range a {
+		inA[v] = true
+	}
+	inB := map[uint]bool{}
+	for _, v := range b {
+		inB[v] = true
+	}
+	result := []uint{}
+	for v := range inA {
+		if !inB[v] {
+			result = append(result, v)
+		}
+	}
+	for v := range inB {
+		if !inA[v] {
+			result = append(result, v)
+		}
+	}
+	return result
 }
 
 // mergeUintSets returns the union of two uint slices with no duplicates.
@@ -319,6 +386,12 @@ func DeleteSharedFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var remaining int64
+	database.DB.Model(&database.SharedFolder{}).Count(&remaining)
+	analytics.Track(r.Context(), analytics.EventSharedFolderDeleted, map[string]any{
+		"remaining_folders": remaining,
+	})
+
 	// Auto-restart mapped instances and delete the backing volume
 	folderID := sf.ID
 	for _, instID := range mappedIDs {
@@ -326,7 +399,8 @@ func DeleteSharedFolder(w http.ResponseWriter, r *http.Request) {
 		if err := database.DB.First(&inst, instID).Error; err != nil {
 			continue
 		}
-		restartInstanceAsync(inst, callerID(r))
+		restartInstanceAsyncWithToast(inst, callerID(r), "Deleting shared folder",
+			fmt.Sprintf("%s is being restarted", inst.DisplayName))
 	}
 
 	// Delete the backing volume in the background (after instances have unmounted it)
@@ -344,4 +418,3 @@ func DeleteSharedFolder(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 }
-

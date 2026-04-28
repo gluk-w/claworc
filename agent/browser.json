@@ -1,7 +1,7 @@
 {
     "enabled": true,
-    "remoteCdpTimeoutMs": 1500,
-    "remoteCdpHandshakeTimeoutMs": 3000,
+    "remoteCdpTimeoutMs": 65000,
+    "remoteCdpHandshakeTimeoutMs": 65000,
     "defaultProfile": "remote",
     "color": "#FF4500",
     "headless": false,

@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
@@ -38,7 +41,7 @@ type catalogCacheEntry struct {
 var (
 	catalogCacheMu    sync.RWMutex
 	catalogCache      = map[string]*catalogCacheEntry{}
-	catalogHTTPClient = &http.Client{Timeout: 10 * time.Second}
+	catalogHTTPClient = newCatalogHTTPClient()
 
 	// providerProbeClient is used for user-provided URLs and includes SSRF
 	// protection that rejects connections to private/loopback addresses.
@@ -49,6 +52,25 @@ var (
 		},
 	}
 )
+
+// newCatalogHTTPClient builds the HTTP client used to fetch the provider
+// catalog. On darwin, Go 1.25's default TLS path uses the macOS Security
+// framework verifier (cgo), which intermittently fails with
+// "SecPolicyCreateSSL error: 0" on Sequoia. Setting RootCAs explicitly forces
+// crypto/tls to use Go's pure-Go verifier and sidesteps that bug while still
+// validating against the OS trust store.
+func newCatalogHTTPClient() *http.Client {
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if pool, err := x509.SystemCertPool(); err == nil && pool != nil {
+		tlsCfg.RootCAs = pool
+	}
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: tlsCfg,
+		},
+	}
+}
 
 // ssrfSafeDialContext resolves the target host and rejects connections to
 // private, loopback, and link-local IP addresses to prevent SSRF attacks.
@@ -409,6 +431,13 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var totalProviders int64
+	database.DB.Model(&database.LLMProvider{}).Count(&totalProviders)
+	analytics.Track(r.Context(), analytics.EventProviderAdded, map[string]any{
+		"provider_alias":  p.Key,
+		"total_providers": totalProviders,
+	})
+
 	// For instance-specific providers, ensure gateway keys and reconfigure
 	if p.InstanceID != nil {
 		var inst database.Instance
@@ -734,6 +763,12 @@ func DeleteProvider(w http.ResponseWriter, r *http.Request) {
 	// Cascade-delete gateway keys (API key is on the provider row itself)
 	database.DB.Where("provider_id = ?", id).Delete(&database.LLMGatewayKey{})
 	database.DB.Delete(&p)
+
+	var remaining int64
+	database.DB.Model(&database.LLMProvider{}).Count(&remaining)
+	analytics.Track(r.Context(), analytics.EventProviderDeleted, map[string]any{
+		"remaining_providers": remaining,
+	})
 
 	// Reconfigure owning instance if this was instance-specific
 	if ownerInstanceID != nil {
@@ -1083,7 +1118,7 @@ func TestProviderKey(w http.ResponseWriter, r *http.Request) {
 
 	at := llmgateway.GetAPIType(body.APIType)
 	probePath := strings.TrimPrefix(at.ProbeURL(body.BaseURL), strings.TrimRight(body.BaseURL, "/"))
-  
+
 	statusCode, respBody, err := probeProviderURL(r.Context(), body.BaseURL, probePath, body.APIType, body.APIKey)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "invalid URL or connection failed"})

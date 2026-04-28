@@ -2,8 +2,26 @@ package database
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
+
+// IsLegacyEmbedded reports whether the given container image refers to the
+// legacy combined agent+browser image. Legacy instances run Chromium and VNC
+// inside the same container as OpenClaw and use the agent's reverse VNC tunnel
+// for desktop streaming. Anything else (typically glukw/claworc-agent:latest)
+// is treated as the on-demand browser-pod layout.
+//
+// Empty string is treated as legacy: pre-upgrade instances often store ""
+// and rely on default_container_image. Treating "" as legacy preserves their
+// behavior across the upgrade; new instances created via the API are
+// populated with the explicit default_agent_image string at creation time.
+func IsLegacyEmbedded(containerImage string) bool {
+	if containerImage == "" {
+		return true
+	}
+	return strings.Contains(containerImage, "openclaw-vnc-")
+}
 
 type Skill struct {
 	ID              uint      `gorm:"primaryKey;autoIncrement" json:"id"`
@@ -16,31 +34,60 @@ type Skill struct {
 }
 
 type Instance struct {
-	ID               uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	Name             string    `gorm:"uniqueIndex;not null" json:"name"`
-	DisplayName      string    `gorm:"not null" json:"display_name"`
-	Status           string    `gorm:"not null;default:creating" json:"status"`
-	CPURequest       string    `gorm:"default:500m" json:"cpu_request"`
-	CPULimit         string    `gorm:"default:2000m" json:"cpu_limit"`
-	MemoryRequest    string    `gorm:"default:1Gi" json:"memory_request"`
-	MemoryLimit      string    `gorm:"default:4Gi" json:"memory_limit"`
-	StorageHomebrew  string    `gorm:"default:10Gi" json:"storage_homebrew"`
-	StorageHome      string    `gorm:"default:10Gi" json:"storage_home"`
-	BraveAPIKey      string    `json:"-"`
-	ContainerImage   string    `json:"container_image"`
-	VNCResolution    string    `json:"vnc_resolution"`
-	GatewayToken     string    `json:"-"`
-	ModelsConfig     string    `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
-	DefaultModel     string    `gorm:"default:''" json:"-"`
-	LogPaths         string    `gorm:"type:text;default:''" json:"log_paths"`          // JSON: {"openclaw":"/custom/path.log",...}
-	AllowedSourceIPs string    `gorm:"type:text;default:''" json:"allowed_source_ips"` // Comma-separated IPs/CIDRs for SSH connection restrictions
-	EnabledProviders string    `gorm:"type:text;default:'[]'" json:"-"`                // JSON array of LLMProvider IDs enabled for this instance
-	Timezone         string    `gorm:"default:''" json:"timezone"`
-	UserAgent        string    `gorm:"default:''" json:"user_agent"`
-	EnvVars          string    `gorm:"type:text;default:'{}'" json:"-"` // JSON map KEY -> fernet-encrypted value
-	SortOrder        int       `gorm:"not null;default:0" json:"sort_order"`
-	CreatedAt        time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt        time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	ID               uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name             string `gorm:"uniqueIndex;not null" json:"name"`
+	DisplayName      string `gorm:"not null" json:"display_name"`
+	Status           string `gorm:"not null;default:creating" json:"status"`
+	CPURequest       string `gorm:"default:500m" json:"cpu_request"`
+	CPULimit         string `gorm:"default:2000m" json:"cpu_limit"`
+	MemoryRequest    string `gorm:"default:1Gi" json:"memory_request"`
+	MemoryLimit      string `gorm:"default:4Gi" json:"memory_limit"`
+	StorageHomebrew  string `gorm:"default:10Gi" json:"storage_homebrew"`
+	StorageHome      string `gorm:"default:10Gi" json:"storage_home"`
+	BraveAPIKey      string `json:"-"`
+	ContainerImage   string `json:"container_image"`
+	VNCResolution    string `json:"vnc_resolution"`
+	GatewayToken     string `json:"-"`
+	ModelsConfig     string `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
+	DefaultModel     string `gorm:"default:''" json:"-"`
+	LogPaths         string `gorm:"type:text;default:''" json:"log_paths"`          // JSON: {"openclaw":"/custom/path.log",...}
+	AllowedSourceIPs string `gorm:"type:text;default:''" json:"allowed_source_ips"` // Comma-separated IPs/CIDRs for SSH connection restrictions
+	EnabledProviders string `gorm:"type:text;default:'[]'" json:"-"`                // JSON array of LLMProvider IDs enabled for this instance
+	Timezone         string `gorm:"default:''" json:"timezone"`
+	UserAgent        string `gorm:"default:''" json:"user_agent"`
+	EnvVars          string `gorm:"type:text;default:'{}'" json:"-"` // JSON map KEY -> fernet-encrypted value
+	SortOrder        int    `gorm:"not null;default:0" json:"sort_order"`
+	// On-demand browser-pod fields. Only consulted when ContainerImage does
+	// not match IsLegacyEmbedded(). All four are optional and fall back to
+	// admin-level defaults from the settings table.
+	BrowserProvider    string `gorm:"default:''" json:"browser_provider"` // "kubernetes" | "docker" | future: "cloudflare"
+	BrowserImage       string `gorm:"default:''" json:"browser_image"`    // e.g. glukw/claworc-browser-chromium:latest
+	BrowserIdleMinutes *int   `json:"browser_idle_minutes,omitempty"`     // overrides default_browser_idle_minutes
+	BrowserStorage     string `gorm:"default:''" json:"browser_storage"`  // PVC size, e.g. "10Gi"
+	// BrowserActive toggles whether the browser pane is shown next to the chat
+	// on this instance's page. Toggling it off also stops the browser pod.
+	BrowserActive bool      `gorm:"not null;default:true" json:"browser_active"`
+	CreatedAt     time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt     time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// BrowserSession tracks the lifecycle of an instance's on-demand browser pod
+// (or, in the future, an external SaaS browser session). One row per Instance;
+// the row exists from the moment the instance is created in non-legacy mode
+// and persists across pod spawn/reap cycles. Status transitions
+// "stopped" → "starting" → "running" → "stopped" (via idle reaper) → ...
+type BrowserSession struct {
+	InstanceID  uint       `gorm:"primaryKey" json:"instance_id"`
+	Provider    string     `gorm:"not null;default:''" json:"provider"`    // "kubernetes" | "docker" | "cloudflare"
+	Status      string     `gorm:"not null;default:stopped" json:"status"` // stopped|starting|running|error
+	Image       string     `gorm:"default:''" json:"image"`                // for K8s/Docker; empty for SaaS
+	PodName     string     `gorm:"default:''" json:"pod_name"`             // K8s deployment / Docker container name
+	ProviderRef string     `gorm:"default:''" json:"provider_ref"`         // opaque provider session id
+	LastUsedAt  time.Time  `gorm:"autoCreateTime" json:"last_used_at"`
+	StartedAt   time.Time  `json:"started_at"`
+	StoppedAt   *time.Time `json:"stopped_at,omitempty"`
+	ErrorMsg    string     `gorm:"type:text" json:"error_msg,omitempty"`
+	UpdatedAt   time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 // ProviderModel represents a model entry in the OpenClaw provider config.

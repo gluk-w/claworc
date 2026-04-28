@@ -45,7 +45,8 @@
             "pages": [
               "authentication",
               "ssh",
-              "environment-variables"
+              "environment-variables",
+              "analytics"
             ]
           }
         ]

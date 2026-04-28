@@ -5,50 +5,14 @@
 
 import { createElement, useEffect, useRef } from "react";
 import toast from "react-hot-toast";
+import { useQueryClient } from "@tanstack/react-query";
 import AppToast from "@/components/AppToast";
 import { useTaskStream } from "@/hooks/useTaskStream";
-import type { Task, TaskState, TaskType } from "@/api/tasks";
-
-const TYPE_LABEL: Record<TaskType, string> = {
-  "instance.create": "Creating instance",
-  "instance.restart": "Restarting instance",
-  "instance.image_update": "Updating image",
-  "instance.clone": "Cloning instance",
-  "backup.create": "Backing up",
-  "skill.deploy": "Deploying skill",
-};
-
-function titleFor(t: Task, state: TaskState): string {
-  const verb = TYPE_LABEL[t.type] ?? t.type;
-  const subject = t.resource_name || (t.instance_id ? `instance ${t.instance_id}` : "");
-  const base = subject ? `${verb}: ${subject}` : verb;
-  switch (state) {
-    case "running":
-      return base;
-    case "succeeded":
-      return base.replace(/^(Creating|Restarting|Updating|Cloning|Backing up|Deploying)/, (m) => {
-        switch (m) {
-          case "Creating":
-            return "Created";
-          case "Restarting":
-            return "Restarted";
-          case "Updating":
-            return "Updated";
-          case "Cloning":
-            return "Cloned";
-          case "Backing up":
-            return "Backed up";
-          case "Deploying":
-            return "Deployed";
-        }
-        return m;
-      });
-    case "failed":
-      return `${base} — failed`;
-    case "canceled":
-      return `${base} — canceled`;
-  }
-}
+import { cancelTask, type Task, type TaskState } from "@/api/tasks";
+import { setInstanceBrowserActive } from "@/api/instances";
+import { storageKey as browserActiveStorageKey } from "@/hooks/useChatViewMode";
+import type { Instance } from "@/types/instance";
+import { errorToast } from "@/utils/toast";
 
 function durationFor(state: TaskState): number {
   switch (state) {
@@ -76,24 +40,60 @@ function statusFor(state: TaskState): "loading" | "success" | "error" | "info" {
   }
 }
 
+// Cancelling a browser.spawn task should also flip the instance's Browser
+// toggle off; otherwise useDesktop stays mounted and immediately re-triggers
+// EnsureSession, defeating the cancel.
+function maybeHideBrowserPane(t: Task, queryClient: ReturnType<typeof useQueryClient>) {
+  if (t.type !== "browser.spawn" || !t.instance_id) return;
+  const id = t.instance_id;
+  try {
+    localStorage.setItem(browserActiveStorageKey(id), "chat-only");
+  } catch {
+    // localStorage unavailable; the API call below still updates server state.
+  }
+  queryClient.setQueryData<Instance | undefined>(["instances", id], (prev) =>
+    prev ? { ...prev, browser_active: false } : prev,
+  );
+  setInstanceBrowserActive(id, false).catch((err) => {
+    errorToast("Failed to hide browser", err);
+  });
+}
+
 export default function TaskToasts() {
   const { tasks } = useTaskStream();
+  const queryClient = useQueryClient();
   // Track which terminal tasks we've already emitted the final toast for, so
   // the toast doesn't re-fire if the task object is replayed (e.g. SSE
   // reconnect re-seeds with terminal state for tasks still in retention).
   const finalizedRef = useRef<Set<string>>(new Set());
 
+  // Track tasks where the user has already clicked Cancel so we don't fire
+  // duplicate POST /cancel requests if the SSE stream re-emits "running"
+  // before the server flips state.
+  const cancelingRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     for (const t of tasks.values()) {
       if (t.state === "running") {
+        const onCancel = t.cancellable && !cancelingRef.current.has(t.id)
+          ? () => {
+              cancelingRef.current.add(t.id);
+              cancelTask(t.id).catch((err) => {
+                cancelingRef.current.delete(t.id);
+                errorToast("Failed to cancel", err);
+              });
+              maybeHideBrowserPane(t, queryClient);
+            }
+          : undefined;
         // Persistent loading toast. Calling toast.custom with the same id
         // updates in place rather than stacking.
         toast.custom(
           createElement(AppToast, {
-            title: titleFor(t, "running"),
+            title: t.title,
             description: t.message,
             status: "loading",
             toastId: t.id,
+            onCancel,
           }),
           { id: t.id, duration: Infinity },
         );
@@ -104,7 +104,7 @@ export default function TaskToasts() {
       finalizedRef.current.add(t.id);
       toast.custom(
         createElement(AppToast, {
-          title: titleFor(t, t.state),
+          title: t.title,
           description: t.state === "failed" ? t.message : undefined,
           status: statusFor(t.state),
           toastId: t.id,

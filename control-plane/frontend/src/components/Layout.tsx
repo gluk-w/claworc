@@ -1,6 +1,7 @@
 import { Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import TaskToasts from "./TaskToasts";
+import AnalyticsConsentModal from "./AnalyticsConsentModal";
 
 export default function Layout() {
   return (
@@ -12,6 +13,7 @@ export default function Layout() {
         </div>
       </main>
       <TaskToasts />
+      <AnalyticsConsentModal />
     </div>
   );
 }

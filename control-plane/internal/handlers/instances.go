@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
@@ -34,17 +35,37 @@ import (
 // The goroutine bodies still update the instance DB row themselves; the
 // task return value is informational for toast UX. We infer "failed" from
 // the in-memory status message ("Failed: ...") so the toast turns red.
-func startInstanceTask(taskType taskmanager.TaskType, instanceID, userID uint, displayName string, work func(ctx context.Context)) {
+func startInstanceTask(taskType taskmanager.TaskType, instanceID, userID uint, displayName, title string, work func(ctx context.Context)) {
+	startInstanceTaskWithMessage(taskType, instanceID, userID, displayName, title, "", work)
+}
+
+// startInstanceTaskWithMessage is like startInstanceTask but also seeds the
+// task's `message` (toast description) before Run executes. The toast
+// surfaces the description immediately instead of waiting for the first
+// h.UpdateMessage from inside the work func.
+func startInstanceTaskWithMessage(taskType taskmanager.TaskType, instanceID, userID uint, displayName, title, message string, work func(ctx context.Context)) {
+	startInstanceTaskFull(taskType, instanceID, userID, displayName, title, message, nil, work)
+}
+
+// startInstanceTaskFull is the most flexible variant: also accepts an
+// OnCancel cleanup callback. A non-nil OnCancel marks the task as
+// user-cancellable on the SSE/REST surface.
+func startInstanceTaskFull(taskType taskmanager.TaskType, instanceID, userID uint, displayName, title, message string, onCancel taskmanager.OnCancel, work func(ctx context.Context)) string {
 	if TaskMgr == nil {
 		go work(context.Background())
-		return
+		return ""
 	}
-	TaskMgr.Start(taskmanager.StartOpts{
+	return TaskMgr.Start(taskmanager.StartOpts{
 		Type:         taskType,
 		InstanceID:   instanceID,
 		UserID:       userID,
 		ResourceName: displayName,
+		Title:        title,
+		OnCancel:     onCancel,
 		Run: func(ctx context.Context, h *taskmanager.Handle) error {
+			if message != "" {
+				h.UpdateMessage(message)
+			}
 			work(ctx)
 			if msg := getStatusMessage(instanceID); strings.HasPrefix(msg, "Failed") {
 				return fmt.Errorf("%s", msg)
@@ -81,22 +102,26 @@ type modelsConfig struct {
 }
 
 type instanceCreateRequest struct {
-	DisplayName      string            `json:"display_name"`
-	CPURequest       string            `json:"cpu_request"`
-	CPULimit         string            `json:"cpu_limit"`
-	MemoryRequest    string            `json:"memory_request"`
-	MemoryLimit      string            `json:"memory_limit"`
-	StorageHomebrew  string            `json:"storage_homebrew"`
-	StorageHome      string            `json:"storage_home"`
-	BraveAPIKey      *string           `json:"brave_api_key"`
-	Models           *modelsConfig     `json:"models"`
-	DefaultModel     string            `json:"default_model"`
-	ContainerImage   *string           `json:"container_image"`
-	VNCResolution    *string           `json:"vnc_resolution"`
-	Timezone         *string           `json:"timezone"`
-	UserAgent        *string           `json:"user_agent"`
-	EnabledProviders []uint            `json:"enabled_providers"`
-	EnvVarsSet       map[string]string `json:"env_vars_set"`
+	DisplayName        string            `json:"display_name"`
+	CPURequest         string            `json:"cpu_request"`
+	CPULimit           string            `json:"cpu_limit"`
+	MemoryRequest      string            `json:"memory_request"`
+	MemoryLimit        string            `json:"memory_limit"`
+	StorageHomebrew    string            `json:"storage_homebrew"`
+	StorageHome        string            `json:"storage_home"`
+	BraveAPIKey        *string           `json:"brave_api_key"`
+	Models             *modelsConfig     `json:"models"`
+	DefaultModel       string            `json:"default_model"`
+	ContainerImage     *string           `json:"container_image"`
+	VNCResolution      *string           `json:"vnc_resolution"`
+	Timezone           *string           `json:"timezone"`
+	UserAgent          *string           `json:"user_agent"`
+	EnabledProviders   []uint            `json:"enabled_providers"`
+	EnvVarsSet         map[string]string `json:"env_vars_set"`
+	BrowserProvider    *string           `json:"browser_provider"`
+	BrowserImage       *string           `json:"browser_image"`
+	BrowserIdleMinutes *int              `json:"browser_idle_minutes"`
+	BrowserStorage     *string           `json:"browser_storage"`
 }
 
 type modelsResponse struct {
@@ -141,6 +166,12 @@ type instanceResponse struct {
 	SortOrder             int               `json:"sort_order"`
 	CreatedAt             string            `json:"created_at"`
 	UpdatedAt             string            `json:"updated_at"`
+	IsLegacyEmbedded      bool              `json:"is_legacy_embedded"`
+	BrowserProvider       string            `json:"browser_provider,omitempty"`
+	BrowserImage          string            `json:"browser_image,omitempty"`
+	BrowserIdleMinutes    *int              `json:"browser_idle_minutes,omitempty"`
+	BrowserStorage        string            `json:"browser_storage,omitempty"`
+	BrowserActive         bool              `json:"browser_active"`
 }
 
 func generateName(displayName string) string {
@@ -424,6 +455,12 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		SortOrder:             inst.SortOrder,
 		CreatedAt:             formatTimestamp(inst.CreatedAt),
 		UpdatedAt:             formatTimestamp(inst.UpdatedAt),
+		IsLegacyEmbedded:      database.IsLegacyEmbedded(getEffectiveImage(inst)),
+		BrowserProvider:       inst.BrowserProvider,
+		BrowserImage:          inst.BrowserImage,
+		BrowserIdleMinutes:    inst.BrowserIdleMinutes,
+		BrowserStorage:        inst.BrowserStorage,
+		BrowserActive:         inst.BrowserActive,
 	}
 }
 
@@ -516,6 +553,14 @@ func getEffectiveUserAgent(inst database.Instance) string {
 // rebuilding its container with current config and shared folder mounts.
 // Safe to call for stopped instances (no-op if status is not "running").
 func restartInstanceAsync(inst database.Instance, userID uint) {
+	restartInstanceAsyncWithToast(inst, userID,
+		fmt.Sprintf("Restarting instance %s", inst.DisplayName), "")
+}
+
+// restartInstanceAsyncWithToast is like restartInstanceAsync but lets the
+// caller customize the toast title and description. Used by flows that
+// trigger a restart as a side effect (e.g. shared-folder mount changes).
+func restartInstanceAsyncWithToast(inst database.Instance, userID uint, title, message string) {
 	if inst.Status != "running" {
 		return
 	}
@@ -539,17 +584,19 @@ func restartInstanceAsync(inst database.Instance, userID uint) {
 		"updated_at": time.Now().UTC(),
 	})
 
-	startInstanceTask(taskmanager.TaskInstanceRestart, inst.ID, userID, inst.DisplayName, func(ctx context.Context) {
-		params := buildCreateParams(inst)
-		if err := orch.RestartInstance(ctx, inst.Name, params); err != nil {
-			log.Printf("Failed to restart instance %d: %v", inst.ID, err)
-			setStatusMessage(inst.ID, fmt.Sprintf("Failed: %v", err))
-			database.DB.Model(&database.Instance{}).Where("id = ?", inst.ID).Updates(map[string]interface{}{
-				"status":     "error",
-				"updated_at": time.Now().UTC(),
-			})
-		}
-	})
+	startInstanceTaskWithMessage(taskmanager.TaskInstanceRestart, inst.ID, userID, inst.DisplayName,
+		title, message,
+		func(ctx context.Context) {
+			params := buildCreateParams(inst)
+			if err := orch.RestartInstance(ctx, inst.Name, params); err != nil {
+				log.Printf("Failed to restart instance %d: %v", inst.ID, err)
+				setStatusMessage(inst.ID, fmt.Sprintf("Failed: %v", err))
+				database.DB.Model(&database.Instance{}).Where("id = ?", inst.ID).Updates(map[string]interface{}{
+					"status":     "error",
+					"updated_at": time.Now().UTC(),
+				})
+			}
+		})
 }
 
 // buildCreateParams constructs orchestrator.CreateParams from a database Instance.
@@ -647,25 +694,24 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set defaults
-	if body.CPURequest == "" {
-		body.CPURequest = "500m"
+	// Set defaults: prefer the configured global default for each resource,
+	// falling back to a hardcoded value only if the setting is missing.
+	resolveDefault := func(field *string, settingKey, fallback string) {
+		if *field != "" {
+			return
+		}
+		if v, err := database.GetSetting(settingKey); err == nil && v != "" {
+			*field = v
+			return
+		}
+		*field = fallback
 	}
-	if body.CPULimit == "" {
-		body.CPULimit = "2000m"
-	}
-	if body.MemoryRequest == "" {
-		body.MemoryRequest = "1Gi"
-	}
-	if body.MemoryLimit == "" {
-		body.MemoryLimit = "4Gi"
-	}
-	if body.StorageHomebrew == "" {
-		body.StorageHomebrew = "10Gi"
-	}
-	if body.StorageHome == "" {
-		body.StorageHome = "10Gi"
-	}
+	resolveDefault(&body.CPURequest, "default_cpu_request", "500m")
+	resolveDefault(&body.CPULimit, "default_cpu_limit", "2000m")
+	resolveDefault(&body.MemoryRequest, "default_memory_request", "1Gi")
+	resolveDefault(&body.MemoryLimit, "default_memory_limit", "4Gi")
+	resolveDefault(&body.StorageHomebrew, "default_storage_homebrew", "10Gi")
+	resolveDefault(&body.StorageHome, "default_storage_home", "10Gi")
 
 	name := generateName(body.DisplayName)
 
@@ -700,6 +746,16 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	if body.ContainerImage != nil {
 		containerImage = *body.ContainerImage
 	}
+	// Populate the new slim agent image as the default for newly-created
+	// instances. Existing rows with empty ContainerImage keep resolving via
+	// default_container_image (which seeds to the legacy combined image), but
+	// any instance created from now on opts into the on-demand browser-pod
+	// layout unless the caller passes an explicit container_image override.
+	if containerImage == "" {
+		if def, err := database.GetSetting("default_agent_image"); err == nil && def != "" {
+			containerImage = def
+		}
+	}
 	var vncResolution string
 	if body.VNCResolution != nil {
 		vncResolution = *body.VNCResolution
@@ -711,6 +767,20 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	var userAgent string
 	if body.UserAgent != nil {
 		userAgent = *body.UserAgent
+	}
+	var browserProvider, browserImage, browserStorage string
+	var browserIdleMinutes *int
+	if body.BrowserProvider != nil {
+		browserProvider = *body.BrowserProvider
+	}
+	if body.BrowserImage != nil {
+		browserImage = *body.BrowserImage
+	}
+	if body.BrowserStorage != nil {
+		browserStorage = *body.BrowserStorage
+	}
+	if body.BrowserIdleMinutes != nil {
+		browserIdleMinutes = body.BrowserIdleMinutes
 	}
 
 	// Serialize models config
@@ -751,26 +821,30 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	database.DB.Model(&database.Instance{}).Select("COALESCE(MAX(sort_order), 0)").Scan(&maxSortOrder)
 
 	inst := database.Instance{
-		Name:             name,
-		DisplayName:      body.DisplayName,
-		Status:           "creating",
-		CPURequest:       body.CPURequest,
-		CPULimit:         body.CPULimit,
-		MemoryRequest:    body.MemoryRequest,
-		MemoryLimit:      body.MemoryLimit,
-		StorageHomebrew:  body.StorageHomebrew,
-		StorageHome:      body.StorageHome,
-		BraveAPIKey:      encBraveKey,
-		ContainerImage:   containerImage,
-		VNCResolution:    vncResolution,
-		Timezone:         timezone,
-		UserAgent:        userAgent,
-		GatewayToken:     encGatewayToken,
-		ModelsConfig:     modelsConfigJSON,
-		DefaultModel:     body.DefaultModel,
-		EnabledProviders: string(enabledProvidersJSON),
-		EnvVars:          envVarsJSON,
-		SortOrder:        maxSortOrder + 1,
+		Name:               name,
+		DisplayName:        body.DisplayName,
+		Status:             "creating",
+		CPURequest:         body.CPURequest,
+		CPULimit:           body.CPULimit,
+		MemoryRequest:      body.MemoryRequest,
+		MemoryLimit:        body.MemoryLimit,
+		StorageHomebrew:    body.StorageHomebrew,
+		StorageHome:        body.StorageHome,
+		BraveAPIKey:        encBraveKey,
+		ContainerImage:     containerImage,
+		VNCResolution:      vncResolution,
+		Timezone:           timezone,
+		UserAgent:          userAgent,
+		GatewayToken:       encGatewayToken,
+		ModelsConfig:       modelsConfigJSON,
+		DefaultModel:       body.DefaultModel,
+		EnabledProviders:   string(enabledProvidersJSON),
+		EnvVars:            envVarsJSON,
+		SortOrder:          maxSortOrder + 1,
+		BrowserProvider:    browserProvider,
+		BrowserImage:       browserImage,
+		BrowserIdleMinutes: browserIdleMinutes,
+		BrowserStorage:     browserStorage,
 	}
 
 	if err := database.DB.Create(&inst).Error; err != nil {
@@ -816,68 +890,94 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	initialProvidersJSON, _ := buildOpenClawProvidersJSON(models, gatewayProviders, config.Cfg.LLMGatewayPort)
 
 	// Launch container creation asynchronously (image pull can take minutes)
-	startInstanceTask(taskmanager.TaskInstanceCreate, inst.ID, callerID(r), inst.DisplayName, func(ctx context.Context) {
-		orch := orchestrator.Get()
-		if orch == nil {
-			setStatusMessage(inst.ID, "Failed: no orchestrator available")
-			database.DB.Model(&inst).Update("status", "error")
-			return
-		}
+	startInstanceTask(taskmanager.TaskInstanceCreate, inst.ID, callerID(r), inst.DisplayName,
+		fmt.Sprintf("Creating instance %s", inst.DisplayName),
+		func(ctx context.Context) {
+			orch := orchestrator.Get()
+			if orch == nil {
+				setStatusMessage(inst.ID, "Failed: no orchestrator available")
+				database.DB.Model(&inst).Update("status", "error")
+				return
+			}
 
-		envVars := map[string]string{}
+			envVars := map[string]string{}
 
-		// User-defined env vars (global defaults overridden by per-instance values).
-		// Applied first so reserved system names below can never be shadowed.
-		MergeUserEnvVars(envVars, LoadGlobalEnvVars(), LoadInstanceEnvVars(inst))
+			// User-defined env vars (global defaults overridden by per-instance values).
+			// Applied first so reserved system names below can never be shadowed.
+			MergeUserEnvVars(envVars, LoadGlobalEnvVars(), LoadInstanceEnvVars(inst))
 
-		// System env vars — reserved, always win over user values
-		if gatewayTokenPlain != "" {
-			envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
-		}
-		envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
-		if initialModelsJSON != "" {
-			envVars["OPENCLAW_INITIAL_MODELS"] = initialModelsJSON
-		}
-		if initialProvidersJSON != "" {
-			envVars["OPENCLAW_INITIAL_PROVIDERS"] = initialProvidersJSON
-		}
+			// System env vars — reserved, always win over user values
+			if gatewayTokenPlain != "" {
+				envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
+			}
+			envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
+			if initialModelsJSON != "" {
+				envVars["OPENCLAW_INITIAL_MODELS"] = initialModelsJSON
+			}
+			if initialProvidersJSON != "" {
+				envVars["OPENCLAW_INITIAL_PROVIDERS"] = initialProvidersJSON
+			}
 
-		err := orch.CreateInstance(ctx, orchestrator.CreateParams{
-			Name:            name,
-			CPURequest:      body.CPURequest,
-			CPULimit:        body.CPULimit,
-			MemoryRequest:   body.MemoryRequest,
-			MemoryLimit:     body.MemoryLimit,
-			StorageHomebrew: body.StorageHomebrew,
-			StorageHome:     body.StorageHome,
-			ContainerImage:  effectiveImage,
-			VNCResolution:   effectiveResolution,
-			Timezone:        effectiveTimezone,
-			UserAgent:       effectiveUserAgent,
-			EnvVars:         envVars,
-			OnProgress:      func(msg string) { setStatusMessage(inst.ID, msg) },
+			err := orch.CreateInstance(ctx, orchestrator.CreateParams{
+				Name:            name,
+				CPURequest:      body.CPURequest,
+				CPULimit:        body.CPULimit,
+				MemoryRequest:   body.MemoryRequest,
+				MemoryLimit:     body.MemoryLimit,
+				StorageHomebrew: body.StorageHomebrew,
+				StorageHome:     body.StorageHome,
+				ContainerImage:  effectiveImage,
+				VNCResolution:   effectiveResolution,
+				Timezone:        effectiveTimezone,
+				UserAgent:       effectiveUserAgent,
+				EnvVars:         envVars,
+				OnProgress:      func(msg string) { setStatusMessage(inst.ID, msg) },
+			})
+			if err != nil {
+				log.Printf("Failed to create container resources for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(err.Error()))
+				setStatusMessage(inst.ID, fmt.Sprintf("Failed: %v", err))
+				database.DB.Model(&inst).Update("status", "error")
+				return
+			}
+			clearStatusMessage(inst.ID)
+			database.DB.Model(&inst).Updates(map[string]interface{}{
+				"status":     "running",
+				"updated_at": time.Now().UTC(),
+			})
+
+			// Reconcile models and providers via SSH (handles any config that couldn't
+			// be passed via env vars, and restarts the gateway for a clean state)
+			database.DB.First(&inst, inst.ID)
+			sshClient, err := SSHMgr.WaitForSSH(ctx, inst.ID, 120*time.Second)
+			if err != nil {
+				log.Printf("Failed to get SSH connection for instance %d during configure: %v", inst.ID, err)
+				return
+			}
+			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), inst.Name, models, gatewayProviders, config.Cfg.LLMGatewayPort)
 		})
-		if err != nil {
-			log.Printf("Failed to create container resources for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(err.Error()))
-			setStatusMessage(inst.ID, fmt.Sprintf("Failed: %v", err))
-			database.DB.Model(&inst).Update("status", "error")
-			return
-		}
-		clearStatusMessage(inst.ID)
-		database.DB.Model(&inst).Updates(map[string]interface{}{
-			"status":     "running",
-			"updated_at": time.Now().UTC(),
-		})
 
-		// Reconcile models and providers via SSH (handles any config that couldn't
-		// be passed via env vars, and restarts the gateway for a clean state)
-		database.DB.First(&inst, inst.ID)
-		sshClient, err := SSHMgr.WaitForSSH(ctx, inst.ID, 120*time.Second)
-		if err != nil {
-			log.Printf("Failed to get SSH connection for instance %d during configure: %v", inst.ID, err)
-			return
+	var totalInstances int64
+	database.DB.Model(&database.Instance{}).Count(&totalInstances)
+	providerAliases := make([]string, 0, len(gatewayProviders))
+	for alias := range gatewayProviders {
+		providerAliases = append(providerAliases, alias)
+	}
+	primaryModel := ""
+	primaryProvider := ""
+	if len(models) > 0 {
+		primaryModel = models[0]
+		if len(providerAliases) > 0 {
+			primaryProvider = providerAliases[0]
 		}
-		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), inst.Name, models, gatewayProviders, config.Cfg.LLMGatewayPort)
+	}
+	analytics.Track(r.Context(), analytics.EventInstanceCreated, map[string]any{
+		"total_instances":  totalInstances,
+		"instance_id":      inst.ID,
+		"provider_aliases": providerAliases,
+		"cpu_limit":        inst.CPULimit,
+		"memory_limit":     inst.MemoryLimit,
+		"model":            primaryModel,
+		"provider_name":    primaryProvider,
 	})
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -917,21 +1017,25 @@ func GetInstance(w http.ResponseWriter, r *http.Request) {
 }
 
 type instanceUpdateRequest struct {
-	BraveAPIKey      *string           `json:"brave_api_key"`
-	Models           *modelsConfig     `json:"models"`
-	DefaultModel     *string           `json:"default_model"`
-	Timezone         *string           `json:"timezone"`
-	UserAgent        *string           `json:"user_agent"`
-	AllowedSourceIPs *string           `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
-	EnabledProviders *[]uint           `json:"enabled_providers"`  // admin only: LLM gateway provider IDs
-	DisplayName      *string           `json:"display_name"`       // admin only
-	CPURequest       *string           `json:"cpu_request"`        // admin only
-	CPULimit         *string           `json:"cpu_limit"`          // admin only
-	MemoryRequest    *string           `json:"memory_request"`     // admin only
-	MemoryLimit      *string           `json:"memory_limit"`       // admin only
-	VNCResolution    *string           `json:"vnc_resolution"`     // admin only
-	EnvVarsSet       map[string]string `json:"env_vars_set"`
-	EnvVarsUnset     []string          `json:"env_vars_unset"`
+	BraveAPIKey        *string           `json:"brave_api_key"`
+	Models             *modelsConfig     `json:"models"`
+	DefaultModel       *string           `json:"default_model"`
+	Timezone           *string           `json:"timezone"`
+	UserAgent          *string           `json:"user_agent"`
+	AllowedSourceIPs   *string           `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
+	EnabledProviders   *[]uint           `json:"enabled_providers"`  // admin only: LLM gateway provider IDs
+	DisplayName        *string           `json:"display_name"`       // admin only
+	CPURequest         *string           `json:"cpu_request"`        // admin only
+	CPULimit           *string           `json:"cpu_limit"`          // admin only
+	MemoryRequest      *string           `json:"memory_request"`     // admin only
+	MemoryLimit        *string           `json:"memory_limit"`       // admin only
+	VNCResolution      *string           `json:"vnc_resolution"`     // admin only
+	EnvVarsSet         map[string]string `json:"env_vars_set"`
+	EnvVarsUnset       []string          `json:"env_vars_unset"`
+	BrowserProvider    *string           `json:"browser_provider"`     // non-legacy only
+	BrowserImage       *string           `json:"browser_image"`        // non-legacy only
+	BrowserIdleMinutes *int              `json:"browser_idle_minutes"` // non-legacy only; null = global default
+	BrowserStorage     *string           `json:"browser_storage"`      // non-legacy only
 }
 
 var (
@@ -1012,6 +1116,20 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	// Update user agent
 	if body.UserAgent != nil {
 		database.DB.Model(&inst).Update("user_agent", *body.UserAgent)
+	}
+
+	// Browser-pod settings (only meaningful for non-legacy instances).
+	if body.BrowserProvider != nil {
+		database.DB.Model(&inst).Update("browser_provider", *body.BrowserProvider)
+	}
+	if body.BrowserImage != nil {
+		database.DB.Model(&inst).Update("browser_image", *body.BrowserImage)
+	}
+	if body.BrowserStorage != nil {
+		database.DB.Model(&inst).Update("browser_storage", *body.BrowserStorage)
+	}
+	if body.BrowserIdleMinutes != nil {
+		database.DB.Model(&inst).Update("browser_idle_minutes", body.BrowserIdleMinutes)
 	}
 
 	// Update allowed source IPs (admin only)
@@ -1164,6 +1282,13 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			envVarsChanged = true
+			localCount := len(decodeEncryptedEnvVarsJSON(updated))
+			globalRaw, _ := database.GetSetting("default_env_vars")
+			analytics.Track(r.Context(), analytics.EventInstanceEnvVarsEdited, map[string]any{
+				"instance_id":     inst.ID,
+				"local_env_vars":  localCount,
+				"global_env_vars": len(decodeEncryptedEnvVarsJSON(globalRaw)),
+			})
 		}
 	}
 
@@ -1338,40 +1463,42 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 
 	instID := inst.ID
 	instName := inst.Name
-	startInstanceTask(taskmanager.TaskInstanceImageUpdate, inst.ID, callerID(r), inst.DisplayName, func(ctx context.Context) {
-		err := orch.UpdateImage(ctx, instName, orchestrator.CreateParams{
-			Name:               instName,
-			CPURequest:         inst.CPURequest,
-			CPULimit:           inst.CPULimit,
-			MemoryRequest:      inst.MemoryRequest,
-			MemoryLimit:        inst.MemoryLimit,
-			ContainerImage:     effectiveImage,
-			VNCResolution:      effectiveResolution,
-			Timezone:           effectiveTimezone,
-			UserAgent:          effectiveUserAgent,
-			EnvVars:            envVars,
-			SharedFolderMounts: getSharedFolderMounts(instID),
-		})
-		if err != nil {
-			log.Printf("Failed to update image for instance %d: %v", instID, err)
-			finalStatus := "error"
-			if liveStatus, lerr := orch.GetInstanceStatus(ctx, instName); lerr == nil && liveStatus == "running" {
-				log.Printf("Instance %d pod is still running after UpdateImage failure; keeping status=running so tunnels are reconciled", instID)
-				finalStatus = "running"
-			}
-			database.DB.Model(&database.Instance{}).Where("id = ?", instID).Updates(map[string]interface{}{
-				"status":         finalStatus,
-				"status_message": fmt.Sprintf("Image update failed: %v", err),
-				"updated_at":     time.Now().UTC(),
+	startInstanceTask(taskmanager.TaskInstanceImageUpdate, inst.ID, callerID(r), inst.DisplayName,
+		fmt.Sprintf("Updating image for %s", inst.DisplayName),
+		func(ctx context.Context) {
+			err := orch.UpdateImage(ctx, instName, orchestrator.CreateParams{
+				Name:               instName,
+				CPURequest:         inst.CPURequest,
+				CPULimit:           inst.CPULimit,
+				MemoryRequest:      inst.MemoryRequest,
+				MemoryLimit:        inst.MemoryLimit,
+				ContainerImage:     effectiveImage,
+				VNCResolution:      effectiveResolution,
+				Timezone:           effectiveTimezone,
+				UserAgent:          effectiveUserAgent,
+				EnvVars:            envVars,
+				SharedFolderMounts: getSharedFolderMounts(instID),
 			})
-			return
-		}
-		log.Printf("Image updated successfully for instance %d", instID)
-		database.DB.Model(&database.Instance{}).Where("id = ?", instID).Updates(map[string]interface{}{
-			"status":     "running",
-			"updated_at": time.Now().UTC(),
+			if err != nil {
+				log.Printf("Failed to update image for instance %d: %v", instID, err)
+				finalStatus := "error"
+				if liveStatus, lerr := orch.GetInstanceStatus(ctx, instName); lerr == nil && liveStatus == "running" {
+					log.Printf("Instance %d pod is still running after UpdateImage failure; keeping status=running so tunnels are reconciled", instID)
+					finalStatus = "running"
+				}
+				database.DB.Model(&database.Instance{}).Where("id = ?", instID).Updates(map[string]interface{}{
+					"status":         finalStatus,
+					"status_message": fmt.Sprintf("Image update failed: %v", err),
+					"updated_at":     time.Now().UTC(),
+				})
+				return
+			}
+			log.Printf("Image updated successfully for instance %d", instID)
+			database.DB.Model(&database.Instance{}).Where("id = ?", instID).Updates(map[string]interface{}{
+				"status":     "running",
+				"updated_at": time.Now().UTC(),
+			})
 		})
-	})
 
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "restarting"})
 }
@@ -1400,9 +1527,18 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if orch := orchestrator.Get(); orch != nil {
+		// Tear down the on-demand browser pod first so its container/volume
+		// don't outlive the agent. Best-effort: a failure here shouldn't
+		// block the agent cleanup or DB delete.
+		if err := orch.DeleteBrowserPod(r.Context(), inst.ID); err != nil {
+			log.Printf("Failed to delete browser pod for %s: %v", utils.SanitizeForLog(inst.Name), err)
+		}
 		if err := orch.DeleteInstance(r.Context(), inst.Name); err != nil {
 			log.Printf("Failed to delete container resources for %s – proceeding with DB cleanup: %v", utils.SanitizeForLog(inst.Name), err)
 		}
+	}
+	if err := database.DeleteBrowserSession(inst.ID); err != nil {
+		log.Printf("Failed to delete browser session row for %s: %v", utils.SanitizeForLog(inst.Name), err)
 	}
 
 	// Delete instance-specific providers (API key is on the provider row)
@@ -1411,6 +1547,11 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 	// Delete associated gateway keys
 	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.LLMGatewayKey{})
 	database.DB.Delete(&inst)
+	var remaining int64
+	database.DB.Model(&database.Instance{}).Count(&remaining)
+	analytics.Track(r.Context(), analytics.EventInstanceDeleted, map[string]any{
+		"remaining_instances": remaining,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1706,84 +1847,185 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		ModelsConfig:    src.ModelsConfig,
 		DefaultModel:    src.DefaultModel,
 		SortOrder:       maxSortOrder + 1,
+		// Carry over on-demand browser config so the clone behaves like the
+		// original (same image override, idle timeout, storage size, and
+		// pane-visibility default).
+		BrowserProvider:    src.BrowserProvider,
+		BrowserImage:       src.BrowserImage,
+		BrowserIdleMinutes: src.BrowserIdleMinutes,
+		BrowserStorage:     src.BrowserStorage,
+		BrowserActive:      src.BrowserActive,
 	}
 
 	if err := database.DB.Create(&inst).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to create cloned instance")
 		return
 	}
+	// GORM's `default:true` on BrowserActive overrides the explicit `false`
+	// passed in via Create (false is the Go zero value, so the column is
+	// omitted from the INSERT and the DB-level default kicks in). Patch it
+	// after Create so a clone of a pane-hidden instance stays pane-hidden.
+	if !src.BrowserActive {
+		database.DB.Model(&inst).Update("browser_active", false)
+		inst.BrowserActive = false
+	}
 
-	// Run the full clone operation asynchronously
-	startInstanceTask(taskmanager.TaskInstanceClone, inst.ID, callerID(r), inst.DisplayName, func(ctx context.Context) {
-		orch := orchestrator.Get()
-		if orch == nil {
-			setStatusMessage(inst.ID, "Failed: no orchestrator available")
-			database.DB.Model(&inst).Update("status", "error")
-			return
-		}
+	// Run the full clone operation asynchronously. The task is cancellable:
+	// hitting POST /api/v1/tasks/{id}/cancel cancels the Run context (so
+	// in-flight orchestrator calls abort) and then runs the OnCancel
+	// callback, which tears down whatever was created and removes the DB
+	// row. Cleanup is idempotent and best-effort.
+	startInstanceTaskFull(taskmanager.TaskInstanceClone, inst.ID, callerID(r), inst.DisplayName,
+		"Cloning instance",
+		fmt.Sprintf("Cloning %s to %s", src.DisplayName, inst.DisplayName),
+		cloneOnCancel(inst.ID, cloneName),
+		func(ctx context.Context) {
+			orch := orchestrator.Get()
+			if orch == nil {
+				setStatusMessage(inst.ID, "Failed: no orchestrator available")
+				database.DB.Model(&inst).Update("status", "error")
+				return
+			}
 
-		effectiveImage := getEffectiveImage(inst)
-		effectiveResolution := getEffectiveResolution(inst)
-		effectiveTimezone := getEffectiveTimezone(inst)
-		effectiveUserAgent := getEffectiveUserAgent(inst)
+			effectiveImage := getEffectiveImage(inst)
+			effectiveResolution := getEffectiveResolution(inst)
+			effectiveTimezone := getEffectiveTimezone(inst)
+			effectiveUserAgent := getEffectiveUserAgent(inst)
 
-		envVars := map[string]string{}
-		if gatewayTokenPlain != "" {
-			envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
-		}
-		envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
+			envVars := map[string]string{}
+			if gatewayTokenPlain != "" {
+				envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
+			}
+			envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
 
-		// Create container/deployment with empty volumes
-		err := orch.CreateInstance(ctx, orchestrator.CreateParams{
-			Name:               cloneName,
-			CPURequest:         inst.CPURequest,
-			CPULimit:           inst.CPULimit,
-			MemoryRequest:      inst.MemoryRequest,
-			MemoryLimit:        inst.MemoryLimit,
-			StorageHomebrew:    inst.StorageHomebrew,
-			StorageHome:        inst.StorageHome,
-			ContainerImage:     effectiveImage,
-			VNCResolution:      effectiveResolution,
-			Timezone:           effectiveTimezone,
-			UserAgent:          effectiveUserAgent,
-			EnvVars:            envVars,
-			OnProgress:         func(msg string) { setStatusMessage(inst.ID, msg) },
-			SharedFolderMounts: getSharedFolderMounts(inst.ID),
+			// Create container/deployment with empty volumes
+			err := orch.CreateInstance(ctx, orchestrator.CreateParams{
+				Name:               cloneName,
+				CPURequest:         inst.CPURequest,
+				CPULimit:           inst.CPULimit,
+				MemoryRequest:      inst.MemoryRequest,
+				MemoryLimit:        inst.MemoryLimit,
+				StorageHomebrew:    inst.StorageHomebrew,
+				StorageHome:        inst.StorageHome,
+				ContainerImage:     effectiveImage,
+				VNCResolution:      effectiveResolution,
+				Timezone:           effectiveTimezone,
+				UserAgent:          effectiveUserAgent,
+				EnvVars:            envVars,
+				OnProgress:         func(msg string) { setStatusMessage(inst.ID, msg) },
+				SharedFolderMounts: getSharedFolderMounts(inst.ID),
+			})
+			if err != nil {
+				log.Printf("Failed to create container for clone %s: %v", cloneName, err)
+				setStatusMessage(inst.ID, fmt.Sprintf("Failed: %v", err))
+				database.DB.Model(&inst).Update("status", "error")
+				return
+			}
+
+			// Clone volume data from source
+			setStatusMessage(inst.ID, "Cloning volumes...")
+			if err := orch.CloneVolumes(ctx, src.Name, cloneName); err != nil {
+				log.Printf("Failed to clone volumes from %s to %s: %v", src.Name, cloneName, err)
+				// Continue anyway – instance is created, just without cloned data
+			}
+			// Clone the on-demand browser profile volume too, so Chrome cookies,
+			// sessions, and persisted state follow the clone. Best-effort: if the
+			// source never launched a browser there's nothing to copy.
+			if err := orch.CloneBrowserVolume(ctx, src.Name, cloneName); err != nil {
+				log.Printf("Failed to clone browser volume from %s to %s: %v", src.Name, cloneName, err)
+			}
+
+			clearStatusMessage(inst.ID)
+			database.DB.Model(&inst).Updates(map[string]interface{}{
+				"status":     "running",
+				"updated_at": time.Now().UTC(),
+			})
+
+			// Push models and API keys to the running instance
+			// Re-fetch to get latest state
+			database.DB.First(&inst, inst.ID)
+			// Don't carry over gateway keys from source — the clone gets its own instance ID
+			models := resolveInstanceModels(inst)
+			sshClient, err := SSHMgr.WaitForSSH(ctx, inst.ID, 120*time.Second)
+			if err != nil {
+				log.Printf("Failed to get SSH connection for clone %d during configure: %v", inst.ID, err)
+				return
+			}
+			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.LLMGatewayPort)
 		})
-		if err != nil {
-			log.Printf("Failed to create container for clone %s: %v", cloneName, err)
-			setStatusMessage(inst.ID, fmt.Sprintf("Failed: %v", err))
-			database.DB.Model(&inst).Update("status", "error")
-			return
-		}
-
-		// Clone volume data from source
-		setStatusMessage(inst.ID, "Cloning volumes...")
-		if err := orch.CloneVolumes(ctx, src.Name, cloneName); err != nil {
-			log.Printf("Failed to clone volumes from %s to %s: %v", src.Name, cloneName, err)
-			// Continue anyway – instance is created, just without cloned data
-		}
-
-		clearStatusMessage(inst.ID)
-		database.DB.Model(&inst).Updates(map[string]interface{}{
-			"status":     "running",
-			"updated_at": time.Now().UTC(),
-		})
-
-		// Push models and API keys to the running instance
-		// Re-fetch to get latest state
-		database.DB.First(&inst, inst.ID)
-		// Don't carry over gateway keys from source — the clone gets its own instance ID
-		models := resolveInstanceModels(inst)
-		sshClient, err := SSHMgr.WaitForSSH(ctx, inst.ID, 120*time.Second)
-		if err != nil {
-			log.Printf("Failed to get SSH connection for clone %d during configure: %v", inst.ID, err)
-			return
-		}
-		ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.LLMGatewayPort)
-	})
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
+}
+
+// cloneOnCancel returns the cleanup callback for a clone task. It tears
+// down whatever the in-flight Run may have created on the destination —
+// container, volumes, browser pod, browser volume — and removes the
+// destination DB row. Idempotent and best-effort: each step logs and
+// continues so a partial failure can't trap the cleanup.
+//
+// IMPORTANT: this only touches the *destination*, never the source. The
+// instanceID and cloneName captured in the closure are the destination's.
+func cloneOnCancel(instanceID uint, cloneName string) taskmanager.OnCancel {
+	return func(ctx context.Context) {
+		setStatusMessage(instanceID, "Canceling clone...")
+		if SSHMgr != nil {
+			SSHMgr.CancelReconnection(instanceID)
+		}
+		if TunnelMgr != nil {
+			if err := TunnelMgr.StopTunnelsForInstance(instanceID); err != nil {
+				log.Printf("clone-cancel: stop tunnels for %d: %v", instanceID, err)
+			}
+		}
+		if orch := orchestrator.Get(); orch != nil {
+			if err := orch.DeleteBrowserPod(ctx, instanceID); err != nil {
+				log.Printf("clone-cancel: delete browser pod for %s: %v", utils.SanitizeForLog(cloneName), err)
+			}
+			if err := orch.DeleteInstance(ctx, cloneName); err != nil {
+				log.Printf("clone-cancel: delete container for %s: %v", utils.SanitizeForLog(cloneName), err)
+			}
+		}
+		if err := database.DeleteBrowserSession(instanceID); err != nil {
+			log.Printf("clone-cancel: delete browser session row for %d: %v", instanceID, err)
+		}
+		// Drop instance providers / gateway keys / instance row. Mirrors the
+		// teardown in DeleteInstance so a canceled clone leaves no rows behind.
+		database.DB.Where("instance_id = ?", instanceID).Delete(&database.LLMProvider{})
+		database.DB.Where("instance_id = ?", instanceID).Delete(&database.LLMGatewayKey{})
+		database.DB.Delete(&database.Instance{}, instanceID)
+		clearStatusMessage(instanceID)
+	}
+}
+
+// SetBrowserActive flips the per-instance "show browser pane" toggle. Stopping
+// the browser pod when the user hides the pane is intentionally NOT done here
+// — the dedicated /browser/stop handler covers that and lets the frontend
+// surface task feedback.
+func SetBrowserActive(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+	if !middleware.CanAccessInstance(r, uint(id)) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	var body struct {
+		BrowserActive *bool `json:"browser_active"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.BrowserActive == nil {
+		writeError(w, http.StatusBadRequest, "browser_active is required")
+		return
+	}
+
+	if err := database.DB.Model(&database.Instance{}).
+		Where("id = ?", id).
+		Update("browser_active", *body.BrowserActive).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to update instance")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"browser_active": *body.BrowserActive})
 }
 
 func ReorderInstances(w http.ResponseWriter, r *http.Request) {

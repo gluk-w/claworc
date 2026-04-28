@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
@@ -17,6 +18,12 @@ var fixedEncryptedSettings = map[string]bool{
 // plainSettings are returned as-is (not encrypted).
 var plainSettings = []string{
 	"default_container_image",
+	"default_agent_image",
+	"default_browser_image",
+	"default_browser_provider",
+	"default_browser_idle_minutes",
+	"default_browser_ready_seconds",
+	"default_browser_storage",
 	"default_vnc_resolution",
 	"default_cpu_request",
 	"default_cpu_limit",
@@ -27,6 +34,7 @@ var plainSettings = []string{
 	"default_timezone",
 	"default_user_agent",
 	"default_models",
+	"analytics_consent",
 }
 
 func getAllSettings() map[string]string {
@@ -52,8 +60,21 @@ func settingsToResponse(raw map[string]string) map[string]interface{} {
 			result[key] = models
 			continue
 		}
+		if key == "analytics_consent" {
+			v := raw[key]
+			if v == "" {
+				v = analytics.ConsentUnset
+			}
+			result[key] = v
+			continue
+		}
 		result[key] = raw[key]
 	}
+
+	// Read-only: surface installation_id (auto-generated on first GET) so the
+	// settings UI can show the user the random ID we report alongside events.
+	id, _ := analytics.GetOrCreateInstallationID()
+	result["installation_id"] = id
 
 	// Fixed encrypted settings (brave_api_key)
 	for key := range fixedEncryptedSettings {
@@ -146,6 +167,9 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			envVarsChanged = true
+			analytics.Track(r.Context(), analytics.EventGlobalEnvVarsEdited, map[string]any{
+				"total_env_vars": len(decodeEncryptedEnvVarsJSON(updated)),
+			})
 		}
 	}
 
@@ -154,7 +178,26 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		if key == "default_models" || key == "brave_api_key" || key == "env_vars_set" || key == "env_vars_unset" {
 			continue
 		}
+		// installation_id is read-only; never accept it on update.
+		if key == "installation_id" {
+			continue
+		}
 		if strVal, ok := val.(string); ok {
+			if key == "analytics_consent" {
+				if strVal != analytics.ConsentOptIn && strVal != analytics.ConsentOptOut {
+					// Reject "unset" or unknown values — once shown the modal,
+					// users can only flip between in and out.
+					continue
+				}
+				prev := analytics.GetConsent()
+				// Send the opt_out event BEFORE persisting so Track()'s consent
+				// gate doesn't short-circuit it. Then store the new state.
+				if strVal == analytics.ConsentOptOut && prev == analytics.ConsentOptIn {
+					analytics.TrackForceOptOut()
+				}
+				database.SetSetting(key, strVal)
+				continue
+			}
 			database.SetSetting(key, strVal)
 		}
 	}

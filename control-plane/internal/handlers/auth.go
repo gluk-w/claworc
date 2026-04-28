@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/auth"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
@@ -109,9 +110,10 @@ func GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"id":       user.ID,
-		"username": user.Username,
-		"role":     user.Role,
+		"id":                   user.ID,
+		"username":             user.Username,
+		"role":                 user.Role,
+		"can_create_instances": user.CanCreateInstances,
 	})
 }
 
@@ -223,6 +225,10 @@ func ChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Failed to update password")
 		return
 	}
+
+	analytics.Track(r.Context(), analytics.EventPasswordChanged, map[string]any{
+		"user_id": user.ID,
+	})
 
 	// Invalidate all other sessions for this user
 	cookie, err := r.Cookie(auth.SessionCookie)

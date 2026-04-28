@@ -46,20 +46,3 @@ export function errorToast(title: string, error?: unknown) {
 export function infoToast(title: string, description?: string) {
   showToast(title, description, "info", 3000);
 }
-
-// envVarRestartToast shows a persistent loading toast while an instance is
-// being recreated to apply env var changes. The toast id is stable per
-// instance so repeated saves collapse into one, and useRestartedToast
-// dismisses it when the instance transitions back to "running".
-export function envVarRestartToast(instanceId: number, displayName: string) {
-  const id = `env-restart-${instanceId}`;
-  toast.custom(
-    createElement(AppToast, {
-      title: `Restarting ${displayName}`,
-      description: "Setting environment variables",
-      status: "loading",
-      toastId: id,
-    }),
-    { id, duration: Infinity },
-  );
-}

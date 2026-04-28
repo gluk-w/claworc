@@ -108,6 +108,7 @@ func CreateFullBackup(ctx context.Context, orch orchestrator.ContainerOrchestrat
 			UserID:       userID,
 			ResourceID:   strconv.FormatUint(uint64(b.ID), 10),
 			ResourceName: fmt.Sprintf("%s backup", instanceName),
+			Title:        fmt.Sprintf("Backing up %s", instanceName),
 			OnCancel:     backupOnCancel(b.ID, absPath),
 			Run: func(taskCtx context.Context, h *taskmanager.Handle) error {
 				h.UpdateMessage("archiving filesystem")

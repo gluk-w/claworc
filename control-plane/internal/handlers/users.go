@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/auth"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
@@ -93,6 +94,17 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var totalUsers int64
+	database.DB.Model(&database.User{}).Count(&totalUsers)
+	var assigned int64
+	database.DB.Model(&database.UserInstance{}).Where("user_id = ?", user.ID).Count(&assigned)
+	analytics.Track(r.Context(), analytics.EventUserCreated, map[string]any{
+		"total_users":        totalUsers,
+		"user_id":            user.ID,
+		"role":               user.Role,
+		"assigned_instances": assigned,
+	})
+
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"id":                   user.ID,
 		"username":             user.Username,
@@ -131,6 +143,8 @@ func UpdateUserPermissions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	analyticsTrackUserUpdated(r, uint(id))
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -154,6 +168,12 @@ func DeleteUser(w http.ResponseWriter, r *http.Request) {
 
 	// Invalidate all sessions for the deleted user
 	SessionStore.DeleteByUserID(uint(id))
+
+	var remaining int64
+	database.DB.Model(&database.User{}).Count(&remaining)
+	analytics.Track(r.Context(), analytics.EventUserDeleted, map[string]any{
+		"remaining_users": remaining,
+	})
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -189,7 +209,28 @@ func UpdateUserRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	analyticsTrackUserUpdated(r, uint(id))
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// analyticsTrackUserUpdated emits a user_updated event with the canonical
+// prop set used for both permission and role updates.
+func analyticsTrackUserUpdated(r *http.Request, userID uint) {
+	var u database.User
+	if err := database.DB.First(&u, userID).Error; err != nil {
+		return
+	}
+	var totalUsers int64
+	database.DB.Model(&database.User{}).Count(&totalUsers)
+	var assigned int64
+	database.DB.Model(&database.UserInstance{}).Where("user_id = ?", userID).Count(&assigned)
+	analytics.Track(r.Context(), analytics.EventUserUpdated, map[string]any{
+		"total_users":        totalUsers,
+		"user_id":            u.ID,
+		"role":               u.Role,
+		"assigned_instances": assigned,
+	})
 }
 
 func GetUserAssignedInstances(w http.ResponseWriter, r *http.Request) {

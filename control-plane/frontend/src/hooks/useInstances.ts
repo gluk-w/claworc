@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import toast from "react-hot-toast";
 import { successToast, errorToast, infoToast } from "@/utils/toast";
 import {
   fetchInstances,
@@ -67,8 +66,10 @@ export function useCloneInstance() {
   return useMutation({
     mutationFn: ({ id }: { id: number; displayName: string }) =>
       cloneInstance(id),
-    onSuccess: (_data, { displayName }) => {
-      infoToast("Cloning instance", displayName);
+    // No success toast here — the TaskManager-driven `instance.clone` task
+    // surfaces its own loading→success/error toast via TaskToasts. Two toasts
+    // for one user action is noise.
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["instances"] });
     },
     onError: (error: any, { displayName }) => {
@@ -140,7 +141,9 @@ export function useUpdateInstanceImage() {
   });
 }
 
-/** Show a "Restarted <name>" toast when any instance transitions from "restarting" → "running". */
+/** Show a "Stopped <name>" toast when any instance transitions from "stopping" → "stopped".
+ * Restart transitions are surfaced by TaskToasts (task type `instance.restart`),
+ * so this hook does not duplicate them. */
 export function useRestartedToast(instances: Instance[] | undefined) {
   const prevRef = useRef<Map<number, string>>(new Map());
 
@@ -148,12 +151,6 @@ export function useRestartedToast(instances: Instance[] | undefined) {
     if (!instances) return;
     const prev = prevRef.current;
     for (const inst of instances) {
-      if (prev.get(inst.id) === "restarting" && inst.status === "running") {
-        successToast("Instance restarted", inst.display_name);
-        // Auto-dismiss the "Setting environment variables" loading toast if
-        // it was fired when the admin saved env var changes — restart is done.
-        toast.dismiss(`env-restart-${inst.id}`);
-      }
       if (prev.get(inst.id) === "stopping" && inst.status === "stopped") {
         successToast("Instance stopped", inst.display_name);
       }

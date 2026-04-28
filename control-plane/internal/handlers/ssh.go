@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -19,6 +21,21 @@ var SSHMgr *sshproxy.SSHManager
 
 // TunnelMgr is set from main.go during init.
 var TunnelMgr *sshproxy.TunnelManager
+
+// BrowserBridgeRef is set from main.go during init. It is the bridge handlers
+// use to ensure on-demand browser sessions and dial CDP/VNC for non-legacy
+// instances. The interface here keeps handlers free of an import cycle with
+// browserprov; main.go assigns a *browserprov.BrowserBridge.
+var BrowserBridgeRef BrowserBridge
+
+// BrowserBridge is the contract handlers depend on. It mirrors
+// browserprov.BrowserBridge's exported methods.
+type BrowserBridge interface {
+	EnsureSession(ctx context.Context, instanceID, userID uint) error
+	DialCDP(ctx context.Context, instanceID uint) (io.ReadWriteCloser, error)
+	DialVNC(ctx context.Context, instanceID uint) (io.ReadWriteCloser, error)
+	Touch(instanceID uint)
+}
 
 // SSHConnectionTest tests SSH connectivity to an instance by establishing a
 // connection (or reusing an existing one) and executing a simple command.

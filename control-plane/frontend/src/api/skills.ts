@@ -33,6 +33,39 @@ export async function searchClawhub(
   return res.data;
 }
 
+export interface SkillFileEntry {
+  path: string;
+  size: number;
+  binary: boolean;
+}
+
+export interface SkillFileContent {
+  path: string;
+  content: string;
+  binary: boolean;
+}
+
+function encodeSkillPath(path: string): string {
+  return path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+export async function listSkillFiles(slug: string): Promise<SkillFileEntry[]> {
+  const res = await client.get<SkillFileEntry[]>(`/skills/${slug}/files`);
+  return res.data;
+}
+
+export async function getSkillFile(slug: string, path: string): Promise<SkillFileContent> {
+  const res = await client.get<SkillFileContent>(`/skills/${slug}/files/${encodeSkillPath(path)}`);
+  return res.data;
+}
+
+export async function saveSkillFile(slug: string, path: string, content: string): Promise<void> {
+  await client.put(`/skills/${slug}/files/${encodeSkillPath(path)}`, { content });
+}
+
 export async function deploySkill(
   slug: string,
   instanceIds: number[],

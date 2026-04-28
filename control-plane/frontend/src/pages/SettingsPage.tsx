@@ -3,12 +3,13 @@ import { AlertTriangle, Eye, EyeOff, Key, Pencil, Plus, RefreshCw } from "lucide
 import ProviderIcon from "@/components/ProviderIcon";
 import ProviderModal from "@/components/ProviderModal";
 import EnvVarsEditor from "@/components/EnvVarsEditor";
+import StickyActionBar from "@/components/StickyActionBar";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import { useProviders } from "@/hooks/useProviders";
 import { fetchSSHFingerprint, rotateSSHKey } from "@/api/ssh";
 import { syncAllProviders } from "@/api/llm";
-import { successToast, errorToast, envVarRestartToast } from "@/utils/toast";
+import { successToast, errorToast } from "@/utils/toast";
 import type { LLMProvider } from "@/types/instance";
 
 import type { SettingsUpdatePayload } from "@/types/settings";
@@ -55,6 +56,7 @@ export default function SettingsPage() {
   const [editingBrave, setEditingBrave] = useState(false);
   const [braveValue, setBraveValue] = useState("");
   const [showBrave, setShowBrave] = useState(false);
+  const [resetKey, setResetKey] = useState(0);
 
   if (isLoading || !settings) {
     return <div className="text-center py-12 text-gray-500">Loading...</div>;
@@ -86,25 +88,32 @@ export default function SettingsPage() {
     });
   };
 
+  const handleReset = () => {
+    setPendingBraveKey(null);
+    setResources({});
+    setEditingBrave(false);
+    setBraveValue("");
+    setShowBrave(false);
+    setResetKey((k) => k + 1);
+  };
+
   // Env var changes save independently of the rest of the page so the editor
-  // has its own Save button inside the card (see EnvVarsEditor).
+  // has its own Save button inside the card (see EnvVarsEditor). Per-instance
+  // restart progress surfaces via TaskToasts (task type `instance.restart`).
   const handleSaveEnvVars = async (delta: { set: Record<string, string>; unset: string[] }) => {
     const payload: SettingsUpdatePayload = {};
     if (Object.keys(delta.set).length > 0) payload.env_vars_set = delta.set;
     if (delta.unset.length > 0) payload.env_vars_unset = delta.unset;
-    const data = await updateMutation.mutateAsync(payload);
-    for (const inst of data?.restarting_instances ?? []) {
-      envVarRestartToast(inst.id, inst.display_name);
-    }
+    await updateMutation.mutateAsync(payload);
   };
 
   const resourceFields: { key: string; label: string }[] = [
-    { key: "default_cpu_request", label: "Default CPU Request" },
-    { key: "default_cpu_limit", label: "Default CPU Limit" },
-    { key: "default_memory_request", label: "Default Memory Request" },
-    { key: "default_memory_limit", label: "Default Memory Limit" },
-    { key: "default_storage_homebrew", label: "Default Homebrew Storage" },
-    { key: "default_storage_home", label: "Default Home Storage" },
+    { key: "default_cpu_request", label: "CPU Request" },
+    { key: "default_cpu_limit", label: "CPU Limit" },
+    { key: "default_memory_request", label: "Memory Request" },
+    { key: "default_memory_limit", label: "Memory Limit" },
+    { key: "default_storage_homebrew", label: "Homebrew Storage" },
+    { key: "default_storage_home", label: "Home Storage" },
   ];
 
   const hasChanges =
@@ -120,7 +129,7 @@ export default function SettingsPage() {
         Changing global API keys will update all instances that don't have overrides.
       </div>
 
-      <div className="space-y-8 max-w-2xl">
+      <div className="space-y-8 max-w-2xl pb-24">
         {/* Model API Keys — provider list */}
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-4">
@@ -253,19 +262,87 @@ export default function SettingsPage() {
         </div>
 
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-sm font-medium text-gray-900 mb-4">Agent Image</h3>
-          <div className="space-y-4">
+          <h3 className="text-sm font-medium text-gray-900 mb-1">Instance Defaults</h3>
+          <p className="text-xs text-gray-500 mb-4">
+            Applied only when a new instance is created. Changing these values does not affect existing instances.
+          </p>
+          <div key={resetKey} className="space-y-4">
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Default Container Image</label>
+              <label className="block text-xs text-gray-500 mb-1">Image</label>
               <input
                 type="text"
-                defaultValue={settings.default_container_image ?? ""}
-                onChange={(e) => setResources((r) => ({ ...r, default_container_image: e.target.value }))}
+                defaultValue={settings.default_agent_image ?? ""}
+                onChange={(e) => setResources((r) => ({ ...r, default_agent_image: e.target.value }))}
+                placeholder="glukw/claworc-agent:latest"
                 className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Default VNC Resolution</label>
+              <label className="block text-xs text-gray-500 mb-1">Timezone</label>
+              <input
+                type="text"
+                defaultValue={settings.default_timezone ?? ""}
+                onChange={(e) => setResources((r) => ({ ...r, default_timezone: e.target.value }))}
+                placeholder="e.g., America/New_York"
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              {resourceFields.map((field) => (
+                <div key={field.key}>
+                  <label className="block text-xs text-gray-500 mb-1">{field.label}</label>
+                  <input
+                    type="text"
+                    defaultValue={(settings as Record<string, any>)[field.key] ?? ""}
+                    onChange={(e) => setResources((r) => ({ ...r, [field.key]: e.target.value }))}
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="text-sm font-medium text-gray-900 mb-1">Browser Defaults</h3>
+          <p className="text-xs text-gray-500 mb-4">
+            Browser settings used to launch a browser for each instance.
+          </p>
+          <div key={resetKey} className="space-y-4">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Image</label>
+              <input
+                type="text"
+                defaultValue={settings.default_browser_image ?? ""}
+                onChange={(e) => setResources((r) => ({ ...r, default_browser_image: e.target.value }))}
+                placeholder="glukw/claworc-browser-chromium:latest"
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Idle Timeout (min)</label>
+                <input
+                  type="number"
+                  min={1}
+                  defaultValue={settings.default_browser_idle_minutes ?? "15"}
+                  onChange={(e) => setResources((r) => ({ ...r, default_browser_idle_minutes: e.target.value }))}
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Ready Timeout (sec)</label>
+                <input
+                  type="number"
+                  min={5}
+                  defaultValue={settings.default_browser_ready_seconds ?? "60"}
+                  onChange={(e) => setResources((r) => ({ ...r, default_browser_ready_seconds: e.target.value }))}
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Resolution</label>
               <input
                 type="text"
                 defaultValue={settings.default_vnc_resolution ?? "1920x1080"}
@@ -275,17 +352,7 @@ export default function SettingsPage() {
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Default Timezone</label>
-              <input
-                type="text"
-                defaultValue={settings.default_timezone ?? ""}
-                onChange={(e) => setResources((r) => ({ ...r, default_timezone: e.target.value }))}
-                placeholder="e.g., America/New_York"
-                className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Default User-Agent</label>
+              <label className="block text-xs text-gray-500 mb-1">User-Agent</label>
               <input
                 type="text"
                 defaultValue={settings.default_user_agent ?? ""}
@@ -294,26 +361,6 @@ export default function SettingsPage() {
                 className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-sm font-medium text-gray-900 mb-1">Default Resource Limits</h3>
-          <p className="text-xs text-gray-500 mb-4">
-            Applied only when a new instance is created. Changing these values does not affect existing instances.
-          </p>
-          <div className="grid grid-cols-2 gap-4">
-            {resourceFields.map((field) => (
-              <div key={field.key}>
-                <label className="block text-xs text-gray-500 mb-1">{field.label}</label>
-                <input
-                  type="text"
-                  defaultValue={(settings as Record<string, any>)[field.key] ?? ""}
-                  onChange={(e) => setResources((r) => ({ ...r, [field.key]: e.target.value }))}
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            ))}
           </div>
         </div>
 
@@ -362,16 +409,53 @@ export default function SettingsPage() {
           )}
         </div>
 
-        <div className="flex justify-end">
-          <button
-            onClick={handleSave}
-            disabled={updateMutation.isPending || !hasChanges}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {updateMutation.isPending ? "Saving..." : "Save Settings"}
-          </button>
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="text-sm font-medium text-gray-900 mb-1">Anonymous Analytics</h3>
+          <p className="text-xs text-gray-500 mb-4">
+            Help us improve Claworc by sharing anonymous usage statistics. We never collect API keys, env-var values, file paths, or instance names. See{" "}
+            <a href="https://claworc.com/docs/analytics" className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">
+              what's collected
+            </a>
+            .
+          </p>
+          <div className="space-y-4">
+            <label className="inline-flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.analytics_consent === "opt_in"}
+                onChange={(e) => {
+                  updateMutation.mutate({ analytics_consent: e.target.checked ? "opt_in" : "opt_out" });
+                }}
+                className="h-4 w-4 text-blue-600 rounded border-gray-300"
+              />
+              <span className="text-sm text-gray-700">Share anonymous usage statistics</span>
+            </label>
+            <div>
+              <dt className="text-xs text-gray-500 mb-1">Installation ID</dt>
+              <dd className="text-xs font-mono text-gray-700 break-all">{settings.installation_id || "—"}</dd>
+            </div>
+          </div>
         </div>
+
       </div>
+
+      <StickyActionBar visible={hasChanges}>
+        <button
+          type="button"
+          onClick={handleReset}
+          disabled={updateMutation.isPending}
+          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Reset
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={updateMutation.isPending || !hasChanges}
+          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {updateMutation.isPending ? "Saving..." : "Save"}
+        </button>
+      </StickyActionBar>
 
       <ProviderModal
         open={modalOpen}

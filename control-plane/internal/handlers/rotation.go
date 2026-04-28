@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
@@ -62,6 +63,8 @@ func RotateSSHKey(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("old=%s, new=%s, instances=%d/%d succeeded",
 			result.OldFingerprint, result.NewFingerprint,
 			successCount, len(result.InstanceStatuses)))
+
+	analytics.Track(r.Context(), analytics.EventSSHKeyRotated, nil)
 
 	writeJSON(w, http.StatusOK, result)
 }

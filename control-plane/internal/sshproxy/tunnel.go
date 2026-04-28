@@ -98,7 +98,19 @@ type TunnelManager struct {
 	healthCancel context.CancelFunc
 
 	llmGatewayAddr string // local address of the LLM gateway (set by SetLLMGatewayAddr)
+
+	// cdpDialProvider, when set, lets the reconciler ask "should this instance
+	// get a CDP agent-listener tunnel?" once per StartTunnelsForInstance. ok=true
+	// means the instance is non-legacy and the returned DialFunc routes inbound
+	// CDP connections (e.g. via the BrowserBridge → browser pod). When ok=true,
+	// the legacy VNC reverse tunnel is skipped because VNC is served directly
+	// from the browser pod's Service.
+	cdpDialProvider CDPDialProvider
 }
+
+// CDPDialProvider is the hook used by the reconciler to discover non-legacy
+// instances and obtain their per-instance CDP DialFunc.
+type CDPDialProvider func(ctx context.Context, instanceID uint) (DialFunc, bool)
 
 // NewTunnelManager creates a new TunnelManager that uses the given SSHManager
 // for obtaining SSH connections to instances.
@@ -119,16 +131,50 @@ func (tm *TunnelManager) SetLLMGatewayAddr(addr string) {
 	tm.mu.Unlock()
 }
 
+// SetCDPDialProvider installs the hook used by StartTunnelsForInstance to
+// decide whether to register a CDP agent-listener (non-legacy mode) or a VNC
+// reverse tunnel (legacy mode). Pass nil to disable the non-legacy path —
+// then every instance gets the legacy VNC reverse tunnel as before.
+func (tm *TunnelManager) SetCDPDialProvider(p CDPDialProvider) {
+	tm.mu.Lock()
+	tm.cdpDialProvider = p
+	tm.mu.Unlock()
+}
+
 // CreateAgentListenerTunnel makes the SSH server (agent) listen on agentPort.
 // Connections from inside the agent to that port are forwarded to localAddr on the control plane.
 // Uses ssh.Client.Listen() — different from reverse tunnels which use local listeners.
 func (tm *TunnelManager) CreateAgentListenerTunnel(ctx context.Context, instanceID uint, label string, agentPort int, localAddr string) error {
+	dial := func(dialCtx context.Context) (io.ReadWriteCloser, error) {
+		var d net.Dialer
+		dialCtx, cancel := context.WithTimeout(dialCtx, 5*time.Second)
+		defer cancel()
+		return d.DialContext(dialCtx, "tcp", localAddr)
+	}
+	if err := tm.CreateAgentListenerTunnelDial(ctx, instanceID, label, agentPort, dial); err != nil {
+		return err
+	}
+	log.Printf("Agent-listener tunnel %q for instance %d: agent:%d → %s", label, instanceID, agentPort, localAddr)
+	return nil
+}
+
+// DialFunc returns a fresh per-connection upstream conn for an agent-listener
+// tunnel. The bridge uses this to lazily route each inbound CDP connection to
+// the configured browser provider (which may itself spawn the browser pod on
+// first use).
+type DialFunc func(ctx context.Context) (io.ReadWriteCloser, error)
+
+// CreateAgentListenerTunnelDial is the dial-based variant of
+// CreateAgentListenerTunnel. The agent's sshd listens on agentPort; each
+// inbound connection is forwarded by calling the provided DialFunc, which
+// returns the upstream io.ReadWriteCloser. Bytes are copied bidirectionally
+// until either side closes.
+func (tm *TunnelManager) CreateAgentListenerTunnelDial(ctx context.Context, instanceID uint, label string, agentPort int, dial DialFunc) error {
 	client, ok := tm.sshMgr.GetConnection(instanceID)
 	if !ok {
 		return fmt.Errorf("no SSH connection for instance %d", instanceID)
 	}
 
-	// client.Listen binds a port on the SSH SERVER (agent container side)
 	listener, err := client.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", agentPort))
 	if err != nil {
 		return fmt.Errorf("agent listen port %d: %w", agentPort, err)
@@ -146,12 +192,11 @@ func (tm *TunnelManager) CreateAgentListenerTunnel(ctx context.Context, instance
 		metrics:   &TunnelMetrics{CreatedAt: time.Now()},
 	}
 	tm.addTunnel(instanceID, tunnel)
-	go tm.agentListenerLoop(tunnelCtx, tunnel, listener, localAddr, instanceID)
-	log.Printf("LLM proxy tunnel for instance %d: agent:%d → %s", instanceID, agentPort, localAddr)
+	go tm.agentListenerLoopDial(tunnelCtx, tunnel, listener, dial, instanceID)
 	return nil
 }
 
-func (tm *TunnelManager) agentListenerLoop(ctx context.Context, tunnel *ActiveTunnel, listener net.Listener, localAddr string, instanceID uint) {
+func (tm *TunnelManager) agentListenerLoopDial(ctx context.Context, tunnel *ActiveTunnel, listener net.Listener, dial DialFunc, instanceID uint) {
 	defer listener.Close()
 	for {
 		conn, err := listener.Accept()
@@ -164,7 +209,7 @@ func (tm *TunnelManager) agentListenerLoop(ctx context.Context, tunnel *ActiveTu
 		}
 		go func(remote net.Conn) {
 			defer remote.Close()
-			local, err := net.DialTimeout("tcp", localAddr, 5*time.Second)
+			local, err := dial(ctx)
 			if err != nil {
 				return
 			}
@@ -271,16 +316,32 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID
 		return fmt.Errorf("ensure connected for instance %d: %w", instanceID, err)
 	}
 
+	// Resolve mode for this instance: external (CDP via bridge → browser pod)
+	// or legacy (VNC reverse tunnel from agent's port 3000).
+	tm.mu.RLock()
+	cdpProvider := tm.cdpDialProvider
+	tm.mu.RUnlock()
+	var cdpDial DialFunc
+	useCDP := false
+	if cdpProvider != nil {
+		if d, ok := cdpProvider(ctx, instanceID); ok {
+			cdpDial = d
+			useCDP = true
+		}
+	}
+
 	if !needsRecreation {
-		// Even when other tunnels are healthy, ensure the LLMProxy tunnel exists.
-		// It may be missing if the gateway feature was enabled after initial tunnel creation.
+		// Healthy: ensure missing optional tunnels (LLMProxy, CDP) are created.
 		tm.mu.RLock()
 		llmAddr := tm.llmGatewayAddr
 		hasLLMProxy := false
+		hasCDP := false
 		for _, t := range tm.tunnels[instanceID] {
 			if t.Label == "LLMProxy" && t.Status == "active" {
 				hasLLMProxy = true
-				break
+			}
+			if t.Label == "CDP" && t.Status == "active" {
+				hasCDP = true
 			}
 		}
 		tm.mu.RUnlock()
@@ -292,6 +353,13 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID
 			}
 			if err := tm.CreateAgentListenerTunnel(ctx, instanceID, "LLMProxy", agentPort, llmAddr); err != nil {
 				log.Printf("Failed to create LLM proxy tunnel for instance %d: %v", instanceID, err)
+			}
+		}
+		if useCDP && !hasCDP {
+			if err := tm.CreateAgentListenerTunnelDial(ctx, instanceID, "CDP", 9222, cdpDial); err != nil {
+				log.Printf("Failed to create CDP tunnel for instance %d: %v", instanceID, err)
+			} else {
+				log.Printf("CDP tunnel for instance %d: agent:9222 → browser provider", instanceID)
 			}
 		}
 		return nil
@@ -307,11 +375,20 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID
 		tm.incrementReconnectCount(instanceID)
 	}
 
-	// Create VNC tunnel
-	_, err = tm.CreateTunnelForVNC(ctx, instanceID)
-	if err != nil {
-		log.Printf("Failed to create VNC tunnel for instance %d: %v", instanceID, err)
-		// Continue to try gateway tunnel
+	if useCDP {
+		// Non-legacy: VNC is served from the browser pod via Service; no
+		// reverse tunnel needed. The CDP agent-listener routes OpenClaw's
+		// localhost:9222 dials through the bridge to the browser provider.
+		if err := tm.CreateAgentListenerTunnelDial(ctx, instanceID, "CDP", 9222, cdpDial); err != nil {
+			log.Printf("Failed to create CDP tunnel for instance %d: %v", instanceID, err)
+		} else {
+			log.Printf("CDP tunnel for instance %d: agent:9222 → browser provider", instanceID)
+		}
+	} else {
+		// Legacy: agent runs the browser+VNC together; reverse tunnel agent:3000.
+		if _, err := tm.CreateTunnelForVNC(ctx, instanceID); err != nil {
+			log.Printf("Failed to create VNC tunnel for instance %d: %v", instanceID, err)
+		}
 	}
 
 	// Create Gateway tunnel

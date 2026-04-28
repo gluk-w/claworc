@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/backup"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
@@ -58,6 +59,10 @@ func CreateBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to start backup: %v", err))
 		return
 	}
+
+	analytics.Track(r.Context(), analytics.EventBackupCreatedManual, map[string]any{
+		"paths_count": len(req.Paths),
+	})
 
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"id":      backupID,

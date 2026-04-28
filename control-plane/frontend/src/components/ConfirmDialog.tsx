@@ -1,8 +1,11 @@
+import { useEffect } from "react";
+
 interface ConfirmDialogProps {
   title: string;
   message: string;
   onConfirm: () => void;
   onCancel: () => void;
+  confirmLabel?: string;
 }
 
 export default function ConfirmDialog({
@@ -10,7 +13,22 @@ export default function ConfirmDialog({
   message,
   onConfirm,
   onCancel,
+  confirmLabel = "Confirm",
 }: ConfirmDialogProps) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancel();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        onConfirm();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onConfirm, onCancel]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="fixed inset-0 bg-black/50" onClick={onCancel} />
@@ -28,7 +46,7 @@ export default function ConfirmDialog({
             onClick={onConfirm}
             className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700"
           >
-            Confirm
+            {confirmLabel}
           </button>
         </div>
       </div>

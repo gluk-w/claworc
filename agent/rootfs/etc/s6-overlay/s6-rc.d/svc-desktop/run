@@ -28,16 +28,41 @@ else
   EXTRA_ARGS+=(--no-sandbox)
 fi
 
+PROFILE_DIR=/home/claworc/chrome-data
+
+# Clear stale Singleton* files left behind when Chromium dies without a clean
+# shutdown (e.g. container kill). The lock symlinks `<host>-<pid>` and the
+# matching socket would otherwise abort every subsequent launch with
+# "profile in use", trapping us in a tight respawn loop.
+clear_stale_singletons() {
+  if pgrep -u claworc -f /usr/lib/chromium/chromium >/dev/null 2>&1; then
+    return
+  fi
+  if pgrep -u claworc -x chrome >/dev/null 2>&1; then
+    return
+  fi
+  rm -f "$PROFILE_DIR/SingletonLock" "$PROFILE_DIR/SingletonCookie" "$PROFILE_DIR/SingletonSocket"
+}
+
 # Run browser in a restart loop
 while true; do
+  clear_stale_singletons
+  # CDP listens on 0.0.0.0 so the cluster Service (or Docker bridge) can reach
+  # it. Access control is enforced one layer up via NetworkPolicy / per-instance
+  # bridge networks — see docs/security and helm/templates/networkpolicy.yaml.
+  # Ensure Downloads directory exists. On the on-demand layout this path is
+  # the agent's home PVC mounted via subPath so files Chromium saves here are
+  # immediately visible to OpenClaw and the agent terminal.
+  mkdir -p /home/claworc/Downloads 2>/dev/null || true
   s6-setuidgid claworc $BROWSER \
     --no-first-run \
     --password-store=basic \
     --simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT' \
     --start-maximized \
     --user-data-dir=/home/claworc/chrome-data \
+    --download-directory=/home/claworc/Downloads \
     --remote-debugging-port=9222 \
-    --remote-debugging-address=127.0.0.1 \
+    --remote-debugging-address=0.0.0.0 \
     --disable-default-apps \
     --disable-features=CloseWindowWithLastTab \
     --disable-blink-features=AutomationControlled \

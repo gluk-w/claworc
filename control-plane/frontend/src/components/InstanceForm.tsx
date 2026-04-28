@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { useSettings } from "@/hooks/useSettings";
 import { useProviders } from "@/hooks/useProviders";
 import { fetchCatalogProviderDetail } from "@/api/llm";
 import type { CatalogProviderDetail } from "@/api/llm";
 import ProviderModelSelector from "@/components/ProviderModelSelector";
-import KeyValueListEditor from "@/components/KeyValueListEditor";
+import EnvVarsEditor from "@/components/EnvVarsEditor";
+import StickyActionBar from "@/components/StickyActionBar";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import type { InstanceCreatePayload } from "@/types/instance";
 
 interface InstanceFormProps {
@@ -20,20 +22,36 @@ export default function InstanceForm({
   loading,
 }: InstanceFormProps) {
   const [displayName, setDisplayName] = useState("");
-  const [cpuRequest, setCpuRequest] = useState("500m");
-  const [cpuLimit, setCpuLimit] = useState("2000m");
-  const [memoryRequest, setMemoryRequest] = useState("1Gi");
-  const [memoryLimit, setMemoryLimit] = useState("4Gi");
-  const [storageHomebrew, setStorageHomebrew] = useState("10Gi");
-  const [storageHome, setStorageHome] = useState("10Gi");
+  const [cpuRequest, setCpuRequest] = useState("");
+  const [cpuLimit, setCpuLimit] = useState("");
+  const [memoryRequest, setMemoryRequest] = useState("");
+  const [memoryLimit, setMemoryLimit] = useState("");
+  const [storageHomebrew, setStorageHomebrew] = useState("");
+  const [storageHome, setStorageHome] = useState("");
+  const [resourcesSeeded, setResourcesSeeded] = useState(false);
 
   const [containerImage, setContainerImage] = useState("");
-  const [vncResolution, setVncResolution] = useState("");
   const [timezone, setTimezone] = useState("");
+
+  const [browserImage, setBrowserImage] = useState("");
+  const [vncResolution, setVncResolution] = useState("");
   const [userAgent, setUserAgent] = useState("");
 
   const { data: settings } = useSettings();
   const { data: allProviders = [] } = useProviders();
+
+  // Seed resource fields from global defaults once settings have loaded.
+  // The user can still override anything before submitting.
+  useEffect(() => {
+    if (resourcesSeeded || !settings) return;
+    setCpuRequest(settings.default_cpu_request ?? "");
+    setCpuLimit(settings.default_cpu_limit ?? "");
+    setMemoryRequest(settings.default_memory_request ?? "");
+    setMemoryLimit(settings.default_memory_limit ?? "");
+    setStorageHomebrew(settings.default_storage_homebrew ?? "");
+    setStorageHome(settings.default_storage_home ?? "");
+    setResourcesSeeded(true);
+  }, [settings, resourcesSeeded]);
 
   // Fetch catalog model lists for all catalog providers
   const catalogKeys = [...new Set(allProviders.filter((p) => p.provider).map((p) => p.provider))];
@@ -60,9 +78,10 @@ export default function InstanceForm({
   // Per-instance env var overrides (plaintext, encrypted server-side on save)
   const [envVars, setEnvVars] = useState<Record<string, string>>({});
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!displayName.trim()) return;
+  const [showNoModelsWarning, setShowNoModelsWarning] = useState(false);
+
+  const buildPayload = (): InstanceCreatePayload | null => {
+    if (!displayName.trim()) return null;
 
     // Build provider-prefixed extra models.
     // Skip providers with stored models (custom providers) — their models are
@@ -89,6 +108,10 @@ export default function InstanceForm({
       user_agent: userAgent || null,
     };
 
+    if (browserImage) {
+      payload.browser_image = browserImage;
+    }
+
     if (enabledProviders.length > 0) {
       payload.enabled_providers = enabledProviders;
     }
@@ -102,14 +125,33 @@ export default function InstanceForm({
       payload.env_vars_set = envVars;
     }
 
-    onSubmit(payload);
+    return payload;
+  };
+
+  const hasModelsSelected = Object.values(providerModels).some((m) => m.length > 0);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!displayName.trim()) return;
+    if (!hasModelsSelected) {
+      setShowNoModelsWarning(true);
+      return;
+    }
+    const payload = buildPayload();
+    if (payload) onSubmit(payload);
+  };
+
+  const handleConfirmNoModels = () => {
+    setShowNoModelsWarning(false);
+    const payload = buildPayload();
+    if (payload) onSubmit(payload);
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-8">
-      {/* General */}
+    <form onSubmit={handleSubmit} className="space-y-8 pb-24">
+      {/* Instance */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h3 className="text-sm font-medium text-gray-900 mb-4">General</h3>
+        <h3 className="text-sm font-medium text-gray-900 mb-4">Instance</h3>
         <div className="space-y-4">
           <div>
             <label className="block text-xs text-gray-500 mb-1">
@@ -128,30 +170,6 @@ export default function InstanceForm({
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">
-              Agent Image Override
-            </label>
-            <input
-              type="text"
-              value={containerImage}
-              onChange={(e) => setContainerImage(e.target.value)}
-              placeholder={settings?.default_container_image ?? "glukw/openclaw-vnc-chromium:latest"}
-              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">
-              VNC Resolution Override
-            </label>
-            <input
-              type="text"
-              value={vncResolution}
-              onChange={(e) => setVncResolution(e.target.value)}
-              placeholder={settings?.default_vnc_resolution ?? "1920x1080"}
-              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">
               Timezone Override
             </label>
             <input
@@ -159,18 +177,6 @@ export default function InstanceForm({
               value={timezone}
               onChange={(e) => setTimezone(e.target.value)}
               placeholder={settings?.default_timezone ?? "America/New_York"}
-              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">
-              User-Agent Override
-            </label>
-            <input
-              type="text"
-              value={userAgent}
-              onChange={(e) => setUserAgent(e.target.value)}
-              placeholder={settings?.default_user_agent || "Browser default"}
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -218,10 +224,22 @@ export default function InstanceForm({
         </div>
       </div>
 
-      {/* Container Resources */}
+      {/* Container */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h3 className="text-sm font-medium text-gray-900 mb-4">Container Resources</h3>
+        <h3 className="text-sm font-medium text-gray-900 mb-4">Container</h3>
         <div className="space-y-4">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Agent Image Override
+            </label>
+            <input
+              type="text"
+              value={containerImage}
+              onChange={(e) => setContainerImage(e.target.value)}
+              placeholder={settings?.default_agent_image ?? "glukw/claworc-agent:latest"}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
           <div className="grid grid-cols-2 gap-4">
             {[
               { label: "CPU Request", value: cpuRequest, set: setCpuRequest },
@@ -264,30 +282,61 @@ export default function InstanceForm({
       </div>
 
       {/* Environment Variables */}
+      <EnvVarsEditor
+        inline
+        values={{}}
+        title="Environment Variables"
+        description="Applied to both the instance container and the browser pod. Per-instance values override globals with the same name. Values are encrypted at rest."
+        onChange={setEnvVars}
+      />
+
+      {/* Browser */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h3 className="text-sm font-medium text-gray-900 mb-1">Environment Variables</h3>
+        <h3 className="text-sm font-medium text-gray-900 mb-1">Browser</h3>
         <p className="text-xs text-gray-500 mb-4">
-          Per-instance env vars override globals with the same name. Values are
-          encrypted at rest. Reserved names (<span className="font-mono">OPENCLAW_GATEWAY_TOKEN</span>,
-          <span className="font-mono"> CLAWORC_INSTANCE_ID</span>,
-          <span className="font-mono"> OPENCLAW_INITIAL_MODELS</span>,
-          <span className="font-mono"> OPENCLAW_INITIAL_PROVIDERS</span>) are not allowed.
+          Overrides for the on-demand browser launched for this instance.
         </p>
-        <KeyValueListEditor
-          values={{}}
-          pendingSet={envVars}
-          onSet={(name, value) => setEnvVars((m) => ({ ...m, [name]: value }))}
-          onUnset={(name) =>
-            setEnvVars((m) => {
-              const { [name]: _omit, ...rest } = m;
-              return rest;
-            })
-          }
-          emptyMessage="No instance-specific env vars. Globals from Settings apply."
-        />
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Browser Image Override
+            </label>
+            <input
+              type="text"
+              value={browserImage}
+              onChange={(e) => setBrowserImage(e.target.value)}
+              placeholder={settings?.default_browser_image ?? "glukw/claworc-browser-chromium:latest"}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Resolution Override
+            </label>
+            <input
+              type="text"
+              value={vncResolution}
+              onChange={(e) => setVncResolution(e.target.value)}
+              placeholder={settings?.default_vnc_resolution ?? "1920x1080"}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              User-Agent Override
+            </label>
+            <input
+              type="text"
+              value={userAgent}
+              onChange={(e) => setUserAgent(e.target.value)}
+              placeholder={settings?.default_user_agent || "Browser default"}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
       </div>
 
-      <div className="flex justify-end gap-3">
+      <StickyActionBar visible={!!displayName.trim()}>
         <button
           type="button"
           onClick={onCancel}
@@ -303,8 +352,17 @@ export default function InstanceForm({
         >
           {loading ? "Creating..." : "Create"}
         </button>
-      </div>
+      </StickyActionBar>
 
+      {showNoModelsWarning && (
+        <ConfirmDialog
+          title="No models selected"
+          message="You haven't selected any models for this instance. The agent won't be able to run until models are configured. Continue anyway?"
+          confirmLabel="Continue"
+          onConfirm={handleConfirmNoModels}
+          onCancel={() => setShowNoModelsWarning(false)}
+        />
+      )}
     </form>
   );
 }

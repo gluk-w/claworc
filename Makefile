@@ -3,13 +3,14 @@ include .env.development
 -include .env
 export
 
-AGENT_BASE_IMAGE := glukw/openclaw-vnc-base
-AGENT_IMAGE_NAME := openclaw-vnc-chromium
-AGENT_IMAGE := glukw/$(AGENT_IMAGE_NAME)
-AGENT_CHROME_IMAGE_NAME := openclaw-vnc-chrome
-AGENT_CHROME_IMAGE := glukw/$(AGENT_CHROME_IMAGE_NAME)
-AGENT_BRAVE_IMAGE_NAME := openclaw-vnc-brave
-AGENT_BRAVE_IMAGE := glukw/$(AGENT_BRAVE_IMAGE_NAME)
+AGENT_IMAGE := glukw/claworc-agent
+BROWSER_BASE_IMAGE := glukw/claworc-browser-base
+BROWSER_CHROMIUM_IMAGE := glukw/claworc-browser-chromium
+BROWSER_CHROME_IMAGE := glukw/claworc-browser-chrome
+BROWSER_BRAVE_IMAGE := glukw/claworc-browser-brave
+# Legacy aliases retained for targets that still use the old naming below.
+AGENT_BASE_IMAGE := $(BROWSER_BASE_IMAGE)
+AGENT_IMAGE_NAME := claworc-browser-chromium
 DASHBOARD_IMAGE := glukw/claworc
 TAG := latest
 PLATFORMS := linux/amd64,linux/arm64
@@ -27,34 +28,36 @@ HELM_NAMESPACE := claworc
 	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models scrape-models test \
 	worker-deploy worker-test site-dev site-build site-deploy
 
-agent: agent-base agent-build agent-test agent-push
+agent: agent-base agent-push
 
 agent-base:
-	@echo "Building and pushing base image..."
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(AGENT_BASE_IMAGE):$(TAG) --push agent/
+	@echo "Building and pushing browser-base image..."
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(BROWSER_BASE_IMAGE):$(TAG) -f agent/Dockerfile.browser-base --push agent/
 
 agent-base-china:
-	@echo "Building and pushing base image (China mirrors)..."
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg USE_CHINA_MIRRORS=true -t $(AGENT_BASE_IMAGE):$(TAG) --push agent/
+	@echo "Building and pushing browser-base image (China mirrors)..."
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg USE_CHINA_MIRRORS=true -t $(BROWSER_BASE_IMAGE):$(TAG) -f agent/Dockerfile.browser-base --push agent/
 
 agent-build:
-	@echo "Building agent images (chromium, chrome, brave) in parallel..."
-	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(AGENT_BASE_IMAGE):$(TAG) -t $(AGENT_IMAGE):$(TAG) -f agent/Dockerfile.chromium --load agent/
-	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(AGENT_BASE_IMAGE):$(TAG) -t $(AGENT_CHROME_IMAGE):$(TAG) -f agent/Dockerfile.chrome --load agent/
-	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(AGENT_BASE_IMAGE):$(TAG) -t $(AGENT_BRAVE_IMAGE):$(TAG) -f agent/Dockerfile.brave --load agent/
+	@echo "Building images locally (agent + browser variants)..."
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/Dockerfile.agent --load agent/
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/Dockerfile.browser-chromium --load agent/
+	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/Dockerfile.browser-chrome --load agent/
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/Dockerfile.browser-brave --load agent/
 
 agent-test:
-	cd agent/tests && AGENT_TEST_IMAGE=$(AGENT_IMAGE):$(TAG) \
-		AGENT_CHROME_TEST_IMAGE=$(AGENT_CHROME_IMAGE):$(TAG) \
-		AGENT_BRAVE_TEST_IMAGE=$(AGENT_BRAVE_IMAGE):$(TAG) \
+	cd agent/tests && AGENT_TEST_IMAGE=$(BROWSER_CHROMIUM_IMAGE):$(TAG) \
+		AGENT_CHROME_TEST_IMAGE=$(BROWSER_CHROME_IMAGE):$(TAG) \
+		AGENT_BRAVE_TEST_IMAGE=$(BROWSER_BRAVE_IMAGE):$(TAG) \
 		npm run test
 
 
 agent-push:
-	@echo "Pushing all agent images in parallel..."
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(AGENT_BASE_IMAGE):$(TAG) -t $(AGENT_IMAGE):$(TAG) -f agent/Dockerfile.chromium --push agent/ & \
-	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(AGENT_BASE_IMAGE):$(TAG) -t $(AGENT_CHROME_IMAGE):$(TAG) -f agent/Dockerfile.chrome --push agent/ & \
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(AGENT_BASE_IMAGE):$(TAG) -t $(AGENT_BRAVE_IMAGE):$(TAG) -f agent/Dockerfile.brave --push agent/ & \
+	@echo "Pushing all agent + browser images in parallel..."
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/Dockerfile.agent --push agent/ & \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/Dockerfile.browser-chromium --push agent/ & \
+	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/Dockerfile.browser-chrome --push agent/ & \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/Dockerfile.browser-brave --push agent/ & \
 	wait
 
 AGENT_CONTAINER := claworc-agent-exec
@@ -129,13 +132,11 @@ dev:
 	CLAWORC_AUTH_DISABLED=true CLAWORC_LLM_RESPONSE_LOG=$(CURDIR)/llm-responses.log goreman -set-ports=false start
 
 ssh-integration-test:
-	docker build -t $(AGENT_BASE_IMAGE):local agent/
-	docker build --build-arg BASE_IMAGE=$(AGENT_BASE_IMAGE):local -f agent/Dockerfile.chromium -t claworc-agent:local agent/
+	docker build -f agent/Dockerfile.agent -t claworc-agent:local agent/
 	cd control-plane && go test -tags docker_integration -v -timeout 300s ./internal/sshproxy/ -run TestIntegration
 
 ssh-file-integration-test:
-	docker build -t $(AGENT_BASE_IMAGE):local agent/
-	docker build --build-arg BASE_IMAGE=$(AGENT_BASE_IMAGE):local -f agent/Dockerfile.chromium -t claworc-agent:local agent/
+	docker build -f agent/Dockerfile.agent -t claworc-agent:local agent/
 	cd agent/tests && npm run test:ssh -- --testPathPattern file.test
 
 test-integration-backend:

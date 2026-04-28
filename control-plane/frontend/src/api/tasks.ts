@@ -6,7 +6,9 @@ export type TaskType =
   | "instance.image_update"
   | "instance.clone"
   | "backup.create"
-  | "skill.deploy";
+  | "skill.deploy"
+  | "browser.spawn"
+  | "browser.migrate";
 
 export type TaskState = "running" | "succeeded" | "failed" | "canceled";
 
@@ -16,8 +18,10 @@ export interface Task {
   instance_id?: number;
   resource_id?: string;
   resource_name?: string;
+  title: string;
   state: TaskState;
   message?: string;
+  cancellable?: boolean;
   started_at: string;
   ended_at?: string;
 }

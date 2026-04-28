@@ -28,6 +28,12 @@ function ConnectionIndicator({ state }: { state: DesktopConnectionState }) {
           Connecting
         </span>
       );
+    case "starting":
+      return (
+        <span className="flex items-center gap-1 text-xs text-gray-400">
+          <Loader2 size={12} className="text-yellow-400 animate-spin" /> Starting
+        </span>
+      );
     case "error":
       return (
         <span className="flex items-center gap-1 text-xs text-gray-400">
@@ -66,11 +72,15 @@ export default function VncPanel({
 
   return (
     <div ref={panelRef} className="flex flex-col absolute inset-0">
-      <div className="flex items-center gap-2 px-3 py-2 bg-gray-800 border-b border-gray-700">
+      {/* Fixed toolbar height (h-9 + py-2 content) so the bar doesn't shift
+          by ~1–2px between states as buttons swap in/out. All toolbar buttons
+          use the same h-6 so the row height matches the always-visible
+          New Window / Full Screen buttons. */}
+      <div className="flex items-center gap-2 px-3 h-9 bg-gray-800 border-b border-gray-700">
         {(connectionState === "disconnected" || connectionState === "error") && (
           <button
             onClick={reconnect}
-            className="p-1 text-gray-400 hover:text-white rounded"
+            className="flex items-center gap-1 h-6 px-1.5 text-xs text-gray-400 hover:text-white rounded"
             title="Reconnect"
           >
             <RefreshCw size={14} />
@@ -80,14 +90,14 @@ export default function VncPanel({
           <>
             <button
               onClick={copyFromRemote}
-              className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded"
+              className="flex items-center gap-1 h-6 px-1.5 text-xs text-gray-400 hover:text-white rounded"
               title="Copy selected text from remote desktop to clipboard"
             >
               <Copy size={14} /> Copy
             </button>
             <button
               onClick={pasteToRemote}
-              className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded"
+              className="flex items-center gap-1 h-6 px-1.5 text-xs text-gray-400 hover:text-white rounded"
               title="Paste clipboard content into remote desktop"
             >
               <ClipboardPaste size={14} /> Paste
@@ -98,7 +108,7 @@ export default function VncPanel({
         {showNewWindow && (
           <button
             onClick={() => window.open(`/instances/${instanceId}/vnc`, "_blank", "noopener")}
-            className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded"
+            className="flex items-center gap-1 h-6 px-1.5 text-xs text-gray-400 hover:text-white rounded"
             title="Open in new window"
           >
             <ExternalLink size={14} /> New Window
@@ -107,7 +117,7 @@ export default function VncPanel({
         {showFullscreen && (
           <button
             onClick={toggleFullscreen}
-            className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded"
+            className="flex items-center gap-1 h-6 px-1.5 text-xs text-gray-400 hover:text-white rounded"
             title="Toggle fullscreen"
           >
             <Maximize size={14} /> Full Screen

@@ -167,9 +167,9 @@ func (m *mockOrchestrator) BackendName() string                { return "mock" }
 func (m *mockOrchestrator) CreateInstance(_ context.Context, _ orchestrator.CreateParams) error {
 	return nil
 }
-func (m *mockOrchestrator) DeleteInstance(_ context.Context, _ string) error  { return nil }
-func (m *mockOrchestrator) StartInstance(_ context.Context, _ string) error   { return nil }
-func (m *mockOrchestrator) StopInstance(_ context.Context, _ string) error    { return nil }
+func (m *mockOrchestrator) DeleteInstance(_ context.Context, _ string) error { return nil }
+func (m *mockOrchestrator) StartInstance(_ context.Context, _ string) error  { return nil }
+func (m *mockOrchestrator) StopInstance(_ context.Context, _ string) error   { return nil }
 func (m *mockOrchestrator) RestartInstance(_ context.Context, _ string, _ orchestrator.CreateParams) error {
 	return nil
 }
@@ -206,6 +206,18 @@ func (m *mockOrchestrator) StreamExecInInstance(_ context.Context, _ string, _ [
 	return "", 0, nil
 }
 func (m *mockOrchestrator) DeleteSharedVolume(_ context.Context, _ uint) error { return nil }
+func (m *mockOrchestrator) EnsureBrowserPod(_ context.Context, _ uint, _ orchestrator.BrowserPodParams) (orchestrator.BrowserPodEndpoint, error) {
+	return orchestrator.BrowserPodEndpoint{}, nil
+}
+func (m *mockOrchestrator) StopBrowserPod(_ context.Context, _ uint) error   { return nil }
+func (m *mockOrchestrator) DeleteBrowserPod(_ context.Context, _ uint) error { return nil }
+func (m *mockOrchestrator) GetBrowserPodStatus(_ context.Context, _ uint) (string, error) {
+	return "stopped", nil
+}
+func (m *mockOrchestrator) GetBrowserPodEndpoint(_ context.Context, _ uint) (orchestrator.BrowserPodEndpoint, error) {
+	return orchestrator.BrowserPodEndpoint{}, nil
+}
+func (m *mockOrchestrator) CloneBrowserVolume(_ context.Context, _, _ string) error { return nil }
 
 // --- test helpers ---
 

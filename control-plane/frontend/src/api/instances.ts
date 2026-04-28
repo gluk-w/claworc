@@ -34,6 +34,17 @@ export async function updateInstance(
   return data;
 }
 
+export async function setInstanceBrowserActive(
+  id: number,
+  active: boolean,
+): Promise<{ browser_active: boolean }> {
+  const { data } = await client.patch<{ browser_active: boolean }>(
+    `/instances/${id}/browser-active`,
+    { browser_active: active },
+  );
+  return data;
+}
+
 export async function deleteInstance(id: number): Promise<void> {
   await client.delete(`/instances/${id}`);
 }

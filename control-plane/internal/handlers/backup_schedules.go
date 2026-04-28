@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
+	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/backup"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
@@ -114,6 +116,25 @@ func CreateBackupSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Failed to create schedule")
 		return
 	}
+
+	instCount := len(scheduleInstanceIDs(req.InstanceIDs))
+	if instCount == 0 {
+		instCount = -1 // sentinel for "all"
+	}
+	withinDataDir := true
+	for _, p := range req.Paths {
+		if p != "HOME" && !strings.HasPrefix(p, "/data/") && p != "/data" {
+			withinDataDir = false
+			break
+		}
+	}
+	analytics.Track(r.Context(), analytics.EventBackupScheduleCreated, map[string]any{
+		"cron":            req.CronExpression,
+		"instances_count": instCount,
+		"retention_days":  retentionDays,
+		"within_data_dir": withinDataDir,
+		"paths_count":     len(req.Paths),
+	})
 
 	writeJSON(w, http.StatusCreated, s)
 }

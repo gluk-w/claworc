@@ -52,12 +52,12 @@ func (mockOps) StopInstance(_ context.Context, _ string) error                  
 func (mockOps) RestartInstance(_ context.Context, _ string, _ orchestrator.CreateParams) error {
 	return nil
 }
-func (mockOps) GetInstanceStatus(_ context.Context, _ string) (string, error)       { return "running", nil }
-func (mockOps) GetInstanceImageInfo(_ context.Context, _ string) (string, error)    { return "", nil }
-func (mockOps) UpdateInstanceConfig(_ context.Context, _ string, _ string) error    { return nil }
-func (mockOps) CloneVolumes(_ context.Context, _, _ string) error                   { return nil }
-func (mockOps) ConfigureSSHAccess(_ context.Context, _ uint, _ string) error        { return nil }
-func (mockOps) GetSSHAddress(_ context.Context, _ uint) (string, int, error)        { return "", 0, nil }
+func (mockOps) GetInstanceStatus(_ context.Context, _ string) (string, error)    { return "running", nil }
+func (mockOps) GetInstanceImageInfo(_ context.Context, _ string) (string, error) { return "", nil }
+func (mockOps) UpdateInstanceConfig(_ context.Context, _ string, _ string) error { return nil }
+func (mockOps) CloneVolumes(_ context.Context, _, _ string) error                { return nil }
+func (mockOps) ConfigureSSHAccess(_ context.Context, _ uint, _ string) error     { return nil }
+func (mockOps) GetSSHAddress(_ context.Context, _ uint) (string, int, error)     { return "", 0, nil }
 func (mockOps) UpdateResources(_ context.Context, _ string, _ orchestrator.UpdateResourcesParams) error {
 	return nil
 }
@@ -74,6 +74,18 @@ func (mockOps) StreamExecInInstance(_ context.Context, _ string, _ []string, _ i
 	return "", 0, nil
 }
 func (mockOps) DeleteSharedVolume(_ context.Context, _ uint) error { return nil }
+func (mockOps) EnsureBrowserPod(_ context.Context, _ uint, _ orchestrator.BrowserPodParams) (orchestrator.BrowserPodEndpoint, error) {
+	return orchestrator.BrowserPodEndpoint{}, nil
+}
+func (mockOps) StopBrowserPod(_ context.Context, _ uint) error   { return nil }
+func (mockOps) DeleteBrowserPod(_ context.Context, _ uint) error { return nil }
+func (mockOps) GetBrowserPodStatus(_ context.Context, _ uint) (string, error) {
+	return "stopped", nil
+}
+func (mockOps) GetBrowserPodEndpoint(_ context.Context, _ uint) (orchestrator.BrowserPodEndpoint, error) {
+	return orchestrator.BrowserPodEndpoint{}, nil
+}
+func (mockOps) CloneBrowserVolume(_ context.Context, _, _ string) error { return nil }
 
 func TestConfigureInstance_NoOp(t *testing.T) {
 	inst := &mockInstance{}
