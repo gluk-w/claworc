@@ -15,33 +15,10 @@ body:
     validations:
       required: true
 
-  - type: dropdown
-    id: category
-    attributes:
-      label: Category
-      description: What type of security issue is this?
-      options:
-        - Authentication / Authorization bypass
-        - API key / Secret exposure
-        - Encryption weakness
-        - Container escape / Isolation
-        - Input validation / Injection
-        - Other
-    validations:
-      required: true
-
-  - type: textarea
-    id: impact
-    attributes:
-      label: Impact
-      description: What could an attacker do by exploiting this?
-    validations:
-      required: false
-
   - type: textarea
     id: reproduce
     attributes:
       label: Steps to reproduce
       description: How can this be triggered?
     validations:
-      required: false
+      required: true

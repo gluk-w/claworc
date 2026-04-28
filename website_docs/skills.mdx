@@ -33,18 +33,40 @@ Every skill archive must follow [the specification](https://agentskills.io/speci
 at the top level. This file uses YAML frontmatter to describe the skill,
 followed by Markdown instructions that the agent will follow.
 
+A skill can also declare environment variables it needs at runtime by listing them under `required_env_vars`.
+
 ```markdown
 ---
 name: "Web researcher"
 description: "Searches the web and summarizes findings"
+required_env_vars:
+  - API_KEY
+  - PROVIDER_NAME
 ---
 
 When asked to research a topic, search the web for recent sources
 and compile a concise summary with citations.
 ```
 
+The dashboard surfaces `required_env_vars` so you can supply the values when deploying the skill to an OpenClaw instance.
+
 You can include extra files alongside `SKILL.md` (for example, templates or reference documents). These files
 are deployed to the instance together with the skill instructions.
+
+## Editing a skill
+
+From the **Library** tab, open a skill to launch the in-dashboard editor. The editor is split into two panes:
+
+- **Left pane** — alphabetical list of files in the skill.
+- **Right pane** — Monaco-based editor with syntax highlighting based on the file extension (Markdown, Python, TypeScript, JSON, YAML, shell, and others).
+
+Editing `SKILL.md` and saving updates the skill's name, description, and `required_env_vars`. The dashboard validates the frontmatter on save and rejects invalid YAML.
+
+Unsaved files are marked with an asterisk next to their name. Press **Cmd/Ctrl+S** to save the current file. Press **Esc** to close the editor — if you have unsaved changes, you are asked to confirm before discarding them.
+
+Binary files are shown read-only.
+
+The editor edits files in place; it does not add or remove files. To change the file set, re-upload the skill archive.
 
 ## Deploying a skill
 

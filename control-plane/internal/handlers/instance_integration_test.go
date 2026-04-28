@@ -251,6 +251,7 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 
 				r.Post("/instances", handlers.CreateInstance)
 				r.Post("/instances/{id}/clone", handlers.CloneInstance)
+				r.Post("/instances/{id}/restart", handlers.RestartInstance)
 				r.Delete("/instances/{id}", handlers.DeleteInstance)
 
 				// Skills

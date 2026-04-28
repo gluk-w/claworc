@@ -10,6 +10,31 @@ The browser is paired with OpenClaw out of the box, allowing you to collaborate 
 signing in to your accounts beforehand, so you don't need to expose credentials to the agent.
 There are three browsers available: **Chrome**, **Chromium**, and **Brave** — chosen when deploying the instance.
 
+### On-demand Chrome sessions
+
+The Chrome session for an OpenClaw instance starts lazily on first use — either when you click **Browser**
+on the instance, or the first time the agent makes a browser tool call. On a cold start you may briefly
+see a *"starting browser…"* loading state for up to about 60 seconds while the session comes up.
+
+After an idle period (15 minutes by default) the Chrome session is stopped to save resources. Sign-ins,
+cookies, and extensions are kept on a dedicated persistent volume and restored automatically the next
+time the session starts, so you don't lose your work.
+
+Files Chromium downloads land in the OpenClaw instance's shared `Downloads/` folder. They are
+immediately visible from the **File Browser** and the **Terminal** — no copy or sync step is needed.
+
+The default browser image and the idle timeout are set globally in admin **Settings** and can be
+overridden per OpenClaw instance. See [Managing instances](/instances#creating-an-instance) for the
+per-instance fields.
+
+<Note>
+  **Migrating older instances.** OpenClaw instances created before on-demand Chrome sessions were
+  introduced still run the browser inside the agent container. Their detail page shows a banner that
+  lets you switch to on-demand Chrome with one click. The migration preserves your Chrome profile
+  (sign-ins, cookies, extensions) and is one-way — you cannot revert an instance to the embedded
+  browser layout afterwards.
+</Note>
+
 ## Terminal
 
 Click **Terminal** on any running instance to open a full-screen terminal session inside the container.

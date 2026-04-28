@@ -8,24 +8,35 @@ description: "Create, configure, and control your fleet of OpenClaw agents"
 Each **instance** is an isolated, secured OpenClaw agent running in its own container.
 You can run many instances concurrently — each gets its own browser, terminal, storage, and configuration.
 
-## Agent images
+## Images
 
-Each instance runs one of three official agent images, differing only in which browser is bundled:
-| Image | Browser | Docker Hub |
-|-------|---------|------------|
-| `glukw/openclaw-vnc-chrome` | Chrome | [hub.docker.com/r/glukw/openclaw-vnc-chrome](https://hub.docker.com/r/glukw/openclaw-vnc-chrome) |
-| `glukw/openclaw-vnc-chromium` | Chromium | [hub.docker.com/r/glukw/openclaw-vnc-chromium](https://hub.docker.com/r/glukw/openclaw-vnc-chromium) |
-| `glukw/openclaw-vnc-brave` | Brave | [hub.docker.com/r/glukw/openclaw-vnc-brave](https://hub.docker.com/r/glukw/openclaw-vnc-brave) |
+Each OpenClaw instance runs an **agent image** plus a separate [Chrome session](/accessing#on-demand-chrome-sessions) image. The agent image is always running; the Chrome session image is provisioned on demand the first time you use the browser and stopped after an idle period.
 
-All images except `glukw/openclaw-vnc-chrome` support **AMD64** and **ARM64** architectures.
-Use `latest` to always pull the most recent build.
+### Agent image
 
-Every agent image comes with [Homebrew](https://brew.sh/) pre-installed, so you can install additional
-packages inside any instance using `brew install` without extra setup.
+| Image | Purpose |
+|-------|---------|
+| [`glukw/claworc-agent`](https://hub.docker.com/r/glukw/claworc-agent) | Runs OpenClaw, the terminal, and SSH |
 
-### Updating the agent image
+### Browser images
 
-When a new version of the agent image is published under the same tag (e.g. `:latest`), you can pull it without recreating the instance. Open the instance **Settings** tab, find the **Agent Image** field, and click **Update**. Claworc pulls the latest version of the tag, stops the container, and restarts it with the new image. Persistent volumes (home directory, Homebrew packages) are preserved.
+| Image | Browser |
+|-------|---------|
+| [`glukw/claworc-browser-chrome`](https://hub.docker.com/r/glukw/claworc-browser-chrome) | Chrome |
+| [`glukw/claworc-browser-chromium`](https://hub.docker.com/r/glukw/claworc-browser-chromium) | Chromium |
+| [`glukw/claworc-browser-brave`](https://hub.docker.com/r/glukw/claworc-browser-brave) | Brave |
+
+All images except `glukw/claworc-browser-chrome` support **AMD64** and **ARM64** architectures. Use `latest` to always pull the most recent build.
+
+[Homebrew](https://brew.sh/) is preinstalled in the agent image, so you can install additional packages inside any instance using `brew install` without extra setup.
+
+<Note>
+  **Legacy images.** Earlier instances ran the browser inside the agent container using `glukw/openclaw-vnc-chrome`, `glukw/openclaw-vnc-chromium`, or `glukw/openclaw-vnc-brave`. These images remain published and continue to work for instances created before the agent / browser split. New instances use the pair above. To switch an existing instance, use the migration banner described in [Accessing instances](/accessing#on-demand-chrome-sessions).
+</Note>
+
+### Updating the agent and browser images
+
+When a new version of an image is published under the same tag (e.g. `:latest`), you can pull it without recreating the instance. Open the instance **Settings** tab, find the **Agent Image** field, and click **Update**. Claworc pulls the latest version of the tag, stops the container, and restarts it with the new image. Persistent volumes (home directory, Homebrew packages, browser profile) are preserved. The same **Update** button updates the browser image.
 
 <Note>
   The **Update** button only appears for admins, only when the instance is running, and only for tag-based images (e.g. `:latest`). Digest-pinned images (`@sha256:...`) cannot be updated this way — change the image reference in the instance settings instead.
@@ -38,7 +49,9 @@ Click **New instance** on the dashboard and fill in the form:
 | Field | Description |
 |-------|-------------|
 | **Display name** | Human-readable name shown in the dashboard |
-| **Image** | Agent image to use — choose the browser variant for this instance |
+| **Image** | Agent image — runs OpenClaw and the terminal. Defaults to `glukw/claworc-agent`. |
+| **Browser image** | Chrome session image — Chrome, Chromium, or Brave. Defaults to the value set in admin **Settings**. |
+| **Idle timeout (min)** | How long the Chrome session stays running while idle before being stopped. Leave empty to inherit the global default (15 minutes). See [Accessing instances](/accessing#on-demand-chrome-sessions). |
 | **CPU limit** | Maximum CPU cores allocated (e.g., `1.0`) |
 | **Memory limit** | Maximum RAM allocated (e.g., `2Gi`) |
 | **API key override** | Instance-specific API key; overrides the global key if set |
@@ -67,22 +80,6 @@ You can adjust CPU and memory after creation on the instance **Settings** tab. S
   it on the instance **Settings → Resources** card.
 </Note>
 
-## Instance status
-
-Each instance shows a status from the orchestrator (Kubernetes or Docker), alongside a live connection indicator:
-
-| Status | Meaning |
-|--------|---------|
-| **Creating** | Container is being provisioned or starting up |
-| **Running** | Container is running |
-| **Restarting** | Restart in progress |
-| **Stopping** | Stop in progress |
-| **Stopped** | Container is stopped |
-| **Error** | Container exited unexpectedly |
-| **Failed** | Container stopped after an error |
-
-The colored dot next to each instance reflects live connection health independently of the container status.
-
 ## Starting, stopping, and restarting
 
 From the dashboard, click the **⋮** menu next to any instance:
@@ -106,24 +103,6 @@ Agent containers run with hardened defaults:
 - **No kernel access.** Mount, module loading, and `/proc` writes are blocked.
 
 These settings apply automatically to all new and restarted instances in both Kubernetes and Docker modes.
-
-## Kubernetes resources per instance
-
-In Kubernetes mode, each instance creates and manages these resources in the `claworc` namespace:
-
-| Resource | Name | Purpose |
-|----------|------|---------|
-| `Deployment` | `bot-{name}` | Runs the agent container |
-| `PVC` | `bot-{name}-homebrew` | Homebrew packages |
-| `PVC` | `bot-{name}-home` | Home directory — OpenClaw config, browser profile, personal files |
-
-## Docker resources per instance
-
-In Docker mode, each instance creates:
-
-- One container (named `bot-{name}`)
-- Two named volumes: `claworc-{name}-homebrew` (Homebrew) and `claworc-{name}-home` (home directory)
-- One published SSH port on `127.0.0.1` with a randomly assigned host port
 
 ## Connection status
 
@@ -149,7 +128,7 @@ The Instance Details card shows the display name, agent image, VNC resolution, t
 | Field | Who can edit | Notes |
 |-------|-------------|-------|
 | **Display Name** | Admins | Renaming does not affect the underlying container or Kubernetes resource names. |
-| **Agent Image** | Read-only (use **Update** to pull latest) | See [Updating the agent image](#updating-the-agent-image). |
+| **Agent Image** | Read-only (use **Update** to pull latest) | See [Updating the agent and browser images](#updating-the-agent-and-browser-images). |
 | **VNC Resolution** | Admins | Format: `WIDTHxHEIGHT` (e.g. `1920x1080`). Leave empty for the global default. Requires a restart to take effect. |
 | **Timezone** | All users | IANA timezone string (e.g. `America/New_York`). Leave empty for the global default. Requires a restart to take effect. |
 | **User-Agent** | All users | Custom Chromium User-Agent string. Leave empty for the global default. Requires a restart to take effect. |
