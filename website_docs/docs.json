@@ -25,6 +25,7 @@
             "group": "Instances",
             "pages": [
               "instances",
+              "migrating-on-demand-browser",
               "accessing",
               "skills",
               "backups",
