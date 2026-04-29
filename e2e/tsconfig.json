@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": [
+    "tests/**/*.ts",
+    "utils/**/*.ts",
+    "playwright.config.ts",
+    "globalSetup.ts",
+    "globalTeardown.ts"
+  ]
+}

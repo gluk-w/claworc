@@ -1,0 +1,1 @@
+- [Squash merge no-op gotcha](squash-merge-empty.md) — branch with revert+reapply commits can squash-merge as empty when base diverged

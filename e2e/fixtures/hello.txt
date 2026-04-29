@@ -1,0 +1,1 @@
+claworc-e2e file-manager fixture
