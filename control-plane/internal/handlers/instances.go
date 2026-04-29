@@ -1870,6 +1870,22 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		inst.BrowserActive = false
 	}
 
+	// Inherit shared folder memberships from the source so the clone mounts
+	// the same shared volumes. Best-effort: log and continue on failure rather
+	// than aborting the clone.
+	if folders, ferr := database.GetSharedFoldersForInstance(src.ID); ferr != nil {
+		log.Printf("clone %d: read source shared folders: %v", inst.ID, ferr)
+	} else {
+		for _, sf := range folders {
+			ids := append(database.ParseSharedFolderInstanceIDs(sf.InstanceIDs), inst.ID)
+			if uerr := database.UpdateSharedFolder(sf.ID, map[string]interface{}{
+				"instance_ids": database.EncodeSharedFolderInstanceIDs(ids),
+			}); uerr != nil {
+				log.Printf("clone %d: attach shared folder %d: %v", inst.ID, sf.ID, uerr)
+			}
+		}
+	}
+
 	// Run the full clone operation asynchronously. The task is cancellable:
 	// hitting POST /api/v1/tasks/{id}/cancel cancels the Run context (so
 	// in-flight orchestrator calls abort) and then runs the OnCancel
@@ -1991,6 +2007,23 @@ func cloneOnCancel(instanceID uint, cloneName string) taskmanager.OnCancel {
 		// teardown in DeleteInstance so a canceled clone leaves no rows behind.
 		database.DB.Where("instance_id = ?", instanceID).Delete(&database.LLMProvider{})
 		database.DB.Where("instance_id = ?", instanceID).Delete(&database.LLMGatewayKey{})
+		// Detach the cancelled clone from any shared folders it inherited so
+		// no dangling reference is left behind after the row is deleted.
+		if folders, ferr := database.GetSharedFoldersForInstance(instanceID); ferr == nil {
+			for _, sf := range folders {
+				kept := make([]uint, 0)
+				for _, id := range database.ParseSharedFolderInstanceIDs(sf.InstanceIDs) {
+					if id != instanceID {
+						kept = append(kept, id)
+					}
+				}
+				if uerr := database.UpdateSharedFolder(sf.ID, map[string]interface{}{
+					"instance_ids": database.EncodeSharedFolderInstanceIDs(kept),
+				}); uerr != nil {
+					log.Printf("clone-cancel: detach shared folder %d from %d: %v", sf.ID, instanceID, uerr)
+				}
+			}
+		}
 		database.DB.Delete(&database.Instance{}, instanceID)
 		clearStatusMessage(instanceID)
 	}

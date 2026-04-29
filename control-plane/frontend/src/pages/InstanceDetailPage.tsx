@@ -357,17 +357,7 @@ export default function InstanceDetailPage() {
 
   const handleUpdateImage = () => {
     const toastId = "image-update";
-    toast.custom(
-      createElement(AppToast, { title: "Updating image...", description: "Pulling latest and restarting", status: "loading", toastId }),
-      { id: toastId, duration: Infinity },
-    );
     updateImageMutation.mutate(instanceId, {
-      onSuccess: () => {
-        toast.custom(
-          createElement(AppToast, { title: "Image update started", description: "Instance is restarting with the new image", status: "success", toastId }),
-          { id: toastId, duration: 3000 },
-        );
-      },
       onError: (err: unknown) => {
         const axiosMsg = (err as any)?.response?.data?.error ?? (err as any)?.response?.data?.detail;
         const message = axiosMsg ?? (err instanceof Error ? err.message : "Unknown error");

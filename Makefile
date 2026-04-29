@@ -26,7 +26,8 @@ HELM_NAMESPACE := claworc
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-docs \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
 	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models scrape-models test \
-	worker-deploy worker-test site-dev site-build site-deploy
+	worker-deploy worker-test site-dev site-build site-deploy \
+	e2e e2e-debug e2e-install
 
 agent: agent-base agent-push
 
@@ -143,8 +144,14 @@ test-integration-backend:
 	cd control-plane && CLAWORC_LLM_GATEWAY_PORT=40001 go test -tags docker_integration -v -timeout 600s -count=1 \
 		./internal/handlers/ -run TestIntegration
 
-e2e-docker-tests:
-	./scripts/run_tests.sh
+e2e-install:
+	cd e2e && npm install && npx playwright install --with-deps chromium
+
+e2e:
+	./e2e/run.sh $(KUBECONFIG)
+
+e2e-debug:
+	E2E_KEEP=1 ./e2e/run.sh $(KUBECONFIG)
 
 test:
 	cd control-plane && go test ./internal/...

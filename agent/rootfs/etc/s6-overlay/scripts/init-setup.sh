@@ -18,7 +18,7 @@ set -e
 mkdir -p /var/log/claworc
 chmod 755 /var/log/claworc
 test -f /home/claworc/.bashrc || cp -a /etc/skel/. /home/claworc/
-mkdir -p /home/claworc/chrome-data /home/claworc/.openclaw /home/claworc/Downloads
+mkdir -p /home/claworc/.openclaw /home/claworc/Downloads
 chown -R claworc:claworc /home/claworc
 
 # ---------------------------------------------------------------------------

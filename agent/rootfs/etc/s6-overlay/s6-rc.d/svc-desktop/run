@@ -53,7 +53,7 @@ while true; do
   # Ensure Downloads directory exists. On the on-demand layout this path is
   # the agent's home PVC mounted via subPath so files Chromium saves here are
   # immediately visible to OpenClaw and the agent terminal.
-  mkdir -p /home/claworc/Downloads 2>/dev/null || true
+  mkdir -p /home/claworc/Downloads "$PROFILE_DIR" 2>/dev/null || true
   s6-setuidgid claworc $BROWSER \
     --no-first-run \
     --password-store=basic \

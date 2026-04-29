@@ -115,11 +115,11 @@ Each instance row shows a small colored dot indicating whether Claworc can reach
 | Gray | Disconnected |
 | Red | Failed |
 
-Open an instance to view full connection health and event history on the **Overview** tab.
+Open an instance and switch to the **Settings** tab to see full connection health and event history.
 
 ## Instance settings
 
-Open any instance and switch to the **Settings** tab to view and edit its configuration. Settings are organized into two cards: **Instance Details** and **Resources**.
+Open any instance and switch to the **Settings** tab to view and edit its configuration. The tab is organized into several cards: **Instance Details**, **Resources**, **Environment Variables**, **Enabled Models** (admins only), **SSH Connection Status**, and **Backups** (admins only).
 
 ### Instance details
 
@@ -189,7 +189,7 @@ See [Shared folders](/shared-folders) for setup and limitations.
 
 ## Enabling models for an instance
 
-The **Overview** tab on each instance detail page includes an **Enabled Models** section (visible to admins). This controls which LLM providers and models the agent can use.
+The **Settings** tab on each instance detail page includes an **Enabled Models** section (visible to admins). This controls which LLM providers and models the OpenClaw agent can use.
 
 You can use global providers configured in **Settings**, or click **Add provider** to create a provider that belongs only to this instance. Instance-specific providers are useful when you need a dedicated API key or a provider that other instances should not access. See [Configuration](/models/configuration) for details on both options.
 
@@ -199,7 +199,7 @@ Claworc pushes the model configuration to the container over SSH in the backgrou
 
 ## Troubleshooting an instance
 
-On the instance **Overview** tab, the troubleshoot panel lets you:
+On the instance **Settings** tab, the **SSH Connection Status** card lets you:
 
 - Run a **connectivity test**
 - **Manually reconnect**

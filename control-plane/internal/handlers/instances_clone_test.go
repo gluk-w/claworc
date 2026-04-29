@@ -451,6 +451,128 @@ func TestCloneInstance_NameCollisionGetsSuffix(t *testing.T) {
 	}
 }
 
+// TestCloneInstance_InheritsSharedFolders verifies the clone is added to
+// every shared folder the source belongs to, so the cloned instance mounts
+// the same shared volumes as the original.
+func TestCloneInstance_InheritsSharedFolders(t *testing.T) {
+	cloneSetup(t)
+	if err := database.DB.AutoMigrate(&database.SharedFolder{}); err != nil {
+		t.Fatalf("migrate shared folders: %v", err)
+	}
+
+	src := createTestInstance(t, "bot-sf", "SF")
+	other := createTestInstance(t, "bot-other-sf", "OtherSF")
+
+	// Folder that includes src (and an unrelated other instance) — clone
+	// should be appended to its InstanceIDs.
+	shared := database.SharedFolder{
+		Name:        "data",
+		MountPath:   "/mnt/data",
+		OwnerID:     1,
+		InstanceIDs: database.EncodeSharedFolderInstanceIDs([]uint{src.ID, other.ID}),
+	}
+	if err := database.CreateSharedFolder(&shared); err != nil {
+		t.Fatalf("seed shared folder: %v", err)
+	}
+	// Folder that does NOT include src — clone must NOT be added to it.
+	unrelated := database.SharedFolder{
+		Name:        "elsewhere",
+		MountPath:   "/mnt/elsewhere",
+		OwnerID:     1,
+		InstanceIDs: database.EncodeSharedFolderInstanceIDs([]uint{other.ID}),
+	}
+	if err := database.CreateSharedFolder(&unrelated); err != nil {
+		t.Fatalf("seed unrelated folder: %v", err)
+	}
+
+	user := createTestUser(t, "admin")
+	w := httptest.NewRecorder()
+	CloneInstance(w, reqClone(t, src.ID, user))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status %d body=%s", w.Code, w.Body.String())
+	}
+	resp := parseResponse(t, w)
+	dstID := uint(resp["id"].(float64))
+
+	got, err := database.GetSharedFolder(shared.ID)
+	if err != nil {
+		t.Fatalf("reload shared folder: %v", err)
+	}
+	ids := database.ParseSharedFolderInstanceIDs(got.InstanceIDs)
+	hasSrc, hasDst, hasOther := false, false, false
+	for _, id := range ids {
+		switch id {
+		case src.ID:
+			hasSrc = true
+		case dstID:
+			hasDst = true
+		case other.ID:
+			hasOther = true
+		}
+	}
+	if !hasSrc || !hasDst || !hasOther {
+		t.Errorf("shared folder ids = %v, want all of src=%d dst=%d other=%d", ids, src.ID, dstID, other.ID)
+	}
+
+	gotUnrelated, err := database.GetSharedFolder(unrelated.ID)
+	if err != nil {
+		t.Fatalf("reload unrelated folder: %v", err)
+	}
+	for _, id := range database.ParseSharedFolderInstanceIDs(gotUnrelated.InstanceIDs) {
+		if id == dstID {
+			t.Errorf("unrelated folder unexpectedly contains clone id %d", dstID)
+		}
+	}
+}
+
+// TestCloneOnCancel_DetachesSharedFolders verifies the cancel cleanup
+// strips the cancelled clone's id from any shared folders it had been
+// attached to, so no dangling references remain after the row is deleted.
+func TestCloneOnCancel_DetachesSharedFolders(t *testing.T) {
+	setupTestDB(t)
+	if err := database.DB.AutoMigrate(&database.SharedFolder{}); err != nil {
+		t.Fatalf("migrate shared folders: %v", err)
+	}
+	mock := &blockingMockOrchestrator{}
+	orchestrator.Set(mock)
+	defer orchestrator.Set(nil)
+
+	src := createTestInstance(t, "bot-sfc-src", "Src")
+	dst := createTestInstance(t, "bot-sfc-dst", "Dst")
+
+	shared := database.SharedFolder{
+		Name:        "data",
+		MountPath:   "/mnt/data",
+		OwnerID:     1,
+		InstanceIDs: database.EncodeSharedFolderInstanceIDs([]uint{src.ID, dst.ID}),
+	}
+	if err := database.CreateSharedFolder(&shared); err != nil {
+		t.Fatalf("seed shared folder: %v", err)
+	}
+
+	cloneOnCancel(dst.ID, dst.Name)(context.Background())
+
+	got, err := database.GetSharedFolder(shared.ID)
+	if err != nil {
+		t.Fatalf("reload shared folder: %v", err)
+	}
+	ids := database.ParseSharedFolderInstanceIDs(got.InstanceIDs)
+	for _, id := range ids {
+		if id == dst.ID {
+			t.Errorf("shared folder still references cancelled clone id %d: %v", dst.ID, ids)
+		}
+	}
+	hasSrc := false
+	for _, id := range ids {
+		if id == src.ID {
+			hasSrc = true
+		}
+	}
+	if !hasSrc {
+		t.Errorf("shared folder lost src id %d during cancel cleanup: %v", src.ID, ids)
+	}
+}
+
 // TestCloneInstance_NotFound — non-existent source ID must yield 404.
 func TestCloneInstance_NotFound(t *testing.T) {
 	cloneSetup(t)

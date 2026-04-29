@@ -1,5 +1,10 @@
 replicaCount: 1
 
+# Extra environment variables passed to the control-plane container.
+# Map of name -> value. Values are quoted in the rendered manifest.
+# Useful for toggling settings like CLAWORC_AUTH_DISABLED in test installs.
+extraEnv: {}
+
 config:
   dataPath: /app/data
   # backupsPath: when set, backup archives are stored here instead of under
