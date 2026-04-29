@@ -12,7 +12,7 @@ rules:
     verbs: ["create", "get", "list", "patch", "update", "delete"]
   - apiGroups: [""]
     resources: ["services"]
-    verbs: ["create", "get", "list", "delete"]
+    verbs: ["create", "get", "list", "update", "delete"]
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["create", "get", "list", "delete"]
@@ -36,7 +36,7 @@ rules:
     verbs: ["get"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
-    verbs: ["create", "get", "list", "delete"]
+    verbs: ["create", "get", "list", "update", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

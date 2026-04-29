@@ -28,7 +28,7 @@ You must be an **admin** to run the migration. Confirm the following first:
 | `default_browser_storage` (optional) | Admin **Settings**. PVC size for the browser volume (e.g. `10Gi`). |
 
 <Note>
-  **Kubernetes only.** The control plane ServiceAccount must have the `update` verb on `apps/deployments`. Charts shipped before this was fixed grant only `patch`, which causes the rollout step to fail. If you're on an older chart, see [Troubleshooting](#troubleshooting).
+  **Kubernetes only.** The control plane ServiceAccount must have the `update` verb on `apps/deployments`, `services`, and `networking.k8s.io/networkpolicies`. Charts shipped before this was fixed are missing `update` on these resources, which causes both the migration rollout and the on-demand browser start to fail with a 403. If you're on an older chart, see [Troubleshooting](#troubleshooting).
 </Note>
 
 ## Run the migration
@@ -70,28 +70,43 @@ docker build -f agent/Dockerfile.agent -t glukw/claworc-agent:latest agent/
 
 Push it to your registry (or load it onto the node), then click **Migrate** again.
 
-### `cannot update resource "deployments"` (Kubernetes RBAC)
+### `cannot update resource ...` (Kubernetes RBAC)
 
-The full error looks like:
+The same root cause produces several errors depending on which step fails:
 
 ```text
 deployments.apps "bot-…" is forbidden: User "system:serviceaccount:claworc:claworc"
 cannot update resource "deployments" in API group "apps" in the namespace "claworc"
 ```
 
-The control plane ServiceAccount is missing the `update` verb on Deployments. Pick one recovery path:
+```text
+services "bot-…-browser" is forbidden: User "system:serviceaccount:claworc:claworc"
+cannot update resource "services" in API group "" in the namespace "claworc"
+```
 
-- **Upgrade the Helm chart** (recommended) — the current chart grants `update`:
+```text
+networkpolicies.networking.k8s.io "bot-…-browser" is forbidden: User "system:serviceaccount:claworc:claworc"
+cannot update resource "networkpolicies" in API group "networking.k8s.io" in the namespace "claworc"
+```
+
+The control plane ServiceAccount is missing the `update` verb on one or more of `deployments`, `services`, and `networkpolicies`. The deployments error blocks the migration; the services and networkpolicies errors block the on-demand browser from starting after migration.
+
+Pick one recovery path:
+
+- **Upgrade the Helm chart** (recommended) — the current chart grants `update` on all three resources:
 
   ```bash
   helm upgrade claworc ./helm -n claworc
   ```
 
-- **Or patch the live Role** without redeploying:
+- **Or patch the live Role** without redeploying. The exact rule indices depend on your chart version — check with `kubectl get role claworc -n claworc -o yaml` and locate the rules for `deployments`, `services`, and `networkpolicies`. For the chart that introduced this bug, the rule indices are `0`, `1`, and `8`:
 
   ```bash
-  kubectl patch role claworc -n claworc --type=json \
-    -p='[{"op":"replace","path":"/rules/0/verbs","value":["create","get","list","patch","update","delete"]}]'
+  kubectl patch role claworc -n claworc --type=json -p='[
+    {"op":"replace","path":"/rules/0/verbs","value":["create","get","list","patch","update","delete"]},
+    {"op":"replace","path":"/rules/1/verbs","value":["create","get","list","update","delete"]},
+    {"op":"replace","path":"/rules/8/verbs","value":["create","get","list","update","delete"]}
+  ]'
   ```
 
-Click **Migrate** again afterwards. The instance was reverted on the first failure, so the retry starts from a clean legacy state.
+After applying the fix, retry the action that failed — click **Migrate** again, or click **Browser** to start the on-demand session. If migration was the failing step, the instance was reverted on failure, so the retry starts from a clean legacy state.
