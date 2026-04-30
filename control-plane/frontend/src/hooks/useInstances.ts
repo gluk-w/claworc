@@ -117,8 +117,7 @@ export function useRestartInstance() {
   return useMutation({
     mutationFn: ({ id }: { id: number; displayName: string }) =>
       restartInstance(id),
-    onSuccess: (_data, { displayName }) => {
-      infoToast("Restarting instance", displayName);
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["instances"] });
     },
     onError: (error: any, { displayName }) => {

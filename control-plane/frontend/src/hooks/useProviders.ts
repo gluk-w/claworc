@@ -40,6 +40,13 @@ export function useCatalogProviders() {
   });
 }
 
+export function useCatalogIconMap(): Record<string, string> {
+  const { data: catalogProviders = [] } = useCatalogProviders();
+  return Object.fromEntries(
+    catalogProviders.map((c) => [c.name, c.icon_key]).filter(([, v]) => v)
+  );
+}
+
 export function useCatalogProviderDetail(key: string | null) {
   return useQuery({
     queryKey: ["catalog-provider", key],

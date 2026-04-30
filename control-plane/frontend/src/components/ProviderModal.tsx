@@ -2,7 +2,7 @@ import { createElement, useState, useEffect } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import ProviderIcon from "@/components/ProviderIcon";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useCreateProvider, useUpdateProvider, useDeleteProvider, useCatalogProviders, useCatalogProviderDetail } from "@/hooks/useProviders";
+import { useCreateProvider, useUpdateProvider, useDeleteProvider, useCatalogProviders, useCatalogProviderDetail, useCatalogIconMap } from "@/hooks/useProviders";
 import { syncAllProviders, testProviderKey } from "@/api/llm";
 import { successToast, errorToast } from "@/utils/toast";
 import toast from "react-hot-toast";
@@ -47,6 +47,7 @@ export default function ProviderModal({
   const updateProviderMutation = useUpdateProvider();
   const deleteProviderMutation = useDeleteProvider();
   const { data: catalogProviders = [], isLoading: catalogLoading, isFetching: catalogFetching } = useCatalogProviders();
+  const catalogIconMap = useCatalogIconMap();
   const [syncingCatalog, setSyncingCatalog] = useState(false);
 
   const [mCatalogKey, setMCatalogKey] = useState("");
@@ -323,10 +324,10 @@ export default function ProviderModal({
       <div className={`bg-white rounded-lg shadow-xl p-6 w-full mx-4 ${isCustomProvider ? "max-w-xl" : "max-w-md"}`}>
         <h2 className="text-base font-semibold text-gray-900 mb-4 flex items-center gap-2">
           {mode === "edit" && provider!.provider && (
-            <ProviderIcon provider={provider!.provider} size={22} />
+            <ProviderIcon provider={catalogIconMap[provider!.provider] ?? provider!.provider} size={22} />
           )}
           {mode === "create" && mCatalogKey && mCatalogKey !== CUSTOM_PROVIDER && (
-            <ProviderIcon provider={mCatalogKey} size={22} />
+            <ProviderIcon provider={catalogIconMap[mCatalogKey] ?? mCatalogKey} size={22} />
           )}
           {mode === "create" ? "Add Provider" : "Edit Provider"}
           {instanceId && (

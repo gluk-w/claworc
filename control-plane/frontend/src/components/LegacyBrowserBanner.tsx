@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { migrateBrowser } from "@/api/browser";
-import { successToast, errorToast } from "@/utils/toast";
+import { errorToast } from "@/utils/toast";
 
 interface Props {
   instanceId: number;
@@ -19,11 +19,7 @@ export default function LegacyBrowserBanner({ instanceId }: Props) {
   const onClick = async () => {
     setBusy(true);
     try {
-      const { task_id } = await migrateBrowser(instanceId);
-      successToast(
-        "Migration started",
-        `Task ${task_id.slice(0, 8)}… — progress shown in the toast bar.`,
-      );
+      await migrateBrowser(instanceId);
     } catch (err) {
       errorToast("Migration failed", err);
     } finally {

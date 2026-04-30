@@ -35,6 +35,10 @@ spec:
             {{- end }}
             - name: CLAWORC_K8S_NAMESPACE
               value: {{ .Values.config.k8sNamespace | quote }}
+            {{- range $key, $value := .Values.extraEnv }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
           volumeMounts:
             - name: data
               mountPath: /app/data

@@ -1,0 +1,112 @@
+---
+title: "Migrating to on-demand browser"
+description: "Switch existing OpenClaw instances from the legacy combined image to the on-demand agent + browser layout"
+---
+
+OpenClaw instances created before on-demand Chrome sessions were introduced run the agent and browser together inside one `glukw/openclaw-vnc-*` container. New instances use a slim agent image plus a separate browser pod that starts on first use and stops when idle.
+
+This page walks an admin through migrating an existing instance to the on-demand layout.
+
+## What changes
+
+- The agent runs `glukw/claworc-agent` continuously; the browser runs as its own pod from `glukw/claworc-browser-*` and is provisioned on demand.
+- The Chrome profile (sign-ins, cookies, extensions) is preserved.
+- The migration is **one-way** — you cannot revert to the embedded browser layout afterwards.
+
+For the full image catalog, see [Managing instances](/instances#images).
+
+## Before you start
+
+You must be an **admin** to run the migration. Confirm the following first:
+
+| Prerequisite | Where to set it |
+|--------------|-----------------|
+| `default_agent_image` is set | Admin **Settings**. Default `glukw/claworc-agent:latest`. |
+| Agent image is reachable from the cluster or Docker host | Your registry |
+| `default_browser_image` (optional) | Admin **Settings**. Used when an instance has no browser image set. |
+| `default_browser_provider` (optional) | Admin **Settings**. `kubernetes`, `docker`, or `auto`. |
+| `default_browser_storage` (optional) | Admin **Settings**. PVC size for the browser volume (e.g. `10Gi`). |
+
+<Note>
+  **Kubernetes only.** The control plane ServiceAccount must have the `update` verb on `apps/deployments`, `services`, and `networking.k8s.io/networkpolicies`. Charts shipped before this was fixed are missing `update` on these resources, which causes both the migration rollout and the on-demand browser start to fail with a 403. If you're on an older chart, see [Troubleshooting](#troubleshooting).
+</Note>
+
+## Run the migration
+
+<Steps>
+  <Step title="Open the instance detail page">
+    From the dashboard, click the instance you want to migrate. Legacy instances show a migration banner at the top of the page.
+  </Step>
+  <Step title="Click Migrate to on-demand browser">
+    The control plane runs the migration as a background task. A toast shows live progress: updating the database row, rolling out the new agent image, and recording the browser session.
+  </Step>
+  <Step title="Verify the new layout">
+    On the instance **Settings** tab, the **Agent Image** field shows `glukw/claworc-agent` (or whatever you configured). Open **Browser** to launch the on-demand Chrome session — the first start may take up to 60 seconds.
+  </Step>
+</Steps>
+
+## What gets preserved
+
+- Chrome profile, sign-ins, cookies, and extensions
+- Homebrew packages installed inside the agent
+- `openclaw.json` and other agent configuration
+- SSH keys and persistent home directory
+
+## Troubleshooting
+
+If the migration fails, the instance is automatically reverted to its legacy image so you can retry safely.
+
+### `default_agent_image setting is empty`
+
+The migrator stops before touching the instance. Open admin **Settings**, set `default_agent_image` (e.g. `glukw/claworc-agent:latest`), and click **Migrate** again.
+
+### `rollout new agent image: …`
+
+The new agent image could not be pulled. Make sure the tag exists in the registry your cluster or Docker host uses. For self-hosted setups, you can build the image locally:
+
+```bash
+docker build -f agent/Dockerfile.agent -t glukw/claworc-agent:latest agent/
+```
+
+Push it to your registry (or load it onto the node), then click **Migrate** again.
+
+### `cannot update resource ...` (Kubernetes RBAC)
+
+The same root cause produces several errors depending on which step fails:
+
+```text
+deployments.apps "bot-…" is forbidden: User "system:serviceaccount:claworc:claworc"
+cannot update resource "deployments" in API group "apps" in the namespace "claworc"
+```
+
+```text
+services "bot-…-browser" is forbidden: User "system:serviceaccount:claworc:claworc"
+cannot update resource "services" in API group "" in the namespace "claworc"
+```
+
+```text
+networkpolicies.networking.k8s.io "bot-…-browser" is forbidden: User "system:serviceaccount:claworc:claworc"
+cannot update resource "networkpolicies" in API group "networking.k8s.io" in the namespace "claworc"
+```
+
+The control plane ServiceAccount is missing the `update` verb on one or more of `deployments`, `services`, and `networkpolicies`. The deployments error blocks the migration; the services and networkpolicies errors block the on-demand browser from starting after migration.
+
+Pick one recovery path:
+
+- **Upgrade the Helm chart** (recommended) — the current chart grants `update` on all three resources:
+
+  ```bash
+  helm upgrade claworc ./helm -n claworc
+  ```
+
+- **Or patch the live Role** without redeploying. The exact rule indices depend on your chart version — check with `kubectl get role claworc -n claworc -o yaml` and locate the rules for `deployments`, `services`, and `networkpolicies`. For the chart that introduced this bug, the rule indices are `0`, `1`, and `8`:
+
+  ```bash
+  kubectl patch role claworc -n claworc --type=json -p='[
+    {"op":"replace","path":"/rules/0/verbs","value":["create","get","list","patch","update","delete"]},
+    {"op":"replace","path":"/rules/1/verbs","value":["create","get","list","update","delete"]},
+    {"op":"replace","path":"/rules/8/verbs","value":["create","get","list","update","delete"]}
+  ]'
+  ```
+
+After applying the fix, retry the action that failed — click **Migrate** again, or click **Browser** to start the on-demand session. If migration was the failing step, the instance was reverted on failure, so the retry starts from a clean legacy state.

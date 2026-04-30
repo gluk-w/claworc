@@ -28,7 +28,7 @@ import (
 )
 
 type KubernetesOrchestrator struct {
-	clientset       *kubernetes.Clientset
+	clientset       kubernetes.Interface
 	restConfig      *rest.Config
 	available       bool
 	inCluster       bool

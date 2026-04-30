@@ -55,6 +55,19 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
     expect(result.stdout.trim()).toBe("claworc:claworc");
   });
 
+  // chrome-data must be created by the desktop service (only when Chrome runs),
+  // not by init-setup.sh. Otherwise on-demand-layout agents — where Chrome
+  // lives in a separate browser pod — would still get a stale chrome-data/
+  // visible in the file manager.
+  it("init-setup.sh does not create chrome-data", () => {
+    const result = exec(container!, [
+      "grep",
+      "chrome-data",
+      "/etc/s6-overlay/scripts/init-setup.sh",
+    ]);
+    expect(result.exitCode).not.toBe(0);
+  });
+
   it("openclaw.json structure matches snapshot", () => {
     const result = exec(container!, [
       "cat",
