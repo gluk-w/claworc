@@ -319,13 +319,19 @@ func (b *BrowserBridge) waitForCDPReady(ctx context.Context, instanceID uint, ti
 }
 
 func (b *BrowserBridge) readyTimeout() time.Duration {
+	// Browser pod cold-start now includes pulling the browser image, booting
+	// sshd, provisioning the public key, then waiting for Chromium's CDP
+	// listener to come up over an SSH tunnel. 60s was too tight in CI;
+	// 120s gives slow runners headroom while still failing fast on real
+	// problems.
+	const defaultTimeout = 120 * time.Second
 	if b.settings == nil {
-		return 60 * time.Second
+		return defaultTimeout
 	}
 	v, _ := b.settings.GetSetting("default_browser_ready_seconds")
 	d, ok := parseSeconds(v)
 	if !ok {
-		return 60 * time.Second
+		return defaultTimeout
 	}
 	return d
 }
