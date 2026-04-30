@@ -408,6 +408,13 @@ func (m *SSHManager) GetPublicKey() string {
 	return m.getPublicKey()
 }
 
+// Signer returns the global SSH client signer. Used by callers that need to
+// open ad-hoc SSH connections (e.g. browser pods) outside the SSHManager's
+// own connection cache.
+func (m *SSHManager) Signer() ssh.Signer {
+	return m.getSigner()
+}
+
 // keepalive sends periodic keepalive requests to detect dead connections.
 // If the connection is dead, it is removed from the map.
 func (m *SSHManager) keepalive(ctx context.Context, instanceID uint, client *ssh.Client) {

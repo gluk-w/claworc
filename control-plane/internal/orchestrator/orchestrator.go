@@ -47,6 +47,10 @@ type ContainerOrchestrator interface {
 	DeleteBrowserPod(ctx context.Context, instanceID uint) error
 	GetBrowserPodStatus(ctx context.Context, instanceID uint) (string, error)
 	GetBrowserPodEndpoint(ctx context.Context, instanceID uint) (BrowserPodEndpoint, error)
+	// ConfigureBrowserSSHAccess installs publicKey into the browser pod's
+	// /root/.ssh/authorized_keys so the control plane can open an SSH session
+	// to it and reach CDP / noVNC over loopback inside the pod.
+	ConfigureBrowserSSHAccess(ctx context.Context, instanceID uint, publicKey string) error
 	// CloneBrowserVolume copies the on-demand browser profile volume (Chrome
 	// cookies, sessions, persisted state) from src to dst. No-op when the
 	// source volume does not exist (e.g. browser was never launched).
@@ -114,10 +118,18 @@ type BrowserPodParams struct {
 // BrowserPodEndpoint identifies how to reach a running browser pod from the
 // control plane. Host is a cluster-internal DNS name (K8s) or a container
 // DNS name on the claworc bridge (Docker).
+//
+// The control plane no longer dials CDP / noVNC directly — the only externally
+// reachable port on a browser pod is sshd (SSHPort). It opens an SSH session
+// to (Host, SSHPort) and uses ssh.Client.Dial("tcp", "127.0.0.1:<CDPPort>")
+// or "127.0.0.1:<VNCPort>" to reach the loopback-bound services inside the
+// pod. CDPPort / VNCPort are the in-pod loopback ports, kept here so that
+// callers don't hardcode 9222 / 3000.
 type BrowserPodEndpoint struct {
 	Host    string // e.g. <name>-browser.<ns>.svc.cluster.local
-	CDPPort int    // 9222
-	VNCPort int    // 3000 (noVNC websocket)
+	SSHPort int    // 22 (the only externally reachable port)
+	CDPPort int    // 9222 (loopback only inside the pod)
+	VNCPort int    // 3000 (loopback only inside the pod, noVNC websocket)
 }
 
 // FileEntry is a type alias for sshproxy.FileEntry, kept for backward compatibility.

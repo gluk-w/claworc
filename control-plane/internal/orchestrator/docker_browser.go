@@ -108,13 +108,12 @@ func (d *DockerOrchestrator) EnsureBrowserPod(ctx context.Context, instanceID ui
 			"claworc-role": "browser",
 		},
 		ExposedPorts: nat.PortSet{
-			"9222/tcp": struct{}{},
-			"3000/tcp": struct{}{},
+			"22/tcp": struct{}{},
 		},
 	}
-	// Publish CDP/noVNC ports to 127.0.0.1 with auto-assigned host ports so the
-	// control plane can reach the browser pod even when running natively
-	// outside the claworc Docker bridge network (e.g. `make dev` on macOS).
+	// Publish only port 22 (sshd) to 127.0.0.1 with an auto-assigned host port.
+	// CDP and noVNC are loopback-only inside the container; the control plane
+	// SSHes in and uses ssh.Client.Dial to reach 127.0.0.1:9222 / :3000.
 	// Mount the agent's home volume into the browser container with a Subpath
 	// of "Downloads" so files Chromium saves at /home/claworc/Downloads land
 	// directly on the agent's home volume — visible to OpenClaw and the agent
@@ -137,8 +136,7 @@ func (d *DockerOrchestrator) EnsureBrowserPod(ctx context.Context, instanceID ui
 		},
 		ShmSize: shmSize,
 		PortBindings: nat.PortMap{
-			"9222/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: ""}},
-			"3000/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: ""}},
+			"22/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: ""}},
 		},
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 	}
@@ -156,24 +154,30 @@ func (d *DockerOrchestrator) EnsureBrowserPod(ctx context.Context, instanceID ui
 	return d.lookupBrowserEndpoint(ctx, containerName)
 }
 
-// lookupBrowserEndpoint returns the host-published CDP and noVNC ports for a
-// running browser container. We publish on 127.0.0.1 with auto-assigned host
-// ports so multiple instances don't clash; this resolves them from the live
-// container state.
+// lookupBrowserEndpoint returns the host-published sshd port for a running
+// browser container. CDP / noVNC are loopback-only inside the container and
+// reached over the SSH session; the only host-bound port is 22.
 func (d *DockerOrchestrator) lookupBrowserEndpoint(ctx context.Context, containerName string) (BrowserPodEndpoint, error) {
 	info, err := d.client.ContainerInspect(ctx, containerName)
 	if err != nil {
 		return BrowserPodEndpoint{}, fmt.Errorf("inspect browser container %s: %w", containerName, err)
 	}
-	cdp, err := publishedPort(info.NetworkSettings.Ports, "9222/tcp")
+	sshPort, err := publishedPort(info.NetworkSettings.Ports, "22/tcp")
 	if err != nil {
 		return BrowserPodEndpoint{}, fmt.Errorf("browser %s: %w", containerName, err)
 	}
-	vnc, err := publishedPort(info.NetworkSettings.Ports, "3000/tcp")
+	return BrowserPodEndpoint{Host: "127.0.0.1", SSHPort: sshPort, CDPPort: 9222, VNCPort: 3000}, nil
+}
+
+// ConfigureBrowserSSHAccess installs publicKey into the browser container's
+// /root/.ssh/authorized_keys via docker exec.
+func (d *DockerOrchestrator) ConfigureBrowserSSHAccess(ctx context.Context, instanceID uint, publicKey string) error {
+	name, err := d.lookupInstanceName(instanceID)
 	if err != nil {
-		return BrowserPodEndpoint{}, fmt.Errorf("browser %s: %w", containerName, err)
+		return err
 	}
-	return BrowserPodEndpoint{Host: "127.0.0.1", CDPPort: cdp, VNCPort: vnc}, nil
+	containerName := dockerBrowserContainerName(name)
+	return configureSSHAccess(ctx, d.ExecInInstance, containerName, publicKey)
 }
 
 // CloneBrowserVolume copies the on-demand browser profile volume from src to
@@ -238,18 +242,14 @@ func (d *DockerOrchestrator) runOnVolume(ctx context.Context, vol string, cmd []
 }
 
 // browserContainerHasRequiredBindings returns true if the container is
-// configured to publish CDP and noVNC ports to the host. Containers created
-// before this requirement landed lack these bindings and must be recreated.
+// configured to publish sshd to the host. Containers created before the
+// SSH-tunnel rework lack this binding (or have only 9222/3000) and must be
+// recreated.
 func browserContainerHasRequiredBindings(hostCfg *container.HostConfig) bool {
 	if hostCfg == nil {
 		return false
 	}
-	for _, p := range []nat.Port{"9222/tcp", "3000/tcp"} {
-		if len(hostCfg.PortBindings[p]) == 0 {
-			return false
-		}
-	}
-	return true
+	return len(hostCfg.PortBindings["22/tcp"]) > 0
 }
 
 func publishedPort(ports nat.PortMap, key nat.Port) (int, error) {

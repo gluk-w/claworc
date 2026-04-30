@@ -12,7 +12,6 @@ import (
 	"github.com/coder/websocket"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
-	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	"github.com/go-chi/chi/v5"
 )
@@ -25,8 +24,9 @@ import (
 // SSH tunnel.
 //
 // For non-legacy instances the noVNC server lives in a separate browser pod
-// reached over cluster networking; the BrowserBridge ensures the pod is
-// running and we proxy directly to its Service.
+// that exposes only sshd externally. The BrowserBridge opens an SSH session
+// to the pod and we route every HTTP/WebSocket request through ssh.Client.Dial
+// to 127.0.0.1:3000 inside the pod.
 func DesktopProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
@@ -64,7 +64,9 @@ func DesktopProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Non-legacy: ensure the browser pod is running and proxy to it directly.
+	// Non-legacy: tunnel HTTP/WebSocket traffic into the browser pod over SSH.
+	// The pod's sshd is the only externally reachable port; noVNC binds
+	// 127.0.0.1:3000 inside the pod and we reach it via ssh.Client.Dial.
 	if BrowserBridgeRef == nil {
 		writeError(w, http.StatusServiceUnavailable, "browser bridge not configured")
 		return
@@ -78,31 +80,37 @@ func DesktopProxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("browser session not ready: %v", err))
 		return
 	}
-	orch := orchestrator.Get()
-	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "orchestrator not configured")
-		return
-	}
-	endpoint, err := orch.GetBrowserPodEndpoint(r.Context(), uint(id))
+	dial, err := BrowserBridgeRef.VNCDialer(r.Context(), uint(id))
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("browser ssh: %v", err))
 		return
 	}
 	BrowserBridgeRef.Touch(uint(id))
 
+	transport := &http.Transport{
+		DialContext:           dial,
+		MaxIdleConns:          16,
+		MaxIdleConnsPerHost:   16,
+		IdleConnTimeout:       30 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+	}
+	defer transport.CloseIdleConnections()
+
 	if wantsWS {
-		websocketProxyToHost(w, r, endpoint.Host, endpoint.VNCPort, path)
+		websocketProxyOverDialer(w, r, transport, path)
 		return
 	}
-	if err := proxyToHost(w, r, endpoint.Host, endpoint.VNCPort, path); err != nil {
+	if err := proxyOverDialer(w, r, transport, path); err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 	}
 }
 
-// proxyToHost proxies an HTTP request to http://host:port/path. It mirrors
-// proxyToLocalPort but accepts an arbitrary host (e.g. cluster Service DNS).
-func proxyToHost(w http.ResponseWriter, r *http.Request, host string, port int, path string) error {
-	targetURL := fmt.Sprintf("http://%s:%d/%s", host, port, path)
+// proxyOverDialer proxies an HTTP request through transport, which is
+// expected to dial into the browser pod's noVNC port (127.0.0.1:3000) over
+// SSH. The target host in the URL is a placeholder — the transport's
+// DialContext ignores the address and always dials the SSH-tunnelled port.
+func proxyOverDialer(w http.ResponseWriter, r *http.Request, transport *http.Transport, path string) error {
+	targetURL := fmt.Sprintf("http://browser-pod/%s", path)
 	if r.URL.RawQuery != "" {
 		targetURL += "?" + r.URL.RawQuery
 	}
@@ -121,7 +129,8 @@ func proxyToHost(w http.ResponseWriter, r *http.Request, host string, port int, 
 			proxyReq.Header.Set(h, v)
 		}
 	}
-	resp, err := tunnelProxyClient.Do(proxyReq)
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+	resp, err := client.Do(proxyReq)
 	if err != nil {
 		log.Printf("Browser-pod proxy: %v", err)
 		return fmt.Errorf("cannot connect to browser pod: %w", err)
@@ -129,9 +138,9 @@ func proxyToHost(w http.ResponseWriter, r *http.Request, host string, port int, 
 	return writeProxyResponse(w, resp, "")
 }
 
-// websocketProxyToHost proxies a WebSocket connection to ws://host:port/path.
-// Mirrors websocketProxyToLocalPort but with an arbitrary host.
-func websocketProxyToHost(w http.ResponseWriter, r *http.Request, host string, port int, path string) {
+// websocketProxyOverDialer proxies a WebSocket connection through transport,
+// which dials into the browser pod's noVNC port over SSH.
+func websocketProxyOverDialer(w http.ResponseWriter, r *http.Request, transport *http.Transport, path string) {
 	requestedProtocol := r.Header.Get("Sec-WebSocket-Protocol")
 	var subprotocols []string
 	if requestedProtocol != "" {
@@ -148,7 +157,7 @@ func websocketProxyToHost(w http.ResponseWriter, r *http.Request, host string, p
 	}
 	defer clientConn.CloseNow()
 
-	wsURL := fmt.Sprintf("ws://%s:%d/%s", host, port, path)
+	wsURL := fmt.Sprintf("ws://browser-pod/%s", path)
 	if r.URL.RawQuery != "" {
 		wsURL += "?" + r.URL.RawQuery
 	}
@@ -158,7 +167,10 @@ func websocketProxyToHost(w http.ResponseWriter, r *http.Request, host string, p
 	defer cancel()
 
 	log.Printf("Browser-pod WS proxy: %s → %s", utils.SanitizeForLog(r.URL.Path), utils.SanitizeForLog(wsURL))
-	dialOpts := &websocket.DialOptions{Subprotocols: subprotocols}
+	dialOpts := &websocket.DialOptions{
+		Subprotocols: subprotocols,
+		HTTPClient:   &http.Client{Transport: transport},
+	}
 	upstreamConn, _, err := websocket.Dial(dialCtx, wsURL, dialOpts)
 	if err != nil {
 		log.Printf("Browser-pod WS proxy: dial error %s: %v", utils.SanitizeForLog(wsURL), err)

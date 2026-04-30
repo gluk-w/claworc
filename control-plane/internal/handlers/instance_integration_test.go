@@ -159,7 +159,7 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 	taskMgr := taskmanager.New(taskmanager.Config{})
 	handlers.TaskMgr = taskMgr
 	if orch := orchestrator.Get(); orch != nil {
-		provider := browserprov.NewLocalProvider(orch)
+		provider := browserprov.NewLocalProvider(orch, sshMgr)
 		bridge := browserprov.New(provider, taskMgr)
 		bridge.Start(ctx)
 		handlers.BrowserBridgeRef = bridge

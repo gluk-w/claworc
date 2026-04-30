@@ -72,6 +72,9 @@ func (m *mockOrch) GetBrowserPodEndpoint(_ context.Context, _ uint) (orchestrato
 	return orchestrator.BrowserPodEndpoint{}, nil
 }
 func (m *mockOrch) CloneBrowserVolume(_ context.Context, _, _ string) error { return nil }
+func (m *mockOrch) ConfigureBrowserSSHAccess(_ context.Context, _ uint, _ string) error {
+	return nil
+}
 
 // --- test helpers ---
 

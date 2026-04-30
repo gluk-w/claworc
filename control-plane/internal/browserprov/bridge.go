@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"sync"
 	"time"
 
@@ -182,6 +183,25 @@ func (b *BrowserBridge) DialVNC(ctx context.Context, instanceID uint) (io.ReadWr
 	}
 	b.Touch(instanceID)
 	return conn, nil
+}
+
+// VNCDialer ensures the browser session and returns a DialContext-compatible
+// function that the desktop HTTP / WebSocket proxy uses as the underlying
+// transport. Each call opens a fresh SSH channel to 127.0.0.1:3000 inside the
+// pod.
+func (b *BrowserBridge) VNCDialer(ctx context.Context, instanceID uint) (func(context.Context, string, string) (net.Conn, error), error) {
+	if !b.provider.Capabilities().SupportsVNC {
+		return nil, ErrNotSupported
+	}
+	if err := b.EnsureSession(ctx, instanceID, 0); err != nil {
+		return nil, err
+	}
+	dialer, err := b.provider.VNCDialer(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	b.Touch(instanceID)
+	return dialer, nil
 }
 
 // Touch marks an instance as recently active. The flusher persists touches

@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"time"
 )
 
@@ -80,6 +81,13 @@ type Provider interface {
 	// DialVNC returns a byte-stream connection to the browser's noVNC
 	// websocket bridge, or ErrNotSupported when the provider has no VNC.
 	DialVNC(ctx context.Context, instanceID uint) (io.ReadWriteCloser, error)
+
+	// VNCDialer returns a DialContext-compatible function bound to the noVNC
+	// port (3000) inside the browser pod. Each invocation opens a fresh SSH
+	// channel; callers pass it as http.Transport.DialContext to route HTTP
+	// and WebSocket traffic through the same SSH session that DialVNC uses.
+	// Returns ErrNotSupported for providers without VNC.
+	VNCDialer(ctx context.Context, instanceID uint) (func(ctx context.Context, network, addr string) (net.Conn, error), error)
 
 	SessionStatus(ctx context.Context, instanceID uint) (Status, error)
 }

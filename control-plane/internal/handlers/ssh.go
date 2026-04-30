@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -34,6 +35,7 @@ type BrowserBridge interface {
 	EnsureSession(ctx context.Context, instanceID, userID uint) error
 	DialCDP(ctx context.Context, instanceID uint) (io.ReadWriteCloser, error)
 	DialVNC(ctx context.Context, instanceID uint) (io.ReadWriteCloser, error)
+	VNCDialer(ctx context.Context, instanceID uint) (func(context.Context, string, string) (net.Conn, error), error)
 	Touch(instanceID uint)
 }
 
