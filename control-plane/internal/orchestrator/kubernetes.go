@@ -690,8 +690,8 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 			corev1.EnvVar{Name: "DISPLAY_HEIGHT", Value: parts[1]},
 		)
 	}
-	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "OPENCLAW_GATEWAY_TOKEN", Value: token})
+	for k, v := range params.EnvVars {
+		envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
 	}
 	if params.Timezone != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "TZ", Value: params.Timezone})
