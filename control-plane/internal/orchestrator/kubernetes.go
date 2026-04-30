@@ -409,6 +409,51 @@ func (k *KubernetesOrchestrator) UpdateResources(ctx context.Context, name strin
 	return err
 }
 
+func (k *KubernetesOrchestrator) UpdatePlacementConfig(ctx context.Context, name string, params UpdatePlacementParams) error {
+	dep, err := k.clientset.AppsV1().Deployments(k.ns()).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get deployment: %w", err)
+	}
+
+	dep.Spec.Template.Annotations = params.PodAnnotations
+	dep.Spec.Template.Spec.NodeSelector = params.NodeSelector
+	dep.Spec.Template.Spec.Tolerations = convertTolerations(params.Tolerations)
+	dep.Spec.Template.Spec.Affinity = parseAffinity(params.Affinity)
+
+	_, err = k.clientset.AppsV1().Deployments(k.ns()).Update(ctx, dep, metav1.UpdateOptions{})
+	return err
+}
+
+func convertTolerations(ts []Toleration) []corev1.Toleration {
+	if len(ts) == 0 {
+		return nil
+	}
+	out := make([]corev1.Toleration, len(ts))
+	for i, t := range ts {
+		out[i] = corev1.Toleration{
+			Key:      t.Key,
+			Operator: corev1.TolerationOperator(t.Operator),
+			Value:    t.Value,
+			Effect:   corev1.TaintEffect(t.Effect),
+		}
+		if t.TolerationSeconds != nil {
+			out[i].TolerationSeconds = t.TolerationSeconds
+		}
+	}
+	return out
+}
+
+func parseAffinity(raw string) *corev1.Affinity {
+	if raw == "" {
+		return nil
+	}
+	var aff corev1.Affinity
+	if err := json.Unmarshal([]byte(raw), &aff); err != nil {
+		return nil
+	}
+	return &aff
+}
+
 func (k *KubernetesOrchestrator) GetContainerStats(ctx context.Context, name string) (*ContainerStats, error) {
 	// Use the metrics API (requires metrics-server)
 	podName, err := k.getPodName(ctx, name)
@@ -645,8 +690,8 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 			corev1.EnvVar{Name: "DISPLAY_HEIGHT", Value: parts[1]},
 		)
 	}
-	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "OPENCLAW_GATEWAY_TOKEN", Value: token})
+	for k, v := range params.EnvVars {
+		envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
 	}
 	if params.Timezone != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "TZ", Value: params.Timezone})
@@ -668,9 +713,15 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": params.Name}},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": params.Name, "managed-by": "claworc"}},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      map[string]string{"app": params.Name, "managed-by": "claworc"},
+					Annotations: params.PodAnnotations,
+				},
 				Spec: corev1.PodSpec{
-					Hostname: strings.TrimPrefix(params.Name, "bot-"),
+					Hostname:     strings.TrimPrefix(params.Name, "bot-"),
+					NodeSelector: params.NodeSelector,
+					Tolerations:  convertTolerations(params.Tolerations),
+					Affinity:     parseAffinity(params.Affinity),
 					Containers: []corev1.Container{{
 						Name:            "claworc-instance",
 						Image:           params.ContainerImage,

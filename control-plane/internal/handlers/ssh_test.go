@@ -218,6 +218,9 @@ func (m *mockOrchestrator) GetBrowserPodEndpoint(_ context.Context, _ uint) (orc
 	return orchestrator.BrowserPodEndpoint{}, nil
 }
 func (m *mockOrchestrator) CloneBrowserVolume(_ context.Context, _, _ string) error { return nil }
+func (m *mockOrchestrator) UpdatePlacementConfig(_ context.Context, _ string, _ orchestrator.UpdatePlacementParams) error {
+	return nil
+}
 
 // --- test helpers ---
 

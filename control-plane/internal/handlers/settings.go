@@ -96,6 +96,27 @@ func settingsToResponse(raw map[string]string) map[string]interface{} {
 	// edit flow needs the live value to diff against.
 	result["default_env_vars"] = EnvVarsForResponse(raw["default_env_vars"])
 
+	// Global pod placement settings
+	for _, k := range []string{"default_pod_annotations", "default_node_selector"} {
+		var m map[string]string
+		if raw[k] != "" {
+			json.Unmarshal([]byte(raw[k]), &m)
+		}
+		if m == nil {
+			m = map[string]string{}
+		}
+		result[k] = m
+	}
+	var tolerations []interface{}
+	if raw["default_tolerations"] != "" {
+		json.Unmarshal([]byte(raw["default_tolerations"]), &tolerations)
+	}
+	if tolerations == nil {
+		tolerations = []interface{}{}
+	}
+	result["default_tolerations"] = tolerations
+	result["default_affinity"] = raw["default_affinity"]
+
 	return result
 }
 
@@ -173,10 +194,25 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Handle pod placement settings (stored as JSON strings)
+	for _, key := range []string{"default_pod_annotations", "default_node_selector", "default_tolerations"} {
+		if v, ok := raw[key]; ok {
+			b, err := json.Marshal(v)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "Invalid "+key)
+				return
+			}
+			database.SetSetting(key, string(b))
+		}
+	}
+
 	// Handle remaining plain settings
 	for key, val := range raw {
 		if key == "default_models" || key == "brave_api_key" || key == "env_vars_set" || key == "env_vars_unset" {
 			continue
+		}
+		if key == "default_pod_annotations" || key == "default_node_selector" || key == "default_tolerations" {
+			continue // handled above
 		}
 		// installation_id is read-only; never accept it on update.
 		if key == "installation_id" {

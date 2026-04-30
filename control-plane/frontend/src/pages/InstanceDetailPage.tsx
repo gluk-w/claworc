@@ -38,10 +38,13 @@ import ProviderIcon from "@/components/ProviderIcon";
 import ProviderModelSelector from "@/components/ProviderModelSelector";
 import ProviderModal from "@/components/ProviderModal";
 import EnvVarsEditor from "@/components/EnvVarsEditor";
+import SimpleKVEditor from "@/components/SimpleKVEditor";
+import TolerationsEditor from "@/components/TolerationsEditor";
 import LegacyBrowserBanner from "@/components/LegacyBrowserBanner";
 import AppToast from "@/components/AppToast";
 import toast from "react-hot-toast";
 import { useSSHStatus, useSSHEvents } from "@/hooks/useSSHStatus";
+import { useHealth } from "@/hooks/useHealth";
 import { useInstanceLogs } from "@/hooks/useInstanceLogs";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useDesktop } from "@/hooks/useDesktop";
@@ -61,6 +64,8 @@ export default function InstanceDetailPage() {
 
   const qc = useQueryClient();
   const { isAdmin } = useAuth();
+  const { data: health } = useHealth();
+  const isKubernetes = health?.orchestrator_backend === "kubernetes";
   const { data: instance, isLoading } = useInstance(instanceId);
   const { data: allProviders = [] } = useProviders();
 
@@ -164,6 +169,11 @@ export default function InstanceDetailPage() {
   // Instance provider modal state
   const [instanceProviderModalOpen, setInstanceProviderModalOpen] = useState(false);
   const [editingInstanceProvider, setEditingInstanceProvider] = useState<import("@/types/instance").LLMProvider | undefined>(undefined);
+
+  // Affinity JSON editing state
+  const [editingAffinity, setEditingAffinity] = useState(false);
+  const [pendingAffinity, setPendingAffinity] = useState("");
+  const [affinityError, setAffinityError] = useState<string | null>(null);
 
 
   // Update tab when hash changes
@@ -353,6 +363,39 @@ export default function InstanceDetailPage() {
     if (Object.keys(delta.set).length > 0) payload.env_vars_set = delta.set;
     if (delta.unset.length > 0) payload.env_vars_unset = delta.unset;
     await updateMutation.mutateAsync({ id: instanceId, payload });
+  };
+
+  const handleSavePodAnnotations = async (next: Record<string, string>) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { pod_annotations: next } });
+  };
+
+  const handleSaveNodeSelector = async (next: Record<string, string>) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { node_selector: next } });
+  };
+
+  const handleSaveTolerations = async (next: import("@/types/instance").Toleration[]) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { tolerations: next } });
+  };
+
+  const handleSaveAffinity = async () => {
+    if (pendingAffinity.trim() !== "") {
+      try {
+        JSON.parse(pendingAffinity);
+      } catch {
+        setAffinityError("Invalid JSON — check syntax and try again.");
+        return;
+      }
+    }
+    try {
+      await updateMutation.mutateAsync({
+        id: instanceId,
+        payload: { affinity: pendingAffinity.trim() },
+      });
+      setEditingAffinity(false);
+      setAffinityError(null);
+    } catch (err) {
+      setAffinityError(err instanceof Error ? err.message : "Failed to save.");
+    }
   };
 
   const handleUpdateImage = () => {
@@ -835,6 +878,121 @@ export default function InstanceDetailPage() {
             isSaving={updateMutation.isPending}
             emptyMessage="No instance-specific env vars. Globals from Settings apply."
           />
+
+          {/* Pod Annotations (admin + K8s only) */}
+          {isAdmin && isKubernetes && (
+            <SimpleKVEditor
+              values={instance.pod_annotations ?? {}}
+              title="Pod Annotations"
+              description="Metadata annotations applied to the pod template. Useful for tools like Karpenter, Datadog, or custom controllers."
+              onSave={handleSavePodAnnotations}
+              isSaving={updateMutation.isPending}
+              emptyMessage="No pod annotations configured."
+              keyPlaceholder="karpenter.sh/do-not-disrupt"
+              valuePlaceholder="true"
+            />
+          )}
+
+          {/* Node Placement (admin + K8s only) */}
+          {isAdmin && isKubernetes && (
+            <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+              <h3 className="text-sm font-medium text-gray-900">Node Placement</h3>
+
+              {/* Node Selector */}
+              <SimpleKVEditor
+                values={instance.node_selector ?? {}}
+                title="Node Selector"
+                description="Schedule this pod only on nodes matching all these labels."
+                onSave={handleSaveNodeSelector}
+                isSaving={updateMutation.isPending}
+                emptyMessage="No node selector configured."
+                keyPlaceholder="kubernetes.io/hostname"
+                valuePlaceholder="worker-1"
+              />
+
+              {/* Tolerations */}
+              <TolerationsEditor
+                values={instance.tolerations ?? []}
+                onSave={handleSaveTolerations}
+                isSaving={updateMutation.isPending}
+              />
+
+              {/* Affinity */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-gray-700">Affinity (JSON)</span>
+                  {!editingAffinity && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPendingAffinity(instance.affinity ?? "");
+                        setAffinityError(null);
+                        setEditingAffinity(true);
+                      }}
+                      className="text-xs text-blue-600 hover:text-blue-800"
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 mb-2">
+                  Raw K8s affinity spec — nodeAffinity, podAffinity, podAntiAffinity.
+                </p>
+                {!editingAffinity ? (
+                  instance.affinity ? (
+                    <pre className="text-xs font-mono text-gray-700 bg-gray-50 rounded p-3 overflow-x-auto whitespace-pre-wrap break-all">
+                      {(() => {
+                        try {
+                          return JSON.stringify(JSON.parse(instance.affinity), null, 2);
+                        } catch {
+                          return instance.affinity;
+                        }
+                      })()}
+                    </pre>
+                  ) : (
+                    <p className="text-sm text-gray-400 italic">No affinity configured.</p>
+                  )
+                ) : (
+                  <div>
+                    <textarea
+                      value={pendingAffinity}
+                      onChange={(e) => {
+                        setPendingAffinity(e.target.value);
+                        setAffinityError(null);
+                      }}
+                      rows={8}
+                      placeholder={'{\n  "nodeAffinity": {\n    ...\n  }\n}'}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                    />
+                    {affinityError && (
+                      <p className="text-xs text-red-600 mt-1">{affinityError}</p>
+                    )}
+                    <div className="flex justify-end gap-3 mt-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingAffinity(false);
+                          setAffinityError(null);
+                        }}
+                        disabled={updateMutation.isPending}
+                        className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveAffinity}
+                        disabled={updateMutation.isPending}
+                        className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {updateMutation.isPending ? "Saving..." : "Save"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* LLM Gateway Providers (admin only) */}
           {isAdmin && (

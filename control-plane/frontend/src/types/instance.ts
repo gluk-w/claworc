@@ -43,6 +43,10 @@ export interface Instance {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  pod_annotations: Record<string, string>;
+  node_selector: Record<string, string>;
+  tolerations: Toleration[];
+  affinity: string;
   /** True when the instance still uses the combined image (browser baked into agent). */
   is_legacy_embedded: boolean;
   /** On-demand browser pod settings (only meaningful when !is_legacy_embedded). */
@@ -55,6 +59,14 @@ export interface Instance {
 
 // Keep as distinct type for future detail-only fields
 export type InstanceDetail = Instance;
+
+export interface Toleration {
+  key?: string;
+  operator: "Equal" | "Exists";
+  value?: string;
+  effect?: "NoSchedule" | "PreferNoSchedule" | "NoExecute" | "";
+  tolerationSeconds?: number;
+}
 
 export interface InstanceCreatePayload {
   display_name: string;
@@ -99,6 +111,10 @@ export interface InstanceUpdatePayload {
   browser_image?: string;
   browser_idle_minutes?: number | null;
   browser_storage?: string;
+  pod_annotations?: Record<string, string>;
+  node_selector?: Record<string, string>;
+  tolerations?: Toleration[];
+  affinity?: string;
 }
 
 export interface InstanceStats {
