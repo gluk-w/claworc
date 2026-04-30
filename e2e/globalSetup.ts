@@ -1,5 +1,6 @@
 import { request } from "@playwright/test";
 import { writeSharedInstance, clearSharedInstance } from "./utils/sharedInstance";
+import { SHARED_ENV_VARS } from "./utils/sharedEnv";
 
 const baseURL = process.env.BASE_URL ?? "http://localhost:18001";
 
@@ -13,7 +14,7 @@ export default async function globalSetup() {
   console.log(`[globalSetup] creating shared instance ${display_name}`);
   const created = await api.post("/api/v1/instances", {
     headers: { "Content-Type": "application/json" },
-    data: { display_name },
+    data: { display_name, env_vars_set: SHARED_ENV_VARS },
   });
   if (!created.ok()) {
     throw new Error(`globalSetup: instance create failed: ${created.status()} ${await created.text()}`);
