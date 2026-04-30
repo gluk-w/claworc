@@ -120,7 +120,10 @@ func deleteInstance(t *testing.T, client *http.Client, baseURL string, id uint, 
 // becomes "running" proves the Singleton scrub didn't run.
 func TestIntegration_Clone_CarriesBrowserVolume_AndScrubsSingletons(t *testing.T) {
 	baseURL := sessionURL
-	client := &http.Client{Timeout: 60 * time.Second}
+	// browser/start now waits for CDP-ready (up to 60s) over an SSH tunnel
+	// after spinning up sshd in the browser pod. 60s is too tight in CI; give
+	// each request 3 minutes to absorb cold-start overhead.
+	client := &http.Client{Timeout: 180 * time.Second}
 
 	// --- Source instance: create + wait running + start browser ---
 	srcID, srcName := createInstance(t, client, baseURL, fmt.Sprintf("clone-src-%d", time.Now().UnixNano()))
