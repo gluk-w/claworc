@@ -951,6 +951,7 @@ export default function InstanceDetailPage() {
           {troubleshootOpen && (
             <SSHTroubleshoot
               instanceId={instanceId}
+              containerImage={instance.container_image}
               onClose={() => setTroubleshootOpen(false)}
             />
           )}

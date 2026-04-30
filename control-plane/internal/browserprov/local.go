@@ -133,6 +133,42 @@ func (p *LocalProvider) DialVNC(ctx context.Context, instanceID uint) (io.ReadWr
 	return p.dialLoopback(ctx, instanceID, "VNC", 3000)
 }
 
+// TestConnection runs `echo "SSH test successful"` over a fresh SSH session
+// to the browser pod and returns the command output. Used by the SSH
+// Troubleshooting popup.
+func (p *LocalProvider) TestConnection(ctx context.Context, instanceID uint) (string, error) {
+	client, err := p.ensureBrowserClient(ctx, instanceID)
+	if err != nil {
+		return "", err
+	}
+	session, err := client.NewSession()
+	if err != nil {
+		// Session creation can fail on a stale cached client; redial once.
+		p.closeBrowserClient(instanceID)
+		client, err2 := p.ensureBrowserClient(ctx, instanceID)
+		if err2 != nil {
+			return "", fmt.Errorf("ssh session: %w", err)
+		}
+		session, err = client.NewSession()
+		if err != nil {
+			return "", fmt.Errorf("ssh session: %w", err)
+		}
+	}
+	defer session.Close()
+	out, err := session.CombinedOutput(`echo "SSH test successful"`)
+	if err != nil {
+		return string(out), fmt.Errorf("command execution failed: %w", err)
+	}
+	return string(out), nil
+}
+
+// Reconnect closes the cached SSH client for the browser pod (if any) so
+// the next dial re-establishes a fresh session.
+func (p *LocalProvider) Reconnect(_ context.Context, instanceID uint) error {
+	p.closeBrowserClient(instanceID)
+	return nil
+}
+
 // VNCDialer returns a DialContext-compatible function that opens a new SSH
 // channel to 127.0.0.1:3000 inside the browser pod on each invocation. The
 // network/addr arguments are ignored — they exist only to satisfy

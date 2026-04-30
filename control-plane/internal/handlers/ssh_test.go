@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -547,6 +548,153 @@ func TestSSHConnectionTest_NoSSHManager(t *testing.T) {
 	result := parseResponse(t, w)
 	if result["error"] != "SSH manager not initialized" {
 		t.Errorf("expected 'SSH manager not initialized', got %v", result["error"])
+	}
+}
+
+// --- Browser-target tests for ssh-test / ssh-reconnect ---
+
+// stubBrowserBridge implements the BrowserBridge interface for handler tests.
+// All methods return canned responses so we can isolate the handler logic.
+type stubBrowserBridge struct {
+	testOutput string
+	testErr    error
+	reconErr   error
+	calls      struct{ test, reconnect int }
+}
+
+func (s *stubBrowserBridge) EnsureSession(_ context.Context, _, _ uint) error { return nil }
+func (s *stubBrowserBridge) DialCDP(_ context.Context, _ uint) (io.ReadWriteCloser, error) {
+	return nil, nil
+}
+func (s *stubBrowserBridge) DialVNC(_ context.Context, _ uint) (io.ReadWriteCloser, error) {
+	return nil, nil
+}
+func (s *stubBrowserBridge) VNCDialer(_ context.Context, _ uint) (func(context.Context, string, string) (net.Conn, error), error) {
+	return nil, nil
+}
+func (s *stubBrowserBridge) TestConnection(_ context.Context, _ uint) (string, error) {
+	s.calls.test++
+	return s.testOutput, s.testErr
+}
+func (s *stubBrowserBridge) Reconnect(_ context.Context, _ uint) error {
+	s.calls.reconnect++
+	return s.reconErr
+}
+func (s *stubBrowserBridge) Touch(_ uint) {}
+
+func TestSSHConnectionTest_BrowserTarget_Success(t *testing.T) {
+	setupTestDB(t)
+
+	stub := &stubBrowserBridge{testOutput: "SSH test successful\n"}
+	BrowserBridgeRef = stub
+	defer func() { BrowserBridgeRef = nil }()
+
+	inst := database.Instance{Name: "bot-test", DisplayName: "Test", Status: "running", ContainerImage: "glukw/claworc-agent:latest"}
+	if err := database.DB.Create(&inst).Error; err != nil {
+		t.Fatalf("create test instance: %v", err)
+	}
+	user := createTestUser(t, "admin")
+
+	req := buildRequest(t, "GET", "/api/v1/instances/1/ssh-test?target=browser", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
+	w := httptest.NewRecorder()
+	SSHConnectionTest(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	result := parseResponse(t, w)
+	if result["status"] != "ok" {
+		t.Errorf("status: want ok, got %v (body=%s)", result["status"], w.Body.String())
+	}
+	if result["target"] != "browser" {
+		t.Errorf("target: want browser, got %v", result["target"])
+	}
+	if stub.calls.test != 1 {
+		t.Errorf("TestConnection calls: want 1, got %d", stub.calls.test)
+	}
+}
+
+func TestSSHConnectionTest_BrowserTarget_Legacy(t *testing.T) {
+	setupTestDB(t)
+
+	BrowserBridgeRef = &stubBrowserBridge{}
+	defer func() { BrowserBridgeRef = nil }()
+
+	inst := database.Instance{Name: "bot-legacy", DisplayName: "Legacy", Status: "running", ContainerImage: "glukw/openclaw-vnc-chromium:latest"}
+	if err := database.DB.Create(&inst).Error; err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	user := createTestUser(t, "admin")
+
+	req := buildRequest(t, "GET", "/api/v1/instances/1/ssh-test?target=browser", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
+	w := httptest.NewRecorder()
+	SSHConnectionTest(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	result := parseResponse(t, w)
+	if result["status"] != "error" {
+		t.Errorf("status: want error, got %v", result["status"])
+	}
+	if errMsg, _ := result["error"].(string); !strings.Contains(errMsg, "Legacy") {
+		t.Errorf("error should mention Legacy, got %v", result["error"])
+	}
+}
+
+func TestSSHConnectionTest_BrowserTarget_BridgeMissing(t *testing.T) {
+	setupTestDB(t)
+
+	BrowserBridgeRef = nil
+
+	inst := database.Instance{Name: "bot-test", DisplayName: "Test", Status: "running", ContainerImage: "glukw/claworc-agent:latest"}
+	if err := database.DB.Create(&inst).Error; err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	user := createTestUser(t, "admin")
+
+	req := buildRequest(t, "GET", "/api/v1/instances/1/ssh-test?target=browser", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
+	w := httptest.NewRecorder()
+	SSHConnectionTest(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
+	}
+	result := parseResponse(t, w)
+	if result["status"] != "error" {
+		t.Errorf("status: want error, got %v", result["status"])
+	}
+}
+
+func TestSSHReconnect_BrowserTarget_Success(t *testing.T) {
+	setupTestDB(t)
+
+	stub := &stubBrowserBridge{}
+	BrowserBridgeRef = stub
+	defer func() { BrowserBridgeRef = nil }()
+
+	inst := database.Instance{Name: "bot-test", DisplayName: "Test", Status: "running", ContainerImage: "glukw/claworc-agent:latest"}
+	if err := database.DB.Create(&inst).Error; err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	user := createTestUser(t, "admin")
+
+	req := buildRequest(t, "POST", "/api/v1/instances/1/ssh-reconnect?target=browser", user, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
+	w := httptest.NewRecorder()
+	SSHReconnect(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	result := parseResponse(t, w)
+	if result["status"] != "ok" {
+		t.Errorf("status: want ok, got %v", result["status"])
+	}
+	if result["target"] != "browser" {
+		t.Errorf("target: want browser, got %v", result["target"])
+	}
+	if stub.calls.reconnect != 1 {
+		t.Errorf("Reconnect calls: want 1, got %d", stub.calls.reconnect)
 	}
 }
 

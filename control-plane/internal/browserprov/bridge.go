@@ -185,6 +185,23 @@ func (b *BrowserBridge) DialVNC(ctx context.Context, instanceID uint) (io.ReadWr
 	return conn, nil
 }
 
+// TestConnection runs a one-shot SSH command against the browser pod and
+// returns the output. Used by the SSH Troubleshooting popup to prove
+// end-to-end browser-pod connectivity. Does not Touch — this is a probe,
+// not real activity.
+func (b *BrowserBridge) TestConnection(ctx context.Context, instanceID uint) (string, error) {
+	if err := b.EnsureSession(ctx, instanceID, 0); err != nil {
+		return "", err
+	}
+	return b.provider.TestConnection(ctx, instanceID)
+}
+
+// Reconnect drops any cached SSH client for the browser pod so the next
+// CDP / noVNC dial re-establishes a fresh session.
+func (b *BrowserBridge) Reconnect(ctx context.Context, instanceID uint) error {
+	return b.provider.Reconnect(ctx, instanceID)
+}
+
 // VNCDialer ensures the browser session and returns a DialContext-compatible
 // function that the desktop HTTP / WebSocket proxy uses as the underlying
 // transport. Each call opens a fresh SSH channel to 127.0.0.1:3000 inside the
