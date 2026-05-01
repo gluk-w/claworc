@@ -228,7 +228,15 @@ func (m *mockOrchestrator) ConfigureBrowserSSHAccess(_ context.Context, _ uint, 
 func setupTestDB(t *testing.T) {
 	t.Helper()
 	var err error
-	database.DB, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+	// Use a per-test shared-cache in-memory SQLite so concurrent goroutines
+	// (e.g. two WebSocket handlers serving terminal sessions) see the same
+	// data through GORM's connection pool. Without `cache=shared`, each
+	// pooled connection gets its own empty in-memory database, causing
+	// intermittent "Instance not found" errors when a second goroutine's
+	// query lands on a different connection. The unique DSN (test name +
+	// pointer) keeps tests isolated from each other.
+	dsn := fmt.Sprintf("file:testdb_%s_%p?mode=memory&cache=shared", t.Name(), t)
+	database.DB, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	if err != nil {
