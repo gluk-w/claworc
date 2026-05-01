@@ -83,7 +83,7 @@ Legacy instances continue using a single `<name>-home` PVC where chrome-data liv
 
 Reuse the existing `TunnelTypeAgentListener` pattern.
 
-**Agent change** — `agent/rootfs/etc/ssh/sshd_config.d/claworc.conf`:
+**Agent change** — `agent/instance/rootfs/etc/ssh/sshd_config.d/claworc.conf`:
 ```
 PermitListen 127.0.0.1:9222 127.0.0.1:40001
 ```
@@ -251,9 +251,9 @@ Delete (legacy combined-image sources; published images stay in registry):
 - The combined s6 service set under `rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/` that listed all services together.
 
 Add:
-- `Dockerfile.agent` — slim agent (sshd, OpenClaw, cron). Uses the `agent.bundle` s6 set.
-- `Dockerfile.browser-base` — Xvfb/TigerVNC/noVNC/openbox/stealth-extension base. **No sshd.** Uses the `browser.bundle` s6 set.
-- `Dockerfile.browser-chromium`, `Dockerfile.browser-chrome`, `Dockerfile.browser-brave`.
+- `agent/instance/Dockerfile` — slim agent (sshd, OpenClaw, cron). Uses the `agent.bundle` s6 set.
+- `agent/browser/Dockerfile.base` — Xvfb/TigerVNC/noVNC/openbox/stealth-extension base. Uses the `browser.bundle` s6 set.
+- `agent/browser/Dockerfile.chromium`, `agent/browser/Dockerfile.chrome`, `agent/browser/Dockerfile.brave`.
 - New s6 bundles `agent.bundle` and `browser.bundle`.
 
 Edit:
@@ -342,5 +342,5 @@ CDP is not authenticated by Chromium itself — relying on cluster networking is
 - `/Users/stan/claworc/control-plane/internal/handlers/desktop.go`
 - `/Users/stan/claworc/control-plane/internal/handlers/instances.go`
 - `/Users/stan/claworc/control-plane/internal/taskmanager/taskmanager.go`
-- `/Users/stan/claworc/agent/rootfs/etc/ssh/sshd_config.d/claworc.conf`
+- `/Users/stan/claworc/agent/instance/rootfs/etc/ssh/sshd_config.d/claworc.conf`
 - `/Users/stan/claworc/helm/templates/networkpolicy.yaml`

@@ -10,8 +10,8 @@ import (
 
 // --- SSH Server Hardening Verification Tests ---
 //
-// These tests verify the SSH server configuration in agent/rootfs/etc/ssh/sshd_config.d/claworc.conf
-// and the startup script in agent/rootfs/etc/s6-overlay/s6-rc.d/svc-sshd/run to ensure
+// These tests verify the SSH server configuration in agent/{instance,browser}/rootfs/etc/ssh/sshd_config.d/claworc.conf
+// and the startup script in agent/{instance,browser}/rootfs/etc/s6-overlay/s6-rc.d/svc-sshd/run to ensure
 // security hardening directives are properly set.
 
 // findRepoRoot walks up from the test file to find the repository root
@@ -41,7 +41,7 @@ func findRepoRoot(t *testing.T) string {
 func loadSSHDConfig(t *testing.T) string {
 	t.Helper()
 	root := findRepoRoot(t)
-	configPath := filepath.Join(root, "agent", "rootfs", "etc", "ssh", "sshd_config.d", "claworc.conf")
+	configPath := filepath.Join(root, "agent", "instance", "rootfs", "etc", "ssh", "sshd_config.d", "claworc.conf")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("read sshd config: %v", err)
@@ -53,7 +53,7 @@ func loadSSHDConfig(t *testing.T) string {
 func loadSSHDStartupScript(t *testing.T) string {
 	t.Helper()
 	root := findRepoRoot(t)
-	scriptPath := filepath.Join(root, "agent", "rootfs", "etc", "s6-overlay", "s6-rc.d", "svc-sshd", "run")
+	scriptPath := filepath.Join(root, "agent", "instance", "rootfs", "etc", "s6-overlay", "s6-rc.d", "svc-sshd", "run")
 	data, err := os.ReadFile(scriptPath)
 	if err != nil {
 		t.Fatalf("read sshd startup script: %v", err)

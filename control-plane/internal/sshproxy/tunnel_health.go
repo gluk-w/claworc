@@ -105,6 +105,40 @@ func (tm *TunnelManager) CheckTunnelHealth(instanceID uint, label string) error 
 		return fmt.Errorf("no tunnel with label %q for instance %d", label, instanceID)
 	}
 
+	// CDP agent-listener tunnels have an upstream that may be intentionally
+	// stopped (the browser pod is spawned on demand and reaped when idle).
+	// Use the registered probe to distinguish "running" (active) from "not
+	// running" (idle, gray in the UI) — neither state is a failure.
+	if target.Config.Type == TunnelTypeAgentListener && target.Label == "CDP" {
+		tm.mu.RLock()
+		probe := tm.cdpHealthProbe
+		tm.mu.RUnlock()
+		if probe != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), tunnelHealthCheckTimeout)
+			defer cancel()
+			if probe(ctx, instanceID) {
+				if target.Status != "active" {
+					tm.setTunnelStatus(instanceID, target, "active", "")
+				}
+				if target.metrics != nil {
+					target.metrics.recordSuccess()
+				}
+				return nil
+			}
+			if target.Status != "idle" {
+				tm.setTunnelStatus(instanceID, target, "idle", "browser pod not running")
+			}
+			// Idle is not a failure: do not increment failed_checks. Returning
+			// nil keeps the badge gray rather than flapping to red.
+			return nil
+		}
+		// No probe registered: fall through to legacy "always success" behaviour.
+		if target.metrics != nil {
+			target.metrics.recordSuccess()
+		}
+		return nil
+	}
+
 	if target.Status != "active" {
 		if target.metrics != nil {
 			target.metrics.recordFailure()
@@ -151,7 +185,9 @@ func (tm *TunnelManager) checkAllTunnelHealth() {
 	var refs []tunnelRef
 	for id, tunnels := range tm.tunnels {
 		for _, t := range tunnels {
-			if t.Status == "active" {
+			// Include idle tunnels so the CDP probe can flip them back to
+			// active when the browser pod becomes ready again.
+			if t.Status == "active" || t.Status == "idle" {
 				refs = append(refs, tunnelRef{instanceID: id, label: t.Label})
 			}
 		}

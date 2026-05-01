@@ -106,11 +106,22 @@ type TunnelManager struct {
 	// the legacy VNC reverse tunnel is skipped because VNC is served directly
 	// from the browser pod's Service.
 	cdpDialProvider CDPDialProvider
+
+	// cdpHealthProbe, when set, lets the periodic health checker ask "is the
+	// upstream browser pod actually reachable for this instance?" without
+	// spawning a new session. Returning false means the browser pod is not
+	// running — a normal idle state for on-demand CDP, not a failure.
+	cdpHealthProbe CDPHealthProbe
 }
 
 // CDPDialProvider is the hook used by the reconciler to discover non-legacy
 // instances and obtain their per-instance CDP DialFunc.
 type CDPDialProvider func(ctx context.Context, instanceID uint) (DialFunc, bool)
+
+// CDPHealthProbe reports whether the CDP upstream (browser pod) is currently
+// running for instanceID. It MUST NOT spawn or mutate state — it is called
+// from the tunnel health checker.
+type CDPHealthProbe func(ctx context.Context, instanceID uint) bool
 
 // NewTunnelManager creates a new TunnelManager that uses the given SSHManager
 // for obtaining SSH connections to instances.
@@ -138,6 +149,16 @@ func (tm *TunnelManager) SetLLMGatewayAddr(addr string) {
 func (tm *TunnelManager) SetCDPDialProvider(p CDPDialProvider) {
 	tm.mu.Lock()
 	tm.cdpDialProvider = p
+	tm.mu.Unlock()
+}
+
+// SetCDPHealthProbe installs the hook used by CheckTunnelHealth to verify
+// that the CDP upstream (browser pod) is reachable for a given instance.
+// Pass nil to revert to the default behaviour (CDP tunnels are always
+// reported as healthy as long as the SSH listener is up).
+func (tm *TunnelManager) SetCDPHealthProbe(p CDPHealthProbe) {
+	tm.mu.Lock()
+	tm.cdpHealthProbe = p
 	tm.mu.Unlock()
 }
 
@@ -340,7 +361,9 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID
 			if t.Label == "LLMProxy" && t.Status == "active" {
 				hasLLMProxy = true
 			}
-			if t.Label == "CDP" && t.Status == "active" {
+			// CDP "idle" means the listener is alive but the browser pod is
+			// stopped — still considered present, no need to recreate.
+			if t.Label == "CDP" && (t.Status == "active" || t.Status == "idle") {
 				hasCDP = true
 			}
 		}
@@ -435,7 +458,10 @@ func (tm *TunnelManager) areTunnelsHealthy(instanceID uint) bool {
 	}
 
 	for _, t := range existing {
-		if t.Status != "active" {
+		// "idle" applies to the CDP agent-listener when the browser pod is
+		// stopped — the SSH listener is still up and will spawn the pod on
+		// the next inbound byte, so the tunnel itself is healthy.
+		if t.Status != "active" && t.Status != "idle" {
 			return false
 		}
 	}

@@ -88,8 +88,33 @@ func (d *DockerOrchestrator) BackendName() string {
 	return "docker"
 }
 
-func (d *DockerOrchestrator) volumeName(name, suffix string) string {
+// VolumeNameFor returns the canonical Docker volume name for a workload's
+// per-suffix data volume (homebrew, home, browser-data, ...). The convention
+// is namespaced with the claworc- prefix so volumes are easy to spot when
+// inspecting Docker state by hand.
+func (d *DockerOrchestrator) VolumeNameFor(name, suffix string) string {
 	return fmt.Sprintf("claworc-%s-%s", name, suffix)
+}
+
+func (d *DockerOrchestrator) volumeName(name, suffix string) string {
+	return d.VolumeNameFor(name, suffix)
+}
+
+// CloneVolume copies srcVolName into dstVolName via a one-shot alpine helper.
+// The destination volume is created if it does not already exist.
+func (d *DockerOrchestrator) CloneVolume(ctx context.Context, srcVolName, dstVolName string) error {
+	if _, err := d.client.VolumeInspect(ctx, srcVolName); err != nil {
+		// Source volume doesn't exist — nothing to clone. Treat as success so
+		// callers can call this unconditionally on every clone.
+		return nil
+	}
+	if _, err := d.client.VolumeCreate(ctx, volume.CreateOptions{
+		Name:   dstVolName,
+		Labels: map[string]string{"managed-by": labelManagedBy},
+	}); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already exists") {
+		return fmt.Errorf("create dst volume %s: %w", dstVolName, err)
+	}
+	return d.copyVolume(ctx, srcVolName, dstVolName)
 }
 
 func parseCPUToNanoCPUs(cpuStr string) int64 {

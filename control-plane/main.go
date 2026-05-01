@@ -195,6 +195,7 @@ func main() {
 		handlers.BrowserBridgeRef = bridge
 		handlers.BrowserStopper = browserprov.StopperAdapter{Provider: provider}
 		handlers.BrowserMigrator = browserprov.NewMigrator(taskMgr, orch, bridge)
+		handlers.BrowserAdmin = browserprov.AdminAdapter{Provider: provider}
 
 		tunnelMgr.SetCDPDialProvider(func(dctx context.Context, instanceID uint) (sshproxy.DialFunc, bool) {
 			var inst database.Instance
@@ -208,6 +209,20 @@ func main() {
 				return bridge.DialCDP(callCtx, instanceID)
 			}, true
 		})
+		tunnelMgr.SetCDPHealthProbe(bridge.IsCDPReady)
+
+		// Refresh the CDP tunnel status immediately when the browser session
+		// transitions running ↔ stopped, so the badge flips green/gray
+		// without waiting for the next 60 s periodic health probe.
+		refreshCDP := func(instanceID uint) {
+			go func() {
+				if err := tunnelMgr.CheckTunnelHealth(instanceID, "CDP"); err != nil {
+					log.Printf("CDP status refresh for instance %d: %v", instanceID, err)
+				}
+			}()
+		}
+		bridge.SetOnSessionStateChanged(refreshCDP)
+		handlers.OnBrowserStateChanged = refreshCDP
 	}
 
 	// Start background tunnel manager to maintain SSH tunnels for running instances

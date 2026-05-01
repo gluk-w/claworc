@@ -1,0 +1,87 @@
+FROM debian:bookworm-slim AS base
+
+ARG S6_OVERLAY_VERSION=3.2.0.2
+ARG TARGETARCH
+ARG USE_CHINA_MIRRORS=false
+ARG INCLUDE_CJK_FONTS=false
+ARG NOVNC_VERSION=1.4.0
+ARG WEBSOCKIFY_VERSION=0.12.0
+
+# Browser-only base image: Xvfb + TigerVNC + noVNC + openbox + stealth
+# extension + sshd. NO OpenClaw, NO cron — those live in glukw/claworc-agent.
+#
+# CDP listens on 127.0.0.1:9222 and noVNC on 127.0.0.1:3000 (loopback only —
+# Chromium 134+ silently refuses non-loopback DevTools binding). Externally,
+# the only reachable port is sshd on 22; the control plane SSHes in and uses
+# ssh.Client.Dial to reach 127.0.0.1:9222 / 127.0.0.1:3000.
+#
+# Published as glukw/claworc-browser-base:latest. The variant images
+# (glukw/claworc-browser-{chromium,chrome,brave}) FROM this and add the
+# specific browser package.
+
+RUN useradd -m -u 1000 -s /bin/bash claworc
+
+RUN if [ "$USE_CHINA_MIRRORS" = "true" ]; then \
+      sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; \
+    fi
+
+# CJK fonts are ~200 MB. Off by default; enable with
+# `--build-arg INCLUDE_CJK_FONTS=true` for users that need CJK rendering.
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      curl ca-certificates xz-utils openssh-server \
+      tigervnc-standalone-server tigervnc-common \
+      xfonts-base fonts-liberation x11-utils dbus-x11 \
+      fonts-noto-color-emoji fonts-dejavu-core fonts-freefont-ttf \
+      tzdata locales python3 && \
+    if [ "$INCLUDE_CJK_FONTS" = "true" ]; then \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends fonts-noto-cjk; \
+    fi && \
+    echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/* \
+           /usr/share/doc/* /usr/share/man/* /usr/share/info/* && \
+    find /usr/share/locale -mindepth 1 -maxdepth 1 -type d ! -name 'en*' ! -name 'locale.alias' -exec rm -rf {} +
+
+RUN S6_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") && \
+    curl -fsSL "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz" \
+      | tar -C / -Jxpf - && \
+    curl -fsSL "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz" \
+      | tar -C / -Jxpf -
+
+# Fetch noVNC + websockify as release tarballs (gzip is in base; xz handled
+# the s6 archives above) so we don't need `git` in the runtime image.
+RUN mkdir -p /opt/novnc /opt/novnc/utils/websockify && \
+    curl -fsSL "https://github.com/novnc/noVNC/archive/refs/tags/v${NOVNC_VERSION}.tar.gz" \
+      | tar -xz --strip-components=1 -C /opt/novnc && \
+    curl -fsSL "https://github.com/novnc/websockify/archive/refs/tags/v${WEBSOCKIFY_VERSION}.tar.gz" \
+      | tar -xz --strip-components=1 -C /opt/novnc/utils/websockify && \
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y --auto-remove xz-utils && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY stealth-extension/ /opt/stealth-extension/
+COPY rootfs/ /
+
+RUN chmod +x /etc/s6-overlay/s6-rc.d/init-setup/up \
+             /etc/s6-overlay/scripts/init-setup.sh \
+             /etc/s6-overlay/s6-rc.d/svc-xvnc/run \
+             /etc/s6-overlay/s6-rc.d/svc-novnc/run \
+             /etc/s6-overlay/s6-rc.d/svc-desktop/run \
+             /etc/s6-overlay/s6-rc.d/svc-sshd/run
+
+RUN chmod u-s /usr/bin/su /usr/bin/mount /usr/bin/umount /usr/bin/newgrp \
+    /usr/bin/chsh /usr/bin/chfn /usr/bin/gpasswd /usr/bin/chage \
+    /usr/bin/crontab /usr/bin/passwd /usr/bin/wall /usr/bin/expiry \
+    /usr/lib/openssh/ssh-keysign 2>/dev/null || true && \
+    echo "Remaining SUID binaries:" && find / -xdev -perm -4000 -type f 2>/dev/null || true
+
+# Drop baked-in SSH host keys; init-setup.sh regenerates them on first boot
+# so each pod has unique keys (sharing host keys across pods enables MITM
+# between pods).
+RUN rm -f /etc/ssh/ssh_host_*
+
+EXPOSE 22
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD bash -c '</dev/tcp/127.0.0.1/22' || exit 1
+
+ENTRYPOINT ["/init"]

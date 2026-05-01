@@ -61,20 +61,13 @@ func (m *mockOrch) StreamExecInInstance(ctx context.Context, name string, cmd []
 	return "", 0, nil
 }
 func (m *mockOrch) DeleteSharedVolume(_ context.Context, _ uint) error { return nil }
-func (m *mockOrch) EnsureBrowserPod(_ context.Context, _ uint, _ orchestrator.BrowserPodParams) (orchestrator.BrowserPodEndpoint, error) {
-	return orchestrator.BrowserPodEndpoint{}, nil
-}
-func (m *mockOrch) StopBrowserPod(_ context.Context, _ uint) error   { return nil }
-func (m *mockOrch) DeleteBrowserPod(_ context.Context, _ uint) error { return nil }
-func (m *mockOrch) GetBrowserPodStatus(_ context.Context, _ uint) (string, error) {
-	return "stopped", nil
-}
-func (m *mockOrch) GetBrowserPodEndpoint(_ context.Context, _ uint) (orchestrator.BrowserPodEndpoint, error) {
-	return orchestrator.BrowserPodEndpoint{}, nil
-}
-func (m *mockOrch) CloneBrowserVolume(_ context.Context, _, _ string) error { return nil }
-func (m *mockOrch) ConfigureBrowserSSHAccess(_ context.Context, _ uint, _ string) error {
-	return nil
+func (m *mockOrch) CloneVolume(_ context.Context, _, _ string) error    { return nil }
+func (m *mockOrch) VolumeNameFor(name, suffix string) string            { return name + "-" + suffix }
+func (m *mockOrch) Apply(_ context.Context, _ orchestrator.WorkloadSpec) error          { return nil }
+func (m *mockOrch) DeleteWorkload(_ context.Context, _ orchestrator.WorkloadSpec) error { return nil }
+func (m *mockOrch) EnsureSSHAccess(_ context.Context, _, _ string) error                { return nil }
+func (m *mockOrch) WorkloadSSHAddress(_ context.Context, _ string) (string, int, error) {
+	return "", 0, nil
 }
 
 // --- test helpers ---
