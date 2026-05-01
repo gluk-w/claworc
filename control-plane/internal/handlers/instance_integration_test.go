@@ -165,6 +165,7 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 		handlers.BrowserBridgeRef = bridge
 		handlers.BrowserStopper = browserprov.StopperAdapter{Provider: provider}
 		handlers.BrowserMigrator = browserprov.NewMigrator(taskMgr, orch, bridge)
+		handlers.BrowserAdmin = browserprov.AdminAdapter{Provider: provider}
 
 		tunnelMgr.SetCDPDialProvider(func(dctx context.Context, instanceID uint) (sshproxy.DialFunc, bool) {
 			var inst database.Instance

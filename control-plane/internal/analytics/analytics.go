@@ -24,7 +24,7 @@ var Version = "dev"
 
 // httpClient is package-level so tests can swap it. Keep timeout snug — Track
 // is fire-and-forget but we still bound goroutine lifetime.
-var httpClient = &http.Client{Timeout: 5 * time.Second}
+var httpClient = &http.Client{Timeout: 15 * time.Second}
 
 // endpoint is the URL Track POSTs to. Tests override this; production uses
 // CollectorURL.

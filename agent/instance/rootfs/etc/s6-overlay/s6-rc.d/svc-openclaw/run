@@ -1,0 +1,42 @@
+#!/command/with-contenv bash
+
+export HOME=/home/claworc
+
+# Heavy work (`openclaw doctor --fix`, `openclaw onboard`, TOOLS.md install)
+# runs at image build time; init-openclaw-seed (a oneshot that runs before
+# this service) copies the baked /opt/openclaw-skeleton/.openclaw onto the
+# PVC on first boot. By the time we get here, /home/claworc/.openclaw is
+# already populated and the only work left is to apply env-driven config
+# overrides and exec the gateway.
+
+# Always reaffirm gateway settings — these are baked into the skeleton too,
+# but writing them here keeps a single source of truth and lets ops change
+# them by editing this file without rebuilding the image.
+s6-setuidgid claworc openclaw config set gateway.mode local
+# Newer openclaw rejects host-alias values (e.g. `localhost`) for gateway.bind
+# and demands a bind-mode keyword (lan/loopback/custom/tailnet/auto) instead.
+s6-setuidgid claworc openclaw config set gateway.bind loopback
+s6-setuidgid claworc openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth true
+
+# Set Control UI base path for reverse proxy
+if [ -n "$CLAWORC_INSTANCE_ID" ]; then
+    s6-setuidgid claworc openclaw config set gateway.controlUi.basePath "/openclaw/${CLAWORC_INSTANCE_ID}/"
+fi
+
+# Set token if provided
+if [ -n "$OPENCLAW_GATEWAY_TOKEN" ]; then
+    s6-setuidgid claworc openclaw config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN"
+fi
+
+# Apply initial model and provider config passed by Claworc at container creation.
+# This ensures the gateway starts with providers already configured, preventing
+# auth failures on messages that arrive before ConfigureInstance runs via SSH.
+if [ -n "$OPENCLAW_INITIAL_MODELS" ]; then
+    s6-setuidgid claworc openclaw config set agents.defaults.model "$OPENCLAW_INITIAL_MODELS" --json
+fi
+if [ -n "$OPENCLAW_INITIAL_PROVIDERS" ]; then
+    s6-setuidgid claworc openclaw config set models.providers "$OPENCLAW_INITIAL_PROVIDERS" --json
+fi
+
+echo "Starting OpenClaw Gateway (foreground) as claworc..."
+exec bash -c "tail -f /dev/null | s6-setuidgid claworc /usr/bin/openclaw gateway run >> /var/log/claworc/openclaw.log 2>&1"

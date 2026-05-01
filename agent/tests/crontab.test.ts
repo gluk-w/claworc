@@ -1,17 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { exec, getContainers } from "./helpers";
+import { exec, getContainers, hasCommand } from "./helpers";
 
 const containers = getContainers();
 
-const entries = Object.entries(containers).map(
-  ([browser, info]) => [browser, info.name] as [string, string],
-);
+// Only the claworc-agent image runs cron; the browser-only images
+// (claworc-browser-*) deliberately omit it. Probe each container and
+// skip the ones without a cron binary so the suite stays green against
+// the split images.
+const entries = Object.entries(containers)
+  .map(([browser, info]) => [browser, info.name] as [string, string])
+  .filter(([, name]) => hasCommand(name, "cron"));
 
-// When no containers are available (no images built), skip all tests.
-// We must have at least one describe block to avoid vitest "no test suite" error.
 if (entries.length === 0) {
-  describe.skip("cron (no containers available)", () => {
-    it.skip("skipped — no agent images found", () => {});
+  describe.skip("cron (no cron-capable containers available)", () => {
+    it.skip("skipped — no container ships cron", () => {});
   });
 }
 

@@ -1,0 +1,22 @@
+ARG BASE_IMAGE=glukw/claworc-browser-base:latest
+FROM ${BASE_IMAGE}
+
+# google-chrome-stable is amd64-only on Linux. Fail fast on other arches so
+# CI doesn't silently produce a working-but-browserless image.
+RUN if [ "$(dpkg --print-architecture)" != "amd64" ]; then \
+      echo "ERROR: claworc-browser-chrome only supports amd64 (Google does not ship arm64 Linux Chrome). Use claworc-browser-chromium instead." >&2; \
+      exit 1; \
+    fi
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gnupg && \
+    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+      | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+      > /etc/apt/sources.list.d/google-chrome.list && \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      google-chrome-stable && \
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y --auto-remove gnupg && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
+           /usr/share/doc/* /usr/share/man/*

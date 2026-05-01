@@ -19,6 +19,20 @@ func (s StopperAdapter) StopSession(ctx context.Context, instanceID uint) error 
 	return s.Provider.StopSession(ctx, instanceID)
 }
 
+// AdminAdapter exposes the LocalProvider operations the handlers reach for
+// outside the bridge's session lifecycle (delete on instance teardown, clone
+// on instance clone). Kept as a thin adapter so handlers stay decoupled from
+// the concrete provider implementation.
+type AdminAdapter struct{ Provider *LocalProvider }
+
+func (a AdminAdapter) DeleteBrowserPod(ctx context.Context, instanceID uint) error {
+	return a.Provider.DeleteSession(ctx, instanceID)
+}
+
+func (a AdminAdapter) CloneBrowserVolume(ctx context.Context, srcInstanceName, dstInstanceName string) error {
+	return a.Provider.CloneSession(ctx, srcInstanceName, dstInstanceName)
+}
+
 // Migrator coordinates the legacy → on-demand migration for an instance.
 // The migration:
 //  1. Validates the instance is legacy and resolves the new agent + browser images
@@ -139,8 +153,8 @@ func (m *Migrator) run(ctx context.Context, h *taskmanager.Handle, instanceID ui
 		// Pull/rollout failed — revert the row so the instance keeps using
 		// its existing legacy image and the user can retry once the new
 		// image is available (e.g. after pushing it to the registry, or
-		// building it locally with `docker build -f agent/Dockerfile.agent`
-		// -t glukw/claworc-agent:latest agent/`).
+		// building it locally with `docker build -f agent/instance/Dockerfile`
+		// -t glukw/claworc-agent:latest agent/instance/`).
 		revertSnapshot(instanceID, prev, storageChanged)
 		return fmt.Errorf("rollout new agent image: %w (instance left on legacy image; build/push the agent image first or update default_agent_image)", err)
 	}

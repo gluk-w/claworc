@@ -123,6 +123,9 @@ func BrowserStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = database.UpdateBrowserSessionStatus(uint(id), "stopped", "")
+	if OnBrowserStateChanged != nil {
+		OnBrowserStateChanged(uint(id))
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"state": "stopped"})
 }
 
@@ -157,11 +160,18 @@ func BrowserMigrate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }
 
-// BrowserStopper and BrowserMigrator are wired in main.go so handlers stay
-// independent of the concrete browserprov implementation.
+// BrowserStopper, BrowserMigrator, and BrowserAdmin are wired in main.go so
+// handlers stay independent of the concrete browserprov implementation.
 var (
 	BrowserStopper  BrowserSessionStopper
 	BrowserMigrator BrowserMigrationRunner
+	BrowserAdmin    BrowserAdminOps
+
+	// OnBrowserStateChanged, when set, is invoked after a successful
+	// BrowserStart / BrowserStop so the SSH tunnel manager can refresh the
+	// CDP tunnel status immediately rather than waiting for the next 60 s
+	// periodic health probe.
+	OnBrowserStateChanged func(instanceID uint)
 )
 
 // BrowserSessionStopper is the contract for force-stopping a browser session.
@@ -173,4 +183,12 @@ type BrowserSessionStopper interface {
 // migration and returns the TaskManager task ID.
 type BrowserMigrationRunner interface {
 	Migrate(ctx context.Context, instanceID, userID uint) (taskID string, err error)
+}
+
+// BrowserAdminOps groups the browser-pod admin operations that instance CRUD
+// handlers (delete, clone-cancel, clone) reach for outside the bridge's
+// session lifecycle.
+type BrowserAdminOps interface {
+	DeleteBrowserPod(ctx context.Context, instanceID uint) error
+	CloneBrowserVolume(ctx context.Context, srcInstanceName, dstInstanceName string) error
 }

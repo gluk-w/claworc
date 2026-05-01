@@ -73,21 +73,16 @@ func (mockOps) ExecInInstance(_ context.Context, _ string, _ []string) (string, 
 func (mockOps) StreamExecInInstance(_ context.Context, _ string, _ []string, _ io.Writer) (string, int, error) {
 	return "", 0, nil
 }
-func (mockOps) DeleteSharedVolume(_ context.Context, _ uint) error { return nil }
-func (mockOps) EnsureBrowserPod(_ context.Context, _ uint, _ orchestrator.BrowserPodParams) (orchestrator.BrowserPodEndpoint, error) {
-	return orchestrator.BrowserPodEndpoint{}, nil
-}
-func (mockOps) StopBrowserPod(_ context.Context, _ uint) error   { return nil }
-func (mockOps) DeleteBrowserPod(_ context.Context, _ uint) error { return nil }
-func (mockOps) GetBrowserPodStatus(_ context.Context, _ uint) (string, error) {
-	return "stopped", nil
-}
-func (mockOps) GetBrowserPodEndpoint(_ context.Context, _ uint) (orchestrator.BrowserPodEndpoint, error) {
-	return orchestrator.BrowserPodEndpoint{}, nil
-}
-func (mockOps) CloneBrowserVolume(_ context.Context, _, _ string) error { return nil }
-func (mockOps) ConfigureBrowserSSHAccess(_ context.Context, _ uint, _ string) error {
+func (mockOps) DeleteSharedVolume(_ context.Context, _ uint) error               { return nil }
+func (mockOps) CloneVolume(_ context.Context, _, _ string) error                 { return nil }
+func (mockOps) VolumeNameFor(name, suffix string) string                         { return name + "-" + suffix }
+func (mockOps) Apply(_ context.Context, _ orchestrator.WorkloadSpec) error       { return nil }
+func (mockOps) DeleteWorkload(_ context.Context, _ orchestrator.WorkloadSpec) error {
 	return nil
+}
+func (mockOps) EnsureSSHAccess(_ context.Context, _, _ string) error { return nil }
+func (mockOps) WorkloadSSHAddress(_ context.Context, _ string) (string, int, error) {
+	return "", 0, nil
 }
 
 func TestConfigureInstance_NoOp(t *testing.T) {

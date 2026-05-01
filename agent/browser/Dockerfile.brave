@@ -1,0 +1,18 @@
+ARG BASE_IMAGE=glukw/claworc-browser-base:latest
+FROM ${BASE_IMAGE}
+
+# brave-browser is amd64-only on Linux. Fail fast on other arches.
+RUN if [ "$(dpkg --print-architecture)" != "amd64" ]; then \
+      echo "ERROR: claworc-browser-brave only supports amd64 (Brave does not ship arm64 Linux packages). Use claworc-browser-chromium instead." >&2; \
+      exit 1; \
+    fi
+
+RUN curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg \
+      https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg && \
+    curl -fsSLo /etc/apt/sources.list.d/brave-browser-release.sources \
+      https://brave-browser-apt-release.s3.brave.com/brave-browser.sources && \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      brave-browser && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
+           /usr/share/doc/* /usr/share/man/*

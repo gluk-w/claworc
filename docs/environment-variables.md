@@ -119,7 +119,7 @@ into user-visible places inside the container:
 - **SSH sessions** — do **not** inherit sshd's environ. sshd runs the
   user through PAM and `login.defs`, which build a fresh env. To cover
   this path, the init-setup oneshot
-  (`agent/rootfs/etc/s6-overlay/scripts/init-setup.sh`) snapshots PID
+  (`agent/instance/rootfs/etc/s6-overlay/scripts/init-setup.sh`) snapshots PID
   1's env into two files at boot:
   - `/etc/environment` — read by `pam_env.so`, present in
     `/etc/pam.d/sshd`, `cron`, `login`, and `su`.

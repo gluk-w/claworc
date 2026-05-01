@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { exec, execAsUser, sleep, getContainers, dumpDiagnostics } from "./helpers";
+import { exec, execAsUser, sleep, getContainers, hasCommand, dumpDiagnostics } from "./helpers";
 
 const containers = getContainers();
-const container = containers.chromium?.name;
+// openclaw lives in the claworc-agent image only. Browser-only images
+// (claworc-browser-*) don't ship the gateway, so this suite must skip
+// against them. Capability-probe the chromium container at module load.
+const chromiumName = containers.chromium?.name;
+const container = chromiumName && hasCommand(chromiumName, "openclaw") ? chromiumName : undefined;
 
 function structureOf(obj: any): any {
   if (Array.isArray(obj)) return obj.length > 0 ? [structureOf(obj[0])] : [];

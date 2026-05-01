@@ -73,6 +73,19 @@ func (k *KubernetesOrchestrator) BackendName() string {
 	return "kubernetes"
 }
 
+// VolumeNameFor returns the canonical PVC name for a workload's per-suffix
+// data volume. K8s PVCs are scoped per-namespace; the convention is plain
+// "<workload>-<suffix>" with no managed-by prefix.
+func (k *KubernetesOrchestrator) VolumeNameFor(name, suffix string) string {
+	return fmt.Sprintf("%s-%s", name, suffix)
+}
+
+// CloneVolume on Kubernetes is intentionally a no-op for now: cloning a PVC
+// in-band requires either a CSI clone capability or an attach-detach helper
+// pod, both of which complicate the instance-clone path. Callers should treat
+// per-workload data as not preserved on K8s clones.
+func (k *KubernetesOrchestrator) CloneVolume(_ context.Context, _, _ string) error { return nil }
+
 func (k *KubernetesOrchestrator) ns() string {
 	return config.Cfg.K8sNamespace
 }
