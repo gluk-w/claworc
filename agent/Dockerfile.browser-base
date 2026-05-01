@@ -5,9 +5,12 @@ ARG TARGETARCH
 ARG USE_CHINA_MIRRORS=false
 
 # Browser-only base image: Xvfb + TigerVNC + noVNC + openbox + stealth
-# extension. NO sshd, NO OpenClaw, NO cron — those live in glukw/claworc-agent.
-# CDP listens on 0.0.0.0:9222 and noVNC on 0.0.0.0:3000; both are reachable
-# only from the control plane via the cluster Service + NetworkPolicy.
+# extension + sshd. NO OpenClaw, NO cron — those live in glukw/claworc-agent.
+#
+# CDP listens on 127.0.0.1:9222 and noVNC on 127.0.0.1:3000 (loopback only —
+# Chromium 134+ silently refuses non-loopback DevTools binding). Externally,
+# the only reachable port is sshd on 22; the control plane SSHes in and uses
+# ssh.Client.Dial to reach 127.0.0.1:9222 / 127.0.0.1:3000.
 #
 # Published as glukw/claworc-browser-base:latest. The variant images
 # (glukw/claworc-browser-{chromium,chrome,brave}) FROM this and add the
@@ -21,7 +24,7 @@ RUN if [ "$USE_CHINA_MIRRORS" = "true" ]; then \
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      curl ca-certificates xz-utils gnupg git \
+      curl ca-certificates xz-utils gnupg git openssh-server \
       tigervnc-standalone-server tigervnc-common \
       openbox xfonts-base fonts-liberation x11-utils dbus-x11 \
       fonts-noto-color-emoji fonts-noto-cjk fonts-dejavu-core fonts-freefont-ttf \
@@ -41,21 +44,21 @@ RUN git clone --branch v1.4.0 --depth 1 https://github.com/novnc/noVNC.git /opt/
 COPY stealth-extension/ /opt/stealth-extension/
 COPY rootfs/ /
 
-# Trim the s6 service set to browser-only services; sshd / openclaw / cron
-# are intentionally absent.
-RUN rm -rf /etc/s6-overlay/s6-rc.d/user/contents.d/svc-sshd \
-           /etc/s6-overlay/s6-rc.d/user/contents.d/svc-openclaw \
+# Trim the s6 service set: keep sshd (control plane reaches CDP/noVNC through
+# it), drop openclaw / cron — those live in glukw/claworc-agent.
+RUN rm -rf /etc/s6-overlay/s6-rc.d/user/contents.d/svc-openclaw \
            /etc/s6-overlay/s6-rc.d/user/contents.d/svc-cron && \
     chmod +x /etc/s6-overlay/s6-rc.d/init-setup/up \
              /etc/s6-overlay/scripts/init-setup.sh \
              /etc/s6-overlay/s6-rc.d/svc-xvnc/run \
              /etc/s6-overlay/s6-rc.d/svc-novnc/run \
-             /etc/s6-overlay/s6-rc.d/svc-desktop/run
+             /etc/s6-overlay/s6-rc.d/svc-desktop/run \
+             /etc/s6-overlay/s6-rc.d/svc-sshd/run
 
 RUN chmod u-s /usr/bin/su /usr/bin/mount /usr/bin/umount /usr/bin/newgrp \
     /usr/bin/chsh /usr/bin/chfn /usr/bin/gpasswd /usr/bin/chage \
     /usr/bin/crontab 2>/dev/null || true
 
-EXPOSE 9222 3000
+EXPOSE 22
 
 ENTRYPOINT ["/init"]

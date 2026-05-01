@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -34,11 +35,21 @@ type BrowserBridge interface {
 	EnsureSession(ctx context.Context, instanceID, userID uint) error
 	DialCDP(ctx context.Context, instanceID uint) (io.ReadWriteCloser, error)
 	DialVNC(ctx context.Context, instanceID uint) (io.ReadWriteCloser, error)
+	VNCDialer(ctx context.Context, instanceID uint) (func(context.Context, string, string) (net.Conn, error), error)
+	TestConnection(ctx context.Context, instanceID uint) (string, error)
+	Reconnect(ctx context.Context, instanceID uint) error
 	Touch(instanceID uint)
 }
 
 // SSHConnectionTest tests SSH connectivity to an instance by establishing a
 // connection (or reusing an existing one) and executing a simple command.
+//
+// Query parameter `target` selects which pod to probe:
+//   - "" or "agent" (default): the agent pod's sshd, via the global SSHMgr.
+//   - "browser": the per-instance browser pod's sshd, via the browser bridge.
+//
+// Both responses share the same shape; the response echoes `target` so the
+// client can disambiguate when fanning out parallel requests.
 func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
@@ -57,24 +68,21 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	target := normalizeSSHTarget(r.URL.Query().Get("target"))
+
+	if target == "browser" {
+		sshConnectionTestBrowser(w, r, &inst)
+		return
+	}
+
 	orch := orchestrator.Get()
 	if orch == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
-			"status":     "error",
-			"output":     "",
-			"latency_ms": 0,
-			"error":      "No orchestrator available",
-		})
+		writeJSON(w, http.StatusServiceUnavailable, sshTestResponse(target, "error", "", 0, "No orchestrator available"))
 		return
 	}
 
 	if SSHMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
-			"status":     "error",
-			"output":     "",
-			"latency_ms": 0,
-			"error":      "SSH manager not initialized",
-		})
+		writeJSON(w, http.StatusServiceUnavailable, sshTestResponse(target, "error", "", 0, "SSH manager not initialized"))
 		return
 	}
 
@@ -83,24 +91,14 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 	client, err := SSHMgr.EnsureConnectedWithIPCheck(r.Context(), inst.ID, orch, inst.AllowedSourceIPs)
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"status":     "error",
-			"output":     "",
-			"latency_ms": latency,
-			"error":      err.Error(),
-		})
+		writeJSON(w, http.StatusOK, sshTestResponse(target, "error", "", latency, err.Error()))
 		return
 	}
 
 	session, err := client.NewSession()
 	if err != nil {
 		latency := time.Since(start).Milliseconds()
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"status":     "error",
-			"output":     "",
-			"latency_ms": latency,
-			"error":      "Failed to create SSH session: " + err.Error(),
-		})
+		writeJSON(w, http.StatusOK, sshTestResponse(target, "error", "", latency, "Failed to create SSH session: "+err.Error()))
 		return
 	}
 	defer session.Close()
@@ -109,24 +107,82 @@ func SSHConnectionTest(w http.ResponseWriter, r *http.Request) {
 	latency := time.Since(start).Milliseconds()
 
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"status":     "error",
-			"output":     string(output),
-			"latency_ms": latency,
-			"error":      "Command execution failed: " + err.Error(),
-		})
+		writeJSON(w, http.StatusOK, sshTestResponse(target, "error", string(output), latency, "Command execution failed: "+err.Error()))
 		return
 	}
 
 	auditLog(sshaudit.EventCommandExec, inst.ID, getUsername(r),
 		fmt.Sprintf("command=echo SSH test, latency=%dms, result=success", latency))
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":     "ok",
-		"output":     string(output),
-		"latency_ms": latency,
-		"error":      nil,
-	})
+	writeJSON(w, http.StatusOK, sshTestResponse(target, "ok", string(output), latency, ""))
+}
+
+// sshConnectionTestBrowser runs the SSH connectivity probe against the
+// per-instance browser pod via the browser bridge. Refuses for legacy
+// instances (no separate browser pod) and when the bridge isn't wired.
+func sshConnectionTestBrowser(w http.ResponseWriter, r *http.Request, inst *database.Instance) {
+	const target = "browser"
+	if database.IsLegacyEmbedded(inst.ContainerImage) {
+		writeJSON(w, http.StatusOK, sshTestResponse(target, "error", "", 0,
+			"Legacy instance: browser runs inside the agent pod, no separate browser SSH endpoint"))
+		return
+	}
+	if BrowserBridgeRef == nil {
+		writeJSON(w, http.StatusServiceUnavailable, sshTestResponse(target, "error", "", 0,
+			"Browser bridge not configured"))
+		return
+	}
+	start := time.Now()
+	output, err := BrowserBridgeRef.TestConnection(r.Context(), inst.ID)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		writeJSON(w, http.StatusOK, sshTestResponse(target, "error", output, latency, err.Error()))
+		return
+	}
+	auditLog(sshaudit.EventCommandExec, inst.ID, getUsername(r),
+		fmt.Sprintf("target=browser command=echo SSH test, latency=%dms, result=success", latency))
+	writeJSON(w, http.StatusOK, sshTestResponse(target, "ok", output, latency, ""))
+}
+
+// normalizeSSHTarget canonicalises the optional `target` query parameter on
+// /ssh-test and /ssh-reconnect. Unknown / empty values fall back to "agent"
+// so existing clients keep working unchanged.
+func normalizeSSHTarget(s string) string {
+	switch s {
+	case "browser":
+		return "browser"
+	default:
+		return "agent"
+	}
+}
+
+func sshTestResponse(target, status, output string, latencyMs int64, errMsg string) map[string]interface{} {
+	resp := map[string]interface{}{
+		"status":     status,
+		"output":     output,
+		"latency_ms": latencyMs,
+		"target":     target,
+	}
+	if errMsg == "" {
+		resp["error"] = nil
+	} else {
+		resp["error"] = errMsg
+	}
+	return resp
+}
+
+func sshReconnectResponse(target, status string, latencyMs int64, errMsg string) map[string]interface{} {
+	resp := map[string]interface{}{
+		"status":     status,
+		"latency_ms": latencyMs,
+		"target":     target,
+	}
+	if errMsg == "" {
+		resp["error"] = nil
+	} else {
+		resp["error"] = errMsg
+	}
+	return resp
 }
 
 // GetSSHStatus returns the SSH connection status, health metrics, active tunnels,
@@ -356,6 +412,9 @@ type sshEventEntry struct {
 
 // SSHReconnect triggers a manual reconnection to an instance. It closes the
 // existing connection and re-establishes it with key re-upload.
+//
+// `target` query parameter (default "agent") selects the agent pod or the
+// per-instance browser pod, mirroring SSHConnectionTest.
 func SSHReconnect(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
@@ -374,11 +433,32 @@ func SSHReconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	target := normalizeSSHTarget(r.URL.Query().Get("target"))
+
+	if target == "browser" {
+		if database.IsLegacyEmbedded(inst.ContainerImage) {
+			writeJSON(w, http.StatusOK, sshReconnectResponse(target, "error", 0,
+				"Legacy instance: browser runs inside the agent pod, no separate browser SSH endpoint"))
+			return
+		}
+		if BrowserBridgeRef == nil {
+			writeJSON(w, http.StatusServiceUnavailable, sshReconnectResponse(target, "error", 0,
+				"Browser bridge not configured"))
+			return
+		}
+		start := time.Now()
+		err = BrowserBridgeRef.Reconnect(r.Context(), inst.ID)
+		latency := time.Since(start).Milliseconds()
+		if err != nil {
+			writeJSON(w, http.StatusOK, sshReconnectResponse(target, "error", latency, err.Error()))
+			return
+		}
+		writeJSON(w, http.StatusOK, sshReconnectResponse(target, "ok", latency, ""))
+		return
+	}
+
 	if SSHMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
-			"status": "error",
-			"error":  "SSH manager not initialized",
-		})
+		writeJSON(w, http.StatusServiceUnavailable, sshReconnectResponse(target, "error", 0, "SSH manager not initialized"))
 		return
 	}
 
@@ -387,19 +467,11 @@ func SSHReconnect(w http.ResponseWriter, r *http.Request) {
 	latency := time.Since(start).Milliseconds()
 
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"status":     "error",
-			"latency_ms": latency,
-			"error":      err.Error(),
-		})
+		writeJSON(w, http.StatusOK, sshReconnectResponse(target, "error", latency, err.Error()))
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":     "ok",
-		"latency_ms": latency,
-		"error":      nil,
-	})
+	writeJSON(w, http.StatusOK, sshReconnectResponse(target, "ok", latency, ""))
 }
 
 // GetSSHFingerprint returns the global SSH public key fingerprint.

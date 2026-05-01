@@ -86,6 +86,9 @@ func (mockOps) GetBrowserPodEndpoint(_ context.Context, _ uint) (orchestrator.Br
 	return orchestrator.BrowserPodEndpoint{}, nil
 }
 func (mockOps) CloneBrowserVolume(_ context.Context, _, _ string) error { return nil }
+func (mockOps) ConfigureBrowserSSHAccess(_ context.Context, _ uint, _ string) error {
+	return nil
+}
 
 func TestConfigureInstance_NoOp(t *testing.T) {
 	inst := &mockInstance{}

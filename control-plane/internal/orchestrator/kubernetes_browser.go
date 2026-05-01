@@ -71,12 +71,13 @@ func (k *KubernetesOrchestrator) EnsureBrowserPod(ctx context.Context, instanceI
 		return BrowserPodEndpoint{}, fmt.Errorf("get browser PVC: %w", err)
 	}
 
-	// Service (ClusterIP) — exposes 9222 + 3000, control-plane reachable via DNS.
+	// Service (ClusterIP) — exposes only port 22 (sshd). CDP and noVNC are
+	// loopback-only inside the pod and reached via ssh.Client.Dial.
 	if err := k.upsertBrowserService(ctx, ns, podName); err != nil {
 		return BrowserPodEndpoint{}, fmt.Errorf("upsert browser service: %w", err)
 	}
 
-	// NetworkPolicy — control plane only, ports 9222 + 3000.
+	// NetworkPolicy — control plane only, port 22.
 	if err := k.upsertBrowserNetworkPolicy(ctx, ns, podName); err != nil {
 		return BrowserPodEndpoint{}, fmt.Errorf("upsert browser network policy: %w", err)
 	}
@@ -99,14 +100,16 @@ func (k *KubernetesOrchestrator) EnsureBrowserPod(ctx context.Context, instanceI
 		}
 	}
 
-	// Wait for at least one pod to report ready (TCP probe on 9222 backs the
-	// readiness check below); cap at 60 s so callers don't block forever.
+	// Wait for at least one pod to report ready (the readiness probe curls
+	// http://127.0.0.1:9222/json/version inside the pod); cap at 60 s so
+	// callers don't block forever.
 	if err := k.waitForBrowserPodReady(ctx, ns, podName, 60*time.Second); err != nil {
 		return BrowserPodEndpoint{}, err
 	}
 
 	return BrowserPodEndpoint{
 		Host:    fmt.Sprintf("%s.%s.svc.cluster.local", podName, ns),
+		SSHPort: 22,
 		CDPPort: 9222,
 		VNCPort: 3000,
 	}, nil
@@ -186,9 +189,24 @@ func (k *KubernetesOrchestrator) GetBrowserPodEndpoint(ctx context.Context, inst
 	}
 	return BrowserPodEndpoint{
 		Host:    fmt.Sprintf("%s.%s.svc.cluster.local", podName, k.ns()),
+		SSHPort: 22,
 		CDPPort: 9222,
 		VNCPort: 3000,
 	}, nil
+}
+
+// ConfigureBrowserSSHAccess installs publicKey into the browser pod's
+// /root/.ssh/authorized_keys. Used by browserprov to bootstrap an SSH session
+// to the pod before tunnelling CDP / noVNC over loopback.
+func (k *KubernetesOrchestrator) ConfigureBrowserSSHAccess(ctx context.Context, instanceID uint, publicKey string) error {
+	name, err := k.lookupInstanceName(instanceID)
+	if err != nil {
+		return err
+	}
+	podName := browserPodName(name)
+	// configureSSHAccess uses ExecInInstance which selects pods by label
+	// `app=<name>`. The browser deployment labels its pods app=<browserPodName>.
+	return configureSSHAccess(ctx, k.ExecInInstance, podName, publicKey)
 }
 
 // CloneBrowserVolume is intentionally a no-op on Kubernetes for now: cloning
@@ -243,8 +261,7 @@ func (k *KubernetesOrchestrator) upsertBrowserService(ctx context.Context, ns, p
 			Type:     corev1.ServiceTypeClusterIP,
 			Selector: map[string]string{"app": podName},
 			Ports: []corev1.ServicePort{
-				{Name: "cdp", Port: 9222, TargetPort: intstr.FromInt32(9222)},
-				{Name: "novnc", Port: 3000, TargetPort: intstr.FromInt32(3000)},
+				{Name: "ssh", Port: 22, TargetPort: intstr.FromInt32(22)},
 			},
 		},
 	}
@@ -265,8 +282,7 @@ func (k *KubernetesOrchestrator) upsertBrowserService(ctx context.Context, ns, p
 
 func (k *KubernetesOrchestrator) upsertBrowserNetworkPolicy(ctx context.Context, ns, podName string) error {
 	tcp := corev1.ProtocolTCP
-	cdpPort := intstr.FromInt32(9222)
-	novncPort := intstr.FromInt32(3000)
+	sshPort := intstr.FromInt32(22)
 
 	policy := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
@@ -293,8 +309,7 @@ func (k *KubernetesOrchestrator) upsertBrowserNetworkPolicy(ctx context.Context,
 						},
 					},
 					Ports: []networkingv1.NetworkPolicyPort{
-						{Protocol: &tcp, Port: &cdpPort},
-						{Protocol: &tcp, Port: &novncPort},
+						{Protocol: &tcp, Port: &sshPort},
 					},
 				},
 			},
@@ -383,21 +398,27 @@ func buildBrowserDeployment(params BrowserPodParams, podName, pvcName, ns, agent
 						SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPriv},
 						Env:             envVars,
 						Ports: []corev1.ContainerPort{
-							{Name: "cdp", ContainerPort: 9222},
-							{Name: "novnc", ContainerPort: 3000},
+							{Name: "ssh", ContainerPort: 22},
 						},
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "browser-data", MountPath: "/home/claworc/chrome-data"},
 							{Name: "agent-downloads", MountPath: "/home/claworc/Downloads", SubPath: "Downloads"},
 							{Name: "dshm", MountPath: "/dev/shm"},
 						},
+						// CDP binds 127.0.0.1 only — kubelet TCP probes dial the
+						// pod IP and would always fail. Probe via curl on
+						// loopback instead.
 						ReadinessProbe: &corev1.Probe{
-							ProbeHandler:        corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(9222)}},
+							ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{
+								Command: []string{"sh", "-c", "curl -fsS --max-time 2 http://127.0.0.1:9222/json/version >/dev/null"},
+							}},
 							InitialDelaySeconds: 5,
 							PeriodSeconds:       3,
 						},
 						LivenessProbe: &corev1.Probe{
-							ProbeHandler:        corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(9222)}},
+							ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{
+								Command: []string{"sh", "-c", "curl -fsS --max-time 2 http://127.0.0.1:9222/json/version >/dev/null"},
+							}},
 							InitialDelaySeconds: 30,
 							PeriodSeconds:       30,
 						},

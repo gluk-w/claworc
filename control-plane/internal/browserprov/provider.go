@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"time"
 )
 
@@ -80,6 +81,26 @@ type Provider interface {
 	// DialVNC returns a byte-stream connection to the browser's noVNC
 	// websocket bridge, or ErrNotSupported when the provider has no VNC.
 	DialVNC(ctx context.Context, instanceID uint) (io.ReadWriteCloser, error)
+
+	// VNCDialer returns a DialContext-compatible function bound to the noVNC
+	// port (3000) inside the browser pod. Each invocation opens a fresh SSH
+	// channel; callers pass it as http.Transport.DialContext to route HTTP
+	// and WebSocket traffic through the same SSH session that DialVNC uses.
+	// Returns ErrNotSupported for providers without VNC.
+	VNCDialer(ctx context.Context, instanceID uint) (func(ctx context.Context, network, addr string) (net.Conn, error), error)
+
+	// TestConnection runs a one-shot SSH command against the browser pod's
+	// sshd to prove end-to-end connectivity (key provisioned, sshd up,
+	// network reachable). Returns the command output. Used by the SSH
+	// Troubleshoot popup. Returns ErrNotSupported for providers without an
+	// addressable SSH endpoint (SaaS).
+	TestConnection(ctx context.Context, instanceID uint) (output string, err error)
+
+	// Reconnect closes any cached SSH client/state for the browser pod so
+	// the next dial re-establishes a fresh session and re-uploads the
+	// public key. Returns ErrNotSupported for providers that don't manage
+	// a connection.
+	Reconnect(ctx context.Context, instanceID uint) error
 
 	SessionStatus(ctx context.Context, instanceID uint) (Status, error)
 }

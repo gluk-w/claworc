@@ -58,14 +58,30 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
   // chrome-data must be created by the desktop service (only when Chrome runs),
   // not by init-setup.sh. Otherwise on-demand-layout agents — where Chrome
   // lives in a separate browser pod — would still get a stale chrome-data/
-  // visible in the file manager.
+  // visible in the file manager. init-setup.sh may legitimately *remove*
+  // the dir on agent images (no svc-desktop), so this test only forbids
+  // mkdir-style creation.
   it("init-setup.sh does not create chrome-data", () => {
     const result = exec(container!, [
       "grep",
-      "chrome-data",
+      "-E",
+      "mkdir.*chrome-data",
       "/etc/s6-overlay/scripts/init-setup.sh",
     ]);
     expect(result.exitCode).not.toBe(0);
+  });
+
+  // Conversely, on the agent image the init script must remove any leftover
+  // chrome-data dir from a prior legacy boot so it isn't reachable from the
+  // agent SSH/terminal/file-manager.
+  it("init-setup.sh removes chrome-data when svc-desktop is absent", () => {
+    const result = exec(container!, [
+      "grep",
+      "-E",
+      "rm -rf /home/claworc/chrome-data",
+      "/etc/s6-overlay/scripts/init-setup.sh",
+    ]);
+    expect(result.exitCode).toBe(0);
   });
 
   it("openclaw.json structure matches snapshot", () => {

@@ -19,6 +19,17 @@ mkdir -p /var/log/claworc
 chmod 755 /var/log/claworc
 test -f /home/claworc/.bashrc || cp -a /etc/skel/. /home/claworc/
 mkdir -p /home/claworc/.openclaw /home/claworc/Downloads
+
+# On the on-demand layout the agent pod has no Chromium and svc-desktop is
+# absent — but the agent home volume may carry a leftover /home/claworc/chrome-data
+# from a previous legacy combined image. Remove it so the agent's file
+# manager / SSH session can't reach a stale browser profile that now lives
+# in a separate browser pod. Skip on images that actually run the desktop
+# (browser-base derivatives) — those legitimately need chrome-data.
+if [ ! -e /etc/s6-overlay/s6-rc.d/user/contents.d/svc-desktop ]; then
+    rm -rf /home/claworc/chrome-data
+fi
+
 chown -R claworc:claworc /home/claworc
 
 # ---------------------------------------------------------------------------

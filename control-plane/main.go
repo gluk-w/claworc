@@ -189,7 +189,7 @@ func main() {
 	// dial provider returns a usable closure for non-legacy instances during
 	// the very first reconcile pass.
 	if orch := orchestrator.Get(); orch != nil {
-		provider := browserprov.NewLocalProvider(orch)
+		provider := browserprov.NewLocalProvider(orch, sshMgr)
 		bridge := browserprov.New(provider, taskMgr)
 		bridge.Start(ctx)
 		handlers.BrowserBridgeRef = bridge

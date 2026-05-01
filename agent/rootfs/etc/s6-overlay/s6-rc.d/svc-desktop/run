@@ -47,9 +47,10 @@ clear_stale_singletons() {
 # Run browser in a restart loop
 while true; do
   clear_stale_singletons
-  # CDP listens on 0.0.0.0 so the cluster Service (or Docker bridge) can reach
-  # it. Access control is enforced one layer up via NetworkPolicy / per-instance
-  # bridge networks — see docs/security and helm/templates/networkpolicy.yaml.
+  # CDP binds to 127.0.0.1 only — Chromium 134+ silently refuses non-loopback
+  # remote-debugging addresses. The control plane reaches CDP through an SSH
+  # session to the browser pod (port 22 is the only externally exposed port);
+  # ssh.Client.Dial then opens 127.0.0.1:9222 inside the pod.
   # Ensure Downloads directory exists. On the on-demand layout this path is
   # the agent's home PVC mounted via subPath so files Chromium saves here are
   # immediately visible to OpenClaw and the agent terminal.
@@ -62,7 +63,7 @@ while true; do
     --user-data-dir=/home/claworc/chrome-data \
     --download-directory=/home/claworc/Downloads \
     --remote-debugging-port=9222 \
-    --remote-debugging-address=0.0.0.0 \
+    --remote-debugging-address=127.0.0.1 \
     --disable-default-apps \
     --disable-features=CloseWindowWithLastTab \
     --disable-blink-features=AutomationControlled \

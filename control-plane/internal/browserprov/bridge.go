@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"sync"
 	"time"
 
@@ -184,6 +185,42 @@ func (b *BrowserBridge) DialVNC(ctx context.Context, instanceID uint) (io.ReadWr
 	return conn, nil
 }
 
+// TestConnection runs a one-shot SSH command against the browser pod and
+// returns the output. Used by the SSH Troubleshooting popup to prove
+// end-to-end browser-pod connectivity. Does not Touch — this is a probe,
+// not real activity.
+func (b *BrowserBridge) TestConnection(ctx context.Context, instanceID uint) (string, error) {
+	if err := b.EnsureSession(ctx, instanceID, 0); err != nil {
+		return "", err
+	}
+	return b.provider.TestConnection(ctx, instanceID)
+}
+
+// Reconnect drops any cached SSH client for the browser pod so the next
+// CDP / noVNC dial re-establishes a fresh session.
+func (b *BrowserBridge) Reconnect(ctx context.Context, instanceID uint) error {
+	return b.provider.Reconnect(ctx, instanceID)
+}
+
+// VNCDialer ensures the browser session and returns a DialContext-compatible
+// function that the desktop HTTP / WebSocket proxy uses as the underlying
+// transport. Each call opens a fresh SSH channel to 127.0.0.1:3000 inside the
+// pod.
+func (b *BrowserBridge) VNCDialer(ctx context.Context, instanceID uint) (func(context.Context, string, string) (net.Conn, error), error) {
+	if !b.provider.Capabilities().SupportsVNC {
+		return nil, ErrNotSupported
+	}
+	if err := b.EnsureSession(ctx, instanceID, 0); err != nil {
+		return nil, err
+	}
+	dialer, err := b.provider.VNCDialer(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	b.Touch(instanceID)
+	return dialer, nil
+}
+
 // Touch marks an instance as recently active. The flusher persists touches
 // in batches every 30 s.
 func (b *BrowserBridge) Touch(instanceID uint) {
@@ -282,13 +319,19 @@ func (b *BrowserBridge) waitForCDPReady(ctx context.Context, instanceID uint, ti
 }
 
 func (b *BrowserBridge) readyTimeout() time.Duration {
+	// Browser pod cold-start now includes pulling the browser image, booting
+	// sshd, provisioning the public key, then waiting for Chromium's CDP
+	// listener to come up over an SSH tunnel. 60s was too tight in CI;
+	// 120s gives slow runners headroom while still failing fast on real
+	// problems.
+	const defaultTimeout = 120 * time.Second
 	if b.settings == nil {
-		return 60 * time.Second
+		return defaultTimeout
 	}
 	v, _ := b.settings.GetSetting("default_browser_ready_seconds")
 	d, ok := parseSeconds(v)
 	if !ok {
-		return 60 * time.Second
+		return defaultTimeout
 	}
 	return d
 }

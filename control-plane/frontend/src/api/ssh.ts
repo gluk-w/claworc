@@ -6,8 +6,11 @@ export async function fetchSSHStatus(instanceId: number): Promise<SSHStatusRespo
   return data;
 }
 
-export async function testSSHConnection(instanceId: number): Promise<SSHTestResponse> {
-  const { data } = await client.get<SSHTestResponse>(`/instances/${instanceId}/ssh-test`);
+export type SSHTarget = "agent" | "browser";
+
+export async function testSSHConnection(instanceId: number, target?: SSHTarget): Promise<SSHTestResponse> {
+  const url = target ? `/instances/${instanceId}/ssh-test?target=${target}` : `/instances/${instanceId}/ssh-test`;
+  const { data } = await client.get<SSHTestResponse>(url);
   return data;
 }
 
@@ -16,8 +19,9 @@ export async function fetchSSHEvents(instanceId: number): Promise<SSHEventsRespo
   return data;
 }
 
-export async function reconnectSSH(instanceId: number): Promise<SSHReconnectResponse> {
-  const { data } = await client.post<SSHReconnectResponse>(`/instances/${instanceId}/ssh-reconnect`);
+export async function reconnectSSH(instanceId: number, target?: SSHTarget): Promise<SSHReconnectResponse> {
+  const url = target ? `/instances/${instanceId}/ssh-reconnect?target=${target}` : `/instances/${instanceId}/ssh-reconnect`;
+  const { data } = await client.post<SSHReconnectResponse>(url);
   return data;
 }
 

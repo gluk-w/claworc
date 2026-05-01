@@ -125,7 +125,7 @@ func seedDefaults() error {
 		"default_browser_image":         "glukw/claworc-browser-chromium:latest",
 		"default_browser_provider":      "auto",
 		"default_browser_idle_minutes":  "15",
-		"default_browser_ready_seconds": "60",
+		"default_browser_ready_seconds": "120",
 		"default_browser_storage":       "10Gi",
 	}
 

@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -72,13 +73,22 @@ func (m *mockOrch) GetBrowserPodEndpoint(_ context.Context, _ uint) (orchestrato
 	return orchestrator.BrowserPodEndpoint{}, nil
 }
 func (m *mockOrch) CloneBrowserVolume(_ context.Context, _, _ string) error { return nil }
+func (m *mockOrch) ConfigureBrowserSSHAccess(_ context.Context, _ uint, _ string) error {
+	return nil
+}
 
 // --- test helpers ---
 
 func setupTestDB(t *testing.T) {
 	t.Helper()
 	var err error
-	database.DB, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+	// Per-test shared-cache in-memory SQLite so a backup goroutine that grabs
+	// a fresh pooled connection sees the same migrated tables as the
+	// goroutine that ran AutoMigrate. Plain ":memory:" gives each pooled
+	// connection its own empty database, intermittently producing
+	// "no such table: backups" when the goroutine wins the race.
+	dsn := fmt.Sprintf("file:testdb_%s_%p?mode=memory&cache=shared", t.Name(), t)
+	database.DB, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	if err != nil {
