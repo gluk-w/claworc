@@ -1,0 +1,38 @@
+#!/command/with-contenv bash
+
+export DISPLAY=:0
+
+# Wait for X server.
+while ! xdpyinfo -display :0 >/dev/null 2>&1; do sleep 0.5; done
+
+# Pin the Chromium window to the current X display geometry. xev streams
+# RandR ConfigureNotify events whenever the noVNC client resizes the desktop;
+# we react by repositioning and resizing the browser window to fill it.
+exec s6-setuidgid claworc bash -c '
+  resize_browser() {
+    local geom w h id
+    geom=$(xdotool getdisplaygeometry 2>/dev/null) || return
+    w=${geom%% *}
+    h=${geom##* }
+    for klass in chromium google-chrome brave-browser; do
+      id=$(xdotool search --onlyvisible --class "$klass" 2>/dev/null | head -1)
+      [ -n "$id" ] && break
+    done
+    [ -z "$id" ] && return
+    xdotool windowmove "$id" 0 0 windowsize "$id" "$w" "$h" 2>/dev/null || true
+  }
+  # Initial pass once Chromium is up. xdotool search --class uses ERE; bare
+  # alternation (no backslash) is what we want here.
+  for _ in $(seq 1 60); do
+    if xdotool search --onlyvisible --class "chromium|chrome|brave" >/dev/null 2>&1; then
+      resize_browser
+      break
+    fi
+    sleep 1
+  done
+  xev -root -event randr 2>/dev/null | while read -r line; do
+    case "$line" in
+      *RRScreenChangeNotify*|*ConfigureNotify*) resize_browser ;;
+    esac
+  done
+'

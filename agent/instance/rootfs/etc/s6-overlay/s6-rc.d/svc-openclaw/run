@@ -38,5 +38,18 @@ if [ -n "$OPENCLAW_INITIAL_PROVIDERS" ]; then
     s6-setuidgid claworc openclaw config set models.providers "$OPENCLAW_INITIAL_PROVIDERS" --json
 fi
 
+# Refresh TOOLS.md every boot. The seed copies it on a fresh PVC, but if the
+# PVC carries .openclaw from an earlier image (or from anything that creates
+# /home/claworc/.openclaw before the seed oneshot runs), the seed bails out
+# and the workspace TOOLS.md goes stale. Reinstalling here is cheap and makes
+# the runtime contract "image upgrade ⇒ TOOLS.md refresh" hold unconditionally.
+if [ -f /defaults/TOOLS.md ]; then
+    WORKSPACE=$(s6-setuidgid claworc openclaw config get agents.defaults.workspace 2>/dev/null | tr -d '"' | tr -d "'")
+    [ -n "$WORKSPACE" ] || WORKSPACE=/home/claworc/.openclaw/workspace
+    if [ -d "$WORKSPACE" ]; then
+        install -m 0644 -o claworc -g claworc /defaults/TOOLS.md "$WORKSPACE/TOOLS.md"
+    fi
+fi
+
 echo "Starting OpenClaw Gateway (foreground) as claworc..."
 exec bash -c "tail -f /dev/null | s6-setuidgid claworc /usr/bin/openclaw gateway run >> /var/log/claworc/openclaw.log 2>&1"
