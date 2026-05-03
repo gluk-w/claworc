@@ -55,7 +55,11 @@ func DesktopProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if wantsWS {
-			websocketProxyToLocalPort(w, r, port, path)
+			if path == "websockify" {
+				desktopWebsockifyToLocalPort(w, r, uint(id), port, path)
+			} else {
+				websocketProxyToLocalPort(w, r, port, path)
+			}
 			return
 		}
 		if err := proxyToLocalPort(w, r, port, path); err != nil {
@@ -97,7 +101,11 @@ func DesktopProxy(w http.ResponseWriter, r *http.Request) {
 	defer transport.CloseIdleConnections()
 
 	if wantsWS {
-		websocketProxyOverDialer(w, r, transport, path)
+		if path == "websockify" {
+			desktopWebsockifyOverDialer(w, r, uint(id), transport, path)
+		} else {
+			websocketProxyOverDialer(w, r, transport, path)
+		}
 		return
 	}
 	if err := proxyOverDialer(w, r, transport, path); err != nil {

@@ -27,8 +27,20 @@ export function useCreateProvider() {
 
 export function useUpdateProvider() {
   return useMutation({
-    mutationFn: ({ id, payload }: { id: number; payload: { name?: string; base_url?: string; api_type?: string; models?: ProviderModel[]; api_key?: string } }) =>
-      updateProvider(id, payload),
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: number;
+      payload: {
+        name?: string;
+        base_url?: string;
+        api_type?: string;
+        models?: ProviderModel[];
+        api_key?: string;
+        oauth?: { code_verifier: string; redirect_url: string };
+      };
+    }) => updateProvider(id, payload),
   });
 }
 

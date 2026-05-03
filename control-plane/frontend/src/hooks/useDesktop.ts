@@ -22,11 +22,24 @@ export function useDesktop(instanceId: number, enabled: boolean) {
   const [connectTrigger, setConnectTrigger] = useState(0);
   const retryAttemptRef = useRef(0);
   const retryTimerRef = useRef<number | null>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const resizeDebounceRef = useRef<number | null>(null);
 
   const clearRetryTimer = () => {
     if (retryTimerRef.current !== null) {
       window.clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
+    }
+  };
+
+  const teardownResizeObserver = () => {
+    if (resizeObserverRef.current) {
+      resizeObserverRef.current.disconnect();
+      resizeObserverRef.current = null;
+    }
+    if (resizeDebounceRef.current !== null) {
+      window.clearTimeout(resizeDebounceRef.current);
+      resizeDebounceRef.current = null;
     }
   };
 
@@ -65,8 +78,14 @@ export function useDesktop(instanceId: number, enabled: boolean) {
 
     try {
       const rfb = new RFB(container, wsUrl);
+      // Every viewer requests the X display to follow its panel. The control
+      // plane elects one primary per instance and drops SetDesktopSize from
+      // secondaries, so this stays stable when multiple viewers are watching.
+      // scaleViewport keeps secondaries' canvas letterboxed in their panel
+      // until they're promoted (and is a no-op for the primary, whose X
+      // display already matches its panel pixel-for-pixel).
       rfb.scaleViewport = true;
-      rfb.resizeSession = false;
+      rfb.resizeSession = true;
       rfb.background = "rgb(17, 24, 39)"; // gray-900
 
       rfb.addEventListener("connect", () => {
@@ -74,6 +93,22 @@ export function useDesktop(instanceId: number, enabled: boolean) {
         clearRetryTimer();
         setConnectionState("connected");
       });
+
+      // noVNC's resizeSession only re-issues SetDesktopSize on window resize.
+      // The panel can resize independently (chat sidebar drag, popup splits),
+      // so observe the container directly and dispatch a synthetic resize
+      // event to trigger noVNC's internal handler.
+      teardownResizeObserver();
+      resizeObserverRef.current = new ResizeObserver(() => {
+        if (resizeDebounceRef.current !== null) {
+          window.clearTimeout(resizeDebounceRef.current);
+        }
+        resizeDebounceRef.current = window.setTimeout(() => {
+          resizeDebounceRef.current = null;
+          window.dispatchEvent(new Event("resize"));
+        }, 150);
+      });
+      resizeObserverRef.current.observe(container);
 
       rfb.addEventListener("disconnect", (ev: Event) => {
         const detail = (ev as CustomEvent).detail;
@@ -119,6 +154,7 @@ export function useDesktop(instanceId: number, enabled: boolean) {
       connect();
     } else {
       clearRetryTimer();
+      teardownResizeObserver();
       retryAttemptRef.current = 0;
       if (rfbRef.current) {
         try { rfbRef.current.disconnect(); } catch { /* ignore */ }
@@ -129,6 +165,7 @@ export function useDesktop(instanceId: number, enabled: boolean) {
 
     return () => {
       clearRetryTimer();
+      teardownResizeObserver();
       if (rfbRef.current) {
         try { rfbRef.current.disconnect(); } catch { /* ignore */ }
         rfbRef.current = null;

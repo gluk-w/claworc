@@ -31,7 +31,7 @@ RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       curl ca-certificates xz-utils openssh-server \
       tigervnc-standalone-server tigervnc-common \
-      xfonts-base fonts-liberation x11-utils dbus-x11 \
+      xfonts-base fonts-liberation x11-utils xdotool dbus-x11 \
       fonts-noto-color-emoji fonts-dejavu-core fonts-freefont-ttf \
       tzdata locales python3 && \
     if [ "$INCLUDE_CJK_FONTS" = "true" ]; then \
@@ -66,6 +66,7 @@ RUN chmod +x /etc/s6-overlay/s6-rc.d/init-setup/up \
              /etc/s6-overlay/s6-rc.d/svc-xvnc/run \
              /etc/s6-overlay/s6-rc.d/svc-novnc/run \
              /etc/s6-overlay/s6-rc.d/svc-desktop/run \
+             /etc/s6-overlay/s6-rc.d/svc-window-fit/run \
              /etc/s6-overlay/s6-rc.d/svc-sshd/run
 
 RUN chmod u-s /usr/bin/su /usr/bin/mount /usr/bin/umount /usr/bin/newgrp \

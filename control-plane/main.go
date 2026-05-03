@@ -272,6 +272,9 @@ func main() {
 	cancelScheduler := backup.StartScheduleExecutor(ctx)
 	_ = cancelScheduler // stopped via context cancellation on shutdown
 
+	// Daily analytics heartbeat (gated on opt-in inside Track).
+	analytics.StartHeartbeat(ctx)
+
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)

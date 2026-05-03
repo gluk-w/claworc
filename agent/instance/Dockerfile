@@ -56,7 +56,12 @@ RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.co
 USER root
 
 COPY browser.json /defaults/browser.json
-COPY TOOLS.md /defaults/TOOLS.md
+# TOOLS.md is staged here only so the bake step below can drop it into the
+# baked workspace. The runtime contract is that the canonical TOOLS.md lives
+# inside /opt/openclaw-skeleton/.openclaw/workspace/, so we delete this stage
+# file at the end of the bake — there's no /defaults/TOOLS.md at runtime.
+COPY TOOLS.md /tmp/TOOLS.md
+
 COPY rootfs/ /
 
 RUN chmod +x /etc/s6-overlay/s6-rc.d/init-setup/up \
@@ -89,12 +94,13 @@ RUN bash -c '\
     WORKSPACE=$(openclaw config get agents.defaults.workspace 2>/dev/null | tr -d "\"" | tr -d "'\''"); \
     [ -n "$WORKSPACE" ] || WORKSPACE=/home/claworc/.openclaw/workspace; \
     if [ -d "$WORKSPACE" ]; then \
-      install -m 0644 /defaults/TOOLS.md "$WORKSPACE/TOOLS.md"; \
+      install -m 0644 /tmp/TOOLS.md "$WORKSPACE/TOOLS.md"; \
     fi'
 USER root
 RUN mkdir -p /opt/openclaw-skeleton && \
     mv /home/claworc/.openclaw /opt/openclaw-skeleton/.openclaw && \
-    chown -R claworc:claworc /opt/openclaw-skeleton
+    chown -R claworc:claworc /opt/openclaw-skeleton && \
+    rm -f /tmp/TOOLS.md
 
 # Reduce SUID surface.
 RUN chmod u-s /usr/bin/su /usr/bin/mount /usr/bin/umount /usr/bin/newgrp \

@@ -99,21 +99,26 @@ func TestConfigureInstance_ModelSet(t *testing.T) {
 	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
 		[]string{"claude-3-5-sonnet"}, nil, 0)
 
-	if len(inst.calls) < 3 {
-		t.Fatalf("expected at least 3 calls (model set + models allowlist + gateway stop), got %d", len(inst.calls))
+	if len(inst.calls) < 4 {
+		t.Fatalf("expected at least 4 calls (model set + allowlist unset + allowlist set + gateway stop), got %d", len(inst.calls))
 	}
 	// First call: config set agents.defaults.model
 	call0 := inst.calls[0]
 	if call0[0] != "config" || call0[1] != "set" || call0[2] != "agents.defaults.model" {
 		t.Errorf("unexpected first call: %v", call0)
 	}
-	// Second call: config set agents.defaults.models (allowlist)
+	// Second call: config unset agents.defaults.models (clear before re-setting)
 	call1 := inst.calls[1]
-	if call1[0] != "config" || call1[1] != "set" || call1[2] != "agents.defaults.models" {
+	if call1[0] != "config" || call1[1] != "unset" || call1[2] != "agents.defaults.models" {
 		t.Errorf("unexpected second call: %v", call1)
 	}
-	if !strings.Contains(call1[3], "claude-3-5-sonnet") {
-		t.Errorf("models allowlist should contain claude-3-5-sonnet, got: %s", call1[3])
+	// Third call: config set agents.defaults.models (allowlist)
+	call2 := inst.calls[2]
+	if call2[0] != "config" || call2[1] != "set" || call2[2] != "agents.defaults.models" {
+		t.Errorf("unexpected third call: %v", call2)
+	}
+	if !strings.Contains(call2[3], "claude-3-5-sonnet") {
+		t.Errorf("models allowlist should contain claude-3-5-sonnet, got: %s", call2[3])
 	}
 	// Last call must be gateway stop
 	last := inst.calls[len(inst.calls)-1]
@@ -148,13 +153,15 @@ func TestConfigureInstance_ProvidersSet(t *testing.T) {
 	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
 		nil, providers, 40001)
 
-	// Should have: providers set + gateway stop
-	if len(inst.calls) < 2 {
-		t.Fatalf("expected at least 2 calls, got %d", len(inst.calls))
+	// Should have: providers unset + providers set + gateway stop
+	if len(inst.calls) < 3 {
+		t.Fatalf("expected at least 3 calls, got %d", len(inst.calls))
 	}
-	call0 := inst.calls[0]
-	if call0[0] != "config" || call0[1] != "set" || call0[2] != "models.providers" {
-		t.Errorf("unexpected providers call: %v", call0)
+	if c := inst.calls[0]; c[0] != "config" || c[1] != "unset" || c[2] != "models.providers" {
+		t.Errorf("expected providers unset first, got %v", c)
+	}
+	if c := inst.calls[1]; c[0] != "config" || c[1] != "set" || c[2] != "models.providers" {
+		t.Errorf("expected providers set second, got %v", c)
 	}
 }
 

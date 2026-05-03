@@ -135,6 +135,9 @@ export interface LLMProvider {
   api_type: string;
   masked_api_key?: string;
   models: ProviderModel[] | null;
+  oauth_connected?: boolean;
+  oauth_email?: string;
+  oauth_expires_at?: number;
   created_at: string;
   updated_at: string;
 }

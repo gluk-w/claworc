@@ -4,12 +4,19 @@ import ProviderIcon from "@/components/ProviderIcon";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCreateProvider, useUpdateProvider, useDeleteProvider, useCatalogProviders, useCatalogProviderDetail, useCatalogIconMap } from "@/hooks/useProviders";
 import { syncAllProviders, testProviderKey } from "@/api/llm";
+import {
+  buildCodexAuthorizeURL,
+  extractCodeAndState,
+  pkceChallenge,
+  randomBase64Url,
+} from "@/utils/codexOAuth";
 import { successToast, errorToast } from "@/utils/toast";
 import toast from "react-hot-toast";
 import AppToast from "@/components/AppToast";
 import type { LLMProvider, ProviderModel } from "@/types/instance";
 
 const CUSTOM_PROVIDER = "__custom__";
+const CODEX_API_TYPE = "openai-codex-responses";
 
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -69,6 +76,16 @@ export default function ProviderModal({
   });
   const [mShowOptionalFields, setMShowOptionalFields] = useState(false);
 
+  // Codex login flow state — entirely client-held PKCE. The provider row is
+  // only created on the backend once the user pastes the redirect URL and
+  // the auth code is exchanged for tokens. Closing the modal mid-flow leaves
+  // nothing behind.
+  const [codexBusy, setCodexBusy] = useState(false);
+  const [codexAwaitingPaste, setCodexAwaitingPaste] = useState(false);
+  const [codexVerifier, setCodexVerifier] = useState<string | null>(null);
+  const [codexState, setCodexState] = useState<string | null>(null);
+  const [codexRedirectInput, setCodexRedirectInput] = useState("");
+
   const { data: catalogDetail } = useCatalogProviderDetail(
     open && mode === "create" && mCatalogKey && mCatalogKey !== CUSTOM_PROVIDER ? mCatalogKey : null
   );
@@ -90,6 +107,11 @@ export default function ProviderModal({
     createProviderMutation.reset();
     updateProviderMutation.reset();
     deleteProviderMutation.reset();
+    setCodexBusy(false);
+    setCodexAwaitingPaste(false);
+    setCodexVerifier(null);
+    setCodexState(null);
+    setCodexRedirectInput("");
     if (mode === "create") {
       setMCatalogKey("");
       setMProvider("");
@@ -146,14 +168,26 @@ export default function ProviderModal({
     };
   }, [open, mode, catalogLoading, catalogFetching, catalogProviders.length, syncingCatalog, queryClient]);
 
+  const selectedCatalog = catalogProviders.find((c) => c.name === mCatalogKey);
+
+  // Prefer the catalog provider's canonical name (e.g. "openai-codex") over a
+  // slugified display name. The display name may include marketing copy
+  // ("OpenAI Codex (ChatGPT subscription)") that would slugify to a noisy key
+  // and end up baked into model identifiers like "openai-codex-…/gpt-5.5".
   const effectiveKey =
     mode === "edit"
       ? provider!.key
-      : deriveUniqueKey(slugify(mName), existingKeys);
-
+      : selectedCatalog
+        ? deriveUniqueKey(selectedCatalog.name, existingKeys)
+        : deriveUniqueKey(slugify(mName), existingKeys);
+  const isCodexCreate =
+    mode === "create" && selectedCatalog?.api_format === CODEX_API_TYPE;
+  const isCodexEdit =
+    mode === "edit" && provider?.api_type === CODEX_API_TYPE;
+  const isCodex = isCodexCreate || isCodexEdit;
   const isCustomProvider =
     mCatalogKey === CUSTOM_PROVIDER ||
-    (mode === "edit" && !provider?.provider);
+    (mode === "edit" && !provider?.provider && !isCodexEdit);
 
   const handleCatalogKeyChange = (val: string) => {
     setMCatalogKey(val);
@@ -161,6 +195,7 @@ export default function ProviderModal({
       setMProvider("");
       setMName("");
       setMBaseURL("");
+      setMApiType("openai-completions");
     } else if (val) {
       const cat = catalogProviders.find((c) => c.name === val);
       if (cat) {
@@ -186,6 +221,80 @@ export default function ProviderModal({
       queryClient.invalidateQueries({ queryKey: ["instance", instanceId] }),
     ] : []),
   ]);
+
+  // Client-driven PKCE login. Generate a verifier + state in the browser,
+  // open auth.openai.com in a new tab, and wait for the user to paste the
+  // redirect URL. No backend call yet — the provider row is created in
+  // handleCodexComplete only after the auth code exchange succeeds.
+  const handleCodexLogin = async () => {
+    if (!mName.trim()) return;
+    setCodexBusy(true);
+    try {
+      const verifier = randomBase64Url(32);
+      const state = randomBase64Url(24);
+      const challenge = await pkceChallenge(verifier);
+      const authURL = buildCodexAuthorizeURL(state, challenge);
+      window.open(authURL, "_blank", "noopener,noreferrer");
+      setCodexVerifier(verifier);
+      setCodexState(state);
+      setCodexAwaitingPaste(true);
+    } catch (err) {
+      errorToast("Failed to start ChatGPT login", err);
+    } finally {
+      setCodexBusy(false);
+    }
+  };
+
+  const handleCodexComplete = async () => {
+    if (!codexVerifier || !codexState || !codexRedirectInput.trim()) return;
+    setCodexBusy(true);
+    try {
+      const parsed = extractCodeAndState(codexRedirectInput.trim());
+      if (parsed.state !== codexState) {
+        errorToast("ChatGPT login failed", "state mismatch — start the login flow again");
+        setCodexBusy(false);
+        return;
+      }
+      const cat = selectedCatalog;
+      const models = (cat?.models || []).map((m) => ({
+        id: m.model_id,
+        name: m.model_name,
+        reasoning: m.reasoning,
+        contextWindow: m.context_window ?? undefined,
+        maxTokens: m.max_tokens ?? undefined,
+        cost:
+          m.input_cost || m.output_cost || m.cached_read_cost || m.cached_write_cost
+            ? {
+                input: m.input_cost,
+                output: m.output_cost,
+                cacheRead: m.cached_read_cost,
+                cacheWrite: m.cached_write_cost,
+              }
+            : undefined,
+      }));
+      const created = await createProviderMutation.mutateAsync({
+        key: effectiveKey,
+        provider: cat?.name ?? "",
+        name: mName.trim(),
+        base_url: cat?.base_url ?? "https://chatgpt.com/backend-api",
+        api_type: CODEX_API_TYPE,
+        models,
+        instance_id: instanceId,
+        oauth: {
+          code_verifier: codexVerifier,
+          redirect_url: codexRedirectInput.trim(),
+        },
+      });
+      successToast("ChatGPT account linked", created.oauth_email);
+      await refreshQueries();
+      onSaved();
+      onClose();
+    } catch (err) {
+      errorToast("ChatGPT login failed", err);
+    } finally {
+      setCodexBusy(false);
+    }
+  };
 
   const showLoadingToast = (toastId: string, title: string) => {
     toast.custom(
@@ -299,21 +408,33 @@ export default function ProviderModal({
   };
 
   const showForm = mode === "edit" || (mCatalogKey !== "");
+  const isOAuthApiType = resolveApiType() === "openai-codex-responses";
   const canSave =
     showForm &&
     !!effectiveKey &&
     !!mName &&
     !!mBaseURL &&
     (!isCustomProvider || mModels.length > 0) &&
-    (mode === "edit" || isCustomProvider || !!mApiKey.trim()) &&
+    (mode === "edit" || isCustomProvider || isOAuthApiType || !!mApiKey.trim()) &&
     !createProviderMutation.isPending &&
     !updateProviderMutation.isPending;
+
+  const canCodexLogin =
+    isCodexCreate && !!mName.trim() && !codexBusy && !codexAwaitingPaste;
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
       onClose();
-    } else if (e.key === "Enter" && canSave && !e.shiftKey) {
-      handleSave();
+    } else if (e.key === "Enter" && !e.shiftKey) {
+      if (isCodexCreate) {
+        if (codexAwaitingPaste) {
+          if (codexRedirectInput.trim() && !codexBusy) handleCodexComplete();
+        } else if (canCodexLogin) {
+          handleCodexLogin();
+        }
+      } else if (canSave) {
+        handleSave();
+      }
     }
   };
 
@@ -378,7 +499,7 @@ export default function ProviderModal({
             </div>
           )}
 
-          {isCustomProvider && (
+          {isCustomProvider && !isCodex && (
             <>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Base URL</label>
@@ -401,6 +522,7 @@ export default function ProviderModal({
                   <option value="openai-completions">openai-completions</option>
                   <option value="anthropic-messages">anthropic-messages</option>
                   <option value="openai-responses">openai-responses</option>
+                  <option value="openai-codex-responses">openai-codex-responses (ChatGPT OAuth)</option>
                   <option value="ollama">ollama</option>
                   <option value="bedrock-converse-stream">bedrock-converse-stream</option>
                 </select>
@@ -526,8 +648,8 @@ export default function ProviderModal({
             </>
           )}
 
-          {/* API Key */}
-          {showForm && (
+          {/* API Key — hidden for OAuth providers (replaced by ChatGPT connect panel) */}
+          {showForm && resolveApiType() !== "openai-codex-responses" && (
             <div>
               <label className="block text-xs text-gray-500 mb-1">
                 API Key{" "}
@@ -553,6 +675,32 @@ export default function ProviderModal({
               </div>
             </div>
           )}
+
+          {/* ChatGPT OAuth — only meaningful in edit mode for an existing provider */}
+          {showForm && mode === "edit" && resolveApiType() === "openai-codex-responses" && provider && (
+            <CodexOAuthPanel provider={provider} onChanged={onSaved} />
+          )}
+
+          {/* Manual paste step for codex create flow */}
+          {isCodexCreate && codexAwaitingPaste && (
+            <div className="border border-blue-200 bg-blue-50 rounded-md p-3 space-y-2">
+              <div className="text-xs text-gray-700">
+                <div className="font-medium text-gray-800">Paste the redirect URL</div>
+                <p className="mt-1 text-gray-600">
+                  After signing in, OpenAI redirects to a <span className="font-mono">localhost:1455</span> URL
+                  that won't load. Copy the full URL from the address bar (it contains
+                  <span className="font-mono"> ?code=&hellip;&state=&hellip;</span>) and paste it below.
+                </p>
+              </div>
+              <textarea
+                value={codexRedirectInput}
+                onChange={(e) => setCodexRedirectInput(e.target.value)}
+                placeholder="http://localhost:1455/auth/callback?code=...&state=..."
+                rows={3}
+                className="w-full px-2 py-1 border border-gray-300 rounded text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-between mt-6">
@@ -576,27 +724,180 @@ export default function ProviderModal({
             )}
           </div>
           <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => testMutation.mutate({ base_url: mBaseURL, api_key: mApiKey, api_type: resolveApiType() })}
-              disabled={!mBaseURL || !mApiKey.trim() || testMutation.isPending}
-              className="px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {testMutation.isPending ? "Testing..." : "Test"}
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={!canSave}
-              className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
-            >
-              {createProviderMutation.isPending || updateProviderMutation.isPending
-                ? "Saving..."
-                : "Save"}
-            </button>
+            {isCodexCreate ? (
+              codexAwaitingPaste ? (
+                <button
+                  type="button"
+                  onClick={handleCodexComplete}
+                  disabled={!codexRedirectInput.trim() || codexBusy}
+                  className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {codexBusy ? "Linking..." : "Complete Login"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleCodexLogin}
+                  disabled={!canCodexLogin}
+                  className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {codexBusy ? "Starting..." : "ChatGPT Login"}
+                </button>
+              )
+            ) : (
+              <>
+                {!isCodexEdit && (
+                  <button
+                    type="button"
+                    onClick={() => testMutation.mutate({ base_url: mBaseURL, api_key: mApiKey, api_type: resolveApiType() })}
+                    disabled={!mBaseURL || !mApiKey.trim() || testMutation.isPending}
+                    className="px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {testMutation.isPending ? "Testing..." : "Test"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={!canSave}
+                  className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {createProviderMutation.isPending || updateProviderMutation.isPending
+                    ? "Saving..."
+                    : "Save"}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// CodexOAuthPanel handles the "Connect ChatGPT" flow for an openai-codex-responses
+// provider that has not been linked yet (edit mode). The user clicks Connect,
+// signs in on auth.openai.com in a new tab, then pastes the redirect URL
+// back in. The control plane never binds a port — the PKCE verifier lives
+// in component state and the auth code is exchanged on the server inside
+// the same PUT /api/v1/llm/providers/{id} request.
+function CodexOAuthPanel({ provider, onChanged }: { provider: LLMProvider; onChanged: () => void }) {
+  const queryClient = useQueryClient();
+  const updateProviderMutation = useUpdateProvider();
+  const [verifier, setVerifier] = useState<string | null>(null);
+  const [stateValue, setStateValue] = useState<string | null>(null);
+  const [redirectInput, setRedirectInput] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const handleConnect = async () => {
+    setBusy(true);
+    try {
+      const v = randomBase64Url(32);
+      const s = randomBase64Url(24);
+      const challenge = await pkceChallenge(v);
+      window.open(buildCodexAuthorizeURL(s, challenge), "_blank", "noopener,noreferrer");
+      setVerifier(v);
+      setStateValue(s);
+    } catch (err) {
+      errorToast("Failed to start ChatGPT login", err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleComplete = async () => {
+    if (!verifier || !stateValue || !redirectInput.trim()) return;
+    setBusy(true);
+    try {
+      const parsed = extractCodeAndState(redirectInput.trim());
+      if (parsed.state !== stateValue) {
+        errorToast("ChatGPT login failed", "state mismatch — start the login flow again");
+        setBusy(false);
+        return;
+      }
+      const updated = await updateProviderMutation.mutateAsync({
+        id: provider.id,
+        payload: {
+          oauth: {
+            code_verifier: verifier,
+            redirect_url: redirectInput.trim(),
+          },
+        },
+      });
+      successToast("ChatGPT account linked", updated.oauth_email);
+      setVerifier(null);
+      setStateValue(null);
+      setRedirectInput("");
+      await queryClient.invalidateQueries({ queryKey: ["llm-providers"] });
+      onChanged();
+    } catch (err) {
+      errorToast("ChatGPT login failed", err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (provider.oauth_connected) {
+    const expiresIn = provider.oauth_expires_at
+      ? Math.max(0, Math.round((provider.oauth_expires_at - Date.now()) / 60000))
+      : null;
+    return (
+      <div className="border border-emerald-200 bg-emerald-50 rounded-md p-3">
+        <div className="text-xs">
+          <div className="text-emerald-700 font-medium">✓ ChatGPT account connected</div>
+          {provider.oauth_email && (
+            <div className="text-gray-600 mt-1">
+              <span className="text-gray-500">Account:</span> <span className="font-mono">{provider.oauth_email}</span>
+            </div>
+          )}
+          {expiresIn !== null && (
+            <div className="text-gray-500 mt-0.5">
+              Access token expires in {expiresIn} min (auto-refreshed)
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border border-gray-200 bg-gray-50 rounded-md p-3 space-y-2">
+      <div className="text-xs text-gray-600">
+        <div className="font-medium text-gray-800">Connect a ChatGPT account</div>
+        <p className="mt-1 text-gray-500">
+          Opens auth.openai.com in a new tab. After signing in, OpenAI redirects to a
+          <span className="font-mono"> localhost:1455</span> URL that won't load —
+          copy the full URL from the address bar and paste it below.
+        </p>
+      </div>
+      {verifier ? (
+        <>
+          <textarea
+            value={redirectInput}
+            onChange={(e) => setRedirectInput(e.target.value)}
+            placeholder="http://localhost:1455/auth/callback?code=...&state=..."
+            rows={3}
+            className="w-full px-2 py-1 border border-gray-300 rounded text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <button
+            type="button"
+            onClick={handleComplete}
+            disabled={busy || !redirectInput.trim()}
+            className="px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+          >
+            {busy ? "Linking..." : "Complete Login"}
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={handleConnect}
+          disabled={busy}
+          className="px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+        >
+          {busy ? "Starting..." : "Connect ChatGPT"}
+        </button>
+      )}
     </div>
   );
 }

@@ -7,10 +7,10 @@ export LANG=en_US.UTF-8
 # Wait for X server to be ready
 while ! xdpyinfo -display :0 >/dev/null 2>&1; do sleep 0.5; done
 
-# No window manager: the browser is the only X client. Without a WM,
-# --start-maximized is a no-op (it's a WM hint), so we size and position the
-# Chromium window explicitly via --window-size / --window-position to match
-# the Xtigervnc display geometry.
+# No window manager: the browser is the only X client. svc-window-fit watches
+# RandR events and pins the Chromium window to the current display geometry —
+# so the window tracks the X display size as the noVNC client resizes it.
+# (--start-maximized is a no-op without a WM.)
 
 # Build optional extra flags (array preserves spaces in values)
 EXTRA_ARGS=()
@@ -61,8 +61,6 @@ while true; do
     --no-first-run \
     --password-store=basic \
     --simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT' \
-    --window-size="${DISPLAY_WIDTH:-1920},${DISPLAY_HEIGHT:-1080}" \
-    --window-position=0,0 \
     --user-data-dir=/home/claworc/chrome-data \
     --download-directory=/home/claworc/Downloads \
     --remote-debugging-port=9222 \

@@ -56,6 +56,7 @@ const ALLOWED_EVENTS = new Set([
   "global_env_vars_edited",
   "instance_env_vars_edited",
   "opt_out",
+  "heartbeat",
 ]);
 
 const INSTALLATION_ID_RE = /^[a-f0-9]{32}$/;
@@ -119,12 +120,17 @@ async function handleStatsCollect(request: Request, env: Env): Promise<Response>
     return jsonResponse({ error: "Invalid version" }, 400);
   }
 
-  // Serialize props to a single blob — Analytics Engine doesn't take maps.
-  const propsBlob = body.props ? JSON.stringify(body.props) : "";
-
   if (env.ANALYTICS) {
+    const blobs: string[] = [body.event, body.version];
+    if (body.props) {
+      for (const [key, value] of Object.entries(body.props)) {
+        const valueStr =
+          typeof value === "string" ? value : JSON.stringify(value);
+        blobs.push(key, valueStr);
+      }
+    }
     env.ANALYTICS.writeDataPoint({
-      blobs: [body.event, body.version, propsBlob],
+      blobs,
       doubles: [body.ts],
       indexes: [body.installation_id],
     });

@@ -19,6 +19,7 @@ const (
 	EventGlobalEnvVarsEdited   = "global_env_vars_edited"
 	EventInstanceEnvVarsEdited = "instance_env_vars_edited"
 	EventOptOut                = "opt_out"
+	EventHeartbeat             = "heartbeat"
 )
 
 // AllowedEvents is the set of events accepted by the collector. Mirrors the
@@ -42,4 +43,5 @@ var AllowedEvents = map[string]bool{
 	EventGlobalEnvVarsEdited:   true,
 	EventInstanceEnvVarsEdited: true,
 	EventOptOut:                true,
+	EventHeartbeat:             true,
 }

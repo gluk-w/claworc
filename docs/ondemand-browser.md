@@ -126,6 +126,10 @@ When the browser pod is reaped and a user opens the desktop tab, `DesktopProxy` 
 
 For providers without VNC (`Capabilities.SupportsVNC=false`), the desktop tab is hidden in the UI.
 
+### 5a. Dynamic display geometry & primary-viewer election
+
+Every viewer's noVNC client runs with `resizeSession=true` so the X display tracks the panel pixel size, removing letterboxing. To keep multi-viewer sessions stable the control plane parses each viewer's RFB client stream and only forwards `ClientSetDesktopSize` (RFB msg type 251) from a single elected primary — the first viewer connected to that instance, head of an in-memory ordered list (`internal/handlers/desktop_viewers.go`). When the primary disconnects the next-oldest viewer is promoted and its last-attempted `SetDesktopSize` (cached in the filter, `desktop_filter.go`) is replayed upstream, so the X display snaps to the new primary's panel within one frame. The browser image runs `svc-window-fit` (xev + xdotool) to pin the Chromium window to the X display geometry on every `RRScreenChangeNotify`. Secondaries keep `scaleViewport=true` so their canvas letterboxes locally until promotion. Implementation lives in `internal/handlers/desktop_websockify.go` (RFB-aware proxy used only on the `/desktop/websockify` path; non-RFB endpoints under `/desktop/*` go through the unfiltered `websocketProxyOverDialer`/`websocketProxyToLocalPort`).
+
 ## 6. Browser session lifecycle
 
 **DB** — new table `browser_sessions` (`internal/database/models.go`):
