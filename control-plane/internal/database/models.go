@@ -130,8 +130,18 @@ type LLMProvider struct {
 	APIType    string    `gorm:"size:100;default:'openai-completions'" json:"api_type"`
 	APIKey     string    `gorm:"type:text;default:''" json:"-"`   // Fernet-encrypted upstream API key
 	Models     string    `gorm:"type:text;default:'[]'" json:"-"` // JSON []ProviderModel
-	CreatedAt  time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt  time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	// OAuth credentials for providers that authenticate via OAuth instead of a
+	// static API key (currently: openai-codex-responses against ChatGPT).
+	// All four are zero-valued for static-key providers. Explicit column names
+	// keep the schema readable (oauth_* rather than the o_auth_* GORM would
+	// derive from CamelCase by default).
+	OAuthAccessToken  string `gorm:"column:oauth_access_token;type:text;default:''" json:"-"`  // Fernet-encrypted
+	OAuthRefreshToken string `gorm:"column:oauth_refresh_token;type:text;default:''" json:"-"` // Fernet-encrypted
+	OAuthExpiresAt    int64  `gorm:"column:oauth_expires_at;default:0" json:"-"`               // unix ms; 0 = not connected
+	OAuthAccountID    string `gorm:"column:oauth_account_id;default:''" json:"-"`              // chatgpt-account-id (plain)
+	OAuthEmail        string `gorm:"column:oauth_email;default:''" json:"-"`                   // for display
+	CreatedAt         time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt         time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 // ParseProviderModels deserializes the raw JSON models field.

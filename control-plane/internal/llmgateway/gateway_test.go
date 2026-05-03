@@ -1063,7 +1063,7 @@ func TestBuildUpstreamRequest(t *testing.T) {
 	body := []byte(`{"model":"test"}`)
 
 	t.Run("openai-completions → Authorization Bearer", func(t *testing.T) {
-		req, err := buildUpstreamRequest(ctx, "POST", "https://api.example.com/v1/chat/completions", body, http.Header{}, "my-key", GetAPIType("openai-completions"))
+		req, err := buildUpstreamRequest(ctx, "POST", "https://api.example.com/v1/chat/completions", body, http.Header{}, AuthMaterial{APIKey: "my-key"}, GetAPIType("openai-completions"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1073,7 +1073,7 @@ func TestBuildUpstreamRequest(t *testing.T) {
 	})
 
 	t.Run("anthropic-messages → x-api-key", func(t *testing.T) {
-		req, err := buildUpstreamRequest(ctx, "POST", "https://api.anthropic.com/v1/messages", body, http.Header{}, "ant-key", GetAPIType("anthropic-messages"))
+		req, err := buildUpstreamRequest(ctx, "POST", "https://api.anthropic.com/v1/messages", body, http.Header{}, AuthMaterial{APIKey: "ant-key"}, GetAPIType("anthropic-messages"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1086,7 +1086,7 @@ func TestBuildUpstreamRequest(t *testing.T) {
 	})
 
 	t.Run("google-generative-ai → x-goog-api-key", func(t *testing.T) {
-		req, err := buildUpstreamRequest(ctx, "POST", "https://generativelanguage.googleapis.com/v1/models", body, http.Header{}, "goog-key", GetAPIType("google-generative-ai"))
+		req, err := buildUpstreamRequest(ctx, "POST", "https://generativelanguage.googleapis.com/v1/models", body, http.Header{}, AuthMaterial{APIKey: "goog-key"}, GetAPIType("google-generative-ai"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1096,7 +1096,7 @@ func TestBuildUpstreamRequest(t *testing.T) {
 	})
 
 	t.Run("empty apiType → defaults to Bearer", func(t *testing.T) {
-		req, err := buildUpstreamRequest(ctx, "POST", "https://api.example.com/v1/chat/completions", body, http.Header{}, "def-key", GetAPIType(""))
+		req, err := buildUpstreamRequest(ctx, "POST", "https://api.example.com/v1/chat/completions", body, http.Header{}, AuthMaterial{APIKey: "def-key"}, GetAPIType(""))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1113,7 +1113,7 @@ func TestBuildUpstreamRequest(t *testing.T) {
 			"Host":           []string{"evil.example.com"},
 			"X-Custom":       []string{"keep-me"},
 		}
-		req, err := buildUpstreamRequest(ctx, "POST", "https://api.example.com/", body, orig, "real-key", GetAPIType("openai-completions"))
+		req, err := buildUpstreamRequest(ctx, "POST", "https://api.example.com/", body, orig, AuthMaterial{APIKey: "real-key"}, GetAPIType("openai-completions"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1132,7 +1132,7 @@ func TestBuildUpstreamRequest(t *testing.T) {
 	})
 
 	t.Run("default Content-Type set when missing", func(t *testing.T) {
-		req, err := buildUpstreamRequest(ctx, "POST", "https://api.example.com/", body, http.Header{}, "", GetAPIType(""))
+		req, err := buildUpstreamRequest(ctx, "POST", "https://api.example.com/", body, http.Header{}, AuthMaterial{}, GetAPIType(""))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1143,7 +1143,7 @@ func TestBuildUpstreamRequest(t *testing.T) {
 
 	t.Run("explicit Content-Type preserved", func(t *testing.T) {
 		orig := http.Header{"Content-Type": []string{"text/plain"}}
-		req, err := buildUpstreamRequest(ctx, "POST", "https://api.example.com/", body, orig, "", GetAPIType(""))
+		req, err := buildUpstreamRequest(ctx, "POST", "https://api.example.com/", body, orig, AuthMaterial{}, GetAPIType(""))
 		if err != nil {
 			t.Fatal(err)
 		}

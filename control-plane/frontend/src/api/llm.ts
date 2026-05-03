@@ -66,6 +66,11 @@ export async function fetchProviders(): Promise<LLMProvider[]> {
   return data;
 }
 
+export interface ProviderOAuthCompletion {
+  code_verifier: string;
+  redirect_url: string;
+}
+
 export async function createProvider(payload: {
   key: string;
   provider: string;
@@ -75,6 +80,7 @@ export async function createProvider(payload: {
   models?: ProviderModel[];
   api_key?: string;
   instance_id?: number;
+  oauth?: ProviderOAuthCompletion;
 }): Promise<LLMProvider> {
   const { data } = await client.post<LLMProvider>("/llm/providers", payload);
   return data;
@@ -87,7 +93,14 @@ export async function fetchInstanceProviders(instanceId: number): Promise<LLMPro
 
 export async function updateProvider(
   id: number,
-  payload: { name?: string; base_url?: string; api_type?: string; models?: ProviderModel[]; api_key?: string },
+  payload: {
+    name?: string;
+    base_url?: string;
+    api_type?: string;
+    models?: ProviderModel[];
+    api_key?: string;
+    oauth?: ProviderOAuthCompletion;
+  },
 ): Promise<LLMProvider> {
   const { data } = await client.put<LLMProvider>(`/llm/providers/${id}`, payload);
   return data;

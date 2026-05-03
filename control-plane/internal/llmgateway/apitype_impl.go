@@ -9,8 +9,8 @@ import (
 
 type openAICompletions struct{}
 
-func (openAICompletions) SetAuthHeader(req *http.Request, apiKey string) {
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+func (openAICompletions) SetAuthHeader(req *http.Request, mat AuthMaterial) {
+	req.Header.Set("Authorization", "Bearer "+mat.APIKey)
 }
 
 func (openAICompletions) RewritePath(baseURL, requestPath string) string {
@@ -58,12 +58,53 @@ func (openAIResponses) ParseStreamingUsage(body []byte) (int, int, int) {
 	return ParseUsageOpenAIResponsesStream(body)
 }
 
+// --- openAICodexResponses (ChatGPT subscription endpoint) ---
+//
+// Used when an LLMProvider authenticates via OAuth against ChatGPT's
+// /codex/responses endpoint (https://chatgpt.com/backend-api). The request
+// body shape is built by OpenClaw inside the container — the gateway only
+// rewrites auth headers and forwards.
+
+type openAICodexResponses struct {
+	openAIResponses
+}
+
+func (openAICodexResponses) SetAuthHeader(req *http.Request, mat AuthMaterial) {
+	req.Header.Set("Authorization", "Bearer "+mat.OAuthAccess)
+	if mat.OAuthAccount != "" {
+		req.Header.Set("chatgpt-account-id", mat.OAuthAccount)
+	}
+	req.Header.Set("OpenAI-Beta", "responses=experimental")
+	req.Header.Set("originator", "pi")
+}
+
+func (openAICodexResponses) RewritePath(baseURL, requestPath string) string {
+	// OpenClaw is configured with api: "openai-responses" (so pi-ai skips its
+	// client-side JWT decode), so it posts to /responses or /v1/responses via
+	// the OpenAI SDK. The codex backend expects /codex/responses; translate.
+	if requestPath == "/codex/responses" {
+		return requestPath
+	}
+	p := strings.TrimPrefix(requestPath, "/v1")
+	if p == "/responses" {
+		return "/codex/responses"
+	}
+	return requestPath
+}
+
+// Health probes against ChatGPT's backend require valid OAuth credentials and
+// hit a real billable endpoint, so we don't expose a probe URL — TestProviderKey
+// short-circuits for OAuth providers.
+func (openAICodexResponses) ProbeURL(baseURL string) string {
+	return strings.TrimRight(baseURL, "/")
+}
+
 // --- anthropicMessages ---
 
 type anthropicMessages struct{}
 
-func (anthropicMessages) SetAuthHeader(req *http.Request, apiKey string) {
-	req.Header.Set("x-api-key", apiKey)
+func (anthropicMessages) SetAuthHeader(req *http.Request, mat AuthMaterial) {
+	req.Header.Set("x-api-key", mat.APIKey)
 }
 
 func (anthropicMessages) RewritePath(baseURL, requestPath string) string {
@@ -93,8 +134,8 @@ func (anthropicMessages) ProbeHeaders(req *http.Request) {
 
 type googleGenerativeAI struct{}
 
-func (googleGenerativeAI) SetAuthHeader(req *http.Request, apiKey string) {
-	req.Header.Set("x-goog-api-key", apiKey)
+func (googleGenerativeAI) SetAuthHeader(req *http.Request, mat AuthMaterial) {
+	req.Header.Set("x-goog-api-key", mat.APIKey)
 }
 
 func (googleGenerativeAI) RewritePath(baseURL, requestPath string) string {
@@ -122,8 +163,8 @@ func (googleGenerativeAI) ProbeHeaders(*http.Request) {}
 
 type ollamaAPI struct{}
 
-func (ollamaAPI) SetAuthHeader(req *http.Request, apiKey string) {
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+func (ollamaAPI) SetAuthHeader(req *http.Request, mat AuthMaterial) {
+	req.Header.Set("Authorization", "Bearer "+mat.APIKey)
 }
 
 func (ollamaAPI) RewritePath(baseURL, requestPath string) string {
@@ -151,8 +192,8 @@ func (ollamaAPI) ProbeHeaders(*http.Request) {}
 
 type bedrockConverse struct{}
 
-func (bedrockConverse) SetAuthHeader(req *http.Request, apiKey string) {
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+func (bedrockConverse) SetAuthHeader(req *http.Request, mat AuthMaterial) {
+	req.Header.Set("Authorization", "Bearer "+mat.APIKey)
 }
 
 func (bedrockConverse) RewritePath(baseURL, requestPath string) string {

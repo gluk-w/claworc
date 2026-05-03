@@ -98,8 +98,10 @@ func extractGatewayToken(r *http.Request) string {
 	return ""
 }
 
-// authAndResolve validates the gateway token and returns provider info, real API key, API type, and provider models.
-func authAndResolve(r *http.Request) (instanceID, providerID uint, providerKey, baseURL, apiKey, apiType string, providerModels []database.ProviderModel, err error) {
+// authAndResolve validates the gateway token and returns provider info, an
+// AuthMaterial containing the credentials to forward upstream, the api type,
+// and provider models.
+func authAndResolve(r *http.Request) (instanceID, providerID uint, providerKey, baseURL string, mat AuthMaterial, apiType string, providerModels []database.ProviderModel, err error) {
 	token := extractGatewayToken(r)
 	if token == "" {
 		err = fmt.Errorf("missing or invalid gateway auth token")
@@ -116,12 +118,22 @@ func authAndResolve(r *http.Request) (instanceID, providerID uint, providerKey, 
 	providerID = key.ProviderID
 	providerKey = key.Provider.Key
 	baseURL = strings.TrimRight(key.Provider.BaseURL, "/")
-	apiKey = resolveRealAPIKey(key.Provider)
 	apiType = key.Provider.APIType
 	if apiType == "" {
 		apiType = "openai-completions"
 	}
 	providerModels = database.ParseProviderModels(key.Provider.Models)
+
+	if IsOAuthAPIType(apiType) {
+		access, account, oauthErr := EnsureFreshOAuthToken(r.Context(), key.ProviderID)
+		if oauthErr != nil {
+			err = fmt.Errorf("oauth: %w", oauthErr)
+			return
+		}
+		mat = AuthMaterial{OAuthAccess: access, OAuthAccount: account}
+	} else {
+		mat = AuthMaterial{APIKey: resolveRealAPIKey(key.Provider)}
+	}
 	return
 }
 
@@ -162,7 +174,7 @@ func buildTargetURL(baseURL string, requestPath string, at APIType, query url.Va
 // buildUpstreamRequest creates the HTTP request for the upstream provider.
 // Copies headers from the original request, stripping all auth headers, then sets the correct
 // outgoing auth header via at.SetAuthHeader.
-func buildUpstreamRequest(ctx context.Context, method, targetURL string, body []byte, origHeaders http.Header, apiKey string, at APIType) (*http.Request, error) {
+func buildUpstreamRequest(ctx context.Context, method, targetURL string, body []byte, origHeaders http.Header, mat AuthMaterial, at APIType) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -182,8 +194,8 @@ func buildUpstreamRequest(ctx context.Context, method, targetURL string, body []
 			req.Header.Add(k, v)
 		}
 	}
-	if apiKey != "" {
-		at.SetAuthHeader(req, apiKey)
+	if mat.APIKey != "" || mat.OAuthAccess != "" {
+		at.SetAuthHeader(req, mat)
 	}
 	if req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
@@ -206,7 +218,7 @@ func calculateCost(models []database.ProviderModel, modelID string, inputTokens,
 func handleProxy(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	instanceID, providerID, providerKey, baseURL, apiKey, apiType, providerModels, err := authAndResolve(r)
+	instanceID, providerID, providerKey, baseURL, mat, apiType, providerModels, err := authAndResolve(r)
 	if err != nil {
 		log.Printf("[gateway] auth failed: %s path=%s", err, safeLog(r.URL.Path))
 		w.Header().Set("Content-Type", "application/json")
@@ -237,12 +249,20 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	at := GetAPIType(apiType)
 	targetURL := buildTargetURL(baseURL, r.URL.Path, at, r.URL.Query())
 
+	// For codex providers OpenClaw declares api: "openai-responses" so pi-ai
+	// skips its JWT decode. The body it sends is openai-responses-shaped; the
+	// codex backend requires a different shape (instructions extraction,
+	// extra fields, stripped fields). Translate before forwarding.
+	if apiType == APITypeOpenAICodexResponses {
+		body = rewriteCodexRequestBody(body)
+	}
+
 	// Use context.Background() instead of r.Context() so that a client disconnect
 	// does not cancel the upstream request mid-stream. This is important for streaming
 	// responses: if the client closes the connection before the upstream sends final
 	// token-count events (e.g. Anthropic's message_delta), the captured buffer would
 	// be incomplete and token counts would be recorded as 0.
-	upstreamReq, err := buildUpstreamRequest(context.Background(), r.Method, targetURL, body, r.Header, apiKey, at)
+	upstreamReq, err := buildUpstreamRequest(context.Background(), r.Method, targetURL, body, r.Header, mat, at)
 	if err != nil {
 		http.Error(w, `{"error":{"message":"failed to build upstream request"}}`, http.StatusInternalServerError)
 		return
@@ -324,6 +344,10 @@ func logResponseBody(model, apiType string, statusCode int, body []byte) {
 func processResponse(w http.ResponseWriter, body io.Reader, isStreaming bool, at APIType, apiType string, statusCode int, providerModels []database.ProviderModel, model string) (inputTokens, outputTokens, cachedInputTokens int, costUSD float64, errMsg string) {
 	var captured []byte
 	if isStreaming {
+		// Apply any apiType-specific stream rewriting (e.g. codex SSE event renames)
+		// before tee-ing so both the client and the captured-for-token-parsing copy
+		// see the rewritten events.
+		body = wrapResponseStream(apiType, body)
 		flusher, canFlush := w.(http.Flusher)
 		var capBuf bytes.Buffer
 		// Use a TeeReader so the body is simultaneously captured and forwarded.

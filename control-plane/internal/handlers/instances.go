@@ -292,9 +292,16 @@ func buildOpenClawProvidersJSON(models []string, gatewayProviders map[string]Gat
 		if gpModels == nil {
 			gpModels = []database.ProviderModel{}
 		}
+		// Codex declares openai-responses to OpenClaw so pi-ai skips its
+		// client-side JWT decode of apiKey. The gateway translates path/auth/SSE
+		// upstream. The DB record keeps the codex apiType for gateway routing.
+		declaredAPI := apiType
+		if declaredAPI == llmgateway.APITypeOpenAICodexResponses {
+			declaredAPI = "openai-responses"
+		}
 		providers[providerKey] = openclawProviderCfg{
 			BaseURL: fmt.Sprintf("http://127.0.0.1:%d", gatewayPort),
-			API:     apiType,
+			API:     declaredAPI,
 			APIKey:  gp.Key,
 			Models:  gpModels,
 		}
@@ -2143,6 +2150,10 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 		if err != nil {
 			log.Printf("Error marshaling models allowlist for %s: %v", utils.SanitizeForLog(name), err)
 		} else {
+			// `openclaw config set` deep-merges into existing map values, so a
+			// previously-selected model that the admin de-selected would linger.
+			// Clear the path before writing the new allowlist.
+			_, _, _, _ = inst.ExecOpenclaw(ctx, "config", "unset", "agents.defaults.models")
 			_, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "agents.defaults.models", string(modelsMapJSON), "--json")
 			if err != nil {
 				log.Printf("Error setting models allowlist for %s: %v", utils.SanitizeForLog(name), err)
@@ -2158,6 +2169,9 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 		if err != nil {
 			log.Printf("Error marshaling gateway providers for %s: %v", utils.SanitizeForLog(name), err)
 		} else if providersJSON != "" {
+			// Clear the providers map first so de-selected providers are removed
+			// instead of being deep-merged with the previous config.
+			_, _, _, _ = inst.ExecOpenclaw(ctx, "config", "unset", "models.providers")
 			stdout, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "models.providers", providersJSON, "--json")
 			if err != nil {
 				log.Printf("Error setting gateway providers for %s: %v", utils.SanitizeForLog(name), err)

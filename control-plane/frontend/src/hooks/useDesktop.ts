@@ -78,12 +78,13 @@ export function useDesktop(instanceId: number, enabled: boolean) {
 
     try {
       const rfb = new RFB(container, wsUrl);
-      // Render at 1:1 pixels and let the server resize its display to match
-      // the container, so the remote desktop fills the panel at any aspect
-      // ratio (no letterboxing). devicePixelRatio is intentionally not
-      // applied — that would request 2x/3x resolutions on Retina displays
-      // for no visible benefit.
-      rfb.scaleViewport = false;
+      // Every viewer requests the X display to follow its panel. The control
+      // plane elects one primary per instance and drops SetDesktopSize from
+      // secondaries, so this stays stable when multiple viewers are watching.
+      // scaleViewport keeps secondaries' canvas letterboxed in their panel
+      // until they're promoted (and is a no-op for the primary, whose X
+      // display already matches its panel pixel-for-pixel).
+      rfb.scaleViewport = true;
       rfb.resizeSession = true;
       rfb.background = "rgb(17, 24, 39)"; // gray-900
 
