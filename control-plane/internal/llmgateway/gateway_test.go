@@ -1043,6 +1043,22 @@ func TestBuildTargetURL(t *testing.T) {
 			"openai-responses",
 			"https://api.openai.com/v1/responses",
 		},
+		{
+			"openai-completions: /v4 base URL — dedup /v1 in path",
+			"https://api.z.ai/api/paas/v4",
+			"/v1/chat/completions",
+			"",
+			"openai-completions",
+			"https://api.z.ai/api/paas/v4/chat/completions",
+		},
+		{
+			"openai-completions: nested /v1 base URL — dedup /v1 in path",
+			"https://api.venice.ai/api/v1",
+			"/v1/chat/completions",
+			"",
+			"openai-completions",
+			"https://api.venice.ai/api/v1/chat/completions",
+		},
 	}
 
 	for _, tc := range cases {
@@ -1423,3 +1439,91 @@ func TestStreamingDB_OpenAIResponses(t *testing.T) {
 
 // Ensure json import is used (token count parsing uses it)
 var _ = json.Marshal
+
+// --- 20. pathEndsWithVersion — unit tests ---
+
+func TestPathEndsWithVersion(t *testing.T) {
+	cases := []struct {
+		input string
+		want  bool
+	}{
+		// versioned base URLs (models.csv)
+		{"https://gateway.ai.cloudflare.com/v1", true},
+		{"https://api.moonshot.ai/v1", true},
+		{"https://integrate.api.nvidia.com/v1", true},
+		{"https://portal.qwen.ai/v1", true},
+		{"https://api.venice.ai/api/v1", true},
+		{"http://127.0.0.1:8000/v1", true},
+		{"https://api.z.ai/api/paas/v4", true},
+		{"https://api.z.ai/api/coding/paas/v4", true},
+
+		// non-versioned base URLs (models.csv)
+		{"https://bedrock-runtime.us-east-1.amazonaws.com", false},
+		{"https://api.anthropic.com/", false},
+		{"https://api.openai.com/", false},
+		{"https://api.kilo.ai/api/gateway", false},
+		{"http://localhost:4000", false},
+		{"https://api.minimax.io/anthropic", false},
+		{"http://ollama-host:11434", false},
+		{"https://api.xiaomimimo.com/anthropic", false},
+
+		// edge cases
+		{"https://example.com/v", false},
+		{"https://example.com/v1a", false},
+		{"https://example.com/v1beta", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			got := pathEndsWithVersion(tc.input)
+			if got != tc.want {
+				t.Errorf("pathEndsWithVersion(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// --- 21. ProbeURL — unit tests ---
+
+func TestProbeURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		impl    APIType
+		baseURL string
+		want    string
+	}{
+		// openAICompletions
+		{"openai no version", openAICompletions{}, "https://api.openai.com", "https://api.openai.com/v1/models"},
+		{"openai with /v1", openAICompletions{}, "https://api.moonshot.ai/v1", "https://api.moonshot.ai/v1/models"},
+		{"openai with /v1 trailing slash", openAICompletions{}, "https://api.moonshot.ai/v1/", "https://api.moonshot.ai/v1/models"},
+		{"openai with /v4", openAICompletions{}, "https://api.z.ai/api/paas/v4", "https://api.z.ai/api/paas/v4/models"},
+		{"openai nested /v1", openAICompletions{}, "https://api.venice.ai/api/v1", "https://api.venice.ai/api/v1/models"},
+		{"openai non-version path", openAICompletions{}, "https://api.kilo.ai/api/gateway", "https://api.kilo.ai/api/gateway/v1/models"},
+
+		// openAIResponses (inherits ProbeURL from openAICompletions)
+		{"responses with /v1", openAIResponses{}, "https://api.moonshot.ai/v1", "https://api.moonshot.ai/v1/models"},
+
+		// anthropicMessages
+		{"anthropic no version", anthropicMessages{}, "https://api.anthropic.com", "https://api.anthropic.com/v1/models"},
+		{"anthropic with /v1", anthropicMessages{}, "https://example.com/v1", "https://example.com/v1/models"},
+
+		// googleGenerativeAI
+		{"google no version", googleGenerativeAI{}, "https://generativelanguage.googleapis.com", "https://generativelanguage.googleapis.com/v1/models"},
+		{"google with /v1", googleGenerativeAI{}, "https://example.com/v1", "https://example.com/v1/models"},
+
+		// ollamaAPI (unaffected)
+		{"ollama", ollamaAPI{}, "http://localhost:11434", "http://localhost:11434/api/tags"},
+		{"ollama with /v1", ollamaAPI{}, "http://localhost:11434/v1", "http://localhost:11434/v1/api/tags"},
+
+		// bedrockConverse (unaffected)
+		{"bedrock", bedrockConverse{}, "https://bedrock.us-east-1.amazonaws.com", "https://bedrock.us-east-1.amazonaws.com"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.impl.ProbeURL(tc.baseURL)
+			if got != tc.want {
+				t.Errorf("ProbeURL(%q) = %q, want %q", tc.baseURL, got, tc.want)
+			}
+		})
+	}
+}

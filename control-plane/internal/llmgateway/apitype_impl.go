@@ -2,8 +2,17 @@ package llmgateway
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 )
+
+var versionSuffix = regexp.MustCompile(`/v\d+$`)
+
+// pathEndsWithVersion reports whether urlStr's path ends with a versioned
+// segment like /v1, /v4, etc.
+func pathEndsWithVersion(urlStr string) bool {
+	return versionSuffix.MatchString(urlStr)
+}
 
 // --- openAICompletions (default / fallback) ---
 
@@ -14,7 +23,7 @@ func (openAICompletions) SetAuthHeader(req *http.Request, apiKey string) {
 }
 
 func (openAICompletions) RewritePath(baseURL, requestPath string) string {
-	if strings.HasSuffix(baseURL, "/v1") && strings.HasPrefix(requestPath, "/v1/") {
+	if pathEndsWithVersion(baseURL) && strings.HasPrefix(requestPath, "/v1/") {
 		return requestPath[3:]
 	}
 	return requestPath
@@ -29,7 +38,11 @@ func (openAICompletions) ParseStreamingUsage(body []byte) (int, int, int) {
 }
 
 func (openAICompletions) ProbeURL(baseURL string) string {
-	return strings.TrimRight(baseURL, "/") + "/v1/models"
+	trimmed := strings.TrimRight(baseURL, "/")
+	if pathEndsWithVersion(trimmed) {
+		return trimmed + "/models"
+	}
+	return trimmed + "/v1/models"
 }
 
 func (openAICompletions) ProbeHeaders(*http.Request) {}
@@ -41,10 +54,10 @@ type openAIResponses struct {
 }
 
 func (openAIResponses) RewritePath(baseURL, requestPath string) string {
-	if strings.HasSuffix(baseURL, "/v1") && strings.HasPrefix(requestPath, "/v1/") {
+	if pathEndsWithVersion(baseURL) && strings.HasPrefix(requestPath, "/v1/") {
 		return requestPath[3:]
 	}
-	if !strings.HasSuffix(baseURL, "/v1") && !strings.HasPrefix(requestPath, "/v1/") {
+	if !pathEndsWithVersion(baseURL) && !strings.HasPrefix(requestPath, "/v1/") {
 		return "/v1" + requestPath
 	}
 	return requestPath
@@ -67,7 +80,7 @@ func (anthropicMessages) SetAuthHeader(req *http.Request, apiKey string) {
 }
 
 func (anthropicMessages) RewritePath(baseURL, requestPath string) string {
-	if strings.HasSuffix(baseURL, "/v1") && strings.HasPrefix(requestPath, "/v1/") {
+	if pathEndsWithVersion(baseURL) && strings.HasPrefix(requestPath, "/v1/") {
 		return requestPath[3:]
 	}
 	return requestPath
@@ -82,7 +95,11 @@ func (anthropicMessages) ParseStreamingUsage(body []byte) (int, int, int) {
 }
 
 func (anthropicMessages) ProbeURL(baseURL string) string {
-	return strings.TrimRight(baseURL, "/") + "/v1/models"
+	trimmed := strings.TrimRight(baseURL, "/")
+	if pathEndsWithVersion(trimmed) {
+		return trimmed + "/models"
+	}
+	return trimmed + "/v1/models"
 }
 
 func (anthropicMessages) ProbeHeaders(req *http.Request) {
@@ -98,7 +115,7 @@ func (googleGenerativeAI) SetAuthHeader(req *http.Request, apiKey string) {
 }
 
 func (googleGenerativeAI) RewritePath(baseURL, requestPath string) string {
-	if strings.HasSuffix(baseURL, "/v1") && strings.HasPrefix(requestPath, "/v1/") {
+	if pathEndsWithVersion(baseURL) && strings.HasPrefix(requestPath, "/v1/") {
 		return requestPath[3:]
 	}
 	return requestPath
@@ -113,7 +130,11 @@ func (googleGenerativeAI) ParseStreamingUsage(body []byte) (int, int, int) {
 }
 
 func (googleGenerativeAI) ProbeURL(baseURL string) string {
-	return strings.TrimRight(baseURL, "/") + "/v1/models"
+	trimmed := strings.TrimRight(baseURL, "/")
+	if pathEndsWithVersion(trimmed) {
+		return trimmed + "/models"
+	}
+	return trimmed + "/v1/models"
 }
 
 func (googleGenerativeAI) ProbeHeaders(*http.Request) {}
@@ -127,7 +148,7 @@ func (ollamaAPI) SetAuthHeader(req *http.Request, apiKey string) {
 }
 
 func (ollamaAPI) RewritePath(baseURL, requestPath string) string {
-	if strings.HasSuffix(baseURL, "/v1") && strings.HasPrefix(requestPath, "/v1/") {
+	if pathEndsWithVersion(baseURL) && strings.HasPrefix(requestPath, "/v1/") {
 		return requestPath[3:]
 	}
 	return requestPath
@@ -156,7 +177,7 @@ func (bedrockConverse) SetAuthHeader(req *http.Request, apiKey string) {
 }
 
 func (bedrockConverse) RewritePath(baseURL, requestPath string) string {
-	if strings.HasSuffix(baseURL, "/v1") && strings.HasPrefix(requestPath, "/v1/") {
+	if pathEndsWithVersion(baseURL) && strings.HasPrefix(requestPath, "/v1/") {
 		return requestPath[3:]
 	}
 	return requestPath
