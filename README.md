@@ -65,7 +65,7 @@ Browser ──▶ Control Plane ──[SSH tunnel]──▶ Agent :3000 (VNC)
 
 Agent instances are never exposed directly — all traffic is proxied through the control plane.
 Three layers of health monitoring (SSH keepalive, command execution, tunnel probing) with automatic
-reconnection ensure connections stay alive. For full details, see [SSH Connectivity Architecture](docs/ssh-connectivity.md).
+reconnection ensure connections stay alive. For full details, see [SSH Connectivity Architecture](https://claworc.com/docs/ssh).
 
 ## Security
 
@@ -82,13 +82,17 @@ reconnection ensure connections stay alive. For full details, see [SSH Connectiv
 
 Claworc runs on **Docker** for local or single-server setups, or on **Kubernetes** for production-scale deployments.
 The control plane is a single binary with 20Mb footprint that serves both the web dashboard and the proxy layer
-for instance access. [Read more](docs/install.md)
+for instance access. [Read more](https://claworc.com/docs/installation)
 
 ## Documentation
 
-- [Getting Started](docs/getting-started.md) - First-time setup and orientation
-- [Installation](docs/install.md) - Runs on Docker or Kubernetes
-- [UI](docs/ui.md) - Frontend pages, components, and interaction patterns
+- [Getting Started](https://claworc.com/docs/quickstart) - First-time setup and orientation
+- [Installation](https://claworc.com/docs/installation) - Runs on Docker or Kubernetes
+- [Instances](https://claworc.com/docs/instances) - Creating and managing OpenClaw instances
+- [Accessing instances](https://claworc.com/docs/accessing) - Chat, browser, terminal, files, and logs
+- [Models](https://claworc.com/docs/models/overview) - Configure LLM providers and assign models
+- [Authentication](https://claworc.com/docs/authentication) - User roles and biometric login
+- [Full documentation](https://claworc.com/docs)
 
 ## Coming Soon
 
