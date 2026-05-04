@@ -650,6 +650,9 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 	replicas := int32(1)
 	privileged := false
 	allowPrivEsc := false
+	initPrivileged := true
+	fsGroup := int64(1000)
+	fsGroupPolicy := corev1.FSGroupChangeOnRootMismatch
 
 	var envVars []corev1.EnvVar
 	if parts := strings.SplitN(params.VNCResolution, "x", 2); len(parts) == 2 {
@@ -684,6 +687,19 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": params.Name, "managed-by": "claworc"}},
 				Spec: corev1.PodSpec{
 					Hostname: strings.TrimPrefix(params.Name, "bot-"),
+					SecurityContext: &corev1.PodSecurityContext{
+						// Pin the SELinux MCS level so every pod incarnation
+						// can read what its predecessors wrote to the home
+						// PVC. Without this, the runtime hands out random
+						// MCS categories per pod and Bottlerocket-style
+						// SELinux policies deny access to the agent's own
+						// home dir on restart. Ignored on non-SELinux nodes.
+						SELinuxOptions: &corev1.SELinuxOptions{
+							Level: "s0:c0,c0",
+						},
+						FSGroup:             &fsGroup,
+						FSGroupChangePolicy: &fsGroupPolicy,
+					},
 					Containers: []corev1.Container{{
 						Name:            "claworc-instance",
 						Image:           params.ContainerImage,
@@ -716,7 +732,7 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 							PeriodSeconds:       10,
 						},
 					}},
-					InitContainers: buildSharedFolderInitContainers(params.SharedFolderMounts),
+					InitContainers: buildInitContainers(params.SharedFolderMounts, initPrivileged),
 					Volumes: appendSharedVolumes([]corev1.Volume{
 						{Name: "homebrew-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-homebrew"}}},
 						{Name: "home-data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: params.Name + "-home"}}},
@@ -729,27 +745,43 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 	}
 }
 
-// buildSharedFolderInitContainers returns an init container that chowns shared folder
-// mount paths to claworc:claworc (1000:1000) so the unprivileged user can write to them.
-func buildSharedFolderInitContainers(sfMounts []SharedFolderMount) []corev1.Container {
-	if len(sfMounts) == 0 {
-		return nil
-	}
-	var chownCmds []string
-	var volumeMounts []corev1.VolumeMount
-	for _, sfm := range sfMounts {
-		chownCmds = append(chownCmds, fmt.Sprintf("chown 1000:1000 %s", sfm.MountPath))
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      fmt.Sprintf("shared-%d", sfm.VolumeID),
-			MountPath: sfm.MountPath,
+// buildInitContainers builds the pod's init containers. It always includes
+// fix-home-selinux which relabels the home/homebrew PVCs to a fixed MCS
+// level on Bottlerocket/RHCOS-style SELinux nodes (no-op elsewhere). When
+// shared folder mounts are configured, it also includes fix-shared-permissions
+// to chown those mount paths to claworc:claworc (1000:1000).
+func buildInitContainers(sfMounts []SharedFolderMount, privileged bool) []corev1.Container {
+	containers := []corev1.Container{{
+		Name:  "fix-home-selinux",
+		Image: "busybox:latest",
+		// chcon may fail on non-SELinux filesystems or nodes — that's fine,
+		// the `|| true` keeps the pod startable on plain Ubuntu/COS clusters.
+		Command: []string{"sh", "-c",
+			"chcon -R -l s0:c0,c0 /home/claworc /home/linuxbrew/.linuxbrew 2>/dev/null || true"},
+		SecurityContext: &corev1.SecurityContext{Privileged: &privileged},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "home-data", MountPath: "/home/claworc"},
+			{Name: "homebrew-data", MountPath: "/home/linuxbrew/.linuxbrew"},
+		},
+	}}
+	if len(sfMounts) > 0 {
+		var chownCmds []string
+		var volumeMounts []corev1.VolumeMount
+		for _, sfm := range sfMounts {
+			chownCmds = append(chownCmds, fmt.Sprintf("chown 1000:1000 %s", sfm.MountPath))
+			volumeMounts = append(volumeMounts, corev1.VolumeMount{
+				Name:      fmt.Sprintf("shared-%d", sfm.VolumeID),
+				MountPath: sfm.MountPath,
+			})
+		}
+		containers = append(containers, corev1.Container{
+			Name:         "fix-shared-permissions",
+			Image:        "busybox:latest",
+			Command:      []string{"sh", "-c", strings.Join(chownCmds, " && ")},
+			VolumeMounts: volumeMounts,
 		})
 	}
-	return []corev1.Container{{
-		Name:         "fix-shared-permissions",
-		Image:        "busybox:latest",
-		Command:      []string{"sh", "-c", strings.Join(chownCmds, " && ")},
-		VolumeMounts: volumeMounts,
-	}}
+	return containers
 }
 
 func appendSharedVolumeMounts(base []corev1.VolumeMount, sfMounts []SharedFolderMount) []corev1.VolumeMount {
