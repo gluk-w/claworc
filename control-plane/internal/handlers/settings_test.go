@@ -110,6 +110,22 @@ func TestUpdateSettings_PlainSetting(t *testing.T) {
 	}
 }
 
+func TestUpdateSettings_RejectsInvalidMemoryQuantity(t *testing.T) {
+	setupSettingsTest(t)
+
+	w := httptest.NewRecorder()
+	UpdateSettings(w, postJSON("/api/v1/settings", map[string]string{
+		"default_memory_request": "500Mb",
+	}))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if val, _ := database.GetSetting("default_memory_request"); val == "500Mb" {
+		t.Errorf("invalid value was persisted: %q", val)
+	}
+}
+
 func TestUpdateSettings_BraveKey_EncryptsAndMasks(t *testing.T) {
 	setupSettingsTest(t)
 

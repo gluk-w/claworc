@@ -117,6 +117,26 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resourceFromRaw := func(key string) string {
+		if v, ok := raw[key]; ok {
+			if s, ok := v.(string); ok {
+				return s
+			}
+		}
+		return ""
+	}
+	if err := ValidateResourceQuantities(ResourceQuantities{
+		CPURequest:      resourceFromRaw("default_cpu_request"),
+		CPULimit:        resourceFromRaw("default_cpu_limit"),
+		MemoryRequest:   resourceFromRaw("default_memory_request"),
+		MemoryLimit:     resourceFromRaw("default_memory_limit"),
+		StorageHome:     resourceFromRaw("default_storage_home"),
+		StorageHomebrew: resourceFromRaw("default_storage_homebrew"),
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	// Handle default_models
 	if v, ok := raw["default_models"]; ok {
 		b, err := json.Marshal(v)

@@ -10,6 +10,7 @@ import { useProviders, useCatalogIconMap } from "@/hooks/useProviders";
 import { fetchSSHFingerprint, rotateSSHKey } from "@/api/ssh";
 import { syncAllProviders } from "@/api/llm";
 import { successToast, errorToast } from "@/utils/toast";
+import { validateResourceQuantities } from "@/utils/resourceValidation";
 import type { LLMProvider } from "@/types/instance";
 
 import type { SettingsUpdatePayload } from "@/types/settings";
@@ -93,6 +94,7 @@ export default function SettingsPage() {
   };
 
   const handleSave = () => {
+    if (!resourcesValid) return;
     const payload: SettingsUpdatePayload = { ...resources };
     if (pendingBraveKey !== null) payload.brave_api_key = pendingBraveKey;
 
@@ -125,14 +127,33 @@ export default function SettingsPage() {
     await updateMutation.mutateAsync(payload);
   };
 
-  const resourceFields: { key: string; label: string }[] = [
-    { key: "default_cpu_request", label: "CPU Request" },
-    { key: "default_cpu_limit", label: "CPU Limit" },
-    { key: "default_memory_request", label: "Memory Request" },
-    { key: "default_memory_limit", label: "Memory Limit" },
-    { key: "default_storage_homebrew", label: "Homebrew Storage" },
-    { key: "default_storage_home", label: "Home Storage" },
+  const resourceFields: {
+    key: string;
+    label: string;
+    errorKey: "cpu_request" | "cpu_limit" | "memory_request" | "memory_limit" | "storage_home" | "storage_homebrew";
+  }[] = [
+    { key: "default_cpu_request", label: "CPU Request", errorKey: "cpu_request" },
+    { key: "default_cpu_limit", label: "CPU Limit", errorKey: "cpu_limit" },
+    { key: "default_memory_request", label: "Memory Request", errorKey: "memory_request" },
+    { key: "default_memory_limit", label: "Memory Limit", errorKey: "memory_limit" },
+    { key: "default_storage_homebrew", label: "Homebrew Storage", errorKey: "storage_homebrew" },
+    { key: "default_storage_home", label: "Home Storage", errorKey: "storage_home" },
   ];
+
+  const effective = (key: string): string => {
+    if (key in resources) return resources[key];
+    const v = (settings as Record<string, any>)[key];
+    return typeof v === "string" ? v : "";
+  };
+  const resourceErrors = validateResourceQuantities({
+    cpu_request: effective("default_cpu_request"),
+    cpu_limit: effective("default_cpu_limit"),
+    memory_request: effective("default_memory_request"),
+    memory_limit: effective("default_memory_limit"),
+    storage_home: effective("default_storage_home"),
+    storage_homebrew: effective("default_storage_homebrew"),
+  });
+  const resourcesValid = Object.keys(resourceErrors).length === 0;
 
   const hasChanges =
     pendingBraveKey !== null ||
@@ -316,18 +337,28 @@ export default function SettingsPage() {
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
-              {resourceFields.map((field) => (
-                <div key={field.key}>
-                  <label className="block text-xs text-gray-500 mb-1">{field.label}</label>
-                  <input
-                    type="text"
-                    defaultValue={(settings as Record<string, any>)[field.key] ?? ""}
-                    onChange={(e) => setResources((r) => ({ ...r, [field.key]: e.target.value }))}
-                    className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              ))}
+              {resourceFields.map((field) => {
+                const err = resourceErrors[field.errorKey];
+                return (
+                  <div key={field.key}>
+                    <label className="block text-xs text-gray-500 mb-1">{field.label}</label>
+                    <input
+                      type="text"
+                      defaultValue={(settings as Record<string, any>)[field.key] ?? ""}
+                      onChange={(e) => setResources((r) => ({ ...r, [field.key]: e.target.value }))}
+                      className={`w-full px-3 py-1.5 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${err ? "border-red-300" : "border-gray-300"}`}
+                    />
+                    {err && <p className="mt-1 text-xs text-red-600">{err}</p>}
+                  </div>
+                );
+              })}
             </div>
+            {resourceErrors.cpu_pair && (
+              <p className="mt-2 text-xs text-red-600">{resourceErrors.cpu_pair}</p>
+            )}
+            {resourceErrors.memory_pair && (
+              <p className="mt-2 text-xs text-red-600">{resourceErrors.memory_pair}</p>
+            )}
           </div>
         </div>
 
@@ -478,7 +509,7 @@ export default function SettingsPage() {
         </button>
         <button
           onClick={handleSave}
-          disabled={updateMutation.isPending || !hasChanges}
+          disabled={updateMutation.isPending || !hasChanges || !resourcesValid}
           className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {updateMutation.isPending ? "Saving..." : "Save"}
