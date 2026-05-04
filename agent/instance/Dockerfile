@@ -28,7 +28,7 @@ RUN apt-get update && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       tzdata locales \
-      openssh-server git python3 python3-pip python3-venv python3-numpy \
+      openssh-server git python3 python3-pip python3-venv python3-numpy python-is-python3 \
       build-essential procps cron nodejs \
       sudo && \
     echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen && \
@@ -46,14 +46,21 @@ RUN S6_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") &&
     curl -fsSL "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz" \
       | tar -C / -Jxpf -
 
-# Homebrew on the persistent volume (tools survive across pod restarts).
+# Homebrew is installed at build time at its canonical path
+# (/home/linuxbrew/.linuxbrew — bottles hardcode this prefix), then moved to
+# /opt/homebrew-skeleton so it survives the PVC mount on /home/linuxbrew/.linuxbrew.
+# The init-homebrew-seed s6 oneshot copies it back on first boot if the PVC is empty.
 RUN mkdir -p /home/linuxbrew/.linuxbrew && \
-    chown -R claworc:claworc /home/linuxbrew/.linuxbrew
+    chown -R claworc:claworc /home/linuxbrew && \
+    echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/claworc/.bashrc
 
 USER claworc
-RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" && \
-    echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/claworc/.bashrc
+RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 USER root
+RUN mkdir -p /opt/homebrew-skeleton && \
+    mv /home/linuxbrew/.linuxbrew /opt/homebrew-skeleton/.linuxbrew && \
+    mkdir -p /home/linuxbrew/.linuxbrew && \
+    chown -R claworc:claworc /opt/homebrew-skeleton /home/linuxbrew
 
 COPY browser.json /defaults/browser.json
 # TOOLS.md is staged here only so the bake step below can drop it into the
@@ -66,8 +73,10 @@ COPY rootfs/ /
 
 RUN chmod +x /etc/s6-overlay/s6-rc.d/init-setup/up \
              /etc/s6-overlay/s6-rc.d/init-openclaw-seed/up \
+             /etc/s6-overlay/s6-rc.d/init-homebrew-seed/up \
              /etc/s6-overlay/scripts/init-setup.sh \
              /etc/s6-overlay/scripts/init-openclaw-seed.sh \
+             /etc/s6-overlay/scripts/init-homebrew-seed.sh \
              /etc/s6-overlay/s6-rc.d/svc-openclaw/run \
              /etc/s6-overlay/s6-rc.d/svc-sshd/run \
              /etc/s6-overlay/s6-rc.d/svc-cron/run
