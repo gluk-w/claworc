@@ -1,0 +1,109 @@
+---
+title: "Database"
+description: "Configure SQLite, PostgreSQL, or MariaDB as the control plane's database backend."
+---
+
+The control plane stores its state in a relational database. By default it
+uses an embedded SQLite file under `CLAWORC_DATA_PATH`, which is the right
+choice for single-node installs and most self-hosted deployments. Production
+deployments that prefer an external managed database can switch to
+**PostgreSQL** or **MariaDB / MySQL** by setting a single environment
+variable.
+
+## Choosing a database
+
+| Backend | When to use |
+|---------|-------------|
+| **SQLite** *(default)* | Single-replica deployments, local development, small teams. Zero-config. |
+| **PostgreSQL** | You already operate a managed Postgres (AWS RDS, Cloud SQL, Supabase, etc.) and want one less moving part on the control-plane host. |
+| **MariaDB / MySQL** | You already run MariaDB or MySQL infrastructure and want to colocate Claworc state there. |
+
+All three backends provide identical functionality — the choice is purely
+operational.
+
+## Configuration
+
+Set `CLAWORC_DATABASE` to a URL describing the driver, credentials, host, and
+database name:
+
+| Backend | URL example |
+|---------|-------------|
+| SQLite *(default — leave unset)* | *(empty)* |
+| SQLite at a specific path | `sqlite:///var/lib/claworc/main.db` |
+| PostgreSQL | `postgres://claworc:secret@db.example.com:5432/claworc?sslmode=require` |
+| MariaDB / MySQL | `mariadb://claworc:secret@db.example.com:3306/claworc` |
+
+When `CLAWORC_DATABASE` is unset, the control plane falls back to two SQLite
+files at `<CLAWORC_DATA_PATH>/claworc.db` and
+`<CLAWORC_DATA_PATH>/llm-logs.db`. When it points to PostgreSQL or MariaDB,
+all tables — including LLM request logs — live in the single database named
+in the URL.
+
+<Note>
+  You only need to provision **one** database for PostgreSQL or MariaDB
+  deployments. The control plane no longer uses a separate logs database in
+  that mode.
+</Note>
+
+## Pool tuning
+
+PostgreSQL and MariaDB connections are pooled. The defaults work for typical
+deployments; override them via query-string parameters if you need to:
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `max_open_conns` | `20` | Maximum simultaneously open connections. |
+| `max_idle_conns` | `5` | Idle connections kept warm in the pool. |
+| `conn_max_lifetime` | `1h` | How long a connection lives before it's recycled. Use a Go duration string (`30m`, `2h`, …). |
+
+Example: `postgres://u:p@host/claworc?sslmode=require&max_open_conns=50&conn_max_lifetime=15m`.
+
+## TLS
+
+* **PostgreSQL** — append `?sslmode=require` (or `verify-full` if you also
+  configure a CA bundle via the standard libpq environment variables).
+* **MariaDB / MySQL** — append `?tls=true`, `?tls=preferred`, or
+  `?tls=skip-verify` depending on your TLS posture.
+
+## Helm
+
+The Helm chart exposes the database URL through a `database` block in
+`values.yaml`:
+
+```yaml
+database:
+  url: ""              # e.g. postgres://user:pass@host:5432/claworc
+  existingSecret: ""   # Secret name with a "url" key; takes precedence over url
+```
+
+Leave both fields empty to keep the default SQLite-on-PVC behavior. For
+production, prefer `existingSecret` so credentials never appear in the values
+file:
+
+```bash
+kubectl create secret generic claworc-db \
+  --from-literal=url='postgres://claworc:secret@db.example.com:5432/claworc?sslmode=require'
+
+helm upgrade claworc helm/ --set database.existingSecret=claworc-db
+```
+
+The data persistent volume is still mounted in external-database mode because
+`/app/data` also stores SSH keys, backup staging, and other on-disk artifacts.
+
+## Schema migrations
+
+Schema changes are applied automatically on startup. The first time the
+control plane connects to a fresh database, it creates every table it needs;
+on every subsequent start it applies any new migrations that shipped in the
+release. No manual migration step is required when upgrading.
+
+## Backups
+
+Backing up the control plane database is independent of instance backups
+(`CLAWORC_BACKUPS_PATH`):
+
+* **SQLite** — back up `<CLAWORC_DATA_PATH>` (or its mounted volume); the two
+  database files live there.
+* **PostgreSQL** — `pg_dump` against the configured database.
+* **MariaDB** — `mysqldump --single-transaction --routines` against the
+  configured database.

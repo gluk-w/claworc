@@ -9,6 +9,10 @@ import (
 type Settings struct {
 	DataPath     string   `envconfig:"DATA_PATH" default:"/app/data"`
 	BackupsPath  string   `envconfig:"BACKUPS_PATH" default:""`
+	// Database is a URL-style connection string covering driver, credentials,
+	// host, and database name. Empty means "use SQLite at DataPath" (default
+	// behavior, fully backwards compatible). See docs/databases.md.
+	Database     string   `envconfig:"DATABASE" default:""`
 	K8sNamespace string   `envconfig:"K8S_NAMESPACE" default:"claworc"`
 	DockerHost   string   `envconfig:"DOCKER_HOST" default:""`
 	AuthDisabled bool     `envconfig:"AUTH_DISABLED" default:"false"`

@@ -49,6 +49,12 @@
               "environment-variables",
               "analytics"
             ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "database"
+            ]
           }
         ]
       }

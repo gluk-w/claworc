@@ -14,6 +14,20 @@ config:
   backupsPath: ""
   k8sNamespace: claworc
 
+# External database. When unset, the chart preserves the default behavior:
+# SQLite stored on the data PVC. Setting database.url (or database.existingSecret
+# pointing at a Secret with a "url" key) switches the control plane to the
+# external database. The data PVC is still mounted because /app/data also
+# stores SSH keys, backup staging, and other on-disk artifacts.
+#
+# URL format (see docs/databases.md):
+#   sqlite:///abs/path/main.db
+#   postgres://user:pass@host:5432/dbname?sslmode=require
+#   mysql://user:pass@host:3306/dbname            (mariadb:// also works)
+database:
+  url: ""
+  existingSecret: ""           # Secret name with key "url"; takes precedence over url
+
 service:
   type: NodePort
   port: 8001

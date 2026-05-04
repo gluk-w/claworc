@@ -1,20 +1,34 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/config"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
+// DB is the main control-plane database. For Postgres/MySQL, DB and LogsDB
+// are the same *gorm.DB instance.
 var DB *gorm.DB
+
+// resolved keeps the parsed URL so InitLogsDB can pick the right dialector
+// and so other code (migrations, tests) can introspect the active driver.
+var resolved *ResolvedDB
+
+// ActiveDriver returns the current database driver. Falls back to SQLite when
+// Init has not been called yet (defensive — production calls Init first).
+func ActiveDriver() Driver {
+	if resolved == nil {
+		return DriverSQLite
+	}
+	return resolved.Driver
+}
 
 func Init() error {
 	dataDir := config.Cfg.DataPath
@@ -23,31 +37,23 @@ func Init() error {
 			return fmt.Errorf("create data directory: %w", err)
 		}
 	}
-	dbPath := filepath.Join(dataDir, "claworc.db")
 
-	var err error
-	DB, err = gorm.Open(sqlite.Open(dbPath), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Warn),
-	})
+	r, err := ResolveDatabase(config.Cfg.Database, dataDir)
+	if err != nil {
+		return err
+	}
+	resolved = r
+
+	DB, err = openDialector(r.MainDialector, r.Driver, r.Pool)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
 
-	sqlDB, err := DB.DB()
-	if err != nil {
-		return fmt.Errorf("get sql.DB: %w", err)
-	}
-	// Use busy_timeout instead of WAL journal mode. WAL uses mmap() for the
-	// shared-memory file (.db-shm), which macOS Docker Desktop bind mounts
-	// (VirtioFS/gRPC FUSE) do not support properly, causing SQLITE_IOERR on
-	// every query. The default DELETE journal mode avoids mmap entirely.
-	// busy_timeout handles write contention that WAL would otherwise reduce.
-	if _, err := sqlDB.Exec("PRAGMA busy_timeout=5000"); err != nil {
-		return fmt.Errorf("set busy timeout: %w", err)
-	}
-
-	if err := DB.AutoMigrate(&Instance{}, &Setting{}, &User{}, &UserInstance{}, &WebAuthnCredential{}, &LLMProvider{}, &LLMGatewayKey{}, &Skill{}, &Backup{}, &BackupSchedule{}, &SharedFolder{}, &KanbanBoard{}, &KanbanTask{}, &KanbanComment{}, &KanbanArtifact{}, &InstanceSoul{}, &BrowserSession{}); err != nil {
-		return fmt.Errorf("auto-migrate: %w", err)
+	// Schema migrations run via goose (see migrations.go). RunMigrations is
+	// invoked from main.go after Init/InitLogsDB so callers control ordering;
+	// for unit tests that bypass main, autoMigrateMain remains accessible.
+	if err := RunMigrations(context.Background()); err != nil {
+		return fmt.Errorf("run migrations: %w", err)
 	}
 
 	if err := seedDefaults(); err != nil {
@@ -57,6 +63,66 @@ func Init() error {
 	migrateProviderAPIKeys()
 
 	return nil
+}
+
+// openDialector opens a GORM connection for the given dialector and applies
+// driver-appropriate tuning (SQLite gets PRAGMA busy_timeout; Postgres/MySQL
+// get pool size limits).
+func openDialector(d gorm.Dialector, driver Driver, pool PoolConfig) (*gorm.DB, error) {
+	gdb, err := gorm.Open(d, &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Warn),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		return nil, fmt.Errorf("get sql.DB: %w", err)
+	}
+
+	switch driver {
+	case DriverSQLite:
+		// busy_timeout avoids SQLITE_BUSY under contention. We deliberately
+		// avoid WAL mode because mmap'd .db-shm files break on macOS Docker
+		// Desktop bind mounts. See database.go header comment in older
+		// revisions of this file for detail.
+		if _, err := sqlDB.Exec("PRAGMA busy_timeout=5000"); err != nil {
+			return nil, fmt.Errorf("set busy timeout: %w", err)
+		}
+	default:
+		sqlDB.SetMaxOpenConns(pool.MaxOpenConns)
+		sqlDB.SetMaxIdleConns(pool.MaxIdleConns)
+		sqlDB.SetConnMaxLifetime(pool.ConnMaxLifetime)
+	}
+
+	return gdb, nil
+}
+
+// autoMigrateMain runs GORM AutoMigrate for every model owned by the main
+// database. Kept as the schema source of truth for the baseline; new
+// schema deltas should ship as goose migrations layered on top (see
+// migrations.go).
+func autoMigrateMain(gdb *gorm.DB) error {
+	return gdb.AutoMigrate(
+		&Instance{},
+		&Setting{},
+		&User{},
+		&UserInstance{},
+		&WebAuthnCredential{},
+		&LLMProvider{},
+		&LLMGatewayKey{},
+		&Skill{},
+		&Backup{},
+		&BackupSchedule{},
+		&SharedFolder{},
+		&KanbanBoard{},
+		&KanbanTask{},
+		&KanbanComment{},
+		&KanbanArtifact{},
+		&InstanceSoul{},
+		&BrowserSession{},
+	)
 }
 
 // migrateProviderAPIKeys moves API keys from the settings table into the
@@ -161,12 +227,11 @@ func GetSetting(key string) (string, error) {
 	return s.Value, nil
 }
 
+// SetSetting upserts a row into the settings table. Driver-portable via
+// GORM's clause.OnConflict (translated to ON CONFLICT for SQLite/Postgres
+// and to ON DUPLICATE KEY UPDATE for MySQL).
 func SetSetting(key, value string) error {
-	return DB.Exec(
-		"INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "+
-			"ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-		key, value, time.Now().UTC(),
-	).Error
+	return upsertSetting(key, value, time.Now().UTC())
 }
 
 func DeleteSetting(key string) error {

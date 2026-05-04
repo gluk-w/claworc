@@ -35,6 +35,16 @@ spec:
             {{- end }}
             - name: CLAWORC_K8S_NAMESPACE
               value: {{ .Values.config.k8sNamespace | quote }}
+            {{- if .Values.database.existingSecret }}
+            - name: CLAWORC_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.existingSecret | quote }}
+                  key: url
+            {{- else if .Values.database.url }}
+            - name: CLAWORC_DATABASE
+              value: {{ .Values.database.url | quote }}
+            {{- end }}
             {{- range $key, $value := .Values.extraEnv }}
             - name: {{ $key }}
               value: {{ $value | quote }}

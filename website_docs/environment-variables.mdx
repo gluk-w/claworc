@@ -10,6 +10,7 @@ All Claworc configuration is done via environment variables with the `CLAWORC_` 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CLAWORC_DATA_PATH` | `/app/data` | Directory to store the Claworc's data like SQLite database, SSH key pair, and etc. Mount a persistent volume here. |
+| `CLAWORC_DATABASE` | *(empty)* | Database connection URL. Leave empty to use SQLite under `CLAWORC_DATA_PATH`. Set to a `postgres://`, `mysql://`, or `mariadb://` URL to use an external database. See [Database](/database). |
 | `CLAWORC_BACKUPS_PATH` | *(empty)* | Directory for backup archives. When empty, backups are written under `<CLAWORC_DATA_PATH>/backups`. Set this to place backups on a separate (for example, cheaper or slower) volume. The directory must exist and be writable. |
 | `CLAWORC_K8S_NAMESPACE` | `claworc` | Kubernetes namespace where agent instances are created. Must exist before starting. |
 | `CLAWORC_DOCKER_HOST` | *(empty)* | Docker socket or TCP address. Example: `unix:///var/run/docker.sock`. Leave empty to auto-detect orchestrator (Kubernetes takes priority). |

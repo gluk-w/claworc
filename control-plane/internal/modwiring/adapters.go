@@ -22,6 +22,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	"golang.org/x/crypto/ssh"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ---- Gateway dialer ----------------------------------------------------
@@ -375,11 +376,18 @@ func (s *Store) GetSouls(ctx context.Context, instanceIDs []uint) ([]moderator.S
 
 func (s *Store) UpsertSoul(ctx context.Context, soul moderator.Soul) error {
 	skillsJSON, _ := json.Marshal(soul.Skills)
-	return s.DB.WithContext(ctx).Exec(
-		"INSERT INTO instance_souls (instance_id, summary, skills, updated_at) VALUES (?, ?, ?, ?) "+
-			"ON CONFLICT(instance_id) DO UPDATE SET summary=excluded.summary, skills=excluded.skills, updated_at=excluded.updated_at",
-		soul.InstanceID, soul.Summary, string(skillsJSON), time.Now().UTC(),
-	).Error
+	row := database.InstanceSoul{
+		InstanceID: soul.InstanceID,
+		Summary:    soul.Summary,
+		Skills:     string(skillsJSON),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	// Driver-portable upsert. GORM emits ON CONFLICT for SQLite/Postgres and
+	// ON DUPLICATE KEY UPDATE for MySQL.
+	return s.DB.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "instance_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"summary", "skills", "updated_at"}),
+	}).Create(&row).Error
 }
 
 // ---- Settings ----------------------------------------------------------

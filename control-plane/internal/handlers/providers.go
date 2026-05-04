@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -942,20 +943,32 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 		endDate = v
 	}
 	// Determine time-series granularity based on date range
-	startParsed, _ := time.Parse("2006-01-02", startDate)
-	endParsed, _ := time.Parse("2006-01-02", endDate)
+	startParsed, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid start_date")
+		return
+	}
+	endParsed, err := time.Parse("2006-01-02", endDate)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid end_date")
+		return
+	}
 	daysDiff := int(endParsed.Sub(startParsed).Hours() / 24)
 
-	var tsGroupExpr, granularity string
+	// bucketLayout maps each row's RequestedAt into a string label that drives
+	// time-series grouping. Bucketing in Go (instead of SQL) keeps the query
+	// dialect-portable across SQLite/Postgres/MySQL — there is no portable
+	// SQL function for "truncate timestamp to minute/hour/day".
+	var bucketLayout, granularity string
 	switch {
 	case daysDiff == 0:
-		tsGroupExpr = "strftime('%Y-%m-%dT%H:%M', requested_at)"
+		bucketLayout = "2006-01-02T15:04"
 		granularity = "minute"
 	case daysDiff < 7:
-		tsGroupExpr = "strftime('%Y-%m-%dT%H', requested_at)"
+		bucketLayout = "2006-01-02T15"
 		granularity = "hour"
 	default:
-		tsGroupExpr = "strftime('%Y-%m-%d', requested_at)"
+		bucketLayout = "2006-01-02"
 		granularity = "day"
 	}
 
@@ -975,79 +988,94 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Use DATE() to compare only the date part, making filtering format-agnostic
-	// regardless of how GORM/SQLite stores the time.Time value.
-	baseWhere := "DATE(requested_at) >= ? AND DATE(requested_at) <= ?"
-	baseArgs := []interface{}{startDate, endDate}
+	// Filter by timestamp range using time.Time bounds rather than DATE().
+	// rangeStart = 00:00 UTC on startDate, rangeEnd = 00:00 UTC on the day
+	// AFTER endDate so we get an inclusive end-day with a half-open interval.
+	rangeStart := startParsed.UTC()
+	rangeEnd := endParsed.AddDate(0, 0, 1).UTC()
+
+	query := database.LogsDB.Model(&database.LLMRequestLog{}).
+		Where("requested_at >= ? AND requested_at < ?", rangeStart, rangeEnd)
 	if instanceFilter != nil {
-		baseWhere += " AND instance_id = ?"
-		baseArgs = append(baseArgs, *instanceFilter)
+		query = query.Where("instance_id = ?", *instanceFilter)
 	}
 	if providerFilter != nil {
-		baseWhere += " AND provider_id = ?"
-		baseArgs = append(baseArgs, *providerFilter)
+		query = query.Where("provider_id = ?", *providerFilter)
 	}
 
-	// by_instance
-	type instRow struct {
+	// Pull the rows ungrouped and aggregate in Go. This avoids SQL functions
+	// that vary by dialect (DATE(), strftime, date_trunc, DATE_FORMAT) and
+	// produces all four breakdowns from a single scan. Volumes here are
+	// bounded by the date-range filter; profile and switch to per-driver
+	// expressions if this becomes a hot path.
+	type rawRow struct {
 		InstanceID        uint
-		TotalRequests     int
-		InputTokens       int64
-		CachedInputTokens int64
-		OutputTokens      int64
-		CostUSD           float64
-	}
-	var instRows []instRow
-	database.LogsDB.Raw(
-		"SELECT instance_id, COUNT(*) total_requests, SUM(input_tokens) input_tokens, SUM(cached_input_tokens) cached_input_tokens, SUM(output_tokens) output_tokens, SUM(cost_usd) cost_usd FROM llm_request_logs WHERE "+baseWhere+" GROUP BY instance_id ORDER BY cost_usd DESC",
-		baseArgs...,
-	).Scan(&instRows)
-
-	// by_provider
-	type provRow struct {
 		ProviderID        uint
-		TotalRequests     int
-		InputTokens       int64
-		CachedInputTokens int64
-		OutputTokens      int64
-		CostUSD           float64
-	}
-	var provRows []provRow
-	database.LogsDB.Raw(
-		"SELECT provider_id, COUNT(*) total_requests, SUM(input_tokens) input_tokens, SUM(cached_input_tokens) cached_input_tokens, SUM(output_tokens) output_tokens, SUM(cost_usd) cost_usd FROM llm_request_logs WHERE "+baseWhere+" GROUP BY provider_id ORDER BY cost_usd DESC",
-		baseArgs...,
-	).Scan(&provRows)
-
-	// by_model
-	type modelRow struct {
 		ModelID           string
-		ProviderID        uint
-		TotalRequests     int
 		InputTokens       int64
 		CachedInputTokens int64
 		OutputTokens      int64
 		CostUSD           float64
+		RequestedAt       time.Time
 	}
-	var modelRows []modelRow
-	database.LogsDB.Raw(
-		"SELECT model_id, provider_id, COUNT(*) total_requests, SUM(input_tokens) input_tokens, SUM(cached_input_tokens) cached_input_tokens, SUM(output_tokens) output_tokens, SUM(cost_usd) cost_usd FROM llm_request_logs WHERE "+baseWhere+" GROUP BY model_id, provider_id ORDER BY cost_usd DESC",
-		baseArgs...,
-	).Scan(&modelRows)
+	var rawRows []rawRow
+	if err := query.
+		Select("instance_id, provider_id, model_id, input_tokens, cached_input_tokens, output_tokens, cost_usd, requested_at").
+		Scan(&rawRows).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "query usage logs: "+err.Error())
+		return
+	}
 
-	// time_series
-	type tsRow struct {
-		Date              string
+	// In-memory aggregation buckets.
+	type aggRow struct {
 		TotalRequests     int
 		InputTokens       int64
 		CachedInputTokens int64
 		OutputTokens      int64
 		CostUSD           float64
 	}
-	var tsRows []tsRow
-	database.LogsDB.Raw(
-		"SELECT "+tsGroupExpr+" date, COUNT(*) total_requests, SUM(input_tokens) input_tokens, SUM(cached_input_tokens) cached_input_tokens, SUM(output_tokens) output_tokens, SUM(cost_usd) cost_usd FROM llm_request_logs WHERE "+baseWhere+" GROUP BY "+tsGroupExpr+" ORDER BY date ASC",
-		baseArgs...,
-	).Scan(&tsRows)
+	addAgg := func(a *aggRow, r *rawRow) {
+		a.TotalRequests++
+		a.InputTokens += r.InputTokens
+		a.CachedInputTokens += r.CachedInputTokens
+		a.OutputTokens += r.OutputTokens
+		a.CostUSD += r.CostUSD
+	}
+
+	byInstance := map[uint]*aggRow{}
+	byProvider := map[uint]*aggRow{}
+	type modelKey struct {
+		Model      string
+		ProviderID uint
+	}
+	byModel := map[modelKey]*aggRow{}
+	byTime := map[string]*aggRow{}
+
+	for i := range rawRows {
+		row := &rawRows[i]
+
+		if _, ok := byInstance[row.InstanceID]; !ok {
+			byInstance[row.InstanceID] = &aggRow{}
+		}
+		addAgg(byInstance[row.InstanceID], row)
+
+		if _, ok := byProvider[row.ProviderID]; !ok {
+			byProvider[row.ProviderID] = &aggRow{}
+		}
+		addAgg(byProvider[row.ProviderID], row)
+
+		mk := modelKey{Model: row.ModelID, ProviderID: row.ProviderID}
+		if _, ok := byModel[mk]; !ok {
+			byModel[mk] = &aggRow{}
+		}
+		addAgg(byModel[mk], row)
+
+		bucket := row.RequestedAt.UTC().Format(bucketLayout)
+		if _, ok := byTime[bucket]; !ok {
+			byTime[bucket] = &aggRow{}
+		}
+		addAgg(byTime[bucket], row)
+	}
 
 	// Load instance name map from main DB
 	var instances []database.Instance
@@ -1068,71 +1096,83 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 
 	// Build response
 	resp := UsageStatsResponse{
-		ByInstance: make([]InstanceUsageStat, len(instRows)),
-		ByProvider: make([]ProviderUsageStat, len(provRows)),
-		ByModel:    make([]ModelUsageStat, len(modelRows)),
-		TimeSeries: make([]UsageTimePoint, len(tsRows)),
+		ByInstance: make([]InstanceUsageStat, 0, len(byInstance)),
+		ByProvider: make([]ProviderUsageStat, 0, len(byProvider)),
+		ByModel:    make([]ModelUsageStat, 0, len(byModel)),
+		TimeSeries: make([]UsageTimePoint, 0, len(byTime)),
 		Instances:  make([]UsageInstanceInfo, len(instances)),
 		Providers:  make([]UsageProviderInfo, len(providers)),
 	}
 
-	for i, row := range instRows {
-		ii := instInfoMap[row.InstanceID]
-		resp.ByInstance[i] = InstanceUsageStat{
-			InstanceID:          row.InstanceID,
+	for instanceID, agg := range byInstance {
+		ii := instInfoMap[instanceID]
+		resp.ByInstance = append(resp.ByInstance, InstanceUsageStat{
+			InstanceID:          instanceID,
 			InstanceName:        ii.Name,
 			InstanceDisplayName: ii.DisplayName,
-			TotalRequests:       row.TotalRequests,
-			InputTokens:         row.InputTokens,
-			CachedInputTokens:   row.CachedInputTokens,
-			OutputTokens:        row.OutputTokens,
-			CostUSD:             row.CostUSD,
-		}
-		resp.Total.TotalRequests += row.TotalRequests
-		resp.Total.InputTokens += row.InputTokens
-		resp.Total.CachedInputTokens += row.CachedInputTokens
-		resp.Total.OutputTokens += row.OutputTokens
-		resp.Total.CostUSD += row.CostUSD
+			TotalRequests:       agg.TotalRequests,
+			InputTokens:         agg.InputTokens,
+			CachedInputTokens:   agg.CachedInputTokens,
+			OutputTokens:        agg.OutputTokens,
+			CostUSD:             agg.CostUSD,
+		})
+		resp.Total.TotalRequests += agg.TotalRequests
+		resp.Total.InputTokens += agg.InputTokens
+		resp.Total.CachedInputTokens += agg.CachedInputTokens
+		resp.Total.OutputTokens += agg.OutputTokens
+		resp.Total.CostUSD += agg.CostUSD
 	}
+	sort.Slice(resp.ByInstance, func(i, j int) bool {
+		return resp.ByInstance[i].CostUSD > resp.ByInstance[j].CostUSD
+	})
 
-	for i, row := range provRows {
-		info := provInfoMap[row.ProviderID]
-		resp.ByProvider[i] = ProviderUsageStat{
-			ProviderID:        row.ProviderID,
+	for providerID, agg := range byProvider {
+		info := provInfoMap[providerID]
+		resp.ByProvider = append(resp.ByProvider, ProviderUsageStat{
+			ProviderID:        providerID,
 			ProviderKey:       info.Key,
 			ProviderName:      info.Name,
-			TotalRequests:     row.TotalRequests,
-			InputTokens:       row.InputTokens,
-			CachedInputTokens: row.CachedInputTokens,
-			OutputTokens:      row.OutputTokens,
-			CostUSD:           row.CostUSD,
-		}
+			TotalRequests:     agg.TotalRequests,
+			InputTokens:       agg.InputTokens,
+			CachedInputTokens: agg.CachedInputTokens,
+			OutputTokens:      agg.OutputTokens,
+			CostUSD:           agg.CostUSD,
+		})
 	}
+	sort.Slice(resp.ByProvider, func(i, j int) bool {
+		return resp.ByProvider[i].CostUSD > resp.ByProvider[j].CostUSD
+	})
 
-	for i, row := range modelRows {
-		info := provInfoMap[row.ProviderID]
-		resp.ByModel[i] = ModelUsageStat{
-			ModelID:           row.ModelID,
-			ProviderID:        row.ProviderID,
+	for mk, agg := range byModel {
+		info := provInfoMap[mk.ProviderID]
+		resp.ByModel = append(resp.ByModel, ModelUsageStat{
+			ModelID:           mk.Model,
+			ProviderID:        mk.ProviderID,
 			ProviderKey:       info.Key,
-			TotalRequests:     row.TotalRequests,
-			InputTokens:       row.InputTokens,
-			CachedInputTokens: row.CachedInputTokens,
-			OutputTokens:      row.OutputTokens,
-			CostUSD:           row.CostUSD,
-		}
+			TotalRequests:     agg.TotalRequests,
+			InputTokens:       agg.InputTokens,
+			CachedInputTokens: agg.CachedInputTokens,
+			OutputTokens:      agg.OutputTokens,
+			CostUSD:           agg.CostUSD,
+		})
 	}
+	sort.Slice(resp.ByModel, func(i, j int) bool {
+		return resp.ByModel[i].CostUSD > resp.ByModel[j].CostUSD
+	})
 
-	for i, row := range tsRows {
-		resp.TimeSeries[i] = UsageTimePoint{
-			Date:              row.Date,
-			TotalRequests:     row.TotalRequests,
-			InputTokens:       row.InputTokens,
-			CachedInputTokens: row.CachedInputTokens,
-			OutputTokens:      row.OutputTokens,
-			CostUSD:           row.CostUSD,
-		}
+	for bucket, agg := range byTime {
+		resp.TimeSeries = append(resp.TimeSeries, UsageTimePoint{
+			Date:              bucket,
+			TotalRequests:     agg.TotalRequests,
+			InputTokens:       agg.InputTokens,
+			CachedInputTokens: agg.CachedInputTokens,
+			OutputTokens:      agg.OutputTokens,
+			CostUSD:           agg.CostUSD,
+		})
 	}
+	sort.Slice(resp.TimeSeries, func(i, j int) bool {
+		return resp.TimeSeries[i].Date < resp.TimeSeries[j].Date
+	})
 
 	for i, inst := range instances {
 		resp.Instances[i] = UsageInstanceInfo{ID: inst.ID, Name: inst.Name, DisplayName: inst.DisplayName}
@@ -1209,7 +1249,9 @@ func TestProviderKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func ResetUsageLogs(w http.ResponseWriter, r *http.Request) {
-	database.LogsDB.Exec("DELETE FROM llm_request_logs")
+	// GORM requires a WHERE clause for blanket deletes; "1 = 1" is portable
+	// across SQLite, Postgres, and MySQL.
+	database.LogsDB.Where("1 = 1").Delete(&database.LLMRequestLog{})
 	w.WriteHeader(http.StatusNoContent)
 }
 
