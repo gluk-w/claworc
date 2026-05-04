@@ -292,20 +292,60 @@ type providerRequest struct {
 	Models     []database.ProviderModel `json:"models"`
 	APIKey     string                   `json:"api_key"`
 	InstanceID *uint                    `json:"instance_id,omitempty"` // non-nil = instance-specific provider
+	OAuth      *providerOAuthRequest    `json:"oauth,omitempty"`       // present for openai-codex-responses create/reconnect
+}
+
+// providerOAuthRequest carries the client-side PKCE verifier and the redirect
+// URL the user pasted after signing in at auth.openai.com. The backend
+// extracts the auth `code` from the URL, exchanges it for tokens, and
+// populates the OAuth columns on the provider row in the same request that
+// creates (or updates) the row — so a provider only exists once it has a
+// linked ChatGPT account.
+type providerOAuthRequest struct {
+	CodeVerifier string `json:"code_verifier"`
+	RedirectURL  string `json:"redirect_url"`
+}
+
+// exchangeCodexOAuth runs the manual-paste PKCE token exchange and returns
+// the encrypted tokens + decoded profile fields ready to be written to an
+// LLMProvider row.
+func exchangeCodexOAuth(ctx context.Context, in *providerOAuthRequest) (
+	encAccess, encRefresh, email, accountID string,
+	expiresAt int64,
+	err error,
+) {
+	if in == nil || strings.TrimSpace(in.CodeVerifier) == "" || strings.TrimSpace(in.RedirectURL) == "" {
+		return "", "", "", "", 0, fmt.Errorf("oauth.code_verifier and oauth.redirect_url are required")
+	}
+	code, _, parseErr := llmgateway.ExtractCodeAndState(in.RedirectURL)
+	if parseErr != nil {
+		return "", "", "", "", 0, parseErr
+	}
+	if code == "" {
+		return "", "", "", "", 0, fmt.Errorf("redirect URL does not contain an auth code")
+	}
+	tok, err := llmgateway.ExchangeCodexAuthCode(ctx, code, in.CodeVerifier, llmgateway.CodexOAuthRedirectURI)
+	if err != nil {
+		return "", "", "", "", 0, err
+	}
+	return llmgateway.BuildOAuthFieldsFromTokens(tok)
 }
 
 type providerResp struct {
-	ID           uint                     `json:"id"`
-	Key          string                   `json:"key"`
-	InstanceID   *uint                    `json:"instance_id,omitempty"`
-	Provider     string                   `json:"provider"`
-	Name         string                   `json:"name"`
-	BaseURL      string                   `json:"base_url"`
-	APIType      string                   `json:"api_type"`
-	MaskedAPIKey string                   `json:"masked_api_key"`
-	Models       []database.ProviderModel `json:"models"`
-	CreatedAt    string                   `json:"created_at"`
-	UpdatedAt    string                   `json:"updated_at"`
+	ID             uint                     `json:"id"`
+	Key            string                   `json:"key"`
+	InstanceID     *uint                    `json:"instance_id,omitempty"`
+	Provider       string                   `json:"provider"`
+	Name           string                   `json:"name"`
+	BaseURL        string                   `json:"base_url"`
+	APIType        string                   `json:"api_type"`
+	MaskedAPIKey   string                   `json:"masked_api_key"`
+	Models         []database.ProviderModel `json:"models"`
+	OAuthConnected bool                     `json:"oauth_connected"`
+	OAuthEmail     string                   `json:"oauth_email,omitempty"`
+	OAuthExpiresAt int64                    `json:"oauth_expires_at,omitempty"`
+	CreatedAt      string                   `json:"created_at"`
+	UpdatedAt      string                   `json:"updated_at"`
 }
 
 func toProviderResp(p database.LLMProvider) providerResp {
@@ -316,17 +356,20 @@ func toProviderResp(p database.LLMProvider) providerResp {
 		}
 	}
 	return providerResp{
-		ID:           p.ID,
-		Key:          p.Key,
-		InstanceID:   p.InstanceID,
-		Provider:     p.Provider,
-		Name:         p.Name,
-		BaseURL:      p.BaseURL,
-		APIType:      p.APIType,
-		MaskedAPIKey: masked,
-		Models:       database.ParseProviderModels(p.Models),
-		CreatedAt:    formatTimestamp(p.CreatedAt),
-		UpdatedAt:    formatTimestamp(p.UpdatedAt),
+		ID:             p.ID,
+		Key:            p.Key,
+		InstanceID:     p.InstanceID,
+		Provider:       p.Provider,
+		Name:           p.Name,
+		BaseURL:        p.BaseURL,
+		APIType:        p.APIType,
+		MaskedAPIKey:   masked,
+		Models:         database.ParseProviderModels(p.Models),
+		OAuthConnected: p.OAuthRefreshToken != "" && p.OAuthExpiresAt > 0,
+		OAuthEmail:     p.OAuthEmail,
+		OAuthExpiresAt: p.OAuthExpiresAt,
+		CreatedAt:      formatTimestamp(p.CreatedAt),
+		UpdatedAt:      formatTimestamp(p.UpdatedAt),
 	}
 }
 
@@ -379,14 +422,18 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "key must be lowercase alphanumeric with hyphens (e.g. anthropic, my-ollama)")
 		return
 	}
-	if body.Provider != "" && strings.TrimSpace(body.APIKey) == "" {
-		writeError(w, http.StatusBadRequest, "api_key is required for catalog providers")
-		return
-	}
-
 	apiType := body.APIType
 	if apiType == "" {
 		apiType = "openai-completions"
+	}
+	if llmgateway.IsOAuthAPIType(apiType) {
+		if body.OAuth == nil {
+			writeError(w, http.StatusBadRequest, "OAuth completion required for openai-codex-responses providers")
+			return
+		}
+	} else if body.Provider != "" && strings.TrimSpace(body.APIKey) == "" {
+		writeError(w, http.StatusBadRequest, "api_key is required for catalog providers")
+		return
 	}
 	modelsJSON := []byte("[]")
 	if body.Models != nil {
@@ -425,6 +472,18 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		p.InstanceID = body.InstanceID
+	}
+	if llmgateway.IsOAuthAPIType(apiType) {
+		encA, encR, email, accountID, expiresAt, err := exchangeCodexOAuth(r.Context(), body.OAuth)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "ChatGPT login failed: "+err.Error())
+			return
+		}
+		p.OAuthAccessToken = encA
+		p.OAuthRefreshToken = encR
+		p.OAuthEmail = email
+		p.OAuthAccountID = accountID
+		p.OAuthExpiresAt = expiresAt
 	}
 	if err := database.DB.Create(&p).Error; err != nil {
 		writeError(w, http.StatusConflict, "Provider key already exists")
@@ -501,6 +560,22 @@ func UpdateProvider(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		p.APIKey = encrypted
+	}
+	if body.OAuth != nil {
+		if !llmgateway.IsOAuthAPIType(p.APIType) {
+			writeError(w, http.StatusBadRequest, "Provider does not use OAuth")
+			return
+		}
+		encA, encR, email, accountID, expiresAt, err := exchangeCodexOAuth(r.Context(), body.OAuth)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "ChatGPT login failed: "+err.Error())
+			return
+		}
+		p.OAuthAccessToken = encA
+		p.OAuthRefreshToken = encR
+		p.OAuthEmail = email
+		p.OAuthAccountID = accountID
+		p.OAuthExpiresAt = expiresAt
 	}
 	// Key is immutable once created
 	if err := database.DB.Save(&p).Error; err != nil {
@@ -1086,7 +1161,7 @@ func probeProviderURL(ctx context.Context, baseURL, pathSuffix, apiType, apiKey 
 
 	// Set auth and probe headers via API type abstraction
 	at := llmgateway.GetAPIType(apiType)
-	at.SetAuthHeader(req, apiKey)
+	at.SetAuthHeader(req, llmgateway.AuthMaterial{APIKey: apiKey})
 	at.ProbeHeaders(req)
 
 	resp, doErr := providerProbeClient.Do(req)
@@ -1215,3 +1290,4 @@ func GetUsageLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, result)
 }
+

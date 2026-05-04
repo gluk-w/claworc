@@ -37,6 +37,7 @@ export interface SSHTestResponse {
   output: string;
   latency_ms: number;
   error: string | null;
+  target?: "agent" | "browser";
 }
 
 export interface SSHEventEntry {
@@ -53,6 +54,7 @@ export interface SSHReconnectResponse {
   status: "ok" | "error";
   latency_ms: number;
   error: string | null;
+  target?: "agent" | "browser";
 }
 
 export interface SSHFingerprintResponse {

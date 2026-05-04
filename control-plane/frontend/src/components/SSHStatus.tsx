@@ -18,6 +18,7 @@ function formatTime(ts: string): string {
 
 const tunnelLabelMap: Record<string, string> = {
   VNC: "Browser",
+  CDP: "Browser CDP",
   Gateway: "OpenClaw",
   LLMProxy: "API Gateway",
 };
@@ -63,15 +64,19 @@ export default function SSHStatus({ status, isLoading, isError, onRefresh, onTro
   const style = stateStyles[status.state] ?? defaultStyle;
   const tunnelSummary = status.tunnels.length > 0
     ? status.tunnels.map((t) => {
-        const healthy = t.status === "active";
+        const variant =
+          t.status === "active"
+            ? { pill: "bg-green-50 text-green-700", dot: "bg-green-500", title: undefined }
+            : t.status === "idle"
+              ? { pill: "bg-gray-100 text-gray-600", dot: "bg-gray-400", title: "Browser pod not running" }
+              : { pill: "bg-red-50 text-red-700", dot: "bg-red-500", title: t.status };
         return (
           <span
             key={t.label}
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
-              healthy ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
-            }`}
+            title={variant.title}
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${variant.pill}`}
           >
-            <span className={`w-1.5 h-1.5 rounded-full ${healthy ? "bg-green-500" : "bg-red-500"}`} />
+            <span className={`w-1.5 h-1.5 rounded-full ${variant.dot}`} />
             {tunnelLabelMap[t.label] ?? t.label}
           </span>
         );

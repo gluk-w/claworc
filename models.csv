@@ -1,4 +1,5 @@
 provider_key,provider_label,icon_key,api_format,base_url,model_id,model_name,reasoning,vision,context_window,max_tokens,input_cost,output_cost,cached_read_cost,cached_write_cost,tag,description
+openai-codex,OpenAI Codex (ChatGPT subscription),openai,openai-codex-responses,https://chatgpt.com/backend-api,gpt-5.3-codex,GPT-5.3 Codex,TRUE,FALSE,400000,128000,0,0,0,0,coding,Included with ChatGPT subscription
 bedrock,Amazon Bedrock,bedrock,bedrock-converse-stream,https://bedrock-runtime.us-east-1.amazonaws.com,us.anthropic.claude-opus-4-6-v1:0,Claude Opus 4.6 (Bedrock),TRUE,TRUE,200000,128000,,,,,,
 anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-opus-4-6,Claude Opus 4.6,TRUE,TRUE,200000,128000,5,25,0.5,6.25,flagship,Most capable — deep reasoning, complex tasks
 anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-sonnet-4-6,Claude Sonnet 4.6,TRUE,TRUE,200000,64000,3,15,0.3,3.75,balanced,Fast & capable — ideal default
@@ -41,7 +42,7 @@ nvidia,NVIDIA,nvidia,openai-completions,https://integrate.api.nvidia.com/v1,meta
 nvidia,NVIDIA,nvidia,openai-completions,https://integrate.api.nvidia.com/v1,nvidia/mistral-nemo-minitron-8b-8k-instruct,Mistral Nemo Minitron 8B 8K Instruct,FALSE,FALSE,,,,,,
 ollama,Ollama,ollama,ollama,http://ollama-host:11434,gpt-oss:20b,GPT-OSS 20B,FALSE,FALSE,8192,8192,,,,
 opencode,OpenCode Zen,,,,OPENCODE_ZEN_API_KEY,Opencode Zen Api Key,FALSE,FALSE,,,,,,
-openrouter,OpenRouter,openrouter,openai-completions,,openrouter/anthropic/claude-sonnet-4-5,Claude Sonnet 4 5,FALSE,FALSE,,,,,,
+openrouter,OpenRouter,openrouter,openai-completions,https://openrouter.ai/api/v1,openrouter/anthropic/claude-sonnet-4-5,Claude Sonnet 4 5,FALSE,FALSE,,,,,,
 qwen,Qwen,qwen,,https://portal.qwen.ai/v1,qwen-portal/coder-model,Coder Model,FALSE,FALSE,,,,,,
 qwen,Qwen,qwen,,https://portal.qwen.ai/v1,qwen-portal/vision-model,Vision Model,FALSE,FALSE,,,,,,
 together,Together AI,togetherai,openai-completions,,together/moonshotai/Kimi-K2.5,Kimi K2 5,FALSE,FALSE,,,,,,

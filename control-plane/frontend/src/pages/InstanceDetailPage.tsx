@@ -377,11 +377,9 @@ export default function InstanceDetailPage() {
 
   const renderProviderCard = (p: import("@/types/instance").LLMProvider, isInstanceProvider: boolean) => {
     const iconKey = p.provider ? catalogDetailMap[p.provider]?.icon_key ?? undefined : undefined;
-    const displayModels: string[] = (p.models ?? []).length > 0
-      ? (p.models ?? []).map((m) => m.id)
-      : (instance.models.extra ?? [])
-          .filter((m) => m.startsWith(`${p.key}/`))
-          .map((m) => m.slice(`${p.key}/`.length));
+    const displayModels: string[] = (instance.models.extra ?? [])
+      .filter((m) => m.startsWith(`${p.key}/`))
+      .map((m) => m.slice(`${p.key}/`.length));
     return (
       <div key={`${isInstanceProvider ? "inst" : "global"}-${p.id}`} className="bg-white rounded-lg border border-gray-200 px-4 py-3">
         <div className="flex items-center gap-3">
@@ -951,6 +949,7 @@ export default function InstanceDetailPage() {
           {troubleshootOpen && (
             <SSHTroubleshoot
               instanceId={instanceId}
+              containerImage={instance.container_image}
               onClose={() => setTroubleshootOpen(false)}
             />
           )}

@@ -22,10 +22,10 @@ import (
 // removed before recreation so the new spec takes effect (Docker has no native
 // equivalent to a Deployment rolling update).
 //
-// Init containers in spec.InitContainers run as post-start exec hooks. Docker
-// has no built-in init-container concept; the practical effect is the same for
-// our use case (fixing volume ownership) since volumes are mounted before the
-// command runs.
+// Init containers in spec.InitContainers run BEFORE the main container starts,
+// matching K8s init-container semantics: each init container is a one-shot
+// helper that mounts the volumes named in its Mounts list, runs the command,
+// exits, and only then is the main container created.
 func (d *DockerOrchestrator) Apply(ctx context.Context, spec WorkloadSpec) error {
 	if spec.Pull != PullNever {
 		if err := d.ensureImage(ctx, spec.Image); err != nil {
@@ -47,6 +47,12 @@ func (d *DockerOrchestrator) Apply(ctx context.Context, spec WorkloadSpec) error
 		return fmt.Errorf("inspect existing container %s: %w", spec.Name, err)
 	}
 
+	for _, ic := range spec.InitContainers {
+		if err := d.runInitContainer(ctx, ic); err != nil {
+			return fmt.Errorf("init container %q for %s: %w", ic.Name, spec.Name, err)
+		}
+	}
+
 	containerCfg, hostCfg, netCfg := d.buildContainerConfig(spec)
 	resp, err := d.client.ContainerCreate(ctx, containerCfg, hostCfg, netCfg, nil, spec.Name)
 	if err != nil {
@@ -54,12 +60,6 @@ func (d *DockerOrchestrator) Apply(ctx context.Context, spec WorkloadSpec) error
 	}
 	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return fmt.Errorf("start container %s: %w", spec.Name, err)
-	}
-
-	for _, ic := range spec.InitContainers {
-		if err := d.runPostStartExec(ctx, resp.ID, ic); err != nil {
-			log.Printf("init container %q on %s: %v", ic.Name, spec.Name, err)
-		}
 	}
 	return nil
 }
@@ -242,17 +242,53 @@ func (d *DockerOrchestrator) buildContainerConfig(spec WorkloadSpec) (*container
 	return cc, hc, netCfg
 }
 
-func (d *DockerOrchestrator) runPostStartExec(ctx context.Context, containerID string, ic InitContainerSpec) error {
-	cmd := ic.Command
-	if len(cmd) == 0 {
+// runInitContainer spawns a one-shot helper container that mounts the init
+// spec's named volumes, runs the command, and waits for it to exit. Mirrors
+// K8s init-container semantics for the limited cases we use (preparing
+// SubPath directories, scrubbing host-scoped files on a freshly cloned
+// volume). The image is pulled best-effort.
+func (d *DockerOrchestrator) runInitContainer(ctx context.Context, ic InitContainerSpec) error {
+	if len(ic.Command) == 0 {
 		return nil
 	}
-	resp, err := d.client.ContainerExecCreate(ctx, containerID, container.ExecOptions{Cmd: cmd})
-	if err != nil {
-		return fmt.Errorf("exec create %s: %w", ic.Name, err)
+	image := ic.Image
+	if image == "" {
+		image = "alpine:latest"
 	}
-	if err := d.client.ContainerExecStart(ctx, resp.ID, container.ExecStartOptions{}); err != nil {
-		return fmt.Errorf("exec start %s: %w", ic.Name, err)
+	_ = d.ensureImage(ctx, image)
+
+	mounts := make([]mount.Mount, 0, len(ic.Mounts))
+	for _, m := range ic.Mounts {
+		mt := mount.Mount{Type: mount.TypeVolume, Source: m.Name, Target: m.MountPath, ReadOnly: m.ReadOnly}
+		if m.SubPath != "" {
+			mt.VolumeOptions = &mount.VolumeOptions{Subpath: m.SubPath}
+		}
+		mounts = append(mounts, mt)
+	}
+
+	cfg := &container.Config{Image: image, Cmd: ic.Command}
+	hostCfg := &container.HostConfig{Mounts: mounts}
+	resp, err := d.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, "")
+	if err != nil {
+		return fmt.Errorf("create init container: %w", err)
+	}
+	defer d.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return fmt.Errorf("start init container: %w", err)
+	}
+	statusCh, errCh := d.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			return fmt.Errorf("wait init container: %w", err)
+		}
+	case status := <-statusCh:
+		if status.StatusCode != 0 {
+			return fmt.Errorf("init container exited with status %d", status.StatusCode)
+		}
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 	return nil
 }

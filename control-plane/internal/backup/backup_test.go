@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -60,25 +61,27 @@ func (m *mockOrch) StreamExecInInstance(ctx context.Context, name string, cmd []
 	return "", 0, nil
 }
 func (m *mockOrch) DeleteSharedVolume(_ context.Context, _ uint) error { return nil }
-func (m *mockOrch) EnsureBrowserPod(_ context.Context, _ uint, _ orchestrator.BrowserPodParams) (orchestrator.BrowserPodEndpoint, error) {
-	return orchestrator.BrowserPodEndpoint{}, nil
+func (m *mockOrch) CloneVolume(_ context.Context, _, _ string) error    { return nil }
+func (m *mockOrch) VolumeNameFor(name, suffix string) string            { return name + "-" + suffix }
+func (m *mockOrch) Apply(_ context.Context, _ orchestrator.WorkloadSpec) error          { return nil }
+func (m *mockOrch) DeleteWorkload(_ context.Context, _ orchestrator.WorkloadSpec) error { return nil }
+func (m *mockOrch) EnsureSSHAccess(_ context.Context, _, _ string) error                { return nil }
+func (m *mockOrch) WorkloadSSHAddress(_ context.Context, _ string) (string, int, error) {
+	return "", 0, nil
 }
-func (m *mockOrch) StopBrowserPod(_ context.Context, _ uint) error   { return nil }
-func (m *mockOrch) DeleteBrowserPod(_ context.Context, _ uint) error { return nil }
-func (m *mockOrch) GetBrowserPodStatus(_ context.Context, _ uint) (string, error) {
-	return "stopped", nil
-}
-func (m *mockOrch) GetBrowserPodEndpoint(_ context.Context, _ uint) (orchestrator.BrowserPodEndpoint, error) {
-	return orchestrator.BrowserPodEndpoint{}, nil
-}
-func (m *mockOrch) CloneBrowserVolume(_ context.Context, _, _ string) error { return nil }
 
 // --- test helpers ---
 
 func setupTestDB(t *testing.T) {
 	t.Helper()
 	var err error
-	database.DB, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+	// Per-test shared-cache in-memory SQLite so a backup goroutine that grabs
+	// a fresh pooled connection sees the same migrated tables as the
+	// goroutine that ran AutoMigrate. Plain ":memory:" gives each pooled
+	// connection its own empty database, intermittently producing
+	// "no such table: backups" when the goroutine wins the race.
+	dsn := fmt.Sprintf("file:testdb_%s_%p?mode=memory&cache=shared", t.Name(), t)
+	database.DB, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	if err != nil {

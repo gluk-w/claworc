@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"sync"
 	"time"
 
@@ -48,6 +49,14 @@ type BrowserBridge struct {
 	// every 30 s to avoid hot-path DB writes on every CDP frame.
 	activityMu     sync.Mutex
 	pendingTouches map[uint]time.Time
+
+	// onSessionStateChanged is invoked whenever the browser session for an
+	// instance transitions running ↔ stopped (after EnsureSession succeeds or
+	// after the reaper stops a session). Wired by main.go to refresh the CDP
+	// tunnel status so the UI reflects the new state without waiting for the
+	// 60 s periodic health check.
+	stateCbMu             sync.RWMutex
+	onSessionStateChanged func(instanceID uint)
 
 	cancel func()
 }
@@ -102,6 +111,7 @@ func (b *BrowserBridge) EnsureSession(ctx context.Context, instanceID, userID ui
 			Status:     "running",
 			LastUsedAt: time.Now().UTC(),
 		})
+		b.notifySessionStateChanged(instanceID)
 		return nil
 	}
 
@@ -146,7 +156,11 @@ func (b *BrowserBridge) EnsureSession(ctx context.Context, instanceID, userID ui
 	// Wait for spawn task to finish (or ctx cancel).
 	select {
 	case <-ch:
-		return b.lastSpawnError(instanceID)
+		err := b.lastSpawnError(instanceID)
+		if err == nil {
+			b.notifySessionStateChanged(instanceID)
+		}
+		return err
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -167,6 +181,34 @@ func (b *BrowserBridge) DialCDP(ctx context.Context, instanceID uint) (io.ReadWr
 	return conn, nil
 }
 
+// SetOnSessionStateChanged installs a callback fired whenever a browser
+// session for an instance starts (EnsureSession success) or stops (reaper).
+// Pass nil to clear. Safe to call concurrently.
+func (b *BrowserBridge) SetOnSessionStateChanged(cb func(instanceID uint)) {
+	b.stateCbMu.Lock()
+	b.onSessionStateChanged = cb
+	b.stateCbMu.Unlock()
+}
+
+func (b *BrowserBridge) notifySessionStateChanged(instanceID uint) {
+	b.stateCbMu.RLock()
+	cb := b.onSessionStateChanged
+	b.stateCbMu.RUnlock()
+	if cb != nil {
+		cb(instanceID)
+	}
+}
+
+// IsCDPReady reports whether the browser session for instanceID is currently
+// running, without spawning a new one. Used as a non-intrusive health probe
+// for the CDP agent-listener tunnel: when the browser pod is stopped or has
+// not been spawned yet, this returns false and the tunnel is rendered as
+// idle (gray) rather than active (green) or failed (red).
+func (b *BrowserBridge) IsCDPReady(ctx context.Context, instanceID uint) bool {
+	s, err := b.provider.SessionStatus(ctx, instanceID)
+	return err == nil && s == StatusRunning
+}
+
 // DialVNC mirrors DialCDP but for the VNC websocket endpoint. Returns
 // ErrNotSupported when the provider can't expose VNC.
 func (b *BrowserBridge) DialVNC(ctx context.Context, instanceID uint) (io.ReadWriteCloser, error) {
@@ -182,6 +224,42 @@ func (b *BrowserBridge) DialVNC(ctx context.Context, instanceID uint) (io.ReadWr
 	}
 	b.Touch(instanceID)
 	return conn, nil
+}
+
+// TestConnection runs a one-shot SSH command against the browser pod and
+// returns the output. Used by the SSH Troubleshooting popup to prove
+// end-to-end browser-pod connectivity. Does not Touch — this is a probe,
+// not real activity.
+func (b *BrowserBridge) TestConnection(ctx context.Context, instanceID uint) (string, error) {
+	if err := b.EnsureSession(ctx, instanceID, 0); err != nil {
+		return "", err
+	}
+	return b.provider.TestConnection(ctx, instanceID)
+}
+
+// Reconnect drops any cached SSH client for the browser pod so the next
+// CDP / noVNC dial re-establishes a fresh session.
+func (b *BrowserBridge) Reconnect(ctx context.Context, instanceID uint) error {
+	return b.provider.Reconnect(ctx, instanceID)
+}
+
+// VNCDialer ensures the browser session and returns a DialContext-compatible
+// function that the desktop HTTP / WebSocket proxy uses as the underlying
+// transport. Each call opens a fresh SSH channel to 127.0.0.1:3000 inside the
+// pod.
+func (b *BrowserBridge) VNCDialer(ctx context.Context, instanceID uint) (func(context.Context, string, string) (net.Conn, error), error) {
+	if !b.provider.Capabilities().SupportsVNC {
+		return nil, ErrNotSupported
+	}
+	if err := b.EnsureSession(ctx, instanceID, 0); err != nil {
+		return nil, err
+	}
+	dialer, err := b.provider.VNCDialer(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	b.Touch(instanceID)
+	return dialer, nil
 }
 
 // Touch marks an instance as recently active. The flusher persists touches
@@ -282,13 +360,19 @@ func (b *BrowserBridge) waitForCDPReady(ctx context.Context, instanceID uint, ti
 }
 
 func (b *BrowserBridge) readyTimeout() time.Duration {
+	// Browser pod cold-start now includes pulling the browser image, booting
+	// sshd, provisioning the public key, then waiting for Chromium's CDP
+	// listener to come up over an SSH tunnel. 60s was too tight in CI;
+	// 120s gives slow runners headroom while still failing fast on real
+	// problems.
+	const defaultTimeout = 120 * time.Second
 	if b.settings == nil {
-		return 60 * time.Second
+		return defaultTimeout
 	}
 	v, _ := b.settings.GetSetting("default_browser_ready_seconds")
 	d, ok := parseSeconds(v)
 	if !ok {
-		return 60 * time.Second
+		return defaultTimeout
 	}
 	return d
 }
@@ -388,6 +472,7 @@ func (b *BrowserBridge) reapOnce(ctx context.Context) {
 			continue
 		}
 		_ = database.UpdateBrowserSessionStatus(row.InstanceID, "stopped", "")
+		b.notifySessionStateChanged(row.InstanceID)
 	}
 }
 

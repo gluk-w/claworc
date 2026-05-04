@@ -292,9 +292,16 @@ func buildOpenClawProvidersJSON(models []string, gatewayProviders map[string]Gat
 		if gpModels == nil {
 			gpModels = []database.ProviderModel{}
 		}
+		// Codex declares openai-responses to OpenClaw so pi-ai skips its
+		// client-side JWT decode of apiKey. The gateway translates path/auth/SSE
+		// upstream. The DB record keeps the codex apiType for gateway routing.
+		declaredAPI := apiType
+		if declaredAPI == llmgateway.APITypeOpenAICodexResponses {
+			declaredAPI = "openai-responses"
+		}
 		providers[providerKey] = openclawProviderCfg{
 			BaseURL: fmt.Sprintf("http://127.0.0.1:%d", gatewayPort),
-			API:     apiType,
+			API:     declaredAPI,
 			APIKey:  gp.Key,
 			Models:  gpModels,
 		}
@@ -1530,8 +1537,10 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 		// Tear down the on-demand browser pod first so its container/volume
 		// don't outlive the agent. Best-effort: a failure here shouldn't
 		// block the agent cleanup or DB delete.
-		if err := orch.DeleteBrowserPod(r.Context(), inst.ID); err != nil {
-			log.Printf("Failed to delete browser pod for %s: %v", utils.SanitizeForLog(inst.Name), err)
+		if BrowserAdmin != nil {
+			if err := BrowserAdmin.DeleteBrowserPod(r.Context(), inst.ID); err != nil {
+				log.Printf("Failed to delete browser pod for %s: %v", utils.SanitizeForLog(inst.Name), err)
+			}
 		}
 		if err := orch.DeleteInstance(r.Context(), inst.Name); err != nil {
 			log.Printf("Failed to delete container resources for %s – proceeding with DB cleanup: %v", utils.SanitizeForLog(inst.Name), err)
@@ -1947,8 +1956,10 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			// Clone the on-demand browser profile volume too, so Chrome cookies,
 			// sessions, and persisted state follow the clone. Best-effort: if the
 			// source never launched a browser there's nothing to copy.
-			if err := orch.CloneBrowserVolume(ctx, src.Name, cloneName); err != nil {
-				log.Printf("Failed to clone browser volume from %s to %s: %v", src.Name, cloneName, err)
+			if BrowserAdmin != nil {
+				if err := BrowserAdmin.CloneBrowserVolume(ctx, src.Name, cloneName); err != nil {
+					log.Printf("Failed to clone browser volume from %s to %s: %v", src.Name, cloneName, err)
+				}
 			}
 
 			clearStatusMessage(inst.ID)
@@ -1992,10 +2003,12 @@ func cloneOnCancel(instanceID uint, cloneName string) taskmanager.OnCancel {
 				log.Printf("clone-cancel: stop tunnels for %d: %v", instanceID, err)
 			}
 		}
-		if orch := orchestrator.Get(); orch != nil {
-			if err := orch.DeleteBrowserPod(ctx, instanceID); err != nil {
+		if BrowserAdmin != nil {
+			if err := BrowserAdmin.DeleteBrowserPod(ctx, instanceID); err != nil {
 				log.Printf("clone-cancel: delete browser pod for %s: %v", utils.SanitizeForLog(cloneName), err)
 			}
+		}
+		if orch := orchestrator.Get(); orch != nil {
 			if err := orch.DeleteInstance(ctx, cloneName); err != nil {
 				log.Printf("clone-cancel: delete container for %s: %v", utils.SanitizeForLog(cloneName), err)
 			}
@@ -2137,6 +2150,10 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 		if err != nil {
 			log.Printf("Error marshaling models allowlist for %s: %v", utils.SanitizeForLog(name), err)
 		} else {
+			// `openclaw config set` deep-merges into existing map values, so a
+			// previously-selected model that the admin de-selected would linger.
+			// Clear the path before writing the new allowlist.
+			_, _, _, _ = inst.ExecOpenclaw(ctx, "config", "unset", "agents.defaults.models")
 			_, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "agents.defaults.models", string(modelsMapJSON), "--json")
 			if err != nil {
 				log.Printf("Error setting models allowlist for %s: %v", utils.SanitizeForLog(name), err)
@@ -2152,6 +2169,9 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 		if err != nil {
 			log.Printf("Error marshaling gateway providers for %s: %v", utils.SanitizeForLog(name), err)
 		} else if providersJSON != "" {
+			// Clear the providers map first so de-selected providers are removed
+			// instead of being deep-merged with the previous config.
+			_, _, _, _ = inst.ExecOpenclaw(ctx, "config", "unset", "models.providers")
 			stdout, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "models.providers", providersJSON, "--json")
 			if err != nil {
 				log.Printf("Error setting gateway providers for %s: %v", utils.SanitizeForLog(name), err)

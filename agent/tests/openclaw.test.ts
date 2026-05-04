@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { exec, execAsUser, sleep, getContainers, dumpDiagnostics } from "./helpers";
+import { exec, execAsUser, sleep, getContainers, hasCommand, dumpDiagnostics } from "./helpers";
 
 const containers = getContainers();
-const container = containers.chromium?.name;
+// openclaw lives in the claworc-agent image only. Browser-only images
+// (claworc-browser-*) don't ship the gateway, so this suite must skip
+// against them. Capability-probe the chromium container at module load.
+const chromiumName = containers.chromium?.name;
+const container = chromiumName && hasCommand(chromiumName, "openclaw") ? chromiumName : undefined;
 
 function structureOf(obj: any): any {
   if (Array.isArray(obj)) return obj.length > 0 ? [structureOf(obj[0])] : [];
@@ -58,14 +62,30 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
   // chrome-data must be created by the desktop service (only when Chrome runs),
   // not by init-setup.sh. Otherwise on-demand-layout agents — where Chrome
   // lives in a separate browser pod — would still get a stale chrome-data/
-  // visible in the file manager.
+  // visible in the file manager. init-setup.sh may legitimately *remove*
+  // the dir on agent images (no svc-desktop), so this test only forbids
+  // mkdir-style creation.
   it("init-setup.sh does not create chrome-data", () => {
     const result = exec(container!, [
       "grep",
-      "chrome-data",
+      "-E",
+      "mkdir.*chrome-data",
       "/etc/s6-overlay/scripts/init-setup.sh",
     ]);
     expect(result.exitCode).not.toBe(0);
+  });
+
+  // Conversely, on the agent image the init script must remove any leftover
+  // chrome-data dir from a prior legacy boot so it isn't reachable from the
+  // agent SSH/terminal/file-manager.
+  it("init-setup.sh removes chrome-data when svc-desktop is absent", () => {
+    const result = exec(container!, [
+      "grep",
+      "-E",
+      "rm -rf /home/claworc/chrome-data",
+      "/etc/s6-overlay/scripts/init-setup.sh",
+    ]);
+    expect(result.exitCode).toBe(0);
   });
 
   it("openclaw.json structure matches snapshot", () => {

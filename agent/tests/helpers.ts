@@ -65,6 +65,16 @@ export function dumpDiagnostics(container: string): void {
 }
 
 /**
+ * Returns true if `cmd` is on PATH inside `container`. Used by capability-
+ * gated test suites: openclaw / cron live in the claworc-agent image, while
+ * the browser images only ship Xvfb / VNC / chromium. Suites that require
+ * one of those features should skip when probing returns false.
+ */
+export function hasCommand(container: string, cmd: string): boolean {
+  return exec(container, ["sh", "-c", `command -v ${cmd}`]).exitCode === 0;
+}
+
+/**
  * Read the container map written by global-setup.ts via process.env.
  * Returns an empty object when running outside the global setup harness.
  */

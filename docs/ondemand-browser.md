@@ -83,7 +83,7 @@ Legacy instances continue using a single `<name>-home` PVC where chrome-data liv
 
 Reuse the existing `TunnelTypeAgentListener` pattern.
 
-**Agent change** — `agent/rootfs/etc/ssh/sshd_config.d/claworc.conf`:
+**Agent change** — `agent/instance/rootfs/etc/ssh/sshd_config.d/claworc.conf`:
 ```
 PermitListen 127.0.0.1:9222 127.0.0.1:40001
 ```
@@ -125,6 +125,10 @@ For legacy instances, the existing reverse-tunnel path stays: agent:3000 → con
 When the browser pod is reaped and a user opens the desktop tab, `DesktopProxy` first calls `bridge.EnsureSession(ctx, instanceID)`. New endpoint `GET /api/v1/instances/:id/browser/status` returns `{state, since, taskID?}` to power a "starting browser…" loading state in `useDesktop.ts`.
 
 For providers without VNC (`Capabilities.SupportsVNC=false`), the desktop tab is hidden in the UI.
+
+### 5a. Dynamic display geometry & primary-viewer election
+
+Every viewer's noVNC client runs with `resizeSession=true` so the X display tracks the panel pixel size, removing letterboxing. To keep multi-viewer sessions stable the control plane parses each viewer's RFB client stream and only forwards `ClientSetDesktopSize` (RFB msg type 251) from a single elected primary — the first viewer connected to that instance, head of an in-memory ordered list (`internal/handlers/desktop_viewers.go`). When the primary disconnects the next-oldest viewer is promoted and its last-attempted `SetDesktopSize` (cached in the filter, `desktop_filter.go`) is replayed upstream, so the X display snaps to the new primary's panel within one frame. The browser image runs `svc-window-fit` (xev + xdotool) to pin the Chromium window to the X display geometry on every `RRScreenChangeNotify`. Secondaries keep `scaleViewport=true` so their canvas letterboxes locally until promotion. Implementation lives in `internal/handlers/desktop_websockify.go` (RFB-aware proxy used only on the `/desktop/websockify` path; non-RFB endpoints under `/desktop/*` go through the unfiltered `websocketProxyOverDialer`/`websocketProxyToLocalPort`).
 
 ## 6. Browser session lifecycle
 
@@ -251,9 +255,9 @@ Delete (legacy combined-image sources; published images stay in registry):
 - The combined s6 service set under `rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/` that listed all services together.
 
 Add:
-- `Dockerfile.agent` — slim agent (sshd, OpenClaw, cron). Uses the `agent.bundle` s6 set.
-- `Dockerfile.browser-base` — Xvfb/TigerVNC/noVNC/openbox/stealth-extension base. **No sshd.** Uses the `browser.bundle` s6 set.
-- `Dockerfile.browser-chromium`, `Dockerfile.browser-chrome`, `Dockerfile.browser-brave`.
+- `agent/instance/Dockerfile` — slim agent (sshd, OpenClaw, cron). Uses the `agent.bundle` s6 set.
+- `agent/browser/Dockerfile.base` — Xvfb/TigerVNC/noVNC/openbox/stealth-extension base. Uses the `browser.bundle` s6 set.
+- `agent/browser/Dockerfile.chromium`, `agent/browser/Dockerfile.chrome`, `agent/browser/Dockerfile.brave`.
 - New s6 bundles `agent.bundle` and `browser.bundle`.
 
 Edit:
@@ -342,5 +346,5 @@ CDP is not authenticated by Chromium itself — relying on cluster networking is
 - `/Users/stan/claworc/control-plane/internal/handlers/desktop.go`
 - `/Users/stan/claworc/control-plane/internal/handlers/instances.go`
 - `/Users/stan/claworc/control-plane/internal/taskmanager/taskmanager.go`
-- `/Users/stan/claworc/agent/rootfs/etc/ssh/sshd_config.d/claworc.conf`
+- `/Users/stan/claworc/agent/instance/rootfs/etc/ssh/sshd_config.d/claworc.conf`
 - `/Users/stan/claworc/helm/templates/networkpolicy.yaml`

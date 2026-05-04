@@ -14,6 +14,23 @@ import type { LLMProvider } from "@/types/instance";
 
 import type { SettingsUpdatePayload } from "@/types/settings";
 
+// formatExpiresIn formats a duration in milliseconds as e.g. "2 days",
+// "3 hours 54 minutes", "3 minutes", or "less than a minute" / "expired".
+function formatExpiresIn(ms: number): string {
+  if (ms <= 0) return "expired";
+  const totalMin = Math.floor(ms / 60000);
+  if (totalMin < 1) return "less than a minute";
+  const days = Math.floor(totalMin / (60 * 24));
+  const hours = Math.floor((totalMin % (60 * 24)) / 60);
+  const minutes = totalMin % 60;
+  if (days >= 1) return `${days} ${days === 1 ? "day" : "days"}`;
+  if (hours >= 1) {
+    if (minutes === 0) return `${hours} ${hours === 1 ? "hour" : "hours"}`;
+    return `${hours} ${hours === 1 ? "hour" : "hours"} ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+  }
+  return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+}
+
 export default function SettingsPage() {
   const queryClient = useQueryClient();
   const { data: settings, isLoading } = useSettings();
@@ -161,7 +178,13 @@ export default function SettingsPage() {
           ) : (
             <div className="divide-y divide-gray-100">
               {providers.map((p) => {
+                const isOAuth = p.api_type === "openai-codex-responses";
                 const apiKeyDisplay = p.masked_api_key || "not set";
+                const oauthDisplay = isOAuth
+                  ? p.oauth_connected && p.oauth_expires_at
+                    ? `Expires in ${formatExpiresIn(p.oauth_expires_at - Date.now())}`
+                    : "ChatGPT account not linked"
+                  : null;
                 const displayModels = (p.models || []).map((m) => m.id);
                 return (
                   <div key={p.id}>
@@ -182,9 +205,13 @@ export default function SettingsPage() {
                             <span className="text-xs font-mono text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{p.key}</span>
                           </div>
                           <p className="text-xs font-mono text-gray-500 mt-0.5 truncate">{p.base_url}</p>
-                          <p className="text-xs text-gray-400 mt-0.5">
-                            API key: <span className="font-mono">{apiKeyDisplay}</span>
-                          </p>
+                          {isOAuth ? (
+                            <p className="text-xs text-gray-400 mt-0.5">{oauthDisplay}</p>
+                          ) : (
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              API key: <span className="font-mono">{apiKeyDisplay}</span>
+                            </p>
+                          )}
                         </div>
                       </div>
                       <button

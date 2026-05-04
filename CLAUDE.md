@@ -36,6 +36,13 @@ health at `/health`. Logs are streamed via SSE. WebSocket proxying for chat and 
 **LLM Gateway**: Proxy for LLM requests that replaces virtual keys with real, globally configured API tokens. It
 records statistics in a separate SQLite database. See`docs/virtual-keys.md`.
 
+**Orchestrator** (`internal/orchestrator/`): Thin abstraction over the underlying container runtime
+(Kubernetes or Docker). Its job is generic container primitives only — instance lifecycle, exec, file
+streaming, SSH address, resource updates, image updates, volume cloning. It does NOT own browser-pod,
+terminal, or other feature-specific orchestration; those live in their own packages
+(e.g. `browserprov/` for the on-demand browser pod) and depend on the orchestrator only through small
+purpose-specific backend interfaces.
+
 **K8s integration** (`internal/orchestrator/kubernetes.go`): Uses the official Go `client-go` library. 
 Tries in-cluster config first, falls back to kubeconfig for local dev.
 

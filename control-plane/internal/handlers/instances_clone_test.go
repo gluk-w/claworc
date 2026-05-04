@@ -47,6 +47,10 @@ func (m *blockingMockOrchestrator) DeleteBrowserPod(_ context.Context, _ uint) e
 	return nil
 }
 
+func (m *blockingMockOrchestrator) CloneBrowserVolume(_ context.Context, _, _ string) error {
+	return nil
+}
+
 // withTaskMgr installs a fresh TaskManager for the test and tears it down on
 // cleanup. The cleanup also cancels any still-running tasks and waits for
 // them to terminate before returning, so a goroutine leaked from one test
@@ -87,6 +91,8 @@ func TestCloneOnCancel_DeletesDestRow_PreservesSrc(t *testing.T) {
 	mock := &blockingMockOrchestrator{}
 	orchestrator.Set(mock)
 	defer orchestrator.Set(nil)
+	BrowserAdmin = mock
+	defer func() { BrowserAdmin = nil }()
 
 	src := createTestInstance(t, "bot-src", "Src")
 	dst := createTestInstance(t, "bot-dst", "Dst")
@@ -206,6 +212,8 @@ func TestCloneInstance_Cancel_TransitionsToCanceled(t *testing.T) {
 	defer close(mock.createBlock)
 	orchestrator.Set(mock)
 	defer orchestrator.Set(nil)
+	BrowserAdmin = mock
+	defer func() { BrowserAdmin = nil }()
 
 	SSHMgr = sshproxy.NewSSHManager(nil, "")
 	defer func() { SSHMgr = nil }()

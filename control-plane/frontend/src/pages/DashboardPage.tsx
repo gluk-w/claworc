@@ -1,8 +1,9 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus } from "lucide-react";
+import { Plus, List, LayoutGrid } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import InstanceTable from "@/components/InstanceTable";
+import InstanceGrid from "@/components/InstanceGrid";
 import {
   useInstances,
   useStartInstance,
@@ -16,6 +17,19 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import type { Instance } from "@/types/instance";
 
+type ViewMode = "list" | "grid";
+const VIEW_MODE_KEY = "claworc.instances.viewMode";
+
+function readInitialViewMode(): ViewMode {
+  try {
+    const v = localStorage.getItem(VIEW_MODE_KEY);
+    if (v === "grid" || v === "list") return v;
+  } catch {
+    // localStorage unavailable (e.g., private mode)
+  }
+  return "list";
+}
+
 export default function DashboardPage() {
   const { data: instances, isLoading } = useInstances();
   useRestartedToast(instances);
@@ -26,6 +40,15 @@ export default function DashboardPage() {
   const deleteMutation = useDeleteInstance();
   const reorderMutation = useReorderInstances();
   const queryClient = useQueryClient();
+  const [viewMode, setViewMode] = useState<ViewMode>(readInitialViewMode);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, viewMode);
+    } catch {
+      // ignore
+    }
+  }, [viewMode]);
 
   const handleReorder = useCallback(
     (orderedIds: number[]) => {
@@ -53,11 +76,70 @@ export default function DashboardPage() {
   const loadingInstanceId = getLoadingInstanceId();
   const { canCreateInstances } = useAuth();
 
+  const sharedHandlers = {
+    onStart: (id: number) => startMutation.mutate(id),
+    onStop: (id: number) => {
+      const inst = instances?.find((i) => i.id === id);
+      if (inst) stopMutation.mutate({ id, displayName: inst.display_name });
+    },
+    onRestart: (id: number) => {
+      const inst = instances?.find((i) => i.id === id);
+      if (inst) restartMutation.mutate({ id, displayName: inst.display_name });
+    },
+    onClone: (id: number) => {
+      const inst = instances?.find((i) => i.id === id);
+      if (inst) cloneMutation.mutate({ id, displayName: inst.display_name });
+    },
+    onDelete: (id: number) => deleteMutation.mutate(id),
+  };
+
+  const hasInstances = !!instances && instances.length > 0;
+
   return (
     <div>
+      {hasInstances && (
+        <div className="flex items-center justify-between mb-4">
+          <div className="inline-flex border border-gray-200 rounded-md overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              title="List view"
+              className={`p-1.5 ${
+                viewMode === "list"
+                  ? "bg-gray-100 text-gray-900"
+                  : "bg-white text-gray-400 hover:text-gray-600"
+              }`}
+            >
+              <List size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("grid")}
+              title="Grid view"
+              className={`p-1.5 border-l border-gray-200 ${
+                viewMode === "grid"
+                  ? "bg-gray-100 text-gray-900"
+                  : "bg-white text-gray-400 hover:text-gray-600"
+              }`}
+            >
+              <LayoutGrid size={16} />
+            </button>
+          </div>
+          <Link
+            to="/instances/new"
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 ${
+              canCreateInstances ? "" : "invisible"
+            }`}
+          >
+            <Plus size={14} />
+            Create instance
+          </Link>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="text-center py-12 text-gray-500">Loading...</div>
-      ) : !instances || instances.length === 0 ? (
+      ) : !hasInstances ? (
         <div className="text-center py-12">
           <p data-testid="empty-state-message" className="text-gray-500 mb-4">No instances yet.</p>
           {canCreateInstances ? (
@@ -72,23 +154,17 @@ export default function DashboardPage() {
             <p className="text-gray-400 text-sm">Ask an administrator to create an instance for you.</p>
           )}
         </div>
+      ) : viewMode === "grid" ? (
+        <InstanceGrid
+          instances={instances!}
+          {...sharedHandlers}
+          onReorder={handleReorder}
+          loadingInstanceId={loadingInstanceId}
+        />
       ) : (
         <InstanceTable
-          instances={instances}
-          onStart={(id) => startMutation.mutate(id)}
-          onStop={(id) => {
-            const inst = instances?.find((i) => i.id === id);
-            if (inst) stopMutation.mutate({ id, displayName: inst.display_name });
-          }}
-          onRestart={(id) => {
-            const inst = instances?.find((i) => i.id === id);
-            if (inst) restartMutation.mutate({ id, displayName: inst.display_name });
-          }}
-          onClone={(id) => {
-            const inst = instances?.find((i) => i.id === id);
-            if (inst) cloneMutation.mutate({ id, displayName: inst.display_name });
-          }}
-          onDelete={(id) => deleteMutation.mutate(id)}
+          instances={instances!}
+          {...sharedHandlers}
           onReorder={handleReorder}
           loadingInstanceId={loadingInstanceId}
         />
