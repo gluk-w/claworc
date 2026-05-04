@@ -720,6 +720,18 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	resolveDefault(&body.StorageHomebrew, "default_storage_homebrew", "10Gi")
 	resolveDefault(&body.StorageHome, "default_storage_home", "10Gi")
 
+	if err := ValidateResourceQuantities(ResourceQuantities{
+		CPURequest:      body.CPURequest,
+		CPULimit:        body.CPULimit,
+		MemoryRequest:   body.MemoryRequest,
+		MemoryLimit:     body.MemoryLimit,
+		StorageHome:     body.StorageHome,
+		StorageHomebrew: body.StorageHomebrew,
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	name := generateName(body.DisplayName)
 
 	// Check uniqueness
@@ -1045,33 +1057,6 @@ type instanceUpdateRequest struct {
 	BrowserStorage     *string           `json:"browser_storage"`      // non-legacy only
 }
 
-var (
-	cpuRegex        = regexp.MustCompile(`^(\d+m|\d+(\.\d+)?)$`)
-	memoryRegex     = regexp.MustCompile(`^\d+(Ki|Mi|Gi)$`)
-	resolutionRegex = regexp.MustCompile(`^\d+x\d+$`)
-)
-
-func cpuToMillicores(s string) int64 {
-	if strings.HasSuffix(s, "m") {
-		n, _ := strconv.ParseInt(s[:len(s)-1], 10, 64)
-		return n
-	}
-	f, _ := strconv.ParseFloat(s, 64)
-	return int64(f * 1000)
-}
-
-func memoryToBytes(s string) int64 {
-	unitMap := map[string]int64{"Ki": 1024, "Mi": 1024 * 1024, "Gi": 1024 * 1024 * 1024}
-	for suffix, multiplier := range unitMap {
-		if strings.HasSuffix(s, suffix) {
-			n, _ := strconv.ParseInt(s[:len(s)-len(suffix)], 10, 64)
-			return n * multiplier
-		}
-	}
-	n, _ := strconv.ParseInt(s, 10, 64)
-	return n
-}
-
 func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
@@ -1213,40 +1198,25 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		memLim := inst.MemoryLimit
 
 		if body.CPURequest != nil {
-			if !cpuRegex.MatchString(*body.CPURequest) {
-				writeError(w, http.StatusBadRequest, "Invalid CPU request format (e.g., 500m or 0.5)")
-				return
-			}
 			cpuReq = *body.CPURequest
 		}
 		if body.CPULimit != nil {
-			if !cpuRegex.MatchString(*body.CPULimit) {
-				writeError(w, http.StatusBadRequest, "Invalid CPU limit format (e.g., 2000m or 2)")
-				return
-			}
 			cpuLim = *body.CPULimit
 		}
 		if body.MemoryRequest != nil {
-			if !memoryRegex.MatchString(*body.MemoryRequest) {
-				writeError(w, http.StatusBadRequest, "Invalid memory request format (e.g., 1Gi or 512Mi)")
-				return
-			}
 			memReq = *body.MemoryRequest
 		}
 		if body.MemoryLimit != nil {
-			if !memoryRegex.MatchString(*body.MemoryLimit) {
-				writeError(w, http.StatusBadRequest, "Invalid memory limit format (e.g., 4Gi or 2048Mi)")
-				return
-			}
 			memLim = *body.MemoryLimit
 		}
 
-		if cpuToMillicores(cpuReq) > cpuToMillicores(cpuLim) {
-			writeError(w, http.StatusBadRequest, "CPU request cannot exceed CPU limit")
-			return
-		}
-		if memoryToBytes(memReq) > memoryToBytes(memLim) {
-			writeError(w, http.StatusBadRequest, "Memory request cannot exceed memory limit")
+		if err := ValidateResourceQuantities(ResourceQuantities{
+			CPURequest:    cpuReq,
+			CPULimit:      cpuLim,
+			MemoryRequest: memReq,
+			MemoryLimit:   memLim,
+		}); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 

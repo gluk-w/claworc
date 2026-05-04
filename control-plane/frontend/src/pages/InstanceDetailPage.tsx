@@ -17,6 +17,13 @@ import SSHStatus from "@/components/SSHStatus";
 import SSHEventLog from "@/components/SSHEventLog";
 import SSHTroubleshoot from "@/components/SSHTroubleshoot";
 import {
+  isValidCPU,
+  isValidMemory,
+  isValidResolution,
+  cpuToMillis,
+  memToBytes,
+} from "@/utils/resourceValidation";
+import {
   useInstance,
   useStartInstance,
   useStopInstance,
@@ -301,11 +308,6 @@ export default function InstanceDetailPage() {
     );
   };
 
-  const isValidCPU = (v: string) => /^\d+m$/.test(v) || /^\d+(\.\d+)?$/.test(v);
-  const isValidMemory = (v: string) => /^\d+(Mi|Gi)$/.test(v);
-  const cpuToMillis = (v: string) => v.endsWith("m") ? parseInt(v) : parseFloat(v) * 1000;
-  const memToBytes = (v: string) => v.endsWith("Gi") ? parseInt(v) * 1024 : parseInt(v);
-  const isValidResolution = (v: string) => v === "" || /^\d+x\d+$/.test(v);
 
   const resourcesValid =
     isValidCPU(pendingCPURequest) &&
