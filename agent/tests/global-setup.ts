@@ -185,12 +185,16 @@ export async function setup(): Promise<void> {
   const readinessPromises = Object.entries(launched).map(async ([browser, { name }]) => {
     if (browser === "agent") {
       // Instance image has no browser and no CDP listener — it's the
-      // OpenClaw gateway + sshd + cron only. Wait for openclaw to be on
-      // PATH; the SSH wait below is shared with browser images.
-      const ready = await waitForProcess(name, "/init", 300_000);
+      // OpenClaw gateway + sshd + cron only. We can't pgrep for `/init`
+      // because s6-overlay's /init execs into s6-svscan once setup is done,
+      // so the cmdline no longer contains `/init` after the brief boot
+      // phase. Wait for s6-svscan instead (the long-running PID 1 once s6
+      // has handed off), then verify openclaw is on PATH. Sshd readiness
+      // (waitForSSHD below) is the final gate before tests run.
+      const ready = await waitForProcess(name, "s6-svscan", 300_000);
       if (!ready) {
         dumpDiagnostics(name);
-        throw new Error(`[global-setup] agent /init did not start within 300s`);
+        throw new Error(`[global-setup] agent s6-svscan did not start within 300s`);
       }
       const cmd = exec(name, ["sh", "-c", "command -v openclaw"]);
       if (cmd.exitCode !== 0) {
