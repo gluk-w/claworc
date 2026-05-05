@@ -152,4 +152,37 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
     const result = execAsUser(container!, "openclaw gateway stop");
     expect(result.exitCode).toBeDefined();
   });
+
+  // Regression for https://github.com/gluk-w/claworc/issues/127. sharp is a
+  // native addon (libvips) used by openclaw's image pipeline (Telegram,
+  // screenshots). It silently went missing when sharp 0.34 switched to
+  // prebuilt binaries that need libvips on the system.
+  describe("sharp image dependency (issue #127)", () => {
+    const cdOpenclaw = 'cd "$(npm root -g)/openclaw"';
+
+    it("openclaw still declares sharp as a dependency", () => {
+      // If upstream openclaw drops sharp, the runtime check below loses its
+      // meaning — surface that change so we can revisit the Dockerfile.
+      const result = exec(container!, [
+        "bash",
+        "-c",
+        `${cdOpenclaw} && node -e "const p=require('./package.json'); const v=(p.dependencies&&p.dependencies.sharp)||(p.optionalDependencies&&p.optionalDependencies.sharp)||(p.peerDependencies&&p.peerDependencies.sharp); if(!v){process.exit(2)} console.log(v)"`,
+      ]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toMatch(/\d/);
+    });
+
+    it("openclaw can load sharp for image processing", () => {
+      // Resolve sharp the same way openclaw does at runtime — from its own
+      // node_modules — so this fails loudly if libvips is missing or the
+      // native binding didn't get built.
+      const result = exec(container!, [
+        "bash",
+        "-c",
+        `${cdOpenclaw} && node -e "console.log(require('sharp').versions.sharp)"`,
+      ]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    });
+  });
 });

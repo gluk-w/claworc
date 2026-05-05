@@ -30,10 +30,12 @@ RUN apt-get update && \
       tzdata locales \
       openssh-server git python3 python3-pip python3-venv python3-numpy python-is-python3 \
       build-essential procps cron nodejs \
+      libvips42 \
       sudo && \
     echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen && \
     if [ "$USE_CHINA_MIRRORS" = "true" ]; then npm config set registry https://registry.npmmirror.com; fi && \
     npm install -g openclaw@latest && \
+    (cd "$(npm root -g)/openclaw" && npm rebuild sharp) && \
     curl -sSL https://install.python-poetry.org | POETRY_HOME=/usr/local python3 - && \
     rm -rf /var/lib/apt/lists/*
 
