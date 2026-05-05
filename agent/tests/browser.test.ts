@@ -9,10 +9,13 @@ const BROWSER_PROCESS_PATTERNS: Record<string, string> = {
   brave: "brave-browser",
 };
 
-// Build describe.each entries from containers launched by global-setup
-const entries = Object.entries(containers).map(
-  ([browser, info]) => [browser, info.name] as [string, string],
-);
+// Build describe.each entries from containers launched by global-setup.
+// The `agent` (instance) image has no browser / CDP / stealth extension —
+// it ships OpenClaw + sshd + cron only — so exclude it here. openclaw.test.ts
+// is the suite that exercises that container.
+const entries = Object.entries(containers)
+  .filter(([browser]) => browser in BROWSER_PROCESS_PATTERNS)
+  .map(([browser, info]) => [browser, info.name] as [string, string]);
 
 // When no containers are available (no images built), skip all tests.
 // We must have at least one describe block to avoid vitest "no test suite" error.
