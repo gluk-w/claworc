@@ -8,6 +8,9 @@ import { execFileSync } from "node:child_process";
 import type { ContainerMap } from "./helpers";
 
 const IMAGES: Record<string, string> = {
+  // Instance image: OpenClaw + sshd + cron, no browser. openclaw / cron /
+  // sharp / libvips test suites run against this one.
+  agent: process.env.AGENT_INSTANCE_TEST_IMAGE ?? "claworc-agent:test",
   chromium: process.env.AGENT_TEST_IMAGE ?? "openclaw-vnc-chromium:test",
   chrome: process.env.AGENT_CHROME_TEST_IMAGE ?? "openclaw-vnc-chrome:test",
   brave: process.env.AGENT_BRAVE_TEST_IMAGE ?? "openclaw-vnc-brave:test",
@@ -180,21 +183,37 @@ export async function setup(): Promise<void> {
 
   // Wait for readiness in parallel
   const readinessPromises = Object.entries(launched).map(async ([browser, { name }]) => {
-    const pattern = BROWSER_PROCESS_PATTERNS[browser] ?? browser;
+    if (browser === "agent") {
+      // Instance image has no browser and no CDP listener — it's the
+      // OpenClaw gateway + sshd + cron only. Wait for openclaw to be on
+      // PATH; the SSH wait below is shared with browser images.
+      const ready = await waitForProcess(name, "/init", 300_000);
+      if (!ready) {
+        dumpDiagnostics(name);
+        throw new Error(`[global-setup] agent /init did not start within 300s`);
+      }
+      const cmd = exec(name, ["sh", "-c", "command -v openclaw"]);
+      if (cmd.exitCode !== 0) {
+        dumpDiagnostics(name);
+        throw new Error(`[global-setup] openclaw not on PATH in agent container`);
+      }
+    } else {
+      const pattern = BROWSER_PROCESS_PATTERNS[browser] ?? browser;
 
-    // All images: wait for browser process.
-    // Generous timeouts because multiple containers under QEMU compete for CPU.
-    const browserOk = await waitForProcess(name, pattern, 300_000);
-    if (!browserOk) {
-      dumpDiagnostics(name);
-      throw new Error(`[global-setup] ${browser} process did not start within 300s`);
-    }
+      // Wait for browser process.
+      // Generous timeouts because multiple containers under QEMU compete for CPU.
+      const browserOk = await waitForProcess(name, pattern, 300_000);
+      if (!browserOk) {
+        dumpDiagnostics(name);
+        throw new Error(`[global-setup] ${browser} process did not start within 300s`);
+      }
 
-    // All images: wait for CDP port 9222
-    const cdpOk = await waitForCDP(name, 180_000);
-    if (!cdpOk) {
-      dumpDiagnostics(name);
-      throw new Error(`[global-setup] CDP port 9222 not ready for ${browser} within 180s`);
+      // Wait for CDP port 9222
+      const cdpOk = await waitForCDP(name, 180_000);
+      if (!cdpOk) {
+        dumpDiagnostics(name);
+        throw new Error(`[global-setup] CDP port 9222 not ready for ${browser} within 180s`);
+      }
     }
 
     // Note: openclaw gateway readiness is NOT checked here because

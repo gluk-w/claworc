@@ -46,17 +46,150 @@ exports[`agent image > openclaw.json structure matches snapshot 1`] = `
     "lastTouchedAt": "string",
     "lastTouchedVersion": "string",
   },
-  "plugins": {
-    "entries": {
-      "browser": {
-        "enabled": "boolean",
-      },
-    },
-  },
   "session": {
     "dmScope": "string",
   },
   "skills": {
+    "entries": {
+      "1password": {
+        "enabled": "boolean",
+      },
+      "apple-notes": {
+        "enabled": "boolean",
+      },
+      "apple-reminders": {
+        "enabled": "boolean",
+      },
+      "bear-notes": {
+        "enabled": "boolean",
+      },
+      "blogwatcher": {
+        "enabled": "boolean",
+      },
+      "blucli": {
+        "enabled": "boolean",
+      },
+      "bluebubbles": {
+        "enabled": "boolean",
+      },
+      "camsnap": {
+        "enabled": "boolean",
+      },
+      "clawhub": {
+        "enabled": "boolean",
+      },
+      "coding-agent": {
+        "enabled": "boolean",
+      },
+      "discord": {
+        "enabled": "boolean",
+      },
+      "eightctl": {
+        "enabled": "boolean",
+      },
+      "gemini": {
+        "enabled": "boolean",
+      },
+      "gh-issues": {
+        "enabled": "boolean",
+      },
+      "gifgrep": {
+        "enabled": "boolean",
+      },
+      "github": {
+        "enabled": "boolean",
+      },
+      "gog": {
+        "enabled": "boolean",
+      },
+      "goplaces": {
+        "enabled": "boolean",
+      },
+      "himalaya": {
+        "enabled": "boolean",
+      },
+      "imsg": {
+        "enabled": "boolean",
+      },
+      "mcporter": {
+        "enabled": "boolean",
+      },
+      "model-usage": {
+        "enabled": "boolean",
+      },
+      "nano-pdf": {
+        "enabled": "boolean",
+      },
+      "notion": {
+        "enabled": "boolean",
+      },
+      "obsidian": {
+        "enabled": "boolean",
+      },
+      "openai-whisper": {
+        "enabled": "boolean",
+      },
+      "openai-whisper-api": {
+        "enabled": "boolean",
+      },
+      "openhue": {
+        "enabled": "boolean",
+      },
+      "oracle": {
+        "enabled": "boolean",
+      },
+      "ordercli": {
+        "enabled": "boolean",
+      },
+      "peekaboo": {
+        "enabled": "boolean",
+      },
+      "sag": {
+        "enabled": "boolean",
+      },
+      "session-logs": {
+        "enabled": "boolean",
+      },
+      "sherpa-onnx-tts": {
+        "enabled": "boolean",
+      },
+      "slack": {
+        "enabled": "boolean",
+      },
+      "songsee": {
+        "enabled": "boolean",
+      },
+      "sonoscli": {
+        "enabled": "boolean",
+      },
+      "spotify-player": {
+        "enabled": "boolean",
+      },
+      "summarize": {
+        "enabled": "boolean",
+      },
+      "things-mac": {
+        "enabled": "boolean",
+      },
+      "tmux": {
+        "enabled": "boolean",
+      },
+      "trello": {
+        "enabled": "boolean",
+      },
+      "video-frames": {
+        "enabled": "boolean",
+      },
+      "voice-call": {
+        "enabled": "boolean",
+      },
+      "wacli": {
+        "enabled": "boolean",
+      },
+      "xurl": {
+        "enabled": "boolean",
+      },
+    },
     "install": {
       "nodeManager": "string",
     },

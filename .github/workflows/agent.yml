@@ -32,7 +32,7 @@ jobs:
       - name: Install test dependencies
         run: make install-test
 
-      - name: Build, test and push the image
-        run: make agent
+      - name: Build, test, and push agent images
+        run: make agent-ci
         env:
           CACHE_ARGS: --cache-from type=gha,scope=agent --cache-to type=gha,mode=max,scope=agent

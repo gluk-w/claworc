@@ -22,7 +22,7 @@ KUBECONFIG := ../kubeconfig
 HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
 
-.PHONY: agent agent-base agent-base-china agent-build agent-test agent-push agent-exec dashboard docker-prune release \
+.PHONY: agent agent-ci agent-base agent-base-china agent-build agent-test agent-push agent-exec dashboard docker-prune release \
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-docs \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
 	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models scrape-models test \
@@ -30,6 +30,12 @@ HELM_NAMESPACE := claworc
 	e2e e2e-debug e2e-install
 
 agent: agent-base agent-push
+
+# CI entry point: build base image, build all variants locally, run vitest
+# against the loaded images, and only push if tests pass. Used by
+# .github/workflows/agent.yml on the main branch.
+agent-ci: agent-base agent-build agent-test agent-push
+	@echo "Agent images built, tested, and pushed."
 
 agent-base:
 	@echo "Building and pushing browser-base image..."
@@ -47,7 +53,8 @@ agent-build:
 	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --load agent/browser/
 
 agent-test:
-	cd agent/tests && AGENT_TEST_IMAGE=$(BROWSER_CHROMIUM_IMAGE):$(TAG) \
+	cd agent/tests && AGENT_INSTANCE_TEST_IMAGE=$(AGENT_IMAGE):$(TAG) \
+		AGENT_TEST_IMAGE=$(BROWSER_CHROMIUM_IMAGE):$(TAG) \
 		AGENT_CHROME_TEST_IMAGE=$(BROWSER_CHROME_IMAGE):$(TAG) \
 		AGENT_BRAVE_TEST_IMAGE=$(BROWSER_BRAVE_IMAGE):$(TAG) \
 		npm run test
