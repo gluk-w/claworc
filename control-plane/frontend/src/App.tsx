@@ -6,7 +6,6 @@ import InstanceDetailPage from "./pages/InstanceDetailPage";
 import SettingsPage from "./pages/SettingsPage";
 import LoginPage from "./pages/LoginPage";
 import UsersPage from "./pages/UsersPage";
-import TeamsPage from "./pages/TeamsPage";
 import UsagePage from "./pages/UsagePage";
 import AccountPage from "./pages/AccountPage";
 import VncPopupPage from "./pages/VncPopupPage";
@@ -91,14 +90,6 @@ export default function App() {
           element={
             <AdminRoute>
               <UsersPage />
-            </AdminRoute>
-          }
-        />
-        <Route
-          path="/teams"
-          element={
-            <AdminRoute>
-              <TeamsPage />
             </AdminRoute>
           }
         />

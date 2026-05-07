@@ -122,6 +122,9 @@ func autoMigrateMain(gdb *gorm.DB) error {
 		&KanbanArtifact{},
 		&InstanceSoul{},
 		&BrowserSession{},
+		&Team{},
+		&TeamMember{},
+		&TeamProvider{},
 	)
 }
 
@@ -187,7 +190,7 @@ func seedDefaults() error {
 		// On-demand browser pod defaults. New instances created from now on use
 		// the slim agent image; the browser variant is launched lazily as a
 		// separate pod/container by the configured provider.
-		"default_agent_image":           "glukw/claworc-agent:latest",
+		"default_agent_image":           "claworc/openclaw:latest",
 		"default_browser_image":         "glukw/claworc-browser-chromium:latest",
 		"default_browser_provider":      "auto",
 		"default_browser_idle_minutes":  "15",

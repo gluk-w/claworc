@@ -912,6 +912,12 @@ type UsageInstanceInfo struct {
 	ID          uint   `json:"id"`
 	Name        string `json:"name"`
 	DisplayName string `json:"display_name"`
+	TeamID      uint   `json:"team_id"`
+}
+
+type UsageTeamInfo struct {
+	ID   uint   `json:"id"`
+	Name string `json:"name"`
 }
 
 type UsageProviderInfo struct {
@@ -928,6 +934,7 @@ type UsageStatsResponse struct {
 	Total       UsageTotals         `json:"total"`
 	Instances   []UsageInstanceInfo `json:"instances"`
 	Providers   []UsageProviderInfo `json:"providers"`
+	Teams       []UsageTeamInfo     `json:"teams"`
 	Granularity string              `json:"granularity"`
 }
 
@@ -975,6 +982,7 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 	// Build optional filters
 	var instanceFilter *uint
 	var providerFilter *uint
+	var teamFilter *uint
 	if v := q.Get("instance_id"); v != "" {
 		if id, err := strconv.ParseUint(v, 10, 32); err == nil {
 			uid := uint(id)
@@ -985,6 +993,12 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 		if id, err := strconv.ParseUint(v, 10, 32); err == nil {
 			uid := uint(id)
 			providerFilter = &uid
+		}
+	}
+	if v := q.Get("team_id"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 32); err == nil {
+			uid := uint(id)
+			teamFilter = &uid
 		}
 	}
 
@@ -1001,6 +1015,19 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 	}
 	if providerFilter != nil {
 		query = query.Where("provider_id = ?", *providerFilter)
+	}
+	if teamFilter != nil {
+		// LogsDB lives in the logs database (potentially separate from main),
+		// so resolve team → instance IDs in main and filter by IN-set.
+		var ids []uint
+		if err := database.DB.Model(&database.Instance{}).
+			Where("team_id = ?", *teamFilter).
+			Pluck("id", &ids).Error; err == nil {
+			if len(ids) == 0 {
+				ids = []uint{0}
+			}
+			query = query.Where("instance_id IN ?", ids)
+		}
 	}
 
 	// Pull the rows ungrouped and aggregate in Go. This avoids SQL functions
@@ -1079,7 +1106,7 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 
 	// Load instance name map from main DB
 	var instances []database.Instance
-	database.DB.Select("id, name, display_name").Find(&instances)
+	database.DB.Select("id, name, display_name, team_id").Find(&instances)
 	type instInfo struct{ Name, DisplayName string }
 	instInfoMap := map[uint]instInfo{}
 	for _, inst := range instances {
@@ -1175,10 +1202,16 @@ func GetUsageStats(w http.ResponseWriter, r *http.Request) {
 	})
 
 	for i, inst := range instances {
-		resp.Instances[i] = UsageInstanceInfo{ID: inst.ID, Name: inst.Name, DisplayName: inst.DisplayName}
+		resp.Instances[i] = UsageInstanceInfo{ID: inst.ID, Name: inst.Name, DisplayName: inst.DisplayName, TeamID: inst.TeamID}
 	}
 	for i, p := range providers {
 		resp.Providers[i] = UsageProviderInfo{ID: p.ID, Key: p.Key, Name: p.Name}
+	}
+
+	teams, _ := database.ListTeams()
+	resp.Teams = make([]UsageTeamInfo, len(teams))
+	for i, t := range teams {
+		resp.Teams[i] = UsageTeamInfo{ID: t.ID, Name: t.Name}
 	}
 
 	resp.Granularity = granularity
@@ -1295,6 +1328,19 @@ func GetUsageLogs(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("provider_id"); v != "" {
 		if id, err := strconv.Atoi(v); err == nil {
 			query = query.Where("provider_id = ?", id)
+		}
+	}
+	if v := q.Get("team_id"); v != "" {
+		if id, err := strconv.Atoi(v); err == nil {
+			var ids []uint
+			if err := database.DB.Model(&database.Instance{}).
+				Where("team_id = ?", uint(id)).
+				Pluck("id", &ids).Error; err == nil {
+				if len(ids) == 0 {
+					ids = []uint{0}
+				}
+				query = query.Where("instance_id IN ?", ids)
+			}
 		}
 	}
 

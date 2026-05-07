@@ -21,6 +21,7 @@ func setupTestDB(t *testing.T) {
 		&Instance{}, &Setting{}, &User{}, &UserInstance{},
 		&WebAuthnCredential{}, &LLMProvider{}, &LLMGatewayKey{},
 		&Skill{}, &Backup{}, &BackupSchedule{}, &SharedFolder{},
+		&Team{}, &TeamMember{}, &TeamProvider{},
 	); err != nil {
 		t.Fatalf("auto-migrate: %v", err)
 	}

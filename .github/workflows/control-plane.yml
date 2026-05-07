@@ -82,7 +82,7 @@ jobs:
           context: control-plane/
           platforms: linux/amd64
           push: true
-          tags: glukw/claworc:build-amd64
+          tags: claworc/claworc:build-amd64
           cache-from: type=gha,scope=control-plane-amd64
           cache-to: type=gha,mode=max,scope=control-plane-amd64
 
@@ -105,7 +105,7 @@ jobs:
           context: control-plane/
           platforms: linux/arm64
           push: true
-          tags: glukw/claworc:build-arm64
+          tags: claworc/claworc:build-arm64
           cache-from: type=gha,scope=control-plane-arm64
           cache-to: type=gha,mode=max,scope=control-plane-arm64
 
@@ -125,6 +125,6 @@ jobs:
       - name: Create and push multi-arch manifest
         run: |
           docker buildx imagetools create \
-            -t glukw/claworc:latest \
-            glukw/claworc:build-amd64 \
-            glukw/claworc:build-arm64
+            -t claworc/claworc:latest \
+            claworc/claworc:build-amd64 \
+            claworc/claworc:build-arm64

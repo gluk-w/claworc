@@ -69,9 +69,9 @@ func RequireAdmin(next http.Handler) http.Handler {
 	})
 }
 
-// RequireInstanceCreator allows admins, or users whose CanCreateInstances flag
-// is set. It is used for routes that create new instances or restore backups
-// (which effectively replaces an instance's data).
+// RequireInstanceCreator allows admins or users who manage at least one
+// team. Per-team authorization (creating an instance in a specific team)
+// is enforced inside the handler.
 func RequireInstanceCreator(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user := GetUser(r)
@@ -79,12 +79,48 @@ func RequireInstanceCreator(next http.Handler) http.Handler {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"detail": "Authentication required"})
 			return
 		}
-		if user.Role != "admin" && !user.CanCreateInstances {
-			writeJSON(w, http.StatusForbidden, map[string]string{"detail": "Instance creation permission required"})
+		if user.Role == "admin" {
+			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r)
+		managed, _ := database.UserManagedTeamIDs(user.ID)
+		if len(managed) > 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		writeJSON(w, http.StatusForbidden, map[string]string{"detail": "Instance creation permission required"})
 	})
+}
+
+// CanMutateInstance reports whether the user is allowed to start, stop,
+// restart, delete or otherwise change the lifecycle of an instance. Admins
+// always; otherwise the user must be a manager of the instance's team.
+func CanMutateInstance(r *http.Request, instanceID uint) bool {
+	user := GetUser(r)
+	if user == nil {
+		return false
+	}
+	if user.Role == "admin" {
+		return true
+	}
+	inst, err := database.GetInstance(instanceID)
+	if err != nil {
+		return false
+	}
+	return database.IsTeamManager(user.ID, inst.TeamID)
+}
+
+// CanManageTeam reports whether the user can manage the given team:
+// admins always; otherwise the user must hold the manager role on that team.
+func CanManageTeam(r *http.Request, teamID uint) bool {
+	user := GetUser(r)
+	if user == nil {
+		return false
+	}
+	if user.Role == "admin" {
+		return true
+	}
+	return database.IsTeamManager(user.ID, teamID)
 }
 
 func GetUser(r *http.Request) *database.User {
@@ -104,6 +140,20 @@ func CanAccessInstance(r *http.Request, instanceID uint) bool {
 	}
 	if user.Role == "admin" {
 		return true
+	}
+	// Look up the instance's team. Managers of that team have access to
+	// all team instances. Regular team members still need an explicit
+	// UserInstance grant.
+	inst, err := database.GetInstance(instanceID)
+	if err == nil {
+		role := database.GetTeamRole(user.ID, inst.TeamID)
+		if role == database.TeamRoleManager {
+			return true
+		}
+		if role == database.TeamRoleUser && database.IsUserAssignedToInstance(user.ID, instanceID) {
+			return true
+		}
+		return false
 	}
 	return database.IsUserAssignedToInstance(user.ID, instanceID)
 }

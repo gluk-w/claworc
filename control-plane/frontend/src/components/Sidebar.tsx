@@ -150,12 +150,6 @@ export default function Sidebar() {
               Users
             </span>
           </Link>
-          <Link to="/teams" className={navLinkClass("/teams")}>
-            <Users size={18} className="shrink-0" />
-            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
-              Teams
-            </span>
-          </Link>
           <Link to="/settings" className={navLinkClass("/settings")}>
             <Settings size={18} className="shrink-0" />
             <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">

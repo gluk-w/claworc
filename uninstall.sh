@@ -2,7 +2,7 @@
 set -euo pipefail
 
 CONTAINER_NAME="claworc"
-DASHBOARD_IMAGE="glukw/claworc"
+DASHBOARD_IMAGE="claworc/claworc"
 AGENT_IMAGE="glukw/openclaw-vnc-chromium"
 
 confirm() {

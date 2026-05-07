@@ -16,13 +16,13 @@ Each OpenClaw instance runs an **agent image** plus a separate [Chrome session](
 
 | Image | OpenClaw version | Purpose |
 |-------|------------------|---------|
-| [`glukw/claworc-agent`](https://hub.docker.com/r/glukw/claworc-agent) | Latest published OpenClaw release | Runs OpenClaw, the terminal, and SSH |
-| [`glukw/claworc-stable`](https://hub.docker.com/r/glukw/claworc-stable) | Latest version flagged stable by [isitstable.com/openclaw](https://isitstable.com/openclaw) | Same as above, but pinned to a community-vetted OpenClaw release |
+| [`claworc/openclaw`](https://hub.docker.com/r/claworc/openclaw) | Latest published OpenClaw release | Runs OpenClaw, the terminal, and SSH |
+| [`claworc/openclaw-stable`](https://hub.docker.com/r/claworc/openclaw-stable) | Latest version flagged stable by [isitstable.com/openclaw](https://isitstable.com/openclaw) | Same as above, but pinned to a community-vetted OpenClaw release |
 
 Both images are rebuilt nightly. Each build must pass the full Claworc test suite before it is pushed to Docker Hub, so a tag advancing to a new digest means the new version booted, ran OpenClaw, and survived the agent integration tests on both AMD64 and ARM64.
 
 <Tip>
-  **Which one should I use?** Pick `glukw/claworc-stable` if you want the safest path — it lags `glukw/claworc-agent` by however long the community needs to vet a new OpenClaw release on [isitstable.com](https://isitstable.com/openclaw), so you skip the days when an upstream release introduces a regression. Use `glukw/claworc-agent` if you want new OpenClaw features the moment they ship.
+  **Which one should I use?** Pick `claworc/openclaw-stable` if you want the safest path — it lags `claworc/openclaw` by however long the community needs to vet a new OpenClaw release on [isitstable.com](https://isitstable.com/openclaw), so you skip the days when an upstream release introduces a regression. Use `claworc/openclaw` if you want new OpenClaw features the moment they ship.
 </Tip>
 
 ### Browser images
@@ -43,7 +43,7 @@ All images except `glukw/claworc-browser-chrome` support **AMD64** and **ARM64**
 
 ### Updating the agent and browser images
 
-OpenClaw cannot be updated from inside a running container — the agent image must be rebuilt with the new version. Claworc handles this for you: the agent images on Docker Hub are rebuilt nightly with the latest OpenClaw release (or the latest stable release, for `glukw/claworc-stable`), and clicking **Update** on an OpenClaw instance pulls the new image and restarts the container.
+OpenClaw cannot be updated from inside a running container — the agent image must be rebuilt with the new version. Claworc handles this for you: the agent images on Docker Hub are rebuilt nightly with the latest OpenClaw release (or the latest stable release, for `claworc/openclaw-stable`), and clicking **Update** on an OpenClaw instance pulls the new image and restarts the container.
 
 To update an OpenClaw instance, open its **Settings** tab, find the **Agent Image** field, and click **Update**. Claworc pulls the latest version of the tag, stops the container, and restarts it with the new image. Persistent volumes (home directory, Homebrew packages, browser profile) are preserved. The same **Update** button updates the browser image.
 
@@ -52,7 +52,7 @@ To update an OpenClaw instance, open its **Settings** tab, find the **Agent Imag
 </Note>
 
 <Tip>
-  **Recommended way to keep OpenClaw up to date.** Set the agent image to `glukw/claworc-stable:latest` and click **Update** on a regular cadence (for example, weekly). Each build of `glukw/claworc-stable` pins the OpenClaw version flagged stable by [isitstable.com/openclaw](https://isitstable.com/openclaw), so you get vetted upgrades without tracking releases yourself. Updating Claworc itself does not update the OpenClaw running inside existing OpenClaw instances — you still need to click **Update** on each one.
+  **Recommended way to keep OpenClaw up to date.** Set the agent image to `claworc/openclaw-stable:latest` and click **Update** on a regular cadence (for example, weekly). Each build of `claworc/openclaw-stable` pins the OpenClaw version flagged stable by [isitstable.com/openclaw](https://isitstable.com/openclaw), so you get vetted upgrades without tracking releases yourself. Updating Claworc itself does not update the OpenClaw running inside existing OpenClaw instances — you still need to click **Update** on each one.
 </Tip>
 
 ## Creating an instance
@@ -62,7 +62,7 @@ Click **New instance** on the dashboard and fill in the form:
 | Field | Description |
 |-------|-------------|
 | **Display name** | Human-readable name shown in the dashboard |
-| **Image** | Agent image — runs OpenClaw and the terminal. Defaults to `glukw/claworc-agent`. |
+| **Image** | Agent image — runs OpenClaw and the terminal. Defaults to `claworc/openclaw`. |
 | **Browser image** | Chrome session image — Chrome, Chromium, or Brave. Defaults to the value set in admin **Settings**. |
 | **Idle timeout (min)** | How long the Chrome session stays running while idle before being stopped. Leave empty to inherit the global default (15 minutes). See [Accessing instances](/accessing#on-demand-chrome-sessions). |
 | **CPU limit** | Maximum CPU cores allocated (e.g., `1.0`) |

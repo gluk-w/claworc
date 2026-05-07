@@ -4,7 +4,9 @@ include .env.development
 export
 
 AGENT_IMAGE := glukw/claworc-agent
+AGENT_MIRROR_IMAGE := claworc/openclaw
 STABLE_IMAGE := glukw/claworc-stable
+STABLE_MIRROR_IMAGE := claworc/openclaw-stable
 STABLE_VERSION_URL := https://isitstable.com/api/v1/openclaw/latest-stable
 BROWSER_BASE_IMAGE := glukw/claworc-browser-base
 BROWSER_CHROMIUM_IMAGE := glukw/claworc-browser-chromium
@@ -13,7 +15,7 @@ BROWSER_BRAVE_IMAGE := glukw/claworc-browser-brave
 # Legacy aliases retained for targets that still use the old naming below.
 AGENT_BASE_IMAGE := $(BROWSER_BASE_IMAGE)
 AGENT_IMAGE_NAME := claworc-browser-chromium
-DASHBOARD_IMAGE := glukw/claworc
+DASHBOARD_IMAGE := claworc/claworc
 TAG := latest
 PLATFORMS := linux/amd64,linux/arm64
 NATIVE_ARCH := $(shell uname -m | sed 's/x86_64/amd64/')
@@ -64,7 +66,7 @@ agent-test:
 
 agent-push:
 	@echo "Pushing all agent + browser images in parallel..."
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/instance/Dockerfile --push agent/instance/ & \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -t $(AGENT_MIRROR_IMAGE):$(TAG) -f agent/instance/Dockerfile --push agent/instance/ & \
 	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/browser/Dockerfile.chromium --push agent/browser/ & \
 	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/browser/Dockerfile.chrome --push agent/browser/ & \
 	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --push agent/browser/ & \
@@ -82,6 +84,8 @@ agent-stable:
 		--build-arg OPENCLAW_VERSION=$(OPENCLAW_VERSION) \
 		-t $(STABLE_IMAGE):$(TAG) \
 		-t $(STABLE_IMAGE):$(OPENCLAW_VERSION) \
+		-t $(STABLE_MIRROR_IMAGE):$(TAG) \
+		-t $(STABLE_MIRROR_IMAGE):$(OPENCLAW_VERSION) \
 		-f agent/instance/Dockerfile --push agent/instance/
 
 # CI variant: build single-arch first and run the OpenClaw test suite against
@@ -95,11 +99,13 @@ agent-stable-ci:
 		--build-arg OPENCLAW_VERSION=$(OPENCLAW_VERSION) \
 		-t $(STABLE_IMAGE):test -f agent/instance/Dockerfile --load agent/instance/
 	cd agent/tests && AGENT_INSTANCE_TEST_IMAGE=$(STABLE_IMAGE):test npm run test -- openclaw.test.ts
-	@echo "Pushing multi-arch $(STABLE_IMAGE):$(TAG) and :$(OPENCLAW_VERSION)..."
+	@echo "Pushing multi-arch $(STABLE_IMAGE) + $(STABLE_MIRROR_IMAGE) :$(TAG) and :$(OPENCLAW_VERSION)..."
 	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) \
 		--build-arg OPENCLAW_VERSION=$(OPENCLAW_VERSION) \
 		-t $(STABLE_IMAGE):$(TAG) \
 		-t $(STABLE_IMAGE):$(OPENCLAW_VERSION) \
+		-t $(STABLE_MIRROR_IMAGE):$(TAG) \
+		-t $(STABLE_MIRROR_IMAGE):$(OPENCLAW_VERSION) \
 		-f agent/instance/Dockerfile --push agent/instance/
 
 AGENT_CONTAINER := claworc-agent-exec

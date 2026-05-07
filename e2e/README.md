@@ -9,7 +9,7 @@ runs from a developer machine, not CI/CD.
 - `kubectl`, `helm`, `node` (with `npx`)
 - A reachable Kubernetes cluster and a kubeconfig file that points at it
 - Permission to create/destroy resources in the `claworc-e2e` namespace
-- Built/published images for `glukw/claworc:latest` and the agent images
+- Built/published images for `claworc/claworc:latest` and the agent images
   (or set `E2E_BUILD=1` to rebuild before installing)
 
 ## Install

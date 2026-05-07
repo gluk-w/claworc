@@ -7,7 +7,7 @@
 #>
 
 param(
-    [string]$DashboardImage = "glukw/claworc",
+    [string]$DashboardImage = "claworc/claworc",
     [string]$Tag = "latest",
     [string]$ContainerName = "claworc"
 )

@@ -59,8 +59,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user: user ?? null,
         isLoading,
         isAdmin: user?.role === "admin",
+        // Admins always; otherwise users who manage at least one team.
         canCreateInstances:
-          user?.role === "admin" || user?.can_create_instances === true,
+          user?.role === "admin" ||
+          (user?.teams ?? []).some((t) => t.role === "manager"),
         login,
         logout,
         refetch: () => {

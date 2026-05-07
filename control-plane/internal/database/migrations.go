@@ -105,6 +105,94 @@ func registerGoMigrations() {
 			return fmt.Errorf("baseline migration is not reversible")
 		},
 	)
+
+	// 00004_seed_teams: data backfill on top of 00003_create_teams.sql.
+	// Ensures the seeded "Default" team exists, backfills any instance
+	// that came in with team_id=0, mirrors existing UserInstance grants
+	// into TeamMember(role=user), and promotes users whose legacy
+	// can_create_instances flag was set to manager of the Default team.
+	// Safe to re-run.
+	goose.AddNamedMigrationContext("00004_seed_teams.go",
+		func(ctx context.Context, tx *sql.Tx) error {
+			_ = tx
+			return seedTeamsAndBackfill(DB)
+		},
+		func(ctx context.Context, tx *sql.Tx) error {
+			return fmt.Errorf("seed_teams migration is not reversible")
+		},
+	)
+}
+
+// seedTeamsAndBackfill creates the Default team if missing, backfills any
+// instance with team_id=0 to point at it, mirrors UserInstance rows into
+// TeamMember(role=user), and promotes users with can_create_instances=true
+// to manager of the Default team. Idempotent.
+//
+// The teams/team_members/team_providers tables are created by the
+// sibling SQL migration 00003_create_teams.sql. The instances.team_id
+// column is added here via AutoMigrate so it's idempotent: on fresh
+// installs the baseline already created it from the current Instance
+// model (no-op); on upgrades the baseline is stamped, leaving this
+// AutoMigrate call to add the column.
+func seedTeamsAndBackfill(gdb *gorm.DB) error {
+	if err := gdb.AutoMigrate(&Instance{}); err != nil {
+		return fmt.Errorf("auto-migrate instances.team_id: %w", err)
+	}
+
+	var defaultTeam Team
+	err := gdb.Where("is_default = ?", true).First(&defaultTeam).Error
+	if err != nil {
+		err = gdb.Where("name = ?", "Default").First(&defaultTeam).Error
+	}
+	if err != nil {
+		defaultTeam = Team{Name: "Default", Description: "Default team", IsDefault: true}
+		if err := gdb.Create(&defaultTeam).Error; err != nil {
+			return fmt.Errorf("seed default team: %w", err)
+		}
+	} else if !defaultTeam.IsDefault {
+		gdb.Model(&defaultTeam).Update("is_default", true)
+	}
+
+	if err := gdb.Model(&Instance{}).Where("team_id IS NULL OR team_id = 0").
+		Update("team_id", defaultTeam.ID).Error; err != nil {
+		return fmt.Errorf("backfill instance.team_id: %w", err)
+	}
+
+	var grants []UserInstance
+	if err := gdb.Find(&grants).Error; err != nil {
+		return fmt.Errorf("load user_instances: %w", err)
+	}
+	for _, g := range grants {
+		var inst Instance
+		if err := gdb.First(&inst, g.InstanceID).Error; err != nil {
+			continue
+		}
+		teamID := inst.TeamID
+		if teamID == 0 {
+			teamID = defaultTeam.ID
+		}
+		var existing int64
+		gdb.Model(&TeamMember{}).Where("team_id = ? AND user_id = ?", teamID, g.UserID).Count(&existing)
+		if existing == 0 {
+			gdb.Create(&TeamMember{TeamID: teamID, UserID: g.UserID, Role: "user"})
+		}
+	}
+
+	var creators []User
+	if err := gdb.Where("can_create_instances = ?", true).Find(&creators).Error; err != nil {
+		return fmt.Errorf("load creators: %w", err)
+	}
+	for _, u := range creators {
+		var existing TeamMember
+		err := gdb.Where("team_id = ? AND user_id = ?", defaultTeam.ID, u.ID).First(&existing).Error
+		if err != nil {
+			gdb.Create(&TeamMember{TeamID: defaultTeam.ID, UserID: u.ID, Role: "manager"})
+		} else if existing.Role != "manager" {
+			gdb.Model(&existing).Update("role", "manager")
+		}
+	}
+
+	return nil
 }
 
 // resetGoMigrationsForTest is exposed for tests so multiple Init/Migrate

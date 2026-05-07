@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Defaults
-DASHBOARD_IMAGE="glukw/claworc"
+DASHBOARD_IMAGE="claworc/claworc"
 TAG="latest"
 CONTAINER_NAME="claworc"
 

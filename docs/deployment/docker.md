@@ -113,7 +113,7 @@ docker run -d \
   -v claworc-data:/app/data \
   -e CLAWORC_NODE_IP=127.0.0.1 \
   -e CLAWORC_DOCKER_CONFIG_DIR=/app/data/configs \
-  glukw/claworc:latest
+  claworc/claworc:latest
 ```
 
 Key points:

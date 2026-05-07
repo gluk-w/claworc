@@ -13,7 +13,7 @@ The project consists of the following components:
 
 ## Repository Structure
 
-- `agent/` - Base docker image with OpenClaw instance and derived images with various browsers `glukw/openclaw-vnc-<browser>`
+- `agent/` - Base docker image with OpenClaw instance (`claworc/openclaw`) and images with various browsers `claworc/claworc-browser-<browser>`
 - `control-plane/` - Main application (Go backend + React frontend)
     - `main.go` - Entry point, Chi router, embedded SPA serving
     - `internal/` - Go packages (config, database, handlers, middleware, orchestrator, sshproxy, sshterminal)

@@ -60,7 +60,7 @@ export default function UsersPage() {
                 Username
               </th>
               <th className="text-left px-4 py-3 font-medium text-gray-600">
-                Role
+                Access
               </th>
               <th className="text-left px-4 py-3 font-medium text-gray-600">
                 Last login
@@ -121,6 +121,56 @@ export default function UsersPage() {
   );
 }
 
+function AccessSummary({ user }: { user: UserListItem }) {
+  if (user.role === "admin") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-purple-50 text-purple-700">
+        <ShieldCheck size={12} />
+        admin
+      </span>
+    );
+  }
+
+  const managedTeams = user.teams.filter((t) => t.role === "manager");
+  const hasAny = managedTeams.length > 0 || user.instances.length > 0;
+
+  if (!hasAny) {
+    return <span className="text-xs text-gray-400">no access</span>;
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      {managedTeams.length > 0 && (
+        <div className="flex items-center gap-1 flex-wrap">
+          <span className="text-xs text-gray-500">Manager of:</span>
+          {managedTeams.map((t) => (
+            <span
+              key={t.id}
+              className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-blue-50 text-blue-700"
+            >
+              <Shield size={12} />
+              {t.name}
+            </span>
+          ))}
+        </div>
+      )}
+      {user.instances.length > 0 && (
+        <div className="flex items-center gap-1 flex-wrap">
+          <span className="text-xs text-gray-500">Instances:</span>
+          {user.instances.map((inst) => (
+            <span
+              key={inst.id}
+              className="inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-700"
+            >
+              [{inst.team_name}] {inst.display_name || inst.name}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UserRow({
   user,
   onEdit,
@@ -143,30 +193,7 @@ function UserRow({
         </button>
       </td>
       <td className="px-4 py-3">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span
-            className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ${
-              user.role === "admin"
-                ? "bg-purple-50 text-purple-700"
-                : "bg-gray-100 text-gray-600"
-            }`}
-          >
-            {user.role === "admin" ? (
-              <ShieldCheck size={12} />
-            ) : (
-              <Shield size={12} />
-            )}
-            {user.role}
-          </span>
-          {user.role === "user" && user.can_create_instances && (
-            <span
-              className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-blue-50 text-blue-700"
-              title="Can create instances and restore from backups"
-            >
-              can create instances
-            </span>
-          )}
-        </div>
+        <AccessSummary user={user} />
       </td>
       <td className="px-4 py-3 text-gray-500">
         {user.last_login_at ? (

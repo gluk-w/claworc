@@ -1,12 +1,27 @@
 import client from "./client";
 
+export interface UserListTeamRef {
+  id: number;
+  name: string;
+  role: "user" | "manager";
+}
+
+export interface UserListInstanceRef {
+  id: number;
+  name: string;
+  display_name: string;
+  team_id: number;
+  team_name: string;
+}
+
 export interface UserListItem {
   id: number;
   username: string;
   role: string;
-  can_create_instances: boolean;
   last_login_at: string;
   created_at: string;
+  teams: UserListTeamRef[];
+  instances: UserListInstanceRef[];
 }
 
 export async function fetchUsers(): Promise<UserListItem[]> {
@@ -18,24 +33,15 @@ export interface CreatedUser {
   id: number;
   username: string;
   role: string;
-  can_create_instances: boolean;
 }
 
 export async function createUser(data: {
   username: string;
   password: string;
   role: string;
-  can_create_instances?: boolean;
 }): Promise<CreatedUser> {
   const res = await client.post("/users", data);
   return res.data;
-}
-
-export async function updateUserPermissions(
-  id: number,
-  permissions: { can_create_instances?: boolean },
-): Promise<void> {
-  await client.put(`/users/${id}/permissions`, permissions);
 }
 
 export async function deleteUser(id: number): Promise<void> {
@@ -53,6 +59,19 @@ export async function getUserInstances(
   id: number,
 ): Promise<{ instance_ids: number[] }> {
   const res = await client.get(`/users/${id}/instances`);
+  return res.data;
+}
+
+export interface UserTeamMembershipDTO {
+  team_id: number;
+  name: string;
+  role: "user" | "manager";
+}
+
+export async function getUserTeams(
+  id: number,
+): Promise<UserTeamMembershipDTO[]> {
+  const res = await client.get(`/users/${id}/teams`);
   return res.data;
 }
 

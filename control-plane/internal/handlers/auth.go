@@ -109,11 +109,36 @@ func GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "Authentication required")
 		return
 	}
+
+	// Teams: admins implicitly belong to every team as managers; everyone
+	// else gets only their explicit memberships.
+	type teamEntry struct {
+		ID        uint   `json:"id"`
+		Name      string `json:"name"`
+		IsDefault bool   `json:"is_default"`
+		Role      string `json:"role"`
+	}
+	var teams []teamEntry
+	if user.Role == "admin" {
+		all, _ := database.ListTeams()
+		for _, t := range all {
+			teams = append(teams, teamEntry{ID: t.ID, Name: t.Name, IsDefault: t.IsDefault, Role: database.TeamRoleManager})
+		}
+	} else {
+		memberships, _ := database.GetUserTeams(user.ID)
+		for _, m := range memberships {
+			teams = append(teams, teamEntry{ID: m.ID, Name: m.Name, IsDefault: m.IsDefault, Role: m.Role})
+		}
+	}
+	if teams == nil {
+		teams = []teamEntry{}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"id":                   user.ID,
-		"username":             user.Username,
-		"role":                 user.Role,
-		"can_create_instances": user.CanCreateInstances,
+		"id":       user.ID,
+		"username": user.Username,
+		"role":     user.Role,
+		"teams":    teams,
 	})
 }
 

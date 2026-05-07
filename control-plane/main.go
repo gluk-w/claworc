@@ -315,6 +315,9 @@ func main() {
 			r.Get("/tasks/{id}", handlers.GetTask)
 			r.Post("/tasks/{id}/cancel", handlers.CancelTask)
 
+			// Teams: list available to the caller (admin: all, others: own).
+			r.Get("/teams", handlers.ListTeams)
+
 			// Instances (ListInstances filters by role internally)
 			r.Get("/instances", handlers.ListInstances)
 			r.Put("/instances/reorder", handlers.ReorderInstances)
@@ -406,7 +409,7 @@ func main() {
 			r.Put("/backup-schedules/{id}", handlers.UpdateBackupSchedule)
 			r.Delete("/backup-schedules/{id}", handlers.DeleteBackupSchedule)
 
-			// Instance creators (admin or users with can_create_instances=true).
+			// Instance creators (admin or users who manage at least one team).
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequireInstanceCreator)
 
@@ -453,12 +456,22 @@ func main() {
 				r.Get("/skills/{slug}/files/*", handlers.GetSkillFile)
 				r.Put("/skills/{slug}/files/*", handlers.PutSkillFile)
 
+				// Teams CRUD + membership + provider whitelist
+				r.Post("/teams", handlers.CreateTeam)
+				r.Put("/teams/{id}", handlers.UpdateTeam)
+				r.Delete("/teams/{id}", handlers.DeleteTeam)
+				r.Get("/teams/{id}/members", handlers.ListTeamMembers)
+				r.Post("/teams/{id}/members", handlers.SetTeamMember)
+				r.Delete("/teams/{id}/members/{userId}", handlers.RemoveTeamMember)
+				r.Get("/teams/{id}/providers", handlers.GetTeamProviders)
+				r.Put("/teams/{id}/providers", handlers.SetTeamProviders)
+
 				// User management
 				r.Get("/users", handlers.ListUsers)
 				r.Post("/users", handlers.CreateUser)
 				r.Delete("/users/{userId}", handlers.DeleteUser)
 				r.Put("/users/{userId}/role", handlers.UpdateUserRole)
-				r.Put("/users/{userId}/permissions", handlers.UpdateUserPermissions)
+				r.Get("/users/{userId}/teams", handlers.GetUserTeamsHandler)
 				r.Get("/users/{userId}/instances", handlers.GetUserAssignedInstances)
 				r.Put("/users/{userId}/instances", handlers.SetUserAssignedInstances)
 				r.Post("/users/{userId}/reset-password", handlers.ResetUserPassword)
