@@ -132,8 +132,10 @@ export default function UsagePage() {
   const byModel = (stats?.by_model ?? []).slice(0, 10);
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      <h1 className="text-2xl font-semibold text-gray-900">AI Usage</h1>
+    <div>
+      <h1 className="text-xl font-semibold text-gray-900 mb-6">AI Usage</h1>
+
+      <div className="space-y-6">
 
       {/* Filters */}
       <div className="flex flex-wrap items-end gap-4 bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
@@ -417,6 +419,7 @@ export default function UsagePage() {
           </div>
         </>
       )}
+      </div>
     </div>
   );
 }

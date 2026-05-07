@@ -72,13 +72,12 @@ type Instance struct {
 	UpdatedAt     time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
-// Team groups instances and users together. The seeded "Default" team
-// (IsDefault=true) is created automatically on first migration.
+// Team groups instances and users together. A "Default Team" is seeded
+// on first migration when no teams exist.
 type Team struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
 	Name        string    `gorm:"uniqueIndex;not null;size:100" json:"name"`
 	Description string    `json:"description"`
-	IsDefault   bool      `gorm:"not null;default:false" json:"is_default"`
 	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }

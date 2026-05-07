@@ -1,7 +1,6 @@
 export interface UserTeamMembership {
   id: number;
   name: string;
-  is_default: boolean;
   role: "user" | "manager";
 }
 

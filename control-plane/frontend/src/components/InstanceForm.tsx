@@ -9,17 +9,24 @@ import EnvVarsEditor from "@/components/EnvVarsEditor";
 import StickyActionBar from "@/components/StickyActionBar";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import type { InstanceCreatePayload } from "@/types/instance";
+import type { UserTeamMembership } from "@/types/auth";
 
 interface InstanceFormProps {
   onSubmit: (payload: InstanceCreatePayload) => void;
   onCancel: () => void;
   loading?: boolean;
+  teams: UserTeamMembership[];
+  teamId: number | null;
+  onTeamIdChange: (id: number) => void;
 }
 
 export default function InstanceForm({
   onSubmit,
   onCancel,
   loading,
+  teams,
+  teamId,
+  onTeamIdChange,
 }: InstanceFormProps) {
   const [displayName, setDisplayName] = useState("");
   const [cpuRequest, setCpuRequest] = useState("");
@@ -95,6 +102,7 @@ export default function InstanceForm({
 
     const payload: InstanceCreatePayload = {
       display_name: displayName.trim(),
+      team_id: teamId ?? undefined,
       cpu_request: cpuRequest,
       cpu_limit: cpuLimit,
       memory_request: memoryRequest,
@@ -153,6 +161,29 @@ export default function InstanceForm({
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h3 className="text-sm font-medium text-gray-900 mb-4">Instance</h3>
         <div className="space-y-4">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Team *
+            </label>
+            {teams.length <= 1 ? (
+              <div className="w-full px-3 py-1.5 border border-gray-200 bg-gray-50 rounded-md text-sm text-gray-700">
+                {teams[0]?.name ?? "—"}
+              </div>
+            ) : (
+              <select
+                value={teamId ?? ""}
+                onChange={(e) => onTeamIdChange(Number(e.target.value))}
+                required
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">
               Display Name *

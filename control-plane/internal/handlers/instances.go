@@ -742,20 +742,19 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve target team. Without an explicit team_id, fall back to the
-	// Default team. Non-admins must be a manager of the target team.
+	// Target team must be specified. Non-admins must be a manager of it.
 	caller := middleware.GetUser(r)
 	var teamID uint
 	if body.TeamID != nil && *body.TeamID > 0 {
 		teamID = *body.TeamID
 	}
 	if teamID == 0 {
-		if t, err := database.GetDefaultTeam(); err == nil {
-			teamID = t.ID
-		} else {
-			writeError(w, http.StatusInternalServerError, "Default team is not initialized")
-			return
-		}
+		writeError(w, http.StatusBadRequest, "team_id is required")
+		return
+	}
+	if _, err := database.GetTeam(teamID); err != nil {
+		writeError(w, http.StatusBadRequest, "Unknown team")
+		return
 	}
 	if caller != nil && caller.Role != "admin" {
 		if !database.IsTeamManager(caller.ID, teamID) {
@@ -1119,6 +1118,7 @@ type instanceUpdateRequest struct {
 	BrowserImage       *string           `json:"browser_image"`        // non-legacy only
 	BrowserIdleMinutes *int              `json:"browser_idle_minutes"` // non-legacy only; null = global default
 	BrowserStorage     *string           `json:"browser_storage"`      // non-legacy only
+	TeamID             *uint             `json:"team_id"`              // admin or manager of both source+target
 }
 
 func UpdateInstance(w http.ResponseWriter, r *http.Request) {
@@ -1143,6 +1143,32 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
+	}
+
+	// Reassign team. Admins always allowed; non-admins must be a manager
+	// of both the current team and the target team.
+	if body.TeamID != nil && *body.TeamID > 0 && *body.TeamID != inst.TeamID {
+		caller := middleware.GetUser(r)
+		if caller == nil {
+			writeError(w, http.StatusUnauthorized, "Authentication required")
+			return
+		}
+		newTeamID := *body.TeamID
+		if _, err := database.GetTeam(newTeamID); err != nil {
+			writeError(w, http.StatusBadRequest, "Unknown team")
+			return
+		}
+		if caller.Role != "admin" {
+			if !database.IsTeamManager(caller.ID, inst.TeamID) || !database.IsTeamManager(caller.ID, newTeamID) {
+				writeError(w, http.StatusForbidden, "You must be a manager of both the current and target teams to reassign")
+				return
+			}
+		}
+		if err := database.DB.Model(&inst).Update("team_id", newTeamID).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to reassign team")
+			return
+		}
+		inst.TeamID = newTeamID
 	}
 
 	// Update Brave API key

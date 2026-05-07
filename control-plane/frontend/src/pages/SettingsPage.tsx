@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import {
   AlertTriangle,
   Eye,
@@ -8,33 +8,23 @@ import {
   Pencil,
   Plus,
   RefreshCw,
-  Trash2,
 } from "lucide-react";
 import ProviderIcon from "@/components/ProviderIcon";
 import ProviderModal from "@/components/ProviderModal";
 import EnvVarsEditor from "@/components/EnvVarsEditor";
 import StickyActionBar from "@/components/StickyActionBar";
-import CreateTeamDialog from "@/components/CreateTeamDialog";
-import TeamMembersPanel from "@/components/TeamMembersPanel";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import { useProviders, useCatalogIconMap } from "@/hooks/useProviders";
 import { fetchSSHFingerprint, rotateSSHKey } from "@/api/ssh";
 import { syncAllProviders } from "@/api/llm";
-import {
-  fetchTeams,
-  updateTeam,
-  deleteTeam,
-  type Team,
-} from "@/api/teams";
-import { useTeam } from "@/contexts/TeamContext";
 import { successToast, errorToast } from "@/utils/toast";
 import { validateResourceQuantities } from "@/utils/resourceValidation";
 import type { LLMProvider } from "@/types/instance";
 import type { Settings, SettingsUpdatePayload } from "@/types/settings";
 
-type TabKey = "api-keys" | "environment" | "teams" | "misc";
-const TAB_KEYS: TabKey[] = ["api-keys", "environment", "teams", "misc"];
+type TabKey = "api-keys" | "environment" | "misc";
+const TAB_KEYS: TabKey[] = ["api-keys", "environment", "misc"];
 
 function isTabKey(v: string | null): v is TabKey {
   return !!v && (TAB_KEYS as string[]).includes(v);
@@ -60,19 +50,26 @@ function formatExpiresIn(ms: number): string {
 export default function SettingsPage() {
   const { data: settings, isLoading } = useSettings();
   const updateMutation = useUpdateSettings();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const tabParam = searchParams.get("tab");
-  const activeTab: TabKey = isTabKey(tabParam) ? tabParam : "api-keys";
+  const location = useLocation();
 
-  const setActiveTab = (t: TabKey) => {
-    const next = new URLSearchParams(searchParams);
-    next.set("tab", t);
-    setSearchParams(next, { replace: true });
+  const getTabFromHash = (): TabKey => {
+    const hash = location.hash.slice(1);
+    return isTabKey(hash) ? hash : "api-keys";
   };
 
-  // Deferred-save state shared by API Keys + Environment tabs.
+  const [activeTab, setActiveTab] = useState<TabKey>(getTabFromHash());
+
+  useEffect(() => {
+    setActiveTab(getTabFromHash());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.hash]);
+
+  // Deferred-save state shared across tabs.
   const [pendingBraveKey, setPendingBraveKey] = useState<string | null>(null);
   const [resources, setResources] = useState<Record<string, string>>({});
+  const [pendingAnalyticsConsent, setPendingAnalyticsConsent] = useState<
+    "opt_in" | "opt_out" | null
+  >(null);
   const [resetKey, setResetKey] = useState(0);
 
   if (isLoading || !settings) {
@@ -95,19 +92,27 @@ export default function SettingsPage() {
   const resourcesValid = Object.keys(resourceErrors).length === 0;
 
   const hasChanges =
-    pendingBraveKey !== null || Object.keys(resources).length > 0;
+    pendingBraveKey !== null ||
+    Object.keys(resources).length > 0 ||
+    pendingAnalyticsConsent !== null;
   const stickyVisible =
-    (activeTab === "api-keys" || activeTab === "environment") && hasChanges;
+    (activeTab === "api-keys" ||
+      activeTab === "environment" ||
+      activeTab === "misc") &&
+    hasChanges;
 
   const handleSave = () => {
     if (!resourcesValid) return;
     const payload: SettingsUpdatePayload = { ...resources };
     if (pendingBraveKey !== null) payload.brave_api_key = pendingBraveKey;
+    if (pendingAnalyticsConsent !== null)
+      payload.analytics_consent = pendingAnalyticsConsent;
 
     updateMutation.mutate(payload, {
       onSuccess: () => {
         setPendingBraveKey(null);
         setResources({});
+        setPendingAnalyticsConsent(null);
       },
     });
   };
@@ -115,6 +120,7 @@ export default function SettingsPage() {
   const handleReset = () => {
     setPendingBraveKey(null);
     setResources({});
+    setPendingAnalyticsConsent(null);
     setResetKey((k) => k + 1);
   };
 
@@ -136,16 +142,13 @@ export default function SettingsPage() {
       <h1 className="text-xl font-semibold text-gray-900 mb-6">Settings</h1>
 
       <div className="border-b border-gray-200 mb-6 flex gap-6">
-        <TabButton active={activeTab === "api-keys"} onClick={() => setActiveTab("api-keys")}>
+        <TabButton active={activeTab === "api-keys"} hash="api-keys">
           API Keys
         </TabButton>
-        <TabButton active={activeTab === "environment"} onClick={() => setActiveTab("environment")}>
+        <TabButton active={activeTab === "environment"} hash="environment">
           Environment
         </TabButton>
-        <TabButton active={activeTab === "teams"} onClick={() => setActiveTab("teams")}>
-          Teams
-        </TabButton>
-        <TabButton active={activeTab === "misc"} onClick={() => setActiveTab("misc")}>
+        <TabButton active={activeTab === "misc"} hash="misc">
           Misc
         </TabButton>
       </div>
@@ -169,8 +172,13 @@ export default function SettingsPage() {
             isSaving={updateMutation.isPending}
           />
         )}
-        {activeTab === "teams" && <TeamsTab />}
-        {activeTab === "misc" && <MiscTab settings={settings} />}
+        {activeTab === "misc" && (
+          <MiscTab
+            settings={settings}
+            pendingAnalyticsConsent={pendingAnalyticsConsent}
+            setPendingAnalyticsConsent={setPendingAnalyticsConsent}
+          />
+        )}
       </div>
 
       <StickyActionBar visible={stickyVisible}>
@@ -196,17 +204,17 @@ export default function SettingsPage() {
 
 function TabButton({
   active,
-  onClick,
+  hash,
   children,
 }: {
   active: boolean;
-  onClick: () => void;
+  hash: string;
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <Link
+      to={{ hash }}
+      replace
       className={`-mb-px py-2 text-sm border-b-2 ${
         active
           ? "border-blue-600 text-blue-700 font-medium"
@@ -214,7 +222,7 @@ function TabButton({
       }`}
     >
       {children}
-    </button>
+    </Link>
   );
 }
 
@@ -588,276 +596,18 @@ function EnvironmentTab({
   );
 }
 
-// ---------- Teams tab ----------
-
-function TeamsTab() {
-  const qc = useQueryClient();
-  const navigate = useNavigate();
-  const { setActiveTeamId } = useTeam();
-  const { data: teams = [], isLoading } = useQuery({
-    queryKey: ["teams"],
-    queryFn: fetchTeams,
-  });
-
-  const [showCreate, setShowCreate] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editingName, setEditingName] = useState("");
-  const [membersTeam, setMembersTeam] = useState<Team | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<Team | null>(null);
-
-  const renameMut = useMutation({
-    mutationFn: ({ id, name }: { id: number; name: string }) =>
-      updateTeam(id, { name }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["teams"] });
-      setEditingId(null);
-      successToast("Team renamed");
-    },
-    onError: (err) => errorToast("Failed to rename team", err),
-  });
-
-  const deleteMut = useMutation({
-    mutationFn: (id: number) => deleteTeam(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["teams"] });
-      setDeleteTarget(null);
-      successToast("Team deleted");
-    },
-    onError: (err) => {
-      errorToast("Failed to delete team", err);
-      setDeleteTarget(null);
-    },
-  });
-
-  const startEdit = (t: Team) => {
-    setEditingId(t.id);
-    setEditingName(t.name);
-  };
-
-  const commitEdit = () => {
-    if (!editingId) return;
-    const name = editingName.trim();
-    const target = teams.find((t) => t.id === editingId);
-    if (!name || !target || name === target.name) {
-      setEditingId(null);
-      return;
-    }
-    renameMut.mutate({ id: editingId, name });
-  };
-
-  const goToInstances = (teamId: number) => {
-    setActiveTeamId(teamId);
-    navigate("/");
-  };
-
-  if (isLoading) {
-    return <div className="text-gray-500">Loading teams...</div>;
-  }
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <p className="text-sm text-gray-500">
-          Teams group instances and members. Each user can be a manager or a regular user of any team.
-        </p>
-        <button
-          type="button"
-          onClick={() => setShowCreate(true)}
-          className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
-        >
-          Create Team
-        </button>
-      </div>
-
-      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>
-              <th className="text-left px-4 py-3 font-medium text-gray-600">Name</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600">Members</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600">Instances</th>
-              <th className="text-right px-4 py-3 font-medium text-gray-600">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {teams.map((team) => (
-              <tr key={team.id} className="border-b border-gray-100 last:border-0">
-                <td className="px-4 py-3">
-                  {editingId === team.id ? (
-                    <input
-                      autoFocus
-                      type="text"
-                      value={editingName}
-                      onChange={(e) => setEditingName(e.target.value)}
-                      onBlur={commitEdit}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") commitEdit();
-                        if (e.key === "Escape") setEditingId(null);
-                      }}
-                      className="px-2 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  ) : (
-                    <button
-                      onClick={() => startEdit(team)}
-                      className="font-medium text-blue-600 hover:text-blue-800"
-                      title="Click to rename"
-                    >
-                      {team.name}
-                      {team.is_default && (
-                        <span className="ml-2 text-xs text-gray-400 font-normal">default</span>
-                      )}
-                    </button>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  <button
-                    onClick={() => setMembersTeam(team)}
-                    className="text-blue-600 hover:text-blue-800"
-                    title="Manage members"
-                  >
-                    {team.member_count ?? 0}
-                  </button>
-                </td>
-                <td className="px-4 py-3">
-                  <button
-                    onClick={() => goToInstances(team.id)}
-                    className="text-blue-600 hover:text-blue-800"
-                    title="View instances"
-                  >
-                    {team.instance_count ?? 0}
-                  </button>
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <div className="flex items-center justify-end gap-1">
-                    <button
-                      onClick={() => startEdit(team)}
-                      className="p-1.5 text-gray-400 hover:text-gray-600 rounded"
-                      title="Rename team"
-                    >
-                      <Pencil size={16} />
-                    </button>
-                    <button
-                      onClick={() => !team.is_default && setDeleteTarget(team)}
-                      disabled={team.is_default}
-                      className="p-1.5 text-gray-400 hover:text-red-600 rounded disabled:opacity-30 disabled:hover:text-gray-400"
-                      title={team.is_default ? "Default team cannot be deleted" : "Delete team"}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {teams.length === 0 && (
-              <tr>
-                <td colSpan={4} className="text-center text-gray-400 py-6">
-                  No teams yet.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {showCreate && <CreateTeamDialog onClose={() => setShowCreate(false)} />}
-
-      {membersTeam && (
-        <TeamMembersModal team={membersTeam} onClose={() => setMembersTeam(null)} />
-      )}
-
-      {deleteTarget && (
-        <DeleteTeamDialog
-          team={deleteTarget}
-          onCancel={() => setDeleteTarget(null)}
-          onConfirm={() => deleteMut.mutate(deleteTarget.id)}
-          isPending={deleteMut.isPending}
-        />
-      )}
-    </div>
-  );
-}
-
-function TeamMembersModal({ team, onClose }: { team: Team; onClose: () => void }) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onClick={onClose}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") onClose();
-      }}
-    >
-      <div
-        className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 flex flex-col max-h-[80vh]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-base font-semibold text-gray-900">{team.name}</h2>
-        </div>
-        <div className="overflow-y-auto flex-1 px-6 py-4">
-          <TeamMembersPanel team={team} />
-        </div>
-        <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function DeleteTeamDialog({
-  team,
-  onCancel,
-  onConfirm,
-  isPending,
-}: {
-  team: Team;
-  onCancel: () => void;
-  onConfirm: () => void;
-  isPending: boolean;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onCancel}>
-      <div
-        className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="text-base font-semibold text-gray-900 mb-2">Delete team</h2>
-        <p className="text-sm text-gray-600 mb-4">
-          Delete team "{team.name}"? Instances belonging to this team will need to be reassigned.
-        </p>
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="px-3 py-1.5 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={isPending}
-            className="px-3 py-1.5 text-sm text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50"
-          >
-            {isPending ? "Deleting..." : "Delete"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ---------- Misc tab ----------
 
-function MiscTab({ settings }: { settings: Settings }) {
+function MiscTab({
+  settings,
+  pendingAnalyticsConsent,
+  setPendingAnalyticsConsent,
+}: {
+  settings: Settings;
+  pendingAnalyticsConsent: "opt_in" | "opt_out" | null;
+  setPendingAnalyticsConsent: (v: "opt_in" | "opt_out" | null) => void;
+}) {
   const queryClient = useQueryClient();
-  const updateMutation = useUpdateSettings();
 
   const fingerprint = useQuery({
     queryKey: ["ssh-fingerprint"],
@@ -924,10 +674,15 @@ function MiscTab({ settings }: { settings: Settings }) {
           <label className="inline-flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
-              checked={settings.analytics_consent === "opt_in"}
-              onChange={(e) => {
-                updateMutation.mutate({ analytics_consent: e.target.checked ? "opt_in" : "opt_out" });
-              }}
+              checked={
+                (pendingAnalyticsConsent ?? settings.analytics_consent) ===
+                "opt_in"
+              }
+              onChange={(e) =>
+                setPendingAnalyticsConsent(
+                  e.target.checked ? "opt_in" : "opt_out",
+                )
+              }
               className="h-4 w-4 text-blue-600 rounded border-gray-300"
             />
             <span className="text-sm text-gray-700">Share anonymous usage statistics</span>

@@ -15,7 +15,6 @@ type teamResponse struct {
 	ID            uint   `json:"id"`
 	Name          string `json:"name"`
 	Description   string `json:"description"`
-	IsDefault     bool   `json:"is_default"`
 	MemberCount   int64  `json:"member_count"`
 	InstanceCount int64  `json:"instance_count"`
 }
@@ -25,7 +24,6 @@ func teamToResponse(t database.Team) teamResponse {
 		ID:          t.ID,
 		Name:        t.Name,
 		Description: t.Description,
-		IsDefault:   t.IsDefault,
 	}
 }
 
@@ -121,8 +119,7 @@ func CreateTeam(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, teamToResponse(t))
 }
 
-// UpdateTeam updates a team's name/description (admin-only). The Default
-// flag cannot be toggled via this endpoint.
+// UpdateTeam updates a team's name/description (admin-only).
 func UpdateTeam(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
@@ -151,8 +148,8 @@ func UpdateTeam(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, teamToResponse(*t))
 }
 
-// DeleteTeam removes a team (admin-only). The Default team cannot be
-// deleted, and a team with attached instances must be cleared first.
+// DeleteTeam removes a team (admin-only). A team with attached
+// instances must be cleared first.
 func DeleteTeam(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {

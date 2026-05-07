@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, createElement } from "react";
 import { Link, useParams, useNavigate, useLocation } from "react-router-dom";
 import { AlertTriangle, X, Maximize, ExternalLink, Plus } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTeam } from "@/contexts/TeamContext";
 import StatusBadge from "@/components/StatusBadge";
 import ActionButtons from "@/components/ActionButtons";
 import MonacoConfigEditor from "@/components/MonacoConfigEditor";
@@ -68,6 +69,7 @@ export default function InstanceDetailPage() {
 
   const qc = useQueryClient();
   const { isAdmin } = useAuth();
+  const { teams: userTeams, isManager } = useTeam();
   const { data: instance, isLoading } = useInstance(instanceId);
   const { data: allProviders = [] } = useProviders();
 
@@ -150,6 +152,9 @@ export default function InstanceDetailPage() {
   // Display name editing state
   const [editingDisplayName, setEditingDisplayName] = useState(false);
   const [pendingDisplayName, setPendingDisplayName] = useState<string | null>(null);
+
+  const [editingTeam, setEditingTeam] = useState(false);
+  const [pendingTeamId, setPendingTeamId] = useState<number | null>(null);
 
   // Resource limits editing state
   const [editingResources, setEditingResources] = useState(false);
@@ -290,6 +295,19 @@ export default function InstanceDetailPage() {
         onSuccess: () => {
           setEditingUserAgent(false);
           setPendingUserAgent(null);
+        },
+      },
+    );
+  };
+
+  const handleSaveTeam = () => {
+    if (pendingTeamId == null) return;
+    updateMutation.mutate(
+      { id: instanceId, payload: { team_id: pendingTeamId } },
+      {
+        onSuccess: () => {
+          setEditingTeam(false);
+          setPendingTeamId(null);
         },
       },
     );
@@ -589,6 +607,61 @@ export default function InstanceDetailPage() {
                   </dd>
                 )}
               </div>
+
+              {/* Team */}
+              {(() => {
+                const currentTeam = userTeams.find((t) => t.id === instance.team_id);
+                const canReassign = isAdmin || isManager(instance.team_id);
+                const reassignableTeams = isAdmin
+                  ? userTeams
+                  : userTeams.filter((t) => t.role === "manager");
+                const showReassign = canReassign && reassignableTeams.length > 1;
+                return (
+                  <div>
+                    <dt className="text-xs text-gray-500">Team</dt>
+                    {editingTeam ? (
+                      <dd className="mt-0.5 flex gap-2">
+                        <select
+                          value={pendingTeamId ?? instance.team_id}
+                          onChange={(e) => setPendingTeamId(Number(e.target.value))}
+                          className="flex-1 min-w-0 text-sm border border-gray-300 rounded-md px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          {reassignableTeams.map((t) => (
+                            <option key={t.id} value={t.id}>{t.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={handleSaveTeam}
+                          disabled={updateMutation.isPending || pendingTeamId == null || pendingTeamId === instance.team_id}
+                          className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                        >
+                          {updateMutation.isPending ? "Saving..." : "Save"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setEditingTeam(false); setPendingTeamId(null); }}
+                          className="text-xs text-blue-600 hover:text-blue-800 shrink-0"
+                        >
+                          Cancel
+                        </button>
+                      </dd>
+                    ) : (
+                      <dd className="text-sm text-gray-900 mt-0.5">
+                        {currentTeam?.name ?? `#${instance.team_id}`}
+                        {showReassign && (
+                          <button
+                            type="button"
+                            onClick={() => { setPendingTeamId(instance.team_id); setEditingTeam(true); }}
+                            className="ml-2 text-xs text-blue-600 hover:text-blue-800"
+                          >
+                            Reassign
+                          </button>
+                        )}
+                      </dd>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Agent Image */}
               <div>

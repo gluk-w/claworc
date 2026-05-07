@@ -40,8 +40,8 @@ export function TeamProvider({ children }: { children: ReactNode }) {
     readStoredTeamId(),
   );
 
-  // If the persisted team is no longer in the user's list, fall back to the
-  // first team (Default sorts first in the API response).
+  // If the persisted team is no longer in the user's list, fall back to
+  // the first team (teams are returned sorted alphabetically).
   useEffect(() => {
     if (teams.length === 0) {
       return;

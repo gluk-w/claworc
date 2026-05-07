@@ -4,7 +4,6 @@ export interface Team {
   id: number;
   name: string;
   description: string;
-  is_default: boolean;
   member_count?: number;
   instance_count?: number;
 }

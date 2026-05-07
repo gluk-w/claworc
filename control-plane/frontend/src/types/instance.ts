@@ -101,6 +101,7 @@ export interface InstanceUpdatePayload {
   browser_image?: string;
   browser_idle_minutes?: number | null;
   browser_storage?: string;
+  team_id?: number;
 }
 
 export interface InstanceStats {

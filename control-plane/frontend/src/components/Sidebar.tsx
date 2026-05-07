@@ -11,6 +11,8 @@ import {
   HardDrive,
   FolderOpen,
   Trello,
+  ShieldCheck,
+  UsersRound,
 } from "lucide-react";
 import { useHealth } from "@/hooks/useHealth";
 import { useAuth } from "@/contexts/AuthContext";
@@ -44,7 +46,7 @@ export default function Sidebar() {
     }`;
 
   return (
-    <nav className="group fixed left-0 top-0 h-screen w-16 hover:w-56 transition-[width] duration-200 bg-white border-r border-gray-200 z-40 flex flex-col overflow-hidden">
+    <nav className="group fixed left-0 top-0 h-screen w-16 hover:w-56 transition-[width] duration-200 bg-white border-r border-gray-200 z-40 flex flex-col">
       {/* Logo */}
       <div className="relative flex items-center gap-2 px-2 h-16 border-b border-gray-200 shrink-0">
         <img src="/favicon.svg" alt="Claworc" className="w-12 h-12 shrink-0" />
@@ -141,21 +143,59 @@ export default function Sidebar() {
         </div>
       )}
 
-      {/* Admin links below build info */}
+      {/* Admin popout below build info */}
       {isAdmin && (
         <div className="flex flex-col gap-1 px-3 pb-2">
-          <Link to="/users" className={navLinkClass("/users")}>
-            <Users size={18} className="shrink-0" />
-            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
-              Users
-            </span>
-          </Link>
-          <Link to="/settings" className={navLinkClass("/settings")}>
-            <Settings size={18} className="shrink-0" />
-            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
-              Settings
-            </span>
-          </Link>
+          <div className="relative group/admin">
+            <div
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors cursor-pointer ${
+                isActive("/settings") || isActive("/users") || isActive("/teams")
+                  ? "bg-blue-50 text-blue-700 font-medium"
+                  : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+              }`}
+              tabIndex={0}
+            >
+              <ShieldCheck size={18} className="shrink-0" />
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
+                Administration
+              </span>
+            </div>
+            <div className="hidden group-hover/admin:block group-focus-within/admin:block absolute left-full ml-1 bottom-0 z-50 w-40 bg-white border border-gray-200 rounded-lg shadow-lg py-1">
+              <Link
+                to="/settings"
+                className={`flex items-center gap-2 px-3 py-2 text-sm transition-colors ${
+                  isActive("/settings")
+                    ? "bg-blue-50 text-blue-700 font-medium"
+                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                }`}
+              >
+                <Settings size={16} className="shrink-0" />
+                Settings
+              </Link>
+              <Link
+                to="/users"
+                className={`flex items-center gap-2 px-3 py-2 text-sm transition-colors ${
+                  isActive("/users")
+                    ? "bg-blue-50 text-blue-700 font-medium"
+                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                }`}
+              >
+                <Users size={16} className="shrink-0" />
+                Users
+              </Link>
+              <Link
+                to="/teams"
+                className={`flex items-center gap-2 px-3 py-2 text-sm transition-colors ${
+                  isActive("/teams")
+                    ? "bg-blue-50 text-blue-700 font-medium"
+                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                }`}
+              >
+                <UsersRound size={16} className="shrink-0" />
+                Teams
+              </Link>
+            </div>
+          </div>
         </div>
       )}
 

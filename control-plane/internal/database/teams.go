@@ -21,26 +21,9 @@ const (
 	TeamRoleManager = "manager"
 )
 
-// GetDefaultTeam returns the seeded Default team. Falls back to the team
-// named "Default" if no row has is_default=true (older snapshots).
-func GetDefaultTeam() (*Team, error) {
-	var t Team
-	err := DB.Where("is_default = ?", true).First(&t).Error
-	if err == nil {
-		return &t, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-	if err := DB.Where("name = ?", "Default").First(&t).Error; err != nil {
-		return nil, err
-	}
-	return &t, nil
-}
-
 func ListTeams() ([]Team, error) {
 	var teams []Team
-	if err := DB.Order("is_default desc, name asc").Find(&teams).Error; err != nil {
+	if err := DB.Order("name asc").Find(&teams).Error; err != nil {
 		return nil, err
 	}
 	return teams, nil
@@ -63,15 +46,11 @@ func UpdateTeam(id uint, updates map[string]interface{}) error {
 }
 
 // DeleteTeam removes a team along with its memberships and provider
-// whitelist. The Default team cannot be deleted, and a team with
-// instances still attached is rejected.
+// whitelist. A team with instances still attached is rejected — the
+// caller must reassign or delete those instances first.
 func DeleteTeam(id uint) error {
-	t, err := GetTeam(id)
-	if err != nil {
+	if _, err := GetTeam(id); err != nil {
 		return err
-	}
-	if t.IsDefault {
-		return errors.New("cannot delete the Default team")
 	}
 	var instCount int64
 	DB.Model(&Instance{}).Where("team_id = ?", id).Count(&instCount)
@@ -105,7 +84,7 @@ func GetUserTeams(userID uint) ([]TeamMembership, error) {
 		Select("teams.*, team_members.role as role").
 		Joins("JOIN team_members ON team_members.team_id = teams.id").
 		Where("team_members.user_id = ?", userID).
-		Order("teams.is_default desc, teams.name asc").
+		Order("teams.name asc").
 		Scan(&rows).Error
 	if err != nil {
 		return nil, err

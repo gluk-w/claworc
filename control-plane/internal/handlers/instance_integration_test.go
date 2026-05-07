@@ -884,7 +884,7 @@ func sfCreateInstance(t *testing.T, baseURL, label string) (uint, string) {
 	t.Helper()
 	client := &http.Client{Timeout: 60 * time.Second}
 	displayName := fmt.Sprintf("%s-%d", label, time.Now().UnixNano())
-	body, _ := json.Marshal(map[string]interface{}{"display_name": displayName})
+	body, _ := json.Marshal(map[string]interface{}{"display_name": displayName, "team_id": 1})
 	resp, err := client.Post(baseURL+"/api/v1/instances", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("create instance: %v", err)

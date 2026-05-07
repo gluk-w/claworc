@@ -123,10 +123,11 @@ func registerGoMigrations() {
 	)
 }
 
-// seedTeamsAndBackfill creates the Default team if missing, backfills any
-// instance with team_id=0 to point at it, mirrors UserInstance rows into
-// TeamMember(role=user), and promotes users with can_create_instances=true
-// to manager of the Default team. Idempotent.
+// seedTeamsAndBackfill creates a "Default Team" only when the teams
+// table is empty, backfills any instance with team_id=0 to point at the
+// first team, mirrors UserInstance rows into TeamMember(role=user), and
+// promotes users with can_create_instances=true to manager of that team.
+// Idempotent.
 //
 // The teams/team_members/team_providers tables are created by the
 // sibling SQL migration 00003_create_teams.sql. The instances.team_id
@@ -139,18 +140,20 @@ func seedTeamsAndBackfill(gdb *gorm.DB) error {
 		return fmt.Errorf("auto-migrate instances.team_id: %w", err)
 	}
 
-	var defaultTeam Team
-	err := gdb.Where("is_default = ?", true).First(&defaultTeam).Error
-	if err != nil {
-		err = gdb.Where("name = ?", "Default").First(&defaultTeam).Error
+	var teamCount int64
+	if err := gdb.Model(&Team{}).Count(&teamCount).Error; err != nil {
+		return fmt.Errorf("count teams: %w", err)
 	}
-	if err != nil {
-		defaultTeam = Team{Name: "Default", Description: "Default team", IsDefault: true}
+	var defaultTeam Team
+	if teamCount == 0 {
+		defaultTeam = Team{Name: "Default Team", Description: "Default team"}
 		if err := gdb.Create(&defaultTeam).Error; err != nil {
 			return fmt.Errorf("seed default team: %w", err)
 		}
-	} else if !defaultTeam.IsDefault {
-		gdb.Model(&defaultTeam).Update("is_default", true)
+	} else {
+		if err := gdb.Order("id asc").First(&defaultTeam).Error; err != nil {
+			return fmt.Errorf("load anchor team: %w", err)
+		}
 	}
 
 	if err := gdb.Model(&Instance{}).Where("team_id IS NULL OR team_id = 0").
