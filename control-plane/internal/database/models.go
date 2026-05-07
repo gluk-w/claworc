@@ -67,8 +67,38 @@ type Instance struct {
 	// BrowserActive toggles whether the browser pane is shown next to the chat
 	// on this instance's page. Toggling it off also stops the browser pod.
 	BrowserActive bool      `gorm:"not null;default:true" json:"browser_active"`
+	TeamID        uint      `gorm:"not null;default:1;index" json:"team_id"`
 	CreatedAt     time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt     time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// Team groups instances and users together. The seeded "Default" team
+// (IsDefault=true) is created automatically on first migration.
+type Team struct {
+	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name        string    `gorm:"uniqueIndex;not null;size:100" json:"name"`
+	Description string    `json:"description"`
+	IsDefault   bool      `gorm:"not null;default:false" json:"is_default"`
+	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// TeamMember associates a User with a Team and assigns a per-team Role.
+// Role values: "user" (regular member, requires UserInstance grant for
+// instance access) or "manager" (full access to all team instances and
+// can create/start/stop them).
+type TeamMember struct {
+	TeamID    uint      `gorm:"primaryKey" json:"team_id"`
+	UserID    uint      `gorm:"primaryKey" json:"user_id"`
+	Role      string    `gorm:"not null;default:user" json:"role"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+}
+
+// TeamProvider whitelists which global LLMProviders (those with
+// InstanceID == nil) are available to a Team's instances.
+type TeamProvider struct {
+	TeamID     uint `gorm:"primaryKey" json:"team_id"`
+	ProviderID uint `gorm:"primaryKey" json:"provider_id"`
 }
 
 // BrowserSession tracks the lifecycle of an instance's on-demand browser pod
@@ -121,25 +151,25 @@ type ProviderModelCost struct {
 // service. It is tagged json:"-" so it is never serialized into API responses;
 // consumers that need a display value should decrypt and mask it explicitly.
 type LLMProvider struct {
-	ID         uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	Key        string    `gorm:"not null;size:100;uniqueIndex:idx_provider_key_instance" json:"key"` // URL-safe key: "anthropic", "anthropic-2"
-	InstanceID *uint     `gorm:"uniqueIndex:idx_provider_key_instance" json:"instance_id,omitempty"` // NULL = global, set = instance-specific
-	Provider   string    `gorm:"size:100" json:"provider"`                                           // catalog provider key, empty for custom
-	Name       string    `gorm:"not null" json:"name"`                                               // display name
-	BaseURL    string    `gorm:"not null" json:"base_url"`                                           // OpenAI-compat base URL for this provider
-	APIType    string    `gorm:"size:100;default:'openai-completions'" json:"api_type"`
-	APIKey     string    `gorm:"type:text;default:''" json:"-"`   // Fernet-encrypted upstream API key
-	Models     string    `gorm:"type:text;default:'[]'" json:"-"` // JSON []ProviderModel
+	ID         uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	Key        string `gorm:"not null;size:100;uniqueIndex:idx_provider_key_instance" json:"key"` // URL-safe key: "anthropic", "anthropic-2"
+	InstanceID *uint  `gorm:"uniqueIndex:idx_provider_key_instance" json:"instance_id,omitempty"` // NULL = global, set = instance-specific
+	Provider   string `gorm:"size:100" json:"provider"`                                           // catalog provider key, empty for custom
+	Name       string `gorm:"not null" json:"name"`                                               // display name
+	BaseURL    string `gorm:"not null" json:"base_url"`                                           // OpenAI-compat base URL for this provider
+	APIType    string `gorm:"size:100;default:'openai-completions'" json:"api_type"`
+	APIKey     string `gorm:"type:text;default:''" json:"-"`   // Fernet-encrypted upstream API key
+	Models     string `gorm:"type:text;default:'[]'" json:"-"` // JSON []ProviderModel
 	// OAuth credentials for providers that authenticate via OAuth instead of a
 	// static API key (currently: openai-codex-responses against ChatGPT).
 	// All four are zero-valued for static-key providers. Explicit column names
 	// keep the schema readable (oauth_* rather than the o_auth_* GORM would
 	// derive from CamelCase by default).
-	OAuthAccessToken  string `gorm:"column:oauth_access_token;type:text;default:''" json:"-"`  // Fernet-encrypted
-	OAuthRefreshToken string `gorm:"column:oauth_refresh_token;type:text;default:''" json:"-"` // Fernet-encrypted
-	OAuthExpiresAt    int64  `gorm:"column:oauth_expires_at;default:0" json:"-"`               // unix ms; 0 = not connected
-	OAuthAccountID    string `gorm:"column:oauth_account_id;default:''" json:"-"`              // chatgpt-account-id (plain)
-	OAuthEmail        string `gorm:"column:oauth_email;default:''" json:"-"`                   // for display
+	OAuthAccessToken  string    `gorm:"column:oauth_access_token;type:text;default:''" json:"-"`  // Fernet-encrypted
+	OAuthRefreshToken string    `gorm:"column:oauth_refresh_token;type:text;default:''" json:"-"` // Fernet-encrypted
+	OAuthExpiresAt    int64     `gorm:"column:oauth_expires_at;default:0" json:"-"`               // unix ms; 0 = not connected
+	OAuthAccountID    string    `gorm:"column:oauth_account_id;default:''" json:"-"`              // chatgpt-account-id (plain)
+	OAuthEmail        string    `gorm:"column:oauth_email;default:''" json:"-"`                   // for display
 	CreatedAt         time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt         time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }

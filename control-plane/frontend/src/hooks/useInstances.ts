@@ -19,10 +19,10 @@ import {
 } from "@/api/instances";
 import type { Instance, InstanceCreatePayload, InstanceUpdatePayload } from "@/types/instance";
 
-export function useInstances() {
+export function useInstances(teamId?: number | null) {
   return useQuery({
-    queryKey: ["instances"],
-    queryFn: fetchInstances,
+    queryKey: ["instances", { teamId: teamId ?? null }],
+    queryFn: () => fetchInstances(teamId ?? undefined),
     refetchInterval: 5000,
     refetchIntervalInBackground: false,
   });

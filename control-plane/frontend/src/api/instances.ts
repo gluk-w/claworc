@@ -9,8 +9,9 @@ import type {
   InstanceStats,
 } from "@/types/instance";
 
-export async function fetchInstances(): Promise<Instance[]> {
-  const { data } = await client.get<Instance[]>("/instances");
+export async function fetchInstances(teamId?: number): Promise<Instance[]> {
+  const params = teamId ? { team_id: teamId } : undefined;
+  const { data } = await client.get<Instance[]>("/instances", { params });
   return data;
 }
 

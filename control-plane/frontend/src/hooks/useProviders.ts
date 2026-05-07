@@ -73,6 +73,7 @@ export function useUsageStats(params: {
   end_date?: string;
   instance_id?: number;
   provider_id?: number;
+  team_id?: number;
 }) {
   return useQuery<UsageStatsResponse>({
     queryKey: ["llm-usage-stats", params],

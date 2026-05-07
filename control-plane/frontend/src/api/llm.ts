@@ -197,8 +197,9 @@ export interface UsageStatsResponse {
     output_tokens: number;
     cost_usd: number;
   };
-  instances: { id: number; name: string; display_name: string }[];
+  instances: { id: number; name: string; display_name: string; team_id: number }[];
   providers: { id: number; key: string; name: string }[];
+  teams: { id: number; name: string }[];
   granularity: "minute" | "hour" | "day";
 }
 
@@ -207,6 +208,7 @@ export async function fetchUsageStats(params: {
   end_date?: string;
   instance_id?: number;
   provider_id?: number;
+  team_id?: number;
 }): Promise<UsageStatsResponse> {
   const { data } = await client.get<UsageStatsResponse>("/llm/usage/stats", { params });
   return data;

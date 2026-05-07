@@ -15,6 +15,9 @@ import {
   useReorderInstances,
 } from "@/hooks/useInstances";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTeam } from "@/contexts/TeamContext";
+import TeamSelector from "@/components/TeamSelector";
+import CreateTeamDialog from "@/components/CreateTeamDialog";
 import type { Instance } from "@/types/instance";
 
 type ViewMode = "list" | "grid";
@@ -31,7 +34,9 @@ function readInitialViewMode(): ViewMode {
 }
 
 export default function DashboardPage() {
-  const { data: instances, isLoading } = useInstances();
+  const { activeTeamId, isManager } = useTeam();
+  const { data: instances, isLoading } = useInstances(activeTeamId);
+  const [showCreateTeam, setShowCreateTeam] = useState(false);
   useRestartedToast(instances);
   const startMutation = useStartInstance();
   const stopMutation = useStopInstance();
@@ -74,7 +79,8 @@ export default function DashboardPage() {
   };
 
   const loadingInstanceId = getLoadingInstanceId();
-  const { canCreateInstances } = useAuth();
+  const { canCreateInstances: canCreateInstancesGlobal } = useAuth();
+  const canCreateInstances = canCreateInstancesGlobal || isManager();
 
   const sharedHandlers = {
     onStart: (id: number) => startMutation.mutate(id),
@@ -97,9 +103,11 @@ export default function DashboardPage() {
 
   return (
     <div>
-      {hasInstances && (
-        <div className="flex items-center justify-between mb-4">
-          <div className="inline-flex border border-gray-200 rounded-md overflow-hidden">
+      <div className="flex items-center justify-between mb-4 gap-3">
+        <TeamSelector onCreateTeam={() => setShowCreateTeam(true)} />
+        {hasInstances && (
+          <div className="flex items-center gap-3">
+            <div className="inline-flex border border-gray-200 rounded-md overflow-hidden">
             <button
               type="button"
               onClick={() => setViewMode("list")}
@@ -125,16 +133,20 @@ export default function DashboardPage() {
               <LayoutGrid size={16} />
             </button>
           </div>
-          <Link
-            to="/instances/new"
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 ${
-              canCreateInstances ? "" : "invisible"
-            }`}
-          >
-            <Plus size={14} />
-            Create instance
-          </Link>
-        </div>
+            <Link
+              to="/instances/new"
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 ${
+                canCreateInstances ? "" : "invisible"
+              }`}
+            >
+              <Plus size={14} />
+              Create instance
+            </Link>
+          </div>
+        )}
+      </div>
+      {showCreateTeam && (
+        <CreateTeamDialog onClose={() => setShowCreateTeam(false)} />
       )}
 
       {isLoading ? (

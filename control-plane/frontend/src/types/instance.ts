@@ -51,6 +51,7 @@ export interface Instance {
   browser_idle_minutes?: number | null;
   browser_storage?: string;
   browser_active?: boolean;
+  team_id: number;
 }
 
 // Keep as distinct type for future detail-only fields
@@ -77,6 +78,7 @@ export interface InstanceCreatePayload {
   browser_image?: string;
   browser_idle_minutes?: number;
   browser_storage?: string;
+  team_id?: number;
 }
 
 export interface InstanceUpdatePayload {

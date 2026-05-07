@@ -1,4 +1,6 @@
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { ChevronDown } from "lucide-react";
 import { useUsageStats, useResetUsageLogs } from "@/hooks/useProviders";
 import {
   ResponsiveContainer,
@@ -40,6 +42,7 @@ export default function UsagePage() {
   const endDate = searchParams.get("end") ?? today();
   const instanceId = searchParams.get("instance") ? Number(searchParams.get("instance")) : undefined;
   const providerId = searchParams.get("provider") ? Number(searchParams.get("provider")) : undefined;
+  const teamId = searchParams.get("team") ? Number(searchParams.get("team")) : undefined;
 
   function updateParams(updates: Record<string, string | undefined>) {
     setSearchParams((prev) => {
@@ -59,7 +62,51 @@ export default function UsagePage() {
     end_date: endDate,
     instance_id: instanceId,
     provider_id: providerId,
+    team_id: teamId,
   });
+
+  // Resolve the label for the active scope selector (mutually exclusive:
+  // a team filter, an instance filter, or "All instances").
+  const scopeLabel = useMemo(() => {
+    if (teamId) {
+      const t = stats?.teams?.find((x) => x.id === teamId);
+      return t ? t.name : "Team";
+    }
+    if (instanceId) {
+      const inst = stats?.instances?.find((x) => x.id === instanceId);
+      return inst ? inst.display_name || inst.name : "Instance";
+    }
+    return "All instances";
+  }, [teamId, instanceId, stats]);
+
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const scopeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!scopeOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (scopeRef.current && !scopeRef.current.contains(e.target as Node)) {
+        setScopeOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [scopeOpen]);
+
+  // Group instances by team for the scope dropdown.
+  const grouped = useMemo(() => {
+    const teams = stats?.teams ?? [];
+    const instances = stats?.instances ?? [];
+    const byTeam = new Map<number, typeof instances>();
+    for (const inst of instances) {
+      const list = byTeam.get(inst.team_id) ?? [];
+      list.push(inst);
+      byTeam.set(inst.team_id, list);
+    }
+    for (const list of byTeam.values()) {
+      list.sort((a, b) => (a.display_name || a.name).localeCompare(b.display_name || b.name));
+    }
+    return { teams, byTeam };
+  }, [stats]);
 
   const granularity = stats?.granularity ?? "day";
 
@@ -110,20 +157,65 @@ export default function UsagePage() {
             className="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1" ref={scopeRef}>
           <label className="text-xs font-medium text-gray-500">Instance</label>
-          <select
-            value={instanceId ?? ""}
-            onChange={(e) => updateParams({ instance: e.target.value || undefined })}
-            className="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">All instances</option>
-            {(stats?.instances ?? []).map((inst) => (
-              <option key={inst.id} value={inst.id}>
-                {inst.display_name || inst.name}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setScopeOpen((v) => !v)}
+              className="inline-flex items-center justify-between gap-2 min-w-[14rem] border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <span className="truncate">{scopeLabel}</span>
+              <ChevronDown size={14} className="text-gray-400" />
+            </button>
+            {scopeOpen && (
+              <div className="absolute left-0 mt-1 w-72 max-h-80 overflow-auto bg-white border border-gray-200 rounded-md shadow-lg z-20 py-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    updateParams({ instance: undefined, team: undefined });
+                    setScopeOpen(false);
+                  }}
+                  className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50 ${
+                    !teamId && !instanceId ? "bg-gray-100" : ""
+                  }`}
+                >
+                  All instances
+                </button>
+                {grouped.teams.map((t) => (
+                  <div key={t.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateParams({ team: String(t.id), instance: undefined });
+                        setScopeOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-1.5 text-sm font-bold hover:bg-gray-50 ${
+                        teamId === t.id ? "bg-gray-100" : ""
+                      }`}
+                    >
+                      {t.name}
+                    </button>
+                    {(grouped.byTeam.get(t.id) ?? []).map((inst) => (
+                      <button
+                        key={inst.id}
+                        type="button"
+                        onClick={() => {
+                          updateParams({ instance: String(inst.id), team: undefined });
+                          setScopeOpen(false);
+                        }}
+                        className={`w-full text-left pl-7 pr-3 py-1.5 text-sm hover:bg-gray-50 ${
+                          instanceId === inst.id ? "bg-gray-100" : ""
+                        }`}
+                      >
+                        {inst.display_name || inst.name}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-gray-500">Provider</label>

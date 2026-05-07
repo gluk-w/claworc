@@ -36,3 +36,8 @@ jobs:
         run: make agent-ci
         env:
           CACHE_ARGS: --cache-from type=gha,scope=agent --cache-to type=gha,mode=max,scope=agent
+
+      - name: Build, test, and push stable agent image
+        run: make agent-stable-ci
+        env:
+          CACHE_ARGS: --cache-from type=gha,scope=agent-stable --cache-to type=gha,mode=max,scope=agent-stable

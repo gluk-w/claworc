@@ -3,11 +3,13 @@ import { ArrowLeft } from "lucide-react";
 import { errorToast } from "@/utils/toast";
 import InstanceForm from "@/components/InstanceForm";
 import { useCreateInstance } from "@/hooks/useInstances";
+import { useTeam } from "@/contexts/TeamContext";
 
 
 export default function CreateInstancePage() {
   const navigate = useNavigate();
   const createMutation = useCreateInstance();
+  const { activeTeamId } = useTeam();
 
   return (
     <div>
@@ -26,7 +28,7 @@ export default function CreateInstancePage() {
       <div className="max-w-2xl">
         <InstanceForm
           onSubmit={(payload) =>
-            createMutation.mutate(payload, {
+            createMutation.mutate({ ...payload, team_id: activeTeamId ?? undefined }, {
               onSuccess: () => {
                 navigate("/");
               },

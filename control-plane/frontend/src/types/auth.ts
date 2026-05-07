@@ -1,8 +1,16 @@
+export interface UserTeamMembership {
+  id: number;
+  name: string;
+  is_default: boolean;
+  role: "user" | "manager";
+}
+
 export interface User {
   id: number;
   username: string;
   role: "admin" | "user";
   can_create_instances?: boolean;
+  teams?: UserTeamMembership[];
 }
 
 export interface LoginRequest {

@@ -4,6 +4,8 @@ include .env.development
 export
 
 AGENT_IMAGE := glukw/claworc-agent
+STABLE_IMAGE := glukw/claworc-stable
+STABLE_VERSION_URL := https://isitstable.com/api/v1/openclaw/latest-stable
 BROWSER_BASE_IMAGE := glukw/claworc-browser-base
 BROWSER_CHROMIUM_IMAGE := glukw/claworc-browser-chromium
 BROWSER_CHROME_IMAGE := glukw/claworc-browser-chrome
@@ -22,7 +24,7 @@ KUBECONFIG := ../kubeconfig
 HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
 
-.PHONY: agent agent-ci agent-base agent-base-china agent-build agent-test agent-push agent-exec dashboard docker-prune release \
+.PHONY: agent agent-ci agent-base agent-base-china agent-build agent-test agent-push agent-exec agent-stable agent-stable-ci dashboard docker-prune release \
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-docs \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
 	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models scrape-models test \
@@ -67,6 +69,38 @@ agent-push:
 	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/browser/Dockerfile.chrome --push agent/browser/ & \
 	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --push agent/browser/ & \
 	wait
+
+# Nightly stable agent image: same Dockerfile as glukw/claworc-agent, but pins
+# OpenClaw to the version blessed by isitstable.com. Resolved at build time so
+# the image content only changes when the upstream verdict changes.
+agent-stable:
+	@echo "Resolving stable OpenClaw version from $(STABLE_VERSION_URL)..."
+	$(eval OPENCLAW_VERSION := $(shell curl -fsSL $(STABLE_VERSION_URL) | python3 -c 'import sys,json; print(json.load(sys.stdin)["version"])'))
+	@test -n "$(OPENCLAW_VERSION)" || (echo "Failed to resolve stable OpenClaw version" && exit 1)
+	@echo "Building $(STABLE_IMAGE) with openclaw@$(OPENCLAW_VERSION)..."
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) \
+		--build-arg OPENCLAW_VERSION=$(OPENCLAW_VERSION) \
+		-t $(STABLE_IMAGE):$(TAG) \
+		-t $(STABLE_IMAGE):$(OPENCLAW_VERSION) \
+		-f agent/instance/Dockerfile --push agent/instance/
+
+# CI variant: build single-arch first and run the OpenClaw test suite against
+# the pinned image, only push multi-arch if tests pass.
+agent-stable-ci:
+	@echo "Resolving stable OpenClaw version from $(STABLE_VERSION_URL)..."
+	$(eval OPENCLAW_VERSION := $(shell curl -fsSL $(STABLE_VERSION_URL) | python3 -c 'import sys,json; print(json.load(sys.stdin)["version"])'))
+	@test -n "$(OPENCLAW_VERSION)" || (echo "Failed to resolve stable OpenClaw version" && exit 1)
+	@echo "Building+loading $(STABLE_IMAGE):test (openclaw@$(OPENCLAW_VERSION))..."
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) \
+		--build-arg OPENCLAW_VERSION=$(OPENCLAW_VERSION) \
+		-t $(STABLE_IMAGE):test -f agent/instance/Dockerfile --load agent/instance/
+	cd agent/tests && AGENT_INSTANCE_TEST_IMAGE=$(STABLE_IMAGE):test npm run test -- openclaw.test.ts
+	@echo "Pushing multi-arch $(STABLE_IMAGE):$(TAG) and :$(OPENCLAW_VERSION)..."
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) \
+		--build-arg OPENCLAW_VERSION=$(OPENCLAW_VERSION) \
+		-t $(STABLE_IMAGE):$(TAG) \
+		-t $(STABLE_IMAGE):$(OPENCLAW_VERSION) \
+		-f agent/instance/Dockerfile --push agent/instance/
 
 AGENT_CONTAINER := claworc-agent-exec
 AGENT_SSH_PORT := 2222

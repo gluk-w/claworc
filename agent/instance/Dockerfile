@@ -3,6 +3,7 @@ FROM debian:bookworm-slim AS base
 ARG S6_OVERLAY_VERSION=3.2.0.2
 ARG TARGETARCH
 ARG USE_CHINA_MIRRORS=false
+ARG OPENCLAW_VERSION=latest
 
 # Slim agent image: OpenClaw + sshd + cron only. The browser (Chromium /
 # Chrome / Brave) and the VNC stack live in glukw/claworc-browser-* images
@@ -34,7 +35,7 @@ RUN apt-get update && \
       sudo && \
     echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen && \
     if [ "$USE_CHINA_MIRRORS" = "true" ]; then npm config set registry https://registry.npmmirror.com; fi && \
-    npm install -g openclaw@latest && \
+    npm install -g openclaw@${OPENCLAW_VERSION} && \
     # OpenClaw lists `sharp` only under pnpm's `onlyBuiltDependencies`, not
     # `dependencies`, so `npm install -g openclaw` never installs it. The
     # image pipeline (Telegram, screenshots) lazy-imports `sharp` at runtime
@@ -86,6 +87,14 @@ RUN chmod +x /etc/s6-overlay/s6-rc.d/init-setup/up \
              /etc/s6-overlay/s6-rc.d/svc-openclaw/run \
              /etc/s6-overlay/s6-rc.d/svc-sshd/run \
              /etc/s6-overlay/s6-rc.d/svc-cron/run
+
+# Pre-create /var/log/claworc owned by the runtime user. init-setup.sh
+# recreates it at boot anyway (idempotent), but `openclaw config set
+# logging.file ...` in the bake step below eagerly tries to create the parent
+# dir on some openclaw versions (e.g. 2026.5.3-1) and aborts with EACCES if
+# it's missing. The newer `latest` openclaw skips that and just records the
+# path, so this RUN is a no-op for that variant.
+RUN mkdir -p /var/log/claworc && chown claworc:claworc /var/log/claworc
 
 # Bake .openclaw at build time so the runtime container does not have to run
 # `openclaw doctor --fix` and `openclaw onboard` on every boot. We materialize
