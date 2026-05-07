@@ -28,6 +28,13 @@ type LocalProvider struct {
 
 	mu             sync.Mutex
 	browserClients map[uint]*ssh.Client
+
+	// browserHostKeyMu guards browserHostKeys.
+	browserHostKeyMu sync.RWMutex
+	// browserHostKeys stores the TOFU host key for each browser workload keyed
+	// by instance ID. On first connection the key is recorded; subsequent
+	// connections must present the same key.
+	browserHostKeys map[uint]ssh.PublicKey
 }
 
 // NewLocalProvider returns a provider that drives the given orchestrator and
@@ -36,10 +43,55 @@ type LocalProvider struct {
 // must provide one.
 func NewLocalProvider(orch orchestrator.ContainerOrchestrator, keys *sshproxy.SSHManager) *LocalProvider {
 	return &LocalProvider{
-		orch:           orch,
-		keys:           keys,
-		browserClients: make(map[uint]*ssh.Client),
+		orch:            orch,
+		keys:            keys,
+		browserClients:  make(map[uint]*ssh.Client),
+		browserHostKeys: make(map[uint]ssh.PublicKey),
 	}
+}
+
+// browserHostKeyCallback returns a Trust On First Use (TOFU) SSH host-key
+// callback for a browser workload associated with instanceID.  On first
+// connection the presented key is recorded; all subsequent connections must
+// present the identical key.  Use clearBrowserHostKey when a browser workload
+// is recreated so the new host key can be accepted.
+func (p *LocalProvider) browserHostKeyCallback(instanceID uint) ssh.HostKeyCallback {
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		p.browserHostKeyMu.RLock()
+		known, exists := p.browserHostKeys[instanceID]
+		p.browserHostKeyMu.RUnlock()
+
+		if !exists {
+			p.browserHostKeyMu.Lock()
+			// Double-check under write lock to avoid TOCTOU.
+			if known2, exists2 := p.browserHostKeys[instanceID]; exists2 {
+				p.browserHostKeyMu.Unlock()
+				if string(known2.Marshal()) != string(key.Marshal()) {
+					return fmt.Errorf("browser host key mismatch for instance %d: expected %s, got %s",
+						instanceID, ssh.FingerprintSHA256(known2), ssh.FingerprintSHA256(key))
+				}
+				return nil
+			}
+			p.browserHostKeys[instanceID] = key
+			p.browserHostKeyMu.Unlock()
+			return nil
+		}
+
+		if string(known.Marshal()) != string(key.Marshal()) {
+			return fmt.Errorf("browser host key mismatch for instance %d: expected %s, got %s",
+				instanceID, ssh.FingerprintSHA256(known), ssh.FingerprintSHA256(key))
+		}
+		return nil
+	}
+}
+
+// clearBrowserHostKey removes the stored TOFU host key for an instance's
+// browser workload.  Call this when the workload is deleted or recreated so
+// the next connection can record the new host key.
+func (p *LocalProvider) clearBrowserHostKey(instanceID uint) {
+	p.browserHostKeyMu.Lock()
+	delete(p.browserHostKeys, instanceID)
+	p.browserHostKeyMu.Unlock()
 }
 
 func (p *LocalProvider) Name() string {
@@ -216,6 +268,7 @@ func (p *LocalProvider) waitForCDPReady(ctx context.Context, instanceID uint, ti
 
 func (p *LocalProvider) StopSession(ctx context.Context, instanceID uint) error {
 	p.closeBrowserClient(instanceID)
+	p.clearBrowserHostKey(instanceID)
 	name, err := p.instanceName(instanceID)
 	if err != nil {
 		return err
@@ -229,6 +282,7 @@ func (p *LocalProvider) StopSession(ctx context.Context, instanceID uint) error 
 // outlive the browser.
 func (p *LocalProvider) DeleteSession(ctx context.Context, instanceID uint) error {
 	p.closeBrowserClient(instanceID)
+	p.clearBrowserHostKey(instanceID)
 	name, err := p.instanceName(instanceID)
 	if err != nil {
 		return err
@@ -371,6 +425,9 @@ func (p *LocalProvider) ensureBrowserClient(ctx context.Context, instanceID uint
 		}
 		delete(p.browserClients, instanceID)
 		_ = c.Close()
+		// The browser container may have restarted with a new host key;
+		// clear the stored TOFU key so reconnection can record a fresh one.
+		p.clearBrowserHostKey(instanceID)
 	}
 	p.mu.Unlock()
 
@@ -400,7 +457,7 @@ func (p *LocalProvider) ensureBrowserClient(ctx context.Context, instanceID uint
 	cfg := &ssh.ClientConfig{
 		User:            "root",
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(p.keys.Signer())},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: p.browserHostKeyCallback(instanceID),
 		Timeout:         30 * time.Second,
 	}
 	dialer := net.Dialer{Timeout: 30 * time.Second}
