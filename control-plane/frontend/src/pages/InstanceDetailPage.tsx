@@ -871,9 +871,19 @@ export default function InstanceDetailPage() {
                         const initialModels: Record<number, string[]> = {};
                         for (const p of allProvidersForEdit) {
                           const prefix = `${p.key}/`;
-                          initialModels[p.id] = (instance.models.extra ?? [])
+                          const storedForProvider = (instance.models.extra ?? [])
                             .filter((m) => m.startsWith(prefix))
                             .map((m) => m.slice(prefix.length));
+                          const isCustom = (p.models?.length ?? 0) > 0;
+                          if (isCustom) {
+                            const valid = new Set(p.models!.map((m) => m.id));
+                            initialModels[p.id] = storedForProvider.filter((m) => valid.has(m));
+                          } else if (p.provider && catalogDetailMap[p.provider]) {
+                            const valid = new Set(catalogDetailMap[p.provider].models.map((m) => m.model_id));
+                            initialModels[p.id] = storedForProvider.filter((m) => valid.has(m));
+                          } else {
+                            initialModels[p.id] = storedForProvider;
+                          }
                         }
                         setPendingProviderModels(initialModels);
                         setPendingDefaultModel(instance.default_model ?? "");
