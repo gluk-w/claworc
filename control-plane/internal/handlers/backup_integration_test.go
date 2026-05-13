@@ -22,6 +22,7 @@ func TestIntegration_BackupLifecycle(t *testing.T) {
 	displayName := fmt.Sprintf("backup-test-%d", time.Now().UnixNano())
 	instBody, _ := json.Marshal(map[string]interface{}{
 		"display_name": displayName,
+		"team_id":      1,
 	})
 	resp, err := client.Post(baseURL+"/api/v1/instances", "application/json", bytes.NewReader(instBody))
 	if err != nil {

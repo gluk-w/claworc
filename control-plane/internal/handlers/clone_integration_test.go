@@ -71,7 +71,7 @@ func pollInstanceRunning(t *testing.T, client *http.Client, baseURL string, inst
 // createInstance posts /api/v1/instances and returns (id, k8s-safe name).
 func createInstance(t *testing.T, client *http.Client, baseURL, displayName string) (uint, string) {
 	t.Helper()
-	body, _ := json.Marshal(map[string]interface{}{"display_name": displayName})
+	body, _ := json.Marshal(map[string]interface{}{"display_name": displayName, "team_id": 1})
 	resp, err := client.Post(baseURL+"/api/v1/instances", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("create instance %q: %v", displayName, err)

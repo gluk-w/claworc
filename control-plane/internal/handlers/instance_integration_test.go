@@ -363,6 +363,7 @@ func TestIntegration_InstanceLifecycle_ConfiguresOpenclaw(t *testing.T) {
 	displayName := fmt.Sprintf("inttest-%d", time.Now().UnixNano())
 	instBody, _ := json.Marshal(map[string]interface{}{
 		"display_name":      displayName,
+		"team_id":           1,
 		"models":            map[string]interface{}{"extra": []string{"test-model"}},
 		"enabled_providers": []uint{provID},
 	})
@@ -528,6 +529,7 @@ func TestIntegration_SharedFolder_MountedAndWritable(t *testing.T) {
 	displayName := fmt.Sprintf("sf-test-%d", time.Now().UnixNano())
 	instBody, _ := json.Marshal(map[string]interface{}{
 		"display_name": displayName,
+		"team_id":      1,
 	})
 	resp, err := client.Post(baseURL+"/api/v1/instances", "application/json", bytes.NewReader(instBody))
 	if err != nil {
@@ -727,7 +729,7 @@ func TestIntegration_SharedFolder_RemoveInstanceUnmounts(t *testing.T) {
 
 	// --- Step 1: Create instance ---
 	displayName := fmt.Sprintf("sf-unmount-%d", time.Now().UnixNano())
-	instBody, _ := json.Marshal(map[string]interface{}{"display_name": displayName})
+	instBody, _ := json.Marshal(map[string]interface{}{"display_name": displayName, "team_id": 1})
 	resp, err := client.Post(baseURL+"/api/v1/instances", "application/json", bytes.NewReader(instBody))
 	if err != nil {
 		t.Fatalf("create instance: %v", err)

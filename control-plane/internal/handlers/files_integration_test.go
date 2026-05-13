@@ -40,6 +40,7 @@ func createAndWaitForInstance(baseURL string, client *http.Client) (uint, error)
 	displayName := fmt.Sprintf("filetest-%d", time.Now().UnixNano())
 	body, _ := json.Marshal(map[string]interface{}{
 		"display_name": displayName,
+		"team_id":      1,
 	})
 	resp, err := client.Post(baseURL+"/api/v1/instances", "application/json", bytes.NewReader(body))
 	if err != nil {

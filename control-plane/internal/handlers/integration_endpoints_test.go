@@ -67,6 +67,7 @@ func createSharedEndpointInstance() (uint, string, error) {
 	displayName := fmt.Sprintf("eptest-%d", time.Now().UnixNano())
 	instBody, _ := json.Marshal(map[string]interface{}{
 		"display_name":      displayName,
+		"team_id":           1,
 		"enabled_providers": []uint{provID},
 	})
 	resp, err = client.Post(sessionURL+"/api/v1/instances", "application/json", bytes.NewReader(instBody))
