@@ -46,9 +46,21 @@ The installer prompts you to choose **Docker** or **Kubernetes** deployment, the
 
 ---
 
-## Create an admin account
+## Finish setup in the browser
 
-Open [http://localhost:8000](http://localhost:8000) (or the URL shown by the installer). On first run, you'll see a **Create admin account** form. Enter a username and password, then click **Create account**.
+Open [http://localhost:8000](http://localhost:8000) (or the URL shown by the installer). On first run, Claworc walks you through a short onboarding wizard:
+
+<Steps>
+  <Step title="Create the admin account">
+    Enter a username and password for the initial admin.
+  </Step>
+  <Step title="Add LLM provider keys">
+    Paste API keys for any LLM providers you want available, and optionally a Brave Search key.
+  </Step>
+  <Step title="Choose analytics preference">
+    Anonymous usage analytics are opt-in by default. Toggle off if you prefer to disable them.
+  </Step>
+</Steps>
 
 ---
 

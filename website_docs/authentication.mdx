@@ -5,18 +5,13 @@ description: "Set up users, roles, and passkeys for the Claworc dashboard"
 
 ## First-time setup
 
-On first run with an empty database, Claworc shows a **Create admin account** form before the login page.
-Enter a username and password to create the initial admin account.
+On first run with an empty database, Claworc shows an onboarding wizard before the login page. The wizard guides you through three steps:
 
-Alternatively, create the admin account from the CLI:
+1. **Create the admin account** — choose a username and password for the initial admin.
+2. **Add LLM provider keys** — paste API keys for any LLM providers you want enabled, and optionally a Brave Search key.
+3. **Choose analytics preference** — anonymous usage analytics are on by default; toggle off to disable.
 
-```bash
-# Docker Compose
-docker compose exec claworc ./claworc --create-admin
-
-# Kubernetes
-kubectl exec -n claworc deploy/claworc -- ./claworc --create-admin
-```
+You can change provider keys and analytics later from **Settings**.
 
 ---
 
