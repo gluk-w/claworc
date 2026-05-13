@@ -1,10 +1,12 @@
 import { Routes, Route, Navigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import Layout from "./components/Layout";
 import DashboardPage from "./pages/DashboardPage";
 import CreateInstancePage from "./pages/CreateInstancePage";
 import InstanceDetailPage from "./pages/InstanceDetailPage";
 import SettingsPage from "./pages/SettingsPage";
 import LoginPage from "./pages/LoginPage";
+import OnboardingPage from "./pages/OnboardingPage";
 import BackendUnavailablePage from "./pages/BackendUnavailablePage";
 import UsersPage from "./pages/UsersPage";
 import TeamsPage from "./pages/TeamsPage";
@@ -17,6 +19,16 @@ import BackupsPage from "./pages/BackupsPage";
 import SharedFoldersPage from "./pages/SharedFoldersPage";
 import KanbanPage from "./pages/KanbanPage";
 import { useAuth } from "./contexts/AuthContext";
+import { checkSetupRequired } from "./api/auth";
+
+function useSetupRequired() {
+  return useQuery({
+    queryKey: ["auth", "setup-required"],
+    queryFn: checkSetupRequired,
+    retry: false,
+    staleTime: 30_000,
+  });
+}
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading, isBackendUnavailable } = useAuth();
@@ -50,6 +62,19 @@ function InstanceCreatorRoute({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const { data: setupRequired, isLoading: setupLoading } = useSetupRequired();
+
+  if (setupLoading) return null;
+
+  if (setupRequired) {
+    return (
+      <Routes>
+        <Route path="/" element={<OnboardingPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    );
+  }
+
   return (
     <Routes>
       <Route path="/login" element={<LoginRoute />} />

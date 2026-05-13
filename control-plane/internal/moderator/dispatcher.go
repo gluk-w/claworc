@@ -25,6 +25,27 @@ func (s *Service) Dispatch(ctx context.Context, taskID uint) error {
 		return fmt.Errorf("board %d has no eligible instances", board.ID)
 	}
 
+	// Drop ids that no longer correspond to a live instance row — the board's
+	// EligibleInstances JSON can lag behind instance deletion.
+	liveIDs, err := s.opts.Instances.ListInstanceIDs(ctx)
+	if err != nil {
+		return fmt.Errorf("list instances: %w", err)
+	}
+	live := make(map[uint]struct{}, len(liveIDs))
+	for _, id := range liveIDs {
+		live[id] = struct{}{}
+	}
+	filtered := board.EligibleInstances[:0:0]
+	for _, id := range board.EligibleInstances {
+		if _, ok := live[id]; ok {
+			filtered = append(filtered, id)
+		}
+	}
+	board.EligibleInstances = filtered
+	if len(board.EligibleInstances) == 0 {
+		return fmt.Errorf("board %d has no eligible instances", board.ID)
+	}
+
 	souls, err := s.opts.Store.GetSouls(ctx, board.EligibleInstances)
 	if err != nil {
 		return fmt.Errorf("load souls: %w", err)

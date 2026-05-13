@@ -210,7 +210,7 @@ test:
 # file name from what changed. See docs/migrations.md.
 migration:
 	@command -v claude >/dev/null 2>&1 || { echo "error: 'claude' CLI not found in PATH"; exit 1; }
-	claude -p "Use the migration-author subagent to generate the next versioned Go migration based on current GORM model changes. Read the agent definition at .claude/agents/migration-author.md and follow its instructions exactly."
+	claude -p --agent migration-author "Generate the next versioned Go migration based on current GORM model changes. Follow your agent instructions exactly."
 
 # Apply all migrations against a fresh in-memory SQLite database and
 # assert the resulting schema covers every model. CI runs this on every

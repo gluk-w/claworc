@@ -179,27 +179,10 @@ function Install-Docker {
         --restart unless-stopped `
         "${DashboardImage}:${Tag}" | Out-Null
 
-    # --- Initial Admin Setup -------------------------------------------------
-
-    Write-Host ""
-    Write-Host "--- Initial Admin Setup ---"
-    $adminUser = Prompt-Value -PromptText "Admin username" -Default "admin"
-
-    while ($true) {
-        $adminPass = Prompt-SecureValue -PromptText "Admin password"
-        $adminPassConfirm = Prompt-SecureValue -PromptText "Confirm password"
-
-        if (($adminPass -eq $adminPassConfirm) -and (-not [string]::IsNullOrWhiteSpace($adminPass))) {
-            break
-        }
-        Write-Host "Passwords do not match or are empty. Try again."
-    }
-
-    Write-Host "Creating admin user..."
-    docker exec $ContainerName /app/claworc --create-admin --username $adminUser --password $adminPass
-
     Write-Host ""
     Write-Host "=== Claworc is running ==="
+    Write-Host ""
+    Write-Host "  Open http://localhost:$port in your browser to finish setup."
     Write-Host ""
     Write-Host "  Dashboard:  http://localhost:$port"
     Write-Host "  Container:  $ContainerName"
@@ -334,27 +317,10 @@ function Install-Kubernetes {
     Write-Host "Waiting for pod to be ready..."
     kubectl wait --for=condition=ready pod -l app=claworc -n $namespace --kubeconfig $kubeconfigPath --timeout=120s 2>$null
 
-    # --- Initial Admin Setup -------------------------------------------------
-
-    Write-Host ""
-    Write-Host "--- Initial Admin Setup ---"
-    $adminUser = Prompt-Value -PromptText "Admin username" -Default "admin"
-
-    while ($true) {
-        $adminPass = Prompt-SecureValue -PromptText "Admin password"
-        $adminPassConfirm = Prompt-SecureValue -PromptText "Confirm password"
-
-        if (($adminPass -eq $adminPassConfirm) -and (-not [string]::IsNullOrWhiteSpace($adminPass))) {
-            break
-        }
-        Write-Host "Passwords do not match or are empty. Try again."
-    }
-
-    Write-Host "Creating admin user..."
-    kubectl exec deploy/claworc -n $namespace --kubeconfig $kubeconfigPath -- /app/claworc --create-admin --username $adminUser --password $adminPass
-
     Write-Host ""
     Write-Host "=== Claworc deployed to Kubernetes ==="
+    Write-Host ""
+    Write-Host "  Open the dashboard URL below in your browser to finish setup."
     Write-Host ""
     if ($serviceType -eq "NodePort") {
         Write-Host "  Dashboard:  http://<node-ip>:$nodePort"

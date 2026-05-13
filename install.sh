@@ -118,32 +118,10 @@ install_docker() {
         --restart unless-stopped \
         "$DASHBOARD_IMAGE:$TAG" >/dev/null
 
-    # --- Initial Admin Setup -------------------------------------------------
-
-    echo ""
-    echo "--- Initial Admin Setup ---"
-    printf "Admin username [admin]: "
-    read -r ADMIN_USER </dev/tty
-    ADMIN_USER="${ADMIN_USER:-admin}"
-
-    while true; do
-        printf "Admin password: "
-        read -rs ADMIN_PASS </dev/tty
-        echo
-        printf "Confirm password: "
-        read -rs ADMIN_PASS_CONFIRM </dev/tty
-        echo
-        if [ "$ADMIN_PASS" = "$ADMIN_PASS_CONFIRM" ] && [ -n "$ADMIN_PASS" ]; then
-            break
-        fi
-        echo "Passwords do not match or are empty. Try again."
-    done
-
-    echo "Creating admin user..."
-    docker exec "$CONTAINER_NAME" /app/claworc --create-admin --username "$ADMIN_USER" --password "$ADMIN_PASS"
-
     echo ""
     echo "=== Claworc is running ==="
+    echo ""
+    echo "  Open http://localhost:$PORT in your browser to finish setup."
     echo ""
     echo "  Dashboard:  http://localhost:$PORT"
     echo "  Container:  $CONTAINER_NAME"
@@ -267,32 +245,10 @@ install_kubernetes() {
     echo "Waiting for pod to be ready..."
     kubectl wait --for=condition=ready pod -l app=claworc -n "$NAMESPACE" --kubeconfig "$KUBECONFIG_PATH" --timeout=120s 2>/dev/null || true
 
-    # --- Initial Admin Setup -------------------------------------------------
-
-    echo ""
-    echo "--- Initial Admin Setup ---"
-    printf "Admin username [admin]: "
-    read -r ADMIN_USER </dev/tty
-    ADMIN_USER="${ADMIN_USER:-admin}"
-
-    while true; do
-        printf "Admin password: "
-        read -rs ADMIN_PASS </dev/tty
-        echo
-        printf "Confirm password: "
-        read -rs ADMIN_PASS_CONFIRM </dev/tty
-        echo
-        if [ "$ADMIN_PASS" = "$ADMIN_PASS_CONFIRM" ] && [ -n "$ADMIN_PASS" ]; then
-            break
-        fi
-        echo "Passwords do not match or are empty. Try again."
-    done
-
-    echo "Creating admin user..."
-    kubectl exec deploy/claworc -n "$NAMESPACE" --kubeconfig "$KUBECONFIG_PATH" -- /app/claworc --create-admin --username "$ADMIN_USER" --password "$ADMIN_PASS"
-
     echo ""
     echo "=== Claworc deployed to Kubernetes ==="
+    echo ""
+    echo "  Open the dashboard URL below in your browser to finish setup."
     echo ""
     if [[ "$SERVICE_TYPE" == "NodePort" ]]; then
         echo "  Dashboard:  http://<node-ip>:$NODE_PORT"
