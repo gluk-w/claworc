@@ -32,7 +32,7 @@ func cleanupExpiredForSchedule(ctx context.Context, s database.BackupSchedule) {
 		return
 	}
 
-	instanceIDs, err := resolveScheduleInstances(s.InstanceIDs)
+	instanceIDs, err := resolveScheduleInstances(s)
 	if err != nil {
 		log.Printf("backup retention: schedule %d: failed to resolve instances: %v", s.ID, err)
 		return

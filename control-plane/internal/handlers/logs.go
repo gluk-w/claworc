@@ -51,7 +51,7 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 
 	orch := orchestrator.Get()
 	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		WriteOrchestratorUnavailable(w)
 		return
 	}
 

@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=glukw/claworc-browser-base:latest
+ARG BASE_IMAGE=claworc/base-browser:latest
 FROM ${BASE_IMAGE}
 
 RUN apt-get update && \

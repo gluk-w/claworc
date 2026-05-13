@@ -4,8 +4,10 @@ import { CheckCircle, Loader2, XCircle } from "lucide-react";
 import { useInstances } from "@/hooks/useInstances";
 import StatusBadge from "@/components/StatusBadge";
 import { useSettings } from "@/hooks/useSettings";
+import { useTeam } from "@/contexts/TeamContext";
 import { deploySkill } from "@/api/skills";
 import { updateInstance } from "@/api/instances";
+import type { Instance } from "@/types/instance";
 import type { DeployResult } from "@/types/skills";
 import { errorToast } from "@/utils/toast";
 
@@ -39,6 +41,7 @@ export default function DeployModal({
 }: Props) {
   const { data: instances } = useInstances();
   const { data: settings } = useSettings();
+  const { teams } = useTeam();
   const qc = useQueryClient();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [instanceStates, setInstanceStates] = useState<
@@ -57,6 +60,34 @@ export default function DeployModal({
     () => new Set(Object.keys(settings?.default_env_vars ?? {})),
     [settings],
   );
+
+  // Group instances by team. When the user sees more than one team, the list
+  // is rendered as sections with team-name headings; otherwise it stays flat.
+  const groupedInstances = useMemo(() => {
+    if (!instances) return [] as Array<{ teamId: number | null; teamName: string; instances: Instance[] }>;
+    const teamName = new Map<number, string>(teams.map((t) => [t.id, t.name]));
+    const byTeam = new Map<number | null, Instance[]>();
+    for (const inst of instances) {
+      const key = inst.team_id ?? null;
+      const list = byTeam.get(key) ?? [];
+      list.push(inst);
+      byTeam.set(key, list);
+    }
+    const groups = Array.from(byTeam.entries()).map(([teamId, list]) => ({
+      teamId,
+      teamName: teamId != null ? (teamName.get(teamId) ?? "Other") : "Other",
+      instances: list,
+    }));
+    // Stable alphabetical order; unknown ("Other") bucket trails at the end.
+    groups.sort((a, b) => {
+      if (a.teamId == null) return 1;
+      if (b.teamId == null) return -1;
+      return a.teamName.localeCompare(b.teamName);
+    });
+    return groups;
+  }, [instances, teams]);
+
+  const showTeamHeadings = teams.length > 1;
 
   // Per-instance list of required env vars that are neither in globals nor in
   // the instance's own overrides. Computed before deploy so the admin can fix
@@ -185,14 +216,21 @@ export default function DeployModal({
           {!instances || instances.length === 0 ? (
             <p className="text-sm text-gray-500">No instances available.</p>
           ) : (
-            instances.map((inst) => {
-              const state = instanceStates[inst.id];
-              const checked = selected.has(inst.id);
-              const running = inst.status === "running";
-              const preMissing = missingEnvPreview[inst.id];
-              const postMissing = state?.missingEnvVars;
+            groupedInstances.map((group) => (
+              <div key={group.teamId ?? "other"} className="flex flex-col gap-2">
+                {showTeamHeadings && (
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-1 pt-1">
+                    {group.teamName}
+                  </h3>
+                )}
+                {group.instances.map((inst) => {
+                  const state = instanceStates[inst.id];
+                  const checked = selected.has(inst.id);
+                  const running = inst.status === "running";
+                  const preMissing = missingEnvPreview[inst.id];
+                  const postMissing = state?.missingEnvVars;
 
-              return (
+                  return (
                 <div
                   key={inst.id}
                   className={`flex items-start gap-3 px-3 py-2.5 rounded-lg border transition-colors ${
@@ -269,8 +307,10 @@ export default function DeployModal({
                     </span>
                   )}
                 </div>
-              );
-            })
+                  );
+                })}
+              </div>
+            ))
           )}
         </div>
 

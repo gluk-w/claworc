@@ -69,6 +69,7 @@ func ListSharedFolders(w http.ResponseWriter, r *http.Request) {
 		MountPath   string `json:"mount_path"`
 		OwnerID     uint   `json:"owner_id"`
 		InstanceIDs []uint `json:"instance_ids"`
+		TeamIDs     []uint `json:"team_ids"`
 		CreatedAt   string `json:"created_at"`
 	}
 
@@ -80,6 +81,7 @@ func ListSharedFolders(w http.ResponseWriter, r *http.Request) {
 			MountPath:   sf.MountPath,
 			OwnerID:     sf.OwnerID,
 			InstanceIDs: database.ParseSharedFolderInstanceIDs(sf.InstanceIDs),
+			TeamIDs:     database.ParseTeamIDs(sf.TeamIDs),
 			CreatedAt:   sf.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		})
 	}
@@ -143,6 +145,7 @@ func CreateSharedFolder(w http.ResponseWriter, r *http.Request) {
 		"mount_path":   sf.MountPath,
 		"owner_id":     sf.OwnerID,
 		"instance_ids": []uint{},
+		"team_ids":     []uint{},
 		"created_at":   sf.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	})
 }
@@ -177,6 +180,7 @@ func GetSharedFolder(w http.ResponseWriter, r *http.Request) {
 		"mount_path":   sf.MountPath,
 		"owner_id":     sf.OwnerID,
 		"instance_ids": database.ParseSharedFolderInstanceIDs(sf.InstanceIDs),
+		"team_ids":     database.ParseTeamIDs(sf.TeamIDs),
 		"created_at":   sf.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	})
 }
@@ -209,6 +213,7 @@ func UpdateSharedFolder(w http.ResponseWriter, r *http.Request) {
 		Name        *string `json:"name"`
 		MountPath   *string `json:"mount_path"`
 		InstanceIDs *[]uint `json:"instance_ids"`
+		TeamIDs     *[]uint `json:"team_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
@@ -236,7 +241,9 @@ func UpdateSharedFolder(w http.ResponseWriter, r *http.Request) {
 		updates["mount_path"] = *body.MountPath
 	}
 	oldInstanceIDs := database.ParseSharedFolderInstanceIDs(sf.InstanceIDs)
+	oldTeamIDs := database.ParseTeamIDs(sf.TeamIDs)
 	newInstanceIDs := oldInstanceIDs
+	newTeamIDs := oldTeamIDs
 	membershipChanged := false
 	if body.InstanceIDs != nil {
 		// Validate user has access to all specified instances
@@ -248,6 +255,18 @@ func UpdateSharedFolder(w http.ResponseWriter, r *http.Request) {
 		}
 		newInstanceIDs = *body.InstanceIDs
 		updates["instance_ids"] = database.EncodeSharedFolderInstanceIDs(newInstanceIDs)
+		membershipChanged = true
+	}
+	if body.TeamIDs != nil {
+		// Validate caller can manage each team being attached.
+		for _, tid := range *body.TeamIDs {
+			if !middleware.CanManageTeam(r, tid) {
+				writeError(w, http.StatusForbidden, fmt.Sprintf("Not authorized to attach team %d", tid))
+				return
+			}
+		}
+		newTeamIDs = *body.TeamIDs
+		updates["team_ids"] = database.EncodeTeamIDs(newTeamIDs)
 		membershipChanged = true
 	}
 	mountPathChanged := body.MountPath != nil && *body.MountPath != sf.MountPath
@@ -262,7 +281,13 @@ func UpdateSharedFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, target := range computeFolderUpdateRestartTargets(oldInstanceIDs, newInstanceIDs, mountPathChanged, membershipChanged) {
+	// Restart targets are computed from the *effective* instance set (explicit
+	// IDs unioned with instances belonging to a covered team) so a new team
+	// triggers restarts for all of its current instances.
+	oldEffective := expandFolderEffectiveInstances(oldInstanceIDs, oldTeamIDs)
+	newEffective := expandFolderEffectiveInstances(newInstanceIDs, newTeamIDs)
+
+	for _, target := range computeFolderUpdateRestartTargets(oldEffective, newEffective, mountPathChanged, membershipChanged) {
 		var inst database.Instance
 		if err := database.DB.First(&inst, target.InstanceID).Error; err != nil {
 			continue
@@ -272,6 +297,38 @@ func UpdateSharedFolder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// expandFolderEffectiveInstances returns the de-duplicated list of instance IDs
+// a folder covers, given its explicit InstanceIDs and TeamIDs columns. Used to
+// compute restart targets in UpdateSharedFolder so a team-level change kicks
+// every team-member instance into a restart.
+func expandFolderEffectiveInstances(instanceIDs, teamIDs []uint) []uint {
+	seen := map[uint]struct{}{}
+	out := []uint{}
+	for _, id := range instanceIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	if len(teamIDs) > 0 {
+		var rows []database.Instance
+		if err := database.DB.
+			Select("id").
+			Where("team_id IN ?", teamIDs).
+			Find(&rows).Error; err == nil {
+			for _, r := range rows {
+				if _, ok := seen[r.ID]; ok {
+					continue
+				}
+				seen[r.ID] = struct{}{}
+				out = append(out, r.ID)
+			}
+		}
+	}
+	return out
 }
 
 // folderRestartTarget describes one instance that must restart in response to

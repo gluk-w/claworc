@@ -101,7 +101,7 @@ func TestResolveScheduleInstances_ALL(t *testing.T) {
 	database.DB.Create(&database.Instance{Name: "inst-1", DisplayName: "I1", Status: "running"})
 	database.DB.Create(&database.Instance{Name: "inst-2", DisplayName: "I2", Status: "stopped"})
 
-	ids, err := resolveScheduleInstances("ALL")
+	ids, err := resolveScheduleInstances(database.BackupSchedule{InstanceIDs: "ALL"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -111,7 +111,9 @@ func TestResolveScheduleInstances_ALL(t *testing.T) {
 }
 
 func TestResolveScheduleInstances_JSONArray(t *testing.T) {
-	ids, err := resolveScheduleInstances("[1,3,5]")
+	setupSchedulerTestDB(t)
+
+	ids, err := resolveScheduleInstances(database.BackupSchedule{InstanceIDs: "[1,3,5]"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -124,7 +126,7 @@ func TestResolveScheduleInstances_JSONArray(t *testing.T) {
 }
 
 func TestResolveScheduleInstances_InvalidJSON(t *testing.T) {
-	_, err := resolveScheduleInstances("not json")
+	_, err := resolveScheduleInstances(database.BackupSchedule{InstanceIDs: "not json"})
 	if err == nil {
 		t.Error("expected error for invalid JSON")
 	}
@@ -133,12 +135,59 @@ func TestResolveScheduleInstances_InvalidJSON(t *testing.T) {
 func TestResolveScheduleInstances_EmptyDB(t *testing.T) {
 	setupSchedulerTestDB(t)
 
-	ids, err := resolveScheduleInstances("ALL")
+	ids, err := resolveScheduleInstances(database.BackupSchedule{InstanceIDs: "ALL"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(ids) != 0 {
 		t.Errorf("expected 0 instances from empty DB, got %d", len(ids))
+	}
+}
+
+func TestResolveScheduleInstances_ExpandsTeamIDs(t *testing.T) {
+	setupSchedulerTestDB(t)
+	if err := database.DB.AutoMigrate(&database.Team{}); err != nil {
+		t.Fatalf("migrate team: %v", err)
+	}
+
+	team := database.Team{Name: "alpha"}
+	database.DB.Create(&team)
+
+	inst1 := database.Instance{Name: "i1", DisplayName: "I1", Status: "running", TeamID: team.ID}
+	inst2 := database.Instance{Name: "i2", DisplayName: "I2", Status: "running", TeamID: team.ID}
+	inst3 := database.Instance{Name: "i3", DisplayName: "I3", Status: "running"} // different team
+	database.DB.Create(&inst1)
+	database.DB.Create(&inst2)
+	database.DB.Create(&inst3)
+
+	// instance_ids=[inst3], team_ids=[team] should yield {inst1, inst2, inst3}.
+	ids, err := resolveScheduleInstances(database.BackupSchedule{
+		InstanceIDs: database.EncodeSharedFolderInstanceIDs([]uint{inst3.ID}),
+		TeamIDs:     database.EncodeTeamIDs([]uint{team.ID}),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := map[uint]bool{}
+	for _, id := range ids {
+		got[id] = true
+	}
+	for _, want := range []uint{inst1.ID, inst2.ID, inst3.ID} {
+		if !got[want] {
+			t.Errorf("expected instance %d in result, got %v", want, ids)
+		}
+	}
+
+	// instance_ids="ALL" overrides team_ids.
+	ids, err = resolveScheduleInstances(database.BackupSchedule{
+		InstanceIDs: "ALL",
+		TeamIDs:     database.EncodeTeamIDs([]uint{team.ID}),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ids) != 3 {
+		t.Errorf("expected 3 ids with ALL override, got %d", len(ids))
 	}
 }
 

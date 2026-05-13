@@ -6,6 +6,7 @@ export interface SharedFolder {
   mount_path: string;
   owner_id: number;
   instance_ids: number[];
+  team_ids: number[];
   created_at: string;
 }
 
@@ -29,7 +30,12 @@ export async function getSharedFolder(id: number): Promise<SharedFolder> {
 
 export async function updateSharedFolder(
   id: number,
-  data: { name?: string; mount_path?: string; instance_ids?: number[] },
+  data: {
+    name?: string;
+    mount_path?: string;
+    instance_ids?: number[];
+    team_ids?: number[];
+  },
 ): Promise<void> {
   await client.put(`/shared-folders/${id}`, data);
 }

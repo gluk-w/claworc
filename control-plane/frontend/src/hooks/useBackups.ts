@@ -11,6 +11,7 @@ import {
   createBackupSchedule,
   updateBackupSchedule,
   deleteBackupSchedule,
+  type BackupsPage,
 } from "@/api/backups";
 import type {
   Backup,
@@ -19,13 +20,18 @@ import type {
   BackupScheduleUpdatePayload,
 } from "@/types/backup";
 
-export function useAllBackups() {
+export function useAllBackups(args: {
+  limit: number;
+  offset: number;
+  instance?: string;
+}) {
   return useQuery({
-    queryKey: ["backups"],
-    queryFn: fetchAllBackups,
+    queryKey: ["backups", args],
+    queryFn: () => fetchAllBackups(args),
+    placeholderData: (prev) => prev,
     refetchInterval: (query) => {
-      const data = query.state.data as Backup[] | undefined;
-      const hasRunning = data?.some((b) => b.status === "running");
+      const page = query.state.data as BackupsPage | undefined;
+      const hasRunning = page?.backups.some((b) => b.status === "running");
       return hasRunning ? 3000 : false;
     },
   });

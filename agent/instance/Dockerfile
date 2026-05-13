@@ -6,11 +6,11 @@ ARG USE_CHINA_MIRRORS=false
 ARG OPENCLAW_VERSION=latest
 
 # Slim agent image: OpenClaw + sshd + cron only. The browser (Chromium /
-# Chrome / Brave) and the VNC stack live in glukw/claworc-browser-* images
+# Chrome / Brave) and the VNC stack live in claworc/<browser>-browser images
 # launched on demand by the control plane; this image has none of those
 # packages.
 #
-# Published as glukw/claworc-agent:latest. New instances created via the
+# Published as claworc/openclaw:latest. New instances created via the
 # control-plane API default to this image; legacy instances continue to pull
 # the old combined glukw/openclaw-vnc-* images already in the registry.
 

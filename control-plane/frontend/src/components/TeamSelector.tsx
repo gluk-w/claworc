@@ -88,7 +88,7 @@ export default function TeamSelector({ onCreateTeam }: TeamSelectorProps) {
                     setOpen(false);
                     onCreateTeam();
                   }}
-                  className="w-full flex items-center gap-1.5 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50"
+                  className="w-full flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
                 >
                   <Plus size={14} />
                   Create a team
@@ -99,7 +99,7 @@ export default function TeamSelector({ onCreateTeam }: TeamSelectorProps) {
                   type="button"
                   onClick={() => {
                     setOpen(false);
-                    navigate("/settings#teams");
+                    navigate("/teams");
                   }}
                   className="w-full flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
                 >

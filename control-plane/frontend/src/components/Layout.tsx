@@ -2,8 +2,10 @@ import { Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import TaskToasts from "./TaskToasts";
 import AnalyticsConsentModal from "./AnalyticsConsentModal";
+import { useOrchestratorWatcher } from "@/hooks/useOrchestratorWatcher";
 
 export default function Layout() {
+  useOrchestratorWatcher();
   return (
     <div className="min-h-screen bg-gray-50">
       <Sidebar />

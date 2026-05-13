@@ -90,6 +90,9 @@ func (f *WorkspaceFS) client(ctx context.Context, instanceID uint) (*ssh.Client,
 		return nil, err
 	}
 	orch := orchestrator.Get()
+	if orch == nil {
+		return nil, fmt.Errorf("no orchestrator backend available")
+	}
 	return f.SSH.EnsureConnectedWithIPCheck(ctx, inst.ID, orch, inst.AllowedSourceIPs)
 }
 

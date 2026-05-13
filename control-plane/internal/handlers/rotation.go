@@ -27,7 +27,7 @@ func RotateSSHKey(w http.ResponseWriter, r *http.Request) {
 
 	orch := orchestrator.Get()
 	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "Orchestrator not available")
+		WriteOrchestratorUnavailable(w)
 		return
 	}
 

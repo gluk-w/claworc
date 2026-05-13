@@ -1,9 +1,10 @@
-import { useState, useMemo, type FormEvent } from "react";
+import { useEffect, useState, useMemo, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Trash2, Download, Loader2, Pencil, Square } from "lucide-react";
+import { Trash2, Download, Loader2, Pencil, Square, ChevronLeft, ChevronRight } from "lucide-react";
 import FolderInput from "@/components/FolderInput";
-import MultiSelect, { type MultiSelectOption } from "@/components/MultiSelect";
-import SingleSelect, { type SingleSelectOption } from "@/components/SingleSelect";
+import InstanceTeamPicker from "@/components/InstanceTeamPicker";
+import { useTeam } from "@/contexts/TeamContext";
+import type { Instance } from "@/types/instance";
 import {
   useAllBackups,
   useCreateBackup,
@@ -54,9 +55,31 @@ export default function BackupsPage() {
   const [searchParams] = useSearchParams();
   const instanceFilter = searchParams.get("instance") || "";
 
-  const { data: backups = [], isLoading: backupsLoading } = useAllBackups();
+  const PAGE_SIZE_OPTIONS = [25, 50, 100];
+  const [pageSize, setPageSize] = useState<number>(() => {
+    const stored = Number(localStorage.getItem("backups.pageSize"));
+    return PAGE_SIZE_OPTIONS.includes(stored) ? stored : 50;
+  });
+  const [page, setPage] = useState(0);
+
+  useEffect(() => {
+    localStorage.setItem("backups.pageSize", String(pageSize));
+  }, [pageSize]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [instanceFilter, pageSize]);
+
+  const { data: backupsPage, isLoading: backupsLoading } = useAllBackups({
+    limit: pageSize,
+    offset: page * pageSize,
+    instance: instanceFilter || undefined,
+  });
+  const backups = backupsPage?.backups ?? [];
+  const total = backupsPage?.total ?? 0;
   const { data: schedules = [], isLoading: schedulesLoading } = useBackupSchedules();
   const { data: instances = [] } = useInstances();
+  const { teams } = useTeam();
 
   const [showCreateBackup, setShowCreateBackup] = useState(false);
   const [showCreateSchedule, setShowCreateSchedule] = useState(false);
@@ -64,9 +87,12 @@ export default function BackupsPage() {
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [confirmDeleteSchedule, setConfirmDeleteSchedule] = useState<number | null>(null);
 
-  const filteredBackups = instanceFilter
-    ? backups.filter((b) => b.instance_name === instanceFilter)
-    : backups;
+  const filteredBackups = backups;
+  const offset = page * pageSize;
+  const rangeStart = total === 0 ? 0 : offset + 1;
+  const rangeEnd = Math.min(offset + backups.length, total);
+  const canPrev = page > 0;
+  const canNext = offset + backups.length < total;
 
   return (
     <div>
@@ -113,7 +139,7 @@ export default function BackupsPage() {
                   {schedules.map((s) => (
                     <tr key={s.id} className="border-b border-gray-100 last:border-0">
                       <td className="px-4 py-3 text-gray-900">
-                        <ScheduleInstances instanceIDs={s.instance_ids} instances={instances} />
+                        <ScheduleInstances instanceIDs={s.instance_ids} teamIDs={s.team_ids} instances={instances} teams={teams} />
                       </td>
                       <td className="px-4 py-3 text-gray-500">{cronToHuman(s.cron_expression)}</td>
                       <td className="px-4 py-3 text-gray-500">
@@ -164,7 +190,7 @@ export default function BackupsPage() {
             )}
           </h3>
 
-          {backupsLoading ? (
+          {backupsLoading && !backupsPage ? (
             <p className="text-xs text-gray-400">Loading...</p>
           ) : filteredBackups.length === 0 ? (
             <p className="text-sm text-gray-400 italic">No backups found.</p>
@@ -230,12 +256,54 @@ export default function BackupsPage() {
               </table>
             </div>
           )}
+
+          {total > 0 && (
+            <div className="flex items-center justify-between mt-3 text-xs text-gray-500">
+              <div className="flex items-center gap-2">
+                <label htmlFor="backups-page-size">Rows per page:</label>
+                <select
+                  id="backups-page-size"
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="border border-gray-300 rounded-md px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                Showing {rangeStart}–{rangeEnd} of {total}
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={!canPrev}
+                  className="p-1 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="Previous page"
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => p + 1)}
+                  disabled={!canNext}
+                  className="p-1 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="Next page"
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       {showCreateBackup && (
         <CreateBackupModal
           instances={instances}
+          teams={teams}
           defaultInstance={instanceFilter}
           onClose={() => setShowCreateBackup(false)}
         />
@@ -244,6 +312,7 @@ export default function BackupsPage() {
       {showCreateSchedule && (
         <ScheduleModal
           instances={instances}
+          teams={teams}
           onClose={() => setShowCreateSchedule(false)}
         />
       )}
@@ -251,6 +320,7 @@ export default function BackupsPage() {
       {editSchedule && (
         <ScheduleModal
           instances={instances}
+          teams={teams}
           schedule={editSchedule}
           onClose={() => setEditSchedule(null)}
         />
@@ -275,31 +345,56 @@ function StatusPill({ status }: { status: string }) {
 
 function ScheduleInstances({
   instanceIDs,
+  teamIDs,
   instances,
+  teams,
 }: {
   instanceIDs: string;
+  teamIDs?: string;
   instances: { id: number; display_name: string }[];
+  teams: { id: number; name: string }[];
 }) {
   if (instanceIDs === "ALL") {
     return <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-purple-50 text-purple-700">All Instances</span>;
   }
+  let instIds: number[] = [];
   try {
-    const ids: number[] = JSON.parse(instanceIDs);
-    return (
-      <div className="flex flex-wrap gap-1">
-        {ids.map((id) => {
-          const inst = instances.find((i) => i.id === id);
-          return (
-            <span key={id} className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-600">
-              {inst?.display_name || `#${id}`}
-            </span>
-          );
-        })}
-      </div>
-    );
+    instIds = JSON.parse(instanceIDs);
   } catch {
+    // fall through
+  }
+  let parsedTeamIds: number[] = [];
+  if (teamIDs) {
+    try {
+      const v = JSON.parse(teamIDs);
+      if (Array.isArray(v)) parsedTeamIds = v as number[];
+    } catch {
+      // ignore
+    }
+  }
+  if (instIds.length === 0 && parsedTeamIds.length === 0) {
     return <span className="text-gray-500">{instanceIDs}</span>;
   }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {parsedTeamIds.map((id) => {
+        const team = teams.find((t) => t.id === id);
+        return (
+          <span key={`t-${id}`} className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-blue-50 text-blue-700">
+            Team: {team?.name || `#${id}`}
+          </span>
+        );
+      })}
+      {instIds.map((id) => {
+        const inst = instances.find((i) => i.id === id);
+        return (
+          <span key={id} className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-600">
+            {inst?.display_name || `#${id}`}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 function SchedulePaths({ paths }: { paths: string }) {
@@ -385,20 +480,18 @@ function ConfirmDeleteScheduleInline({
 
 function CreateBackupModal({
   instances,
+  teams,
   defaultInstance,
   onClose,
 }: {
-  instances: { id: number; name: string; display_name: string }[];
+  instances: Instance[];
+  teams: { id: number; name: string }[];
   defaultInstance?: string;
   onClose: () => void;
 }) {
   const defaultInst = instances.find((i) => i.name === defaultInstance);
-  const instanceOptions = useMemo<SingleSelectOption[]>(
-    () => instances.map((i) => ({ value: i.id, label: i.display_name })),
-    [instances],
-  );
-  const [selectedInstance, setSelectedInstance] = useState<SingleSelectOption | null>(
-    defaultInst ? { value: defaultInst.id, label: defaultInst.display_name } : null,
+  const [selectedInstanceId, setSelectedInstanceId] = useState<number | null>(
+    defaultInst ? defaultInst.id : null,
   );
   const [paths, setPaths] = useState<string[]>(["HOME"]);
   const [note, setNote] = useState("");
@@ -406,10 +499,10 @@ function CreateBackupModal({
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!selectedInstance) return;
+    if (selectedInstanceId == null) return;
     const cleanPaths = paths.filter((p) => p.trim() !== "");
     createMutation.mutate(
-      { instanceId: selectedInstance.value, paths: cleanPaths.length > 0 ? cleanPaths : undefined, note: note || undefined },
+      { instanceId: selectedInstanceId, paths: cleanPaths.length > 0 ? cleanPaths : undefined, note: note || undefined },
       { onSuccess: () => onClose() },
     );
   };
@@ -426,11 +519,21 @@ function CreateBackupModal({
         <div className="space-y-4">
           <div>
             <label className="block text-xs text-gray-500 mb-1">Instance *</label>
-            <SingleSelect
-              options={instanceOptions}
-              value={selectedInstance}
-              onChange={(val) => setSelectedInstance(val)}
+            <InstanceTeamPicker
+              mode="single"
+              instances={instances}
+              teams={teams}
+              allowAll={false}
+              allowTeamSelect={false}
               placeholder="Select instance..."
+              selected={
+                selectedInstanceId != null
+                  ? { kind: "instance", instanceId: selectedInstanceId }
+                  : { kind: "all" }
+              }
+              onChange={(sel) => {
+                if (sel.kind === "instance") setSelectedInstanceId(sel.instanceId);
+              }}
             />
           </div>
 
@@ -461,7 +564,7 @@ function CreateBackupModal({
           </button>
           <button
             type="submit"
-            disabled={!selectedInstance || createMutation.isPending}
+            disabled={selectedInstanceId == null || createMutation.isPending}
             className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
           >
             {createMutation.isPending ? "Creating..." : "Create Backup"}
@@ -474,10 +577,12 @@ function CreateBackupModal({
 
 function ScheduleModal({
   instances,
+  teams,
   schedule,
   onClose,
 }: {
-  instances: { id: number; name: string; display_name: string }[];
+  instances: Instance[];
+  teams: { id: number; name: string }[];
   schedule?: BackupSchedule;
   onClose: () => void;
 }) {
@@ -503,24 +608,25 @@ function ScheduleModal({
     }
   };
 
+  const parseTeamIDs = (): number[] => {
+    if (!schedule || !schedule.team_ids) return [];
+    try {
+      const parsed = JSON.parse(schedule.team_ids);
+      return Array.isArray(parsed) ? (parsed as number[]) : [];
+    } catch {
+      return [];
+    }
+  };
+
   const initial = parseInstanceIDs();
   const [allInstances, setAllInstances] = useState(initial.all);
-  const [selectedOptions, setSelectedOptions] = useState<MultiSelectOption[]>(
-    initial.ids
-      .map((id) => {
-        const inst = instances.find((i) => i.id === id);
-        return inst ? { value: inst.id, label: inst.display_name } : null;
-      })
-      .filter((o): o is MultiSelectOption => o !== null),
+  const [selectedInstanceIds, setSelectedInstanceIds] = useState<number[]>(
+    initial.ids.filter((id) => instances.some((i) => i.id === id)),
   );
+  const [selectedTeamIds, setSelectedTeamIds] = useState<number[]>(parseTeamIDs());
   const [cronExpression, setCronExpression] = useState(schedule?.cron_expression || "0 2 * * *");
   const [paths, setPaths] = useState<string[]>(parsePaths());
   const [retentionDays, setRetentionDays] = useState<string>(String(schedule?.retention_days ?? 0));
-
-  const instanceOptions = useMemo<MultiSelectOption[]>(
-    () => instances.map((i) => ({ value: i.id, label: i.display_name })),
-    [instances],
-  );
 
   const createMutation = useCreateSchedule();
   const updateMutation = useUpdateSchedule();
@@ -529,15 +635,18 @@ function ScheduleModal({
     e.preventDefault();
     const instanceIdsValue = allInstances
       ? "ALL"
-      : JSON.stringify(selectedOptions.map((o) => o.value));
+      : JSON.stringify(selectedInstanceIds);
     const cleanPaths = paths.filter((p) => p.trim() !== "");
     const retentionDaysValue = Math.max(0, parseInt(retentionDays, 10) || 0);
+
+    const teamIdsValue = allInstances ? [] : selectedTeamIds;
 
     if (isEdit && schedule) {
       updateMutation.mutate(
         {
           id: schedule.id,
           instance_ids: instanceIdsValue,
+          team_ids: teamIdsValue,
           cron_expression: cronExpression,
           paths: cleanPaths.length > 0 ? cleanPaths : ["HOME"],
           retention_days: retentionDaysValue,
@@ -548,6 +657,7 @@ function ScheduleModal({
       createMutation.mutate(
         {
           instance_ids: instanceIdsValue,
+          team_ids: teamIdsValue,
           cron_expression: cronExpression,
           paths: cleanPaths.length > 0 ? cleanPaths : ["HOME"],
           retention_days: retentionDaysValue,
@@ -562,7 +672,11 @@ function ScheduleModal({
   };
 
   const isPending = createMutation.isPending || updateMutation.isPending;
-  const canSubmit = (allInstances || selectedOptions.length > 0) && cronExpression.trim() !== "";
+  const canSubmit =
+    (allInstances ||
+      selectedInstanceIds.length > 0 ||
+      selectedTeamIds.length > 0) &&
+    cronExpression.trim() !== "";
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" onKeyDown={handleKeyDown}>
@@ -585,11 +699,15 @@ function ScheduleModal({
                 <span className="text-sm text-gray-700">All Instances</span>
               </label>
               {!allInstances && (
-                <MultiSelect
-                  options={instanceOptions}
-                  value={selectedOptions}
-                  onChange={(val) => setSelectedOptions([...val])}
-                  placeholder="Select instances..."
+                <InstanceTeamPicker
+                  mode="multi"
+                  instances={instances}
+                  teams={teams}
+                  selectedInstanceIds={selectedInstanceIds}
+                  onChange={setSelectedInstanceIds}
+                  selectedTeamIds={selectedTeamIds}
+                  onTeamsChange={setSelectedTeamIds}
+                  placeholder="Select instances or teams..."
                 />
               )}
             </div>

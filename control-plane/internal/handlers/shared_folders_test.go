@@ -466,6 +466,195 @@ func TestUpdateSharedFolder_NonAdminCannotMapInaccessibleInstance(t *testing.T) 
 	}
 }
 
+// setupSharedFolderTeamsTestDB extends the shared-folder DB with the tables
+// needed to verify per-instance authorization via team membership.
+func setupSharedFolderTeamsTestDB(t *testing.T) {
+	t.Helper()
+	setupSharedFolderTestDB(t)
+	if err := database.DB.AutoMigrate(
+		&database.Instance{}, &database.UserInstance{},
+		&database.Team{}, &database.TeamMember{},
+	); err != nil {
+		t.Fatalf("migrate teams schema: %v", err)
+	}
+}
+
+func TestUpdateSharedFolder_ManagerCanMapOwnTeamInstance(t *testing.T) {
+	setupSharedFolderTeamsTestDB(t)
+
+	team := &database.Team{Name: "alpha"}
+	if err := database.DB.Create(team).Error; err != nil {
+		t.Fatalf("create team: %v", err)
+	}
+	inst := database.Instance{Name: "bot-a", DisplayName: "a", Status: "running", TeamID: team.ID}
+	if err := database.DB.Create(&inst).Error; err != nil {
+		t.Fatalf("create inst: %v", err)
+	}
+	mgr := regularUser(t, "mgr")
+	if err := database.DB.Create(&database.TeamMember{
+		TeamID: team.ID, UserID: mgr.ID, Role: database.TeamRoleManager,
+	}).Error; err != nil {
+		t.Fatalf("create membership: %v", err)
+	}
+	sf := &database.SharedFolder{Name: "owned", MountPath: "/shared/m", OwnerID: mgr.ID}
+	if err := database.CreateSharedFolder(sf); err != nil {
+		t.Fatalf("seed sf: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{"instance_ids": []uint{inst.ID}})
+	w := httptest.NewRecorder()
+	UpdateSharedFolder(w, folderUpdateReq(sf.ID, body, mgr))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+}
+
+func TestUpdateSharedFolder_ManagerCannotMapForeignTeamInstance(t *testing.T) {
+	setupSharedFolderTeamsTestDB(t)
+
+	teamA := &database.Team{Name: "alpha"}
+	teamB := &database.Team{Name: "beta"}
+	if err := database.DB.Create(teamA).Error; err != nil {
+		t.Fatalf("create team A: %v", err)
+	}
+	if err := database.DB.Create(teamB).Error; err != nil {
+		t.Fatalf("create team B: %v", err)
+	}
+	instB := database.Instance{Name: "bot-b", DisplayName: "b", Status: "running", TeamID: teamB.ID}
+	if err := database.DB.Create(&instB).Error; err != nil {
+		t.Fatalf("create inst: %v", err)
+	}
+	mgrA := regularUser(t, "mgr-a")
+	if err := database.DB.Create(&database.TeamMember{
+		TeamID: teamA.ID, UserID: mgrA.ID, Role: database.TeamRoleManager,
+	}).Error; err != nil {
+		t.Fatalf("create membership: %v", err)
+	}
+	sf := &database.SharedFolder{Name: "owned", MountPath: "/shared/x", OwnerID: mgrA.ID}
+	if err := database.CreateSharedFolder(sf); err != nil {
+		t.Fatalf("seed sf: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{"instance_ids": []uint{instB.ID}})
+	w := httptest.NewRecorder()
+	UpdateSharedFolder(w, folderUpdateReq(sf.ID, body, mgrA))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d (body: %s)", w.Code, w.Body.String())
+	}
+}
+
+func TestUpdateSharedFolder_RegularUserWithGrantCanMap(t *testing.T) {
+	setupSharedFolderTeamsTestDB(t)
+
+	team := &database.Team{Name: "alpha"}
+	if err := database.DB.Create(team).Error; err != nil {
+		t.Fatalf("create team: %v", err)
+	}
+	inst := database.Instance{Name: "bot-a", DisplayName: "a", Status: "running", TeamID: team.ID}
+	if err := database.DB.Create(&inst).Error; err != nil {
+		t.Fatalf("create inst: %v", err)
+	}
+	owner := regularUser(t, "owner")
+	// Regular team member + explicit instance grant. CanAccessInstance
+	// requires both: team membership scopes which instances are reachable,
+	// the UserInstance row picks the specific ones within that team.
+	if err := database.DB.Create(&database.TeamMember{
+		TeamID: team.ID, UserID: owner.ID, Role: database.TeamRoleUser,
+	}).Error; err != nil {
+		t.Fatalf("create membership: %v", err)
+	}
+	if err := database.DB.Create(&database.UserInstance{
+		UserID: owner.ID, InstanceID: inst.ID,
+	}).Error; err != nil {
+		t.Fatalf("create grant: %v", err)
+	}
+	sf := &database.SharedFolder{Name: "owned", MountPath: "/shared/g", OwnerID: owner.ID}
+	if err := database.CreateSharedFolder(sf); err != nil {
+		t.Fatalf("seed sf: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{"instance_ids": []uint{inst.ID}})
+	w := httptest.NewRecorder()
+	UpdateSharedFolder(w, folderUpdateReq(sf.ID, body, owner))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+}
+
+// --- Team-level coverage ---
+
+func TestUpdateSharedFolder_TeamIDsRequireManagerAccess(t *testing.T) {
+	setupSharedFolderTeamsTestDB(t)
+
+	teamA := &database.Team{Name: "alpha"}
+	teamB := &database.Team{Name: "beta"}
+	if err := database.DB.Create(teamA).Error; err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	if err := database.DB.Create(teamB).Error; err != nil {
+		t.Fatalf("create B: %v", err)
+	}
+	mgrA := regularUser(t, "mgr-a")
+	if err := database.DB.Create(&database.TeamMember{
+		TeamID: teamA.ID, UserID: mgrA.ID, Role: database.TeamRoleManager,
+	}).Error; err != nil {
+		t.Fatalf("create membership: %v", err)
+	}
+	sf := &database.SharedFolder{Name: "f", MountPath: "/shared/f", OwnerID: mgrA.ID}
+	if err := database.CreateSharedFolder(sf); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Manager of A cannot attach team B.
+	body, _ := json.Marshal(map[string]interface{}{"team_ids": []uint{teamB.ID}})
+	w := httptest.NewRecorder()
+	UpdateSharedFolder(w, folderUpdateReq(sf.ID, body, mgrA))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for foreign team, got %d (body: %s)", w.Code, w.Body.String())
+	}
+
+	// Same manager can attach team A.
+	body, _ = json.Marshal(map[string]interface{}{"team_ids": []uint{teamA.ID}})
+	w = httptest.NewRecorder()
+	UpdateSharedFolder(w, folderUpdateReq(sf.ID, body, mgrA))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for own team, got %d (body: %s)", w.Code, w.Body.String())
+	}
+}
+
+func TestGetSharedFoldersForInstance_CoversByTeamID(t *testing.T) {
+	setupSharedFolderTeamsTestDB(t)
+
+	team := &database.Team{Name: "alpha"}
+	if err := database.DB.Create(team).Error; err != nil {
+		t.Fatalf("create team: %v", err)
+	}
+	inst := database.Instance{Name: "bot-a", DisplayName: "a", Status: "running", TeamID: team.ID}
+	if err := database.DB.Create(&inst).Error; err != nil {
+		t.Fatalf("create inst: %v", err)
+	}
+	owner := regularUser(t, "owner")
+
+	sf := &database.SharedFolder{
+		Name:        "f",
+		MountPath:   "/shared/f",
+		OwnerID:     owner.ID,
+		InstanceIDs: "[]",
+		TeamIDs:     database.EncodeTeamIDs([]uint{team.ID}),
+	}
+	if err := database.CreateSharedFolder(sf); err != nil {
+		t.Fatalf("seed sf: %v", err)
+	}
+
+	folders, err := database.GetSharedFoldersForInstance(inst.ID)
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if len(folders) != 1 || folders[0].ID != sf.ID {
+		t.Fatalf("expected folder %d covering instance via team, got %+v", sf.ID, folders)
+	}
+}
+
 // --- Listing semantics ---
 
 func TestListSharedFolders_AdminSeesAll_UserSeesOwn(t *testing.T) {

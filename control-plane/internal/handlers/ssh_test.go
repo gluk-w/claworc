@@ -594,7 +594,7 @@ func TestSSHConnectionTest_BrowserTarget_Success(t *testing.T) {
 	BrowserBridgeRef = stub
 	defer func() { BrowserBridgeRef = nil }()
 
-	inst := database.Instance{Name: "bot-test", DisplayName: "Test", Status: "running", ContainerImage: "glukw/claworc-agent:latest"}
+	inst := database.Instance{Name: "bot-test", DisplayName: "Test", Status: "running", ContainerImage: "claworc/openclaw:latest"}
 	if err := database.DB.Create(&inst).Error; err != nil {
 		t.Fatalf("create test instance: %v", err)
 	}
@@ -652,7 +652,7 @@ func TestSSHConnectionTest_BrowserTarget_BridgeMissing(t *testing.T) {
 
 	BrowserBridgeRef = nil
 
-	inst := database.Instance{Name: "bot-test", DisplayName: "Test", Status: "running", ContainerImage: "glukw/claworc-agent:latest"}
+	inst := database.Instance{Name: "bot-test", DisplayName: "Test", Status: "running", ContainerImage: "claworc/openclaw:latest"}
 	if err := database.DB.Create(&inst).Error; err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -678,7 +678,7 @@ func TestSSHReconnect_BrowserTarget_Success(t *testing.T) {
 	BrowserBridgeRef = stub
 	defer func() { BrowserBridgeRef = nil }()
 
-	inst := database.Instance{Name: "bot-test", DisplayName: "Test", Status: "running", ContainerImage: "glukw/claworc-agent:latest"}
+	inst := database.Instance{Name: "bot-test", DisplayName: "Test", Status: "running", ContainerImage: "claworc/openclaw:latest"}
 	if err := database.DB.Create(&inst).Error; err != nil {
 		t.Fatalf("create: %v", err)
 	}

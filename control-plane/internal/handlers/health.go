@@ -37,10 +37,11 @@ func HealthCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	uptime := time.Since(startTime)
-	resp := map[string]string{
+	resp := map[string]any{
 		"status":               status,
 		"orchestrator":         orchStatus,
 		"orchestrator_backend": orchBackend,
+		"orchestrator_status":  orchestrator.Status(),
 		"database":             dbStatus,
 		"uptime":               fmt.Sprintf("%.0fs", uptime.Seconds()),
 	}

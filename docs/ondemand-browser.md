@@ -10,11 +10,11 @@ Today every agent pod runs Chromium + Xvfb + TigerVNC + noVNC alongside OpenClaw
 - Design the abstraction so future providers (Cloudflare Browser Rendering, Browserless, BrowserBase, etc.) can be added behind the same interface; for now ship K8s + Docker.
 
 User decisions captured:
-- **Mode discriminator**: not a new column — instead, instances whose `Instance.ContainerImage` contains the substring `openclaw-vnc-` are legacy (combined-image, no separate browser pod). Anything else (e.g. `glukw/claworc-agent:latest`) is the new on-demand layout. A small helper `IsLegacyEmbedded(image string) bool` reads the image once at request time.
+- **Mode discriminator**: not a new column — instead, instances whose `Instance.ContainerImage` contains the substring `openclaw-vnc-` are legacy (combined-image, no separate browser pod). Anything else (e.g. `claworc/openclaw:latest`) is the new on-demand layout. A small helper `IsLegacyEmbedded(image string) bool` reads the image once at request time.
 - **Legacy code retention**: the already-published `glukw/openclaw-vnc-{chromium,chrome,brave}:latest` images are frozen — existing instances keep pulling them from the registry. Their source files in `agent/` are deleted; this PR only ships the new image set.
 - **Cold start**: bump `remoteCdpTimeoutMs` and `remoteCdpHandshakeTimeoutMs` to ~65 s in OpenClaw's `browser` config section so the first call can wait through provider spawn.
 - **Isolation**: per-instance, 1:1 (strongest cookie/session isolation, simplest lifecycle).
-- **Migration**: the instance-details page shows a banner for legacy-image instances. Clicking it runs a `TaskBrowserMigrate` task that (a) provisions the browser PVC and copies `chrome-data` over, (b) recreates the agent container/Deployment using the configured default agent image (`glukw/claworc-agent:latest` initially), (c) registers the CDP/VNC tunnels.
+- **Migration**: the instance-details page shows a banner for legacy-image instances. Clicking it runs a `TaskBrowserMigrate` task that (a) provisions the browser PVC and copies `chrome-data` over, (b) recreates the agent container/Deployment using the configured default agent image (`claworc/openclaw:latest` initially), (c) registers the CDP/VNC tunnels.
 - **Settings-configurable timeouts and image defaults**: idle timeout, ready timeout, and the default agent image all live in the admin `settings` table, surfaced in the existing settings UI. Per-instance fields override globals where appropriate.
 - **Spawn through TaskManager**: every browser session spawn (whether user click, first inbound CDP connection, or migration) runs as a `taskmanager` task with an `OnCancel` callback that rolls back partial state.
 - **No sshd in the browser pod**: the browser pod runs only Chromium + Xvfb/TigerVNC/noVNC. CDP (9222) and noVNC (3000) are reached over cluster networking through a ClusterIP Service; isolation is enforced by NetworkPolicy. VNC streaming goes browser-pod → control plane directly, with no SSH detour. See §11.
@@ -57,9 +57,9 @@ Clean image lineup; legacy combined-image source is deleted from `agent/`.
 
 New images, all under the `glukw/claworc-*` namespace:
 
-- `glukw/claworc-agent:latest` — slim agent. s6 services: `init-setup`, `svc-sshd`, `svc-openclaw`, `svc-cron`. No Xvfb/VNC/openbox/browser.
-- `glukw/claworc-browser-base:latest` — Xvfb, TigerVNC, noVNC, openbox, stealth-extension. **No sshd.** s6 services: `init-setup`, `svc-xvnc`, `svc-novnc`, `svc-desktop`. Container port `9222` (CDP) bound to `0.0.0.0` (cluster-reachable, NetworkPolicy-restricted); container ports `3000` (noVNC) and `5900` (raw VNC) similarly.
-- `glukw/claworc-browser-chromium:latest` / `glukw/claworc-browser-chrome:latest` / `glukw/claworc-browser-brave:latest` — derive from `claworc-browser-base` and install the respective browser. The `svc-desktop` script keeps today's flags except `--remote-debugging-address` is removed (Chromium binds to `0.0.0.0:9222` so the cluster Service can reach it; access control is at the Service + NetworkPolicy layer).
+- `claworc/openclaw:latest` — slim agent. s6 services: `init-setup`, `svc-sshd`, `svc-openclaw`, `svc-cron`. No Xvfb/VNC/openbox/browser.
+- `claworc/base-browser:latest` — Xvfb, TigerVNC, noVNC, openbox, stealth-extension. **No sshd.** s6 services: `init-setup`, `svc-xvnc`, `svc-novnc`, `svc-desktop`. Container port `9222` (CDP) bound to `0.0.0.0` (cluster-reachable, NetworkPolicy-restricted); container ports `3000` (noVNC) and `5900` (raw VNC) similarly.
+- `claworc/chromium-browser:latest` / `claworc/chrome-browser:latest` / `claworc/brave-browser:latest` — derive from `base-browser` and install the respective browser. The `svc-desktop` script keeps today's flags except `--remote-debugging-address` is removed (Chromium binds to `0.0.0.0:9222` so the cluster Service can reach it; access control is at the Service + NetworkPolicy layer).
 
 Legacy `glukw/openclaw-vnc-{chromium,chrome,brave}:latest` images stay published in the registry; legacy instances keep pulling them. No source for those images remains in the repo.
 
@@ -212,8 +212,8 @@ The reaper from below runs as a background goroutine, not a TaskManager task. A 
 ## 7. Settings & UI
 
 **Admin-level settings** (existing `settings` table, surfaced in the settings page):
-- `default_agent_image` — default `glukw/claworc-agent:latest`. Used for new instances and as the migration target.
-- `default_browser_image` — default `glukw/claworc-browser-chromium:latest`.
+- `default_agent_image` — default `claworc/openclaw:latest`. Used for new instances and as the migration target.
+- `default_browser_image` — default `claworc/chromium-browser:latest`.
 - `default_browser_provider` — one of the registered providers (`kubernetes`, `docker`).
 - `default_browser_idle_minutes` — integer, default `15`.
 - `default_browser_ready_seconds` — integer, default `60`. Cap on how long `EnsureSession` waits before failing.
@@ -231,8 +231,8 @@ The reaper from below runs as a background goroutine, not a TaskManager task. A 
 The button calls `POST /api/v1/instances/:id/browser/migrate`, which kicks off a `TaskBrowserMigrate` task that, in order:
 1. Provisions the `<name>-browser` PVC.
 2. Runs the chrome-data copy job (§3).
-3. **Recreates the agent Deployment / container** using `default_agent_image` (e.g., `glukw/claworc-agent:latest`) and updates `Instance.ContainerImage` accordingly. Same name and PVC; image swap and rollout. After this step `IsLegacyEmbedded()` returns `false`.
-4. Sets `Instance.BrowserProvider=<global default>` and `Instance.BrowserImage=<derived from old ContainerImage>` (e.g., `openclaw-vnc-chromium` → `glukw/claworc-browser-chromium:latest`).
+3. **Recreates the agent Deployment / container** using `default_agent_image` (e.g., `claworc/openclaw:latest`) and updates `Instance.ContainerImage` accordingly. Same name and PVC; image swap and rollout. After this step `IsLegacyEmbedded()` returns `false`.
+4. Sets `Instance.BrowserProvider=<global default>` and `Instance.BrowserImage=<derived from old ContainerImage>` (e.g., `openclaw-vnc-chromium` → `claworc/chromium-browser:latest`).
 5. Registers the CDP agent-listener tunnel; the browser session itself is left in `'stopped'` state (lazy spawn on first CDP/VNC use).
 
 `OnCancel` for `TaskBrowserMigrate` deletes the partial browser PVC if step 1 had run, restores the agent's `chrome-data` if step 2 had partially run (the copy is staged into a temp directory and atomically swapped into place only if all phases succeed), and reverts `ContainerImage` if step 3 had run. Progress is surfaced as toasts via TaskManager's existing per-user broadcast.
@@ -295,12 +295,12 @@ Edit:
 ## 10. Verification plan
 
 **K8s e2e (`internal/orchestrator/kubernetes_browser_test.go` / e2e suite):**
-1. Create instance via API. Assert `Instance.ContainerImage='glukw/claworc-agent:latest'`, `IsLegacyEmbedded()=false`, `BrowserSession.Status='stopped'`, no browser deployment yet, agent up, OpenClaw running.
+1. Create instance via API. Assert `Instance.ContainerImage='claworc/openclaw:latest'`, `IsLegacyEmbedded()=false`, `BrowserSession.Status='stopped'`, no browser deployment yet, agent up, OpenClaw running.
 2. Trigger an OpenClaw tool call needing CDP (e.g. `browser_navigate`). Assert: deployment+PVC+Service+NetworkPolicy appear, `/json/version` reachable from control plane via Service DNS, OpenClaw call returns 200, `BrowserSession.Status='running'`.
 3. Connect `/api/v1/instances/:id/desktop/websockify`; assert frames flow without going through any SSH tunnel (validate by inspecting tunnel registry — no VNC reverse tunnel for this instance).
 4. Set `default_browser_idle_minutes=2`, idle, observe reaper deletes deployment, `Status='stopped'`. Browser PVC retained.
 5. Repeat the tool call — pod respawns, profile preserved (cookie set in step 2 still present).
-6. Migration: simulate a legacy instance (image `glukw/openclaw-vnc-chromium:latest`), write data to `/home/claworc/chrome-data`, click the migration banner. Assert: chrome-data ends up on the browser PVC, agent Deployment now uses `glukw/claworc-agent:latest`, `IsLegacyEmbedded()=false`, `BrowserSession` row exists in `'stopped'` state.
+6. Migration: simulate a legacy instance (image `glukw/openclaw-vnc-chromium:latest`), write data to `/home/claworc/chrome-data`, click the migration banner. Assert: chrome-data ends up on the browser PVC, agent Deployment now uses `claworc/openclaw:latest`, `IsLegacyEmbedded()=false`, `BrowserSession` row exists in `'stopped'` state.
 7. Cross-instance isolation: from a sibling instance's pod, attempt `curl http://<browser-svc>:9222/json/version`. Assert connection refused / NetworkPolicy drop.
 8. Delete instance — `DeleteBrowserPod` removes Deployment+PVC+Service+NetworkPolicy and the `BrowserSession` row.
 

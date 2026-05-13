@@ -1440,7 +1440,7 @@ func GetInstanceStats(w http.ResponseWriter, r *http.Request) {
 
 	orch := orchestrator.Get()
 	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		WriteOrchestratorUnavailable(w)
 		return
 	}
 
@@ -1479,7 +1479,7 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 
 	orch := orchestrator.Get()
 	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		WriteOrchestratorUnavailable(w)
 		return
 	}
 
@@ -1766,7 +1766,7 @@ func GetInstanceConfig(w http.ResponseWriter, r *http.Request) {
 
 	orch := orchestrator.Get()
 	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		WriteOrchestratorUnavailable(w)
 		return
 	}
 
@@ -1830,7 +1830,7 @@ func UpdateInstanceConfig(w http.ResponseWriter, r *http.Request) {
 
 	orch := orchestrator.Get()
 	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		WriteOrchestratorUnavailable(w)
 		return
 	}
 

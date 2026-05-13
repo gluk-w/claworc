@@ -28,8 +28,17 @@ export async function fetchInstanceBackups(
   return data;
 }
 
-export async function fetchAllBackups(): Promise<Backup[]> {
-  const { data } = await client.get<Backup[]>("/backups");
+export interface BackupsPage {
+  backups: Backup[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export async function fetchAllBackups(
+  params: { limit: number; offset: number; instance?: string },
+): Promise<BackupsPage> {
+  const { data } = await client.get<BackupsPage>("/backups", { params });
   return data;
 }
 

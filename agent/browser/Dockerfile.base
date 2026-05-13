@@ -8,15 +8,15 @@ ARG NOVNC_VERSION=1.4.0
 ARG WEBSOCKIFY_VERSION=0.12.0
 
 # Browser-only base image: Xvfb + TigerVNC + noVNC + openbox + stealth
-# extension + sshd. NO OpenClaw, NO cron — those live in glukw/claworc-agent.
+# extension + sshd. NO OpenClaw, NO cron — those live in claworc/openclaw.
 #
 # CDP listens on 127.0.0.1:9222 and noVNC on 127.0.0.1:3000 (loopback only —
 # Chromium 134+ silently refuses non-loopback DevTools binding). Externally,
 # the only reachable port is sshd on 22; the control plane SSHes in and uses
 # ssh.Client.Dial to reach 127.0.0.1:9222 / 127.0.0.1:3000.
 #
-# Published as glukw/claworc-browser-base:latest. The variant images
-# (glukw/claworc-browser-{chromium,chrome,brave}) FROM this and add the
+# Published as claworc/base-browser:latest. The variant images
+# (claworc/{chromium,chrome,brave}-browser) FROM this and add the
 # specific browser package.
 
 RUN useradd -m -u 1000 -s /bin/bash claworc

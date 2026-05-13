@@ -5,6 +5,7 @@ import CreateInstancePage from "./pages/CreateInstancePage";
 import InstanceDetailPage from "./pages/InstanceDetailPage";
 import SettingsPage from "./pages/SettingsPage";
 import LoginPage from "./pages/LoginPage";
+import BackendUnavailablePage from "./pages/BackendUnavailablePage";
 import UsersPage from "./pages/UsersPage";
 import TeamsPage from "./pages/TeamsPage";
 import UsagePage from "./pages/UsagePage";
@@ -18,22 +19,32 @@ import KanbanPage from "./pages/KanbanPage";
 import { useAuth } from "./contexts/AuthContext";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, isBackendUnavailable } = useAuth();
   if (isLoading) return null;
+  if (isBackendUnavailable) return <BackendUnavailablePage />;
   if (!user) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
-  const { isAdmin, isLoading } = useAuth();
+  const { isAdmin, isLoading, isBackendUnavailable } = useAuth();
   if (isLoading) return null;
+  if (isBackendUnavailable) return <BackendUnavailablePage />;
   if (!isAdmin) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 
-function InstanceCreatorRoute({ children }: { children: React.ReactNode }) {
-  const { canCreateInstances, isLoading } = useAuth();
+function LoginRoute() {
+  const { isBackendUnavailable, isLoading } = useAuth();
   if (isLoading) return null;
+  if (isBackendUnavailable) return <BackendUnavailablePage />;
+  return <LoginPage />;
+}
+
+function InstanceCreatorRoute({ children }: { children: React.ReactNode }) {
+  const { canCreateInstances, isLoading, isBackendUnavailable } = useAuth();
+  if (isLoading) return null;
+  if (isBackendUnavailable) return <BackendUnavailablePage />;
   if (!canCreateInstances) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
@@ -41,7 +52,7 @@ function InstanceCreatorRoute({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
+      <Route path="/login" element={<LoginRoute />} />
       <Route
         path="/instances/:id/vnc"
         element={
@@ -113,9 +124,9 @@ export default function App() {
         <Route
           path="/skills"
           element={
-            <AdminRoute>
+            <ProtectedRoute>
               <SkillsPage />
-            </AdminRoute>
+            </ProtectedRoute>
           }
         />
         <Route

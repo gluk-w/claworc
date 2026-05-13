@@ -22,6 +22,8 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const { data: health } = useHealth();
   const { user, isAdmin, canCreateInstances, logout } = useAuth();
+  const managesAnyTeam = (user?.teams ?? []).some((t) => t.role === "manager");
+  const canSeeSkills = isAdmin || managesAnyTeam;
 
   const orchLabel =
     health?.orchestrator_backend === "kubernetes"
@@ -94,20 +96,20 @@ export default function Sidebar() {
           </span>
         </Link>
         {isAdmin && (
-          <>
-            <Link to="/usage" className={navLinkClass("/usage")}>
-              <BarChart2 size={18} className="shrink-0" />
-              <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
-                Usage
-              </span>
-            </Link>
-            <Link to="/skills" className={navLinkClass("/skills")}>
-              <BookOpen size={18} className="shrink-0" />
-              <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
-                Skills
-              </span>
-            </Link>
-          </>
+          <Link to="/usage" className={navLinkClass("/usage")}>
+            <BarChart2 size={18} className="shrink-0" />
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
+              Usage
+            </span>
+          </Link>
+        )}
+        {canSeeSkills && (
+          <Link to="/skills" className={navLinkClass("/skills")}>
+            <BookOpen size={18} className="shrink-0" />
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
+              Skills
+            </span>
+          </Link>
         )}
         <Link to="/kanban" className={navLinkClass("/kanban")}>
           <Trello size={18} className="shrink-0" />

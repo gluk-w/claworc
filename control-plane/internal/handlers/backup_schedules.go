@@ -49,6 +49,7 @@ func canAccessAllScheduleInstances(r *http.Request, raw string) bool {
 
 type scheduleCreateRequest struct {
 	InstanceIDs    string   `json:"instance_ids"`
+	TeamIDs        []uint   `json:"team_ids,omitempty"`
 	CronExpression string   `json:"cron_expression"`
 	Paths          []string `json:"paths"`
 	RetentionDays  *int     `json:"retention_days,omitempty"`
@@ -56,9 +57,21 @@ type scheduleCreateRequest struct {
 
 type scheduleUpdateRequest struct {
 	InstanceIDs    *string  `json:"instance_ids,omitempty"`
+	TeamIDs        *[]uint  `json:"team_ids,omitempty"`
 	CronExpression *string  `json:"cron_expression,omitempty"`
 	Paths          []string `json:"paths,omitempty"`
 	RetentionDays  *int     `json:"retention_days,omitempty"`
+}
+
+// authorizeScheduleTeams returns 403-causing teamID if the caller cannot manage
+// any of the given team IDs. Returns (0, true) on success.
+func authorizeScheduleTeams(r *http.Request, teamIDs []uint) (uint, bool) {
+	for _, tid := range teamIDs {
+		if !middleware.CanManageTeam(r, tid) {
+			return tid, false
+		}
+	}
+	return 0, true
 }
 
 // CreateBackupSchedule creates a new backup schedule.
@@ -81,6 +94,10 @@ func CreateBackupSchedule(w http.ResponseWriter, r *http.Request) {
 
 	if !canAccessAllScheduleInstances(r, req.InstanceIDs) {
 		writeError(w, http.StatusForbidden, "You do not have access to all instances in this schedule")
+		return
+	}
+	if bad, ok := authorizeScheduleTeams(r, req.TeamIDs); !ok {
+		writeError(w, http.StatusForbidden, "Not authorized to attach team "+strconv.Itoa(int(bad)))
 		return
 	}
 
@@ -106,6 +123,7 @@ func CreateBackupSchedule(w http.ResponseWriter, r *http.Request) {
 
 	s := &database.BackupSchedule{
 		InstanceIDs:    req.InstanceIDs,
+		TeamIDs:        database.EncodeTeamIDs(req.TeamIDs),
 		CronExpression: req.CronExpression,
 		Paths:          string(pathsJSON),
 		RetentionDays:  retentionDays,
@@ -194,6 +212,13 @@ func UpdateBackupSchedule(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		updates["instance_ids"] = *req.InstanceIDs
+	}
+	if req.TeamIDs != nil {
+		if bad, ok := authorizeScheduleTeams(r, *req.TeamIDs); !ok {
+			writeError(w, http.StatusForbidden, "Not authorized to attach team "+strconv.Itoa(int(bad)))
+			return
+		}
+		updates["team_ids"] = database.EncodeTeamIDs(*req.TeamIDs)
 	}
 
 	if len(req.Paths) > 0 {

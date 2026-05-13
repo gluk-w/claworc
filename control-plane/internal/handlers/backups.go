@@ -50,7 +50,7 @@ func CreateBackup(w http.ResponseWriter, r *http.Request) {
 
 	orch := orchestrator.Get()
 	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "Orchestrator not available")
+		WriteOrchestratorUnavailable(w)
 		return
 	}
 
@@ -92,27 +92,40 @@ func ListInstanceBackups(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, backups)
 }
 
-// ListAllBackups returns backups across all instances. Admins see everything;
-// non-admin users only see backups for instances assigned to them.
+// ListAllBackups returns a paginated list of backups across all instances.
+// Admins see everything; non-admin users only see backups for instances
+// assigned to them. Query params: limit (default 50, max 100), offset
+// (default 0), instance (optional instance name filter).
 func ListAllBackups(w http.ResponseWriter, r *http.Request) {
-	backups, err := database.ListAllBackups()
+	limit := parseIntQuery(r, "limit", 50, 1, 100)
+	offset := parseIntQuery(r, "offset", 0, 0, 1<<30)
+	instanceName := r.URL.Query().Get("instance")
+
+	user := middleware.GetUser(r)
+	isAdmin := user != nil && user.Role == "admin"
+	var userID uint
+	if user != nil {
+		userID = user.ID
+	}
+
+	backups, total, err := database.ListAllBackupsPaginated(database.ListBackupsOptions{
+		Limit:        limit,
+		Offset:       offset,
+		InstanceName: instanceName,
+		UserID:       userID,
+		IsAdmin:      isAdmin,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to list backups")
 		return
 	}
 
-	user := middleware.GetUser(r)
-	if user != nil && user.Role != "admin" {
-		filtered := backups[:0]
-		for _, b := range backups {
-			if database.IsUserAssignedToInstance(user.ID, b.InstanceID) {
-				filtered = append(filtered, b)
-			}
-		}
-		backups = filtered
-	}
-
-	writeJSON(w, http.StatusOK, backups)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"backups": backups,
+		"total":   total,
+		"limit":   limit,
+		"offset":  offset,
+	})
 }
 
 // GetBackupDetail returns details for a specific backup.
@@ -258,7 +271,7 @@ func RestoreBackupHandler(w http.ResponseWriter, r *http.Request) {
 
 	orch := orchestrator.Get()
 	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "Orchestrator not available")
+		WriteOrchestratorUnavailable(w)
 		return
 	}
 

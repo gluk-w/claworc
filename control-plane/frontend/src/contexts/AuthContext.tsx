@@ -11,12 +11,14 @@ import {
   logout as apiLogout,
 } from "@/api/auth";
 import type { User, LoginRequest } from "@/types/auth";
+import { isBackendUnavailableError } from "@/utils/http";
 
 interface AuthContextValue {
   user: User | null;
   isLoading: boolean;
   isAdmin: boolean;
   canCreateInstances: boolean;
+  isBackendUnavailable: boolean;
   login: (data: LoginRequest) => Promise<User>;
   logout: () => Promise<void>;
   refetch: () => void;
@@ -30,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const {
     data: user,
     isLoading,
+    error,
     refetch,
   } = useQuery({
     queryKey: ["auth", "me"],
@@ -63,6 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         canCreateInstances:
           user?.role === "admin" ||
           (user?.teams ?? []).some((t) => t.role === "manager"),
+        isBackendUnavailable: !user && isBackendUnavailableError(error),
         login,
         logout,
         refetch: () => {

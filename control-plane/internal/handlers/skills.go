@@ -19,6 +19,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/taskmanager"
 	"github.com/go-chi/chi/v5"
@@ -669,6 +670,16 @@ func DeploySkill(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Source == "" {
 		req.Source = "library"
+	}
+
+	// Per-instance authorization: caller must be admin or manager of every
+	// targeted instance's team. The route itself is not admin-gated so that
+	// team managers can deploy library skills to their own team's instances.
+	for _, instID := range req.InstanceIDs {
+		if !middleware.CanMutateInstance(r, instID) {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("Not authorized to deploy to instance %d", instID))
+			return
+		}
 	}
 
 	fileMap, err := buildSkillFileMap(r.Context(), slug, req.Source, req.Version)

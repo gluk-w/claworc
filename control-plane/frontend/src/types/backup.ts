@@ -24,6 +24,7 @@ export interface BackupRestorePayload {
 export interface BackupSchedule {
   id: number;
   instance_ids: string;
+  team_ids: string;
   cron_expression: string;
   paths: string;
   retention_days: number;
@@ -35,6 +36,7 @@ export interface BackupSchedule {
 
 export interface BackupScheduleCreatePayload {
   instance_ids: string;
+  team_ids?: number[];
   cron_expression: string;
   paths: string[];
   retention_days?: number;
@@ -42,6 +44,7 @@ export interface BackupScheduleCreatePayload {
 
 export interface BackupScheduleUpdatePayload {
   instance_ids?: string;
+  team_ids?: number[];
   cron_expression?: string;
   paths?: string[];
   retention_days?: number;

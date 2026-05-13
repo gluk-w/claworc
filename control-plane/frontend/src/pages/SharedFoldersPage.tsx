@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { FolderOpen, Trash2, AlertTriangle } from "lucide-react";
-import MultiSelect from "@/components/MultiSelect";
+import InstanceTeamPicker from "@/components/InstanceTeamPicker";
+import { useTeam } from "@/contexts/TeamContext";
 import {
   fetchSharedFolders,
   createSharedFolder,
@@ -210,6 +211,9 @@ function FolderModal({
   const [selectedInstances, setSelectedInstances] = useState<number[]>(
     folder?.instance_ids ?? [],
   );
+  const [selectedTeamIds, setSelectedTeamIds] = useState<number[]>(
+    folder?.team_ids ?? [],
+  );
 
   const { data: instances = [] } = useQuery({
     queryKey: ["instances"],
@@ -231,10 +235,11 @@ function FolderModal({
   const createMutation = useMutation({
     mutationFn: () => createSharedFolder({ name, mount_path: mountPath }),
     onSuccess: (created) => {
-      // If instances selected, update immediately
-      if (selectedInstances.length > 0) {
+      // If anything is selected, attach it in a second PUT.
+      if (selectedInstances.length > 0 || selectedTeamIds.length > 0) {
         updateSharedFolder(created.id, {
           instance_ids: selectedInstances,
+          team_ids: selectedTeamIds,
         }).then(() =>
           queryClient.invalidateQueries({ queryKey: ["shared-folders"] }),
         );
@@ -252,6 +257,7 @@ function FolderModal({
       updateSharedFolder(folder!.id, {
         name,
         instance_ids: selectedInstances,
+        team_ids: selectedTeamIds,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["shared-folders"] });
@@ -278,14 +284,7 @@ function FolderModal({
     }
   };
 
-  const instanceOptions = instances.map((inst) => ({
-    value: inst.id,
-    label: inst.display_name,
-  }));
-
-  const selectedOptions = instanceOptions.filter((opt) =>
-    selectedInstances.includes(opt.value),
-  );
+  const { teams } = useTeam();
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -352,18 +351,19 @@ function FolderModal({
             <label className="block text-xs text-gray-500 mb-1">
               Instances
             </label>
-            <MultiSelect
-              options={instanceOptions}
-              value={selectedOptions}
-              onChange={(selected) =>
-                setSelectedInstances(selected.map((s) => s.value))
-              }
-              placeholder="Select instances..."
-              noOptionsMessage={() => "No instances available"}
+            <InstanceTeamPicker
+              mode="multi"
+              instances={instances}
+              teams={teams}
+              selectedInstanceIds={selectedInstances}
+              onChange={setSelectedInstances}
+              selectedTeamIds={selectedTeamIds}
+              onTeamsChange={setSelectedTeamIds}
+              placeholder="Select instances or teams..."
             />
           </div>
 
-          {selectedInstances.length > 0 && (
+          {(selectedInstances.length > 0 || selectedTeamIds.length > 0) && (
             <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-800">
               <AlertTriangle size={16} className="shrink-0" />
               {isEdit && hasInstanceChanges

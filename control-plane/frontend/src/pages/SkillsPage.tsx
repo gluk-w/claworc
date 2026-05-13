@@ -5,6 +5,7 @@ import { LibrarySkillCard, DiscoverSkillCard } from "@/components/skills/SkillCa
 import DeployModal from "@/components/skills/DeployModal";
 import UploadSkillModal from "@/components/skills/UploadSkillModal";
 import SkillEditorModal from "@/components/skills/SkillEditorModal";
+import { useAuth } from "@/contexts/AuthContext";
 
 type Tab = "library" | "discover";
 
@@ -18,6 +19,7 @@ interface DeployTarget {
 }
 
 export default function SkillsPage() {
+  const { isAdmin } = useAuth();
   const [tab, setTab] = useState<Tab>("library");
   const [showUpload, setShowUpload] = useState(false);
   const [deployTarget, setDeployTarget] = useState<DeployTarget | null>(null);
@@ -91,24 +93,28 @@ export default function SkillsPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-gray-900">Skills</h1>
-        <button
-          onClick={() => setShowUpload(true)}
-          className={`flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 ${tab !== "library" ? "invisible" : ""}`}
-        >
-          <Plus size={16} />
-          Upload Skill
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setShowUpload(true)}
+            className={`flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 ${tab !== "library" ? "invisible" : ""}`}
+          >
+            <Plus size={16} />
+            Upload Skill
+          </button>
+        )}
       </div>
 
-      {/* Tabs */}
-      <div className="flex border-b border-gray-200 mb-6">
-        <button className={tabClass("library")} onClick={() => setTab("library")}>
-          Library
-        </button>
-        <button className={tabClass("discover")} onClick={() => setTab("discover")}>
-          Discover
-        </button>
-      </div>
+      {/* Tabs — Discover (Clawhub search + upload) is admin-only */}
+      {isAdmin && (
+        <div className="flex border-b border-gray-200 mb-6">
+          <button className={tabClass("library")} onClick={() => setTab("library")}>
+            Library
+          </button>
+          <button className={tabClass("discover")} onClick={() => setTab("discover")}>
+            Discover
+          </button>
+        </div>
+      )}
 
       {/* Library Tab */}
       {tab === "library" && (
@@ -129,8 +135,8 @@ export default function SkillsPage() {
                   key={skill.id}
                   skill={skill}
                   onDeploy={handleDeployLibrary}
-                  onEdit={handleEdit}
-                  onDelete={handleDelete}
+                  onEdit={isAdmin ? handleEdit : undefined}
+                  onDelete={isAdmin ? handleDelete : undefined}
                 />
               ))}
             </div>

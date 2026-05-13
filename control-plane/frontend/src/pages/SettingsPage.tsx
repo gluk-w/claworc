@@ -485,7 +485,7 @@ function EnvironmentTab({
               type="text"
               defaultValue={settings.default_agent_image ?? ""}
               onChange={(e) => setResources((r) => ({ ...r, default_agent_image: e.target.value }))}
-              placeholder="glukw/claworc-agent:latest"
+              placeholder="claworc/openclaw:latest"
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -535,7 +535,7 @@ function EnvironmentTab({
               type="text"
               defaultValue={settings.default_browser_image ?? ""}
               onChange={(e) => setResources((r) => ({ ...r, default_browser_image: e.target.value }))}
-              placeholder="glukw/claworc-browser-chromium:latest"
+              placeholder="claworc/chromium-browser:latest"
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>

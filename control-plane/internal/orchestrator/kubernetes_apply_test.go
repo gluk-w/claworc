@@ -37,7 +37,7 @@ func newFakeOrchestrator(t *testing.T, objects ...interface{}) *KubernetesOrches
 func browserSpec() WorkloadSpec {
 	return WorkloadSpec{
 		Name:  "bot-foo-browser",
-		Image: "glukw/claworc-browser-chromium:latest",
+		Image: "claworc/chromium-browser:latest",
 		Volumes: []VolumeMount{
 			{Name: "bot-foo-browser", Size: "10Gi", MountPath: "/home/claworc/chrome-data"},
 		},
@@ -55,7 +55,7 @@ func browserSpec() WorkloadSpec {
 func sharedFolderSpec() WorkloadSpec {
 	return WorkloadSpec{
 		Name:  "bot-foo",
-		Image: "glukw/claworc-agent:latest",
+		Image: "claworc/openclaw:latest",
 		Volumes: []VolumeMount{
 			{Name: "bot-foo-home", Size: "5Gi", MountPath: "/home/claworc"},
 			{Name: "shared-folder-7", Size: "1Gi", Shared: true, MountPath: "/mnt/shared"},
@@ -92,7 +92,7 @@ func TestApply_CreatesPVC_DeploymentService_NetworkPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get deployment: %v", err)
 	}
-	if got := dep.Spec.Template.Spec.Containers[0].Image; got != "glukw/claworc-browser-chromium:latest" {
+	if got := dep.Spec.Template.Spec.Containers[0].Image; got != "claworc/chromium-browser:latest" {
 		t.Errorf("container image = %q", got)
 	}
 

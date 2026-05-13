@@ -7,6 +7,42 @@ on:
       - '.github/workflows/control-plane.yml'
 
 jobs:
+  migration-check:
+    name: Migration Drift Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need history for the git-diff guard below
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: control-plane/go.mod
+          cache-dependency-path: control-plane/go.sum
+
+      - name: Run migrationcheck (verify migrations cover all models)
+        working-directory: control-plane
+        run: go run ./cmd/migrationcheck
+
+      - name: Guard against model changes without a new migration
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          # Compare against the merge base on PRs; against the previous commit on push.
+          if [ -n "${GITHUB_BASE_REF:-}" ]; then
+            base="origin/${GITHUB_BASE_REF}"
+            git fetch --no-tags --depth=1 origin "${GITHUB_BASE_REF}"
+          else
+            base="HEAD~1"
+          fi
+          changed_models=$(git diff --name-only "$base"...HEAD -- 'control-plane/internal/database/models/*.go' || true)
+          new_migrations=$(git diff --name-only --diff-filter=A "$base"...HEAD -- 'control-plane/internal/database/migrations/migration_*.go' || true)
+          if [ -n "$changed_models" ] && [ -z "$new_migrations" ]; then
+            echo "ERROR: models.go changed but no new migration_*.go was added."
+            echo "       Run 'make migration' from control-plane/ to author one."
+            exit 1
+          fi
+
   unit:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -112,7 +148,7 @@ jobs:
   push-manifest:
     name: Push Manifest
     if: github.ref == 'refs/heads/main'
-    needs: [unit, integration, build-amd64, build-arm64]
+    needs: [migration-check, unit, integration, build-amd64, build-arm64]
     runs-on: ubuntu-latest
     steps:
       - uses: docker/setup-buildx-action@v3

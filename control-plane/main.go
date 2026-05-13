@@ -409,6 +409,14 @@ func main() {
 			r.Put("/backup-schedules/{id}", handlers.UpdateBackupSchedule)
 			r.Delete("/backup-schedules/{id}", handlers.DeleteBackupSchedule)
 
+			// Skills read + deploy: available to all authenticated users.
+			// DeploySkill enforces per-instance authorization (admin or
+			// manager of the instance's team) inside the handler.
+			r.Get("/skills", handlers.ListSkills)
+			r.Get("/skills/{slug}/files", handlers.ListSkillFiles)
+			r.Get("/skills/{slug}/files/*", handlers.GetSkillFile)
+			r.Post("/skills/{slug}/deploy", handlers.DeploySkill)
+
 			// Instance creators (admin or users who manage at least one team).
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequireInstanceCreator)
@@ -430,6 +438,10 @@ func main() {
 				r.Post("/settings/rotate-ssh-key", handlers.RotateSSHKey)
 				r.Get("/audit-logs", handlers.GetAuditLogs)
 
+				// Container backend (Docker/Kubernetes) diagnostics + recovery
+				r.Get("/orchestrator/status", handlers.GetOrchestratorStatus)
+				r.Post("/orchestrator/reinitialize", handlers.ReinitializeOrchestrator)
+
 				// LLM gateway providers and usage
 				r.Post("/llm/providers/test", handlers.TestProviderKey)
 				r.Post("/llm/providers/sync", handlers.SyncAllProviderModels)
@@ -446,14 +458,12 @@ func main() {
 				r.Get("/llm/catalog", handlers.GetCatalogProviders)
 				r.Get("/llm/catalog/{key}", handlers.GetCatalogProviderDetail)
 
-				// Skills
-				r.Get("/skills", handlers.ListSkills)
+				// Skills: library curation (Upload/Delete/PutSkillFile/Clawhub
+				// search) stays admin-only. Read + Deploy moved out — managers
+				// need to read library skills and deploy them to their teams.
 				r.Post("/skills", handlers.UploadSkill)
 				r.Delete("/skills/{slug}", handlers.DeleteSkill)
 				r.Get("/skills/clawhub/search", handlers.ClawhubSearch)
-				r.Post("/skills/{slug}/deploy", handlers.DeploySkill)
-				r.Get("/skills/{slug}/files", handlers.ListSkillFiles)
-				r.Get("/skills/{slug}/files/*", handlers.GetSkillFile)
 				r.Put("/skills/{slug}/files/*", handlers.PutSkillFile)
 
 				// Teams CRUD + membership + provider whitelist

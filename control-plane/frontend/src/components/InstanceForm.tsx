@@ -267,7 +267,7 @@ export default function InstanceForm({
               type="text"
               value={containerImage}
               onChange={(e) => setContainerImage(e.target.value)}
-              placeholder={settings?.default_agent_image ?? "glukw/claworc-agent:latest"}
+              placeholder={settings?.default_agent_image ?? "claworc/openclaw:latest"}
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -336,7 +336,7 @@ export default function InstanceForm({
               type="text"
               value={browserImage}
               onChange={(e) => setBrowserImage(e.target.value)}
-              placeholder={settings?.default_browser_image ?? "glukw/claworc-browser-chromium:latest"}
+              placeholder={settings?.default_browser_image ?? "claworc/chromium-browser:latest"}
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>

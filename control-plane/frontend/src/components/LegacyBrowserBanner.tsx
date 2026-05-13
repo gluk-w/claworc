@@ -10,7 +10,7 @@ interface Props {
 // LegacyBrowserBanner is rendered at the top of the instance detail page for
 // instances still using the combined glukw/openclaw-vnc-* image. It exposes a
 // one-shot migration action that flips the agent over to the slim
-// glukw/claworc-agent image and provisions an on-demand browser pod for
+// claworc/openclaw image and provisions an on-demand browser pod for
 // CDP/VNC traffic. The migration runs as a TaskBrowserMigrate task so progress
 // surfaces through the existing toast/SSE infrastructure.
 export default function LegacyBrowserBanner({ instanceId }: Props) {

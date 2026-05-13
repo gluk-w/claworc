@@ -62,7 +62,7 @@ func executeDueSchedules(ctx context.Context) {
 }
 
 func executeSchedule(ctx context.Context, orch orchestrator.ContainerOrchestrator, s database.BackupSchedule) {
-	instanceIDs, err := resolveScheduleInstances(s.InstanceIDs)
+	instanceIDs, err := resolveScheduleInstances(s)
 	if err != nil {
 		log.Printf("backup scheduler: schedule %d: failed to resolve instances: %v", s.ID, err)
 		return
@@ -95,8 +95,14 @@ func executeSchedule(ctx context.Context, orch orchestrator.ContainerOrchestrato
 	database.UpdateBackupSchedule(s.ID, updates)
 }
 
-func resolveScheduleInstances(instanceIDsJSON string) ([]uint, error) {
-	if instanceIDsJSON == "ALL" {
+// resolveScheduleInstances returns the de-duplicated list of instance IDs the
+// schedule covers at fire time. `instance_ids="ALL"` short-circuits to every
+// instance. Otherwise the result is the union of the schedule's explicit
+// InstanceIDs and the instances currently belonging to any team in TeamIDs —
+// expanding teams at fire time so a new instance in a covered team is
+// automatically included.
+func resolveScheduleInstances(s database.BackupSchedule) ([]uint, error) {
+	if s.InstanceIDs == "ALL" {
 		var instances []database.Instance
 		if err := database.DB.Find(&instances).Error; err != nil {
 			return nil, err
@@ -108,9 +114,40 @@ func resolveScheduleInstances(instanceIDsJSON string) ([]uint, error) {
 		return ids, nil
 	}
 
-	var ids []uint
-	if err := json.Unmarshal([]byte(instanceIDsJSON), &ids); err != nil {
-		return nil, err
+	seen := map[uint]struct{}{}
+	out := []uint{}
+
+	var explicit []uint
+	if s.InstanceIDs != "" {
+		if err := json.Unmarshal([]byte(s.InstanceIDs), &explicit); err != nil {
+			return nil, err
+		}
 	}
-	return ids, nil
+	for _, id := range explicit {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+
+	teamIDs := database.ParseTeamIDs(s.TeamIDs)
+	if len(teamIDs) > 0 {
+		var teamInstances []database.Instance
+		if err := database.DB.
+			Select("id").
+			Where("team_id IN ?", teamIDs).
+			Find(&teamInstances).Error; err != nil {
+			return nil, err
+		}
+		for _, inst := range teamInstances {
+			if _, ok := seen[inst.ID]; ok {
+				continue
+			}
+			seen[inst.ID] = struct{}{}
+			out = append(out, inst.ID)
+		}
+	}
+
+	return out, nil
 }

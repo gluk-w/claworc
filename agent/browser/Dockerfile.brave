@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=glukw/claworc-browser-base:latest
+ARG BASE_IMAGE=claworc/base-browser:latest
 FROM ${BASE_IMAGE}
 
 # brave-browser is amd64-only on Linux. Fail fast on other arches.

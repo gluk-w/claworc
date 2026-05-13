@@ -4,8 +4,8 @@ import type { Skill, ClawhubResult } from "@/types/skills";
 interface LibraryCardProps {
   skill: Skill;
   onDeploy: (slug: string, displayName: string) => void;
-  onEdit: (slug: string) => void;
-  onDelete: (slug: string) => void;
+  onEdit?: (slug: string) => void;
+  onDelete?: (slug: string) => void;
 }
 
 export function LibrarySkillCard({ skill, onDeploy, onEdit, onDelete }: LibraryCardProps) {
@@ -23,20 +23,24 @@ export function LibrarySkillCard({ skill, onDeploy, onEdit, onDelete }: LibraryC
           <span className="text-xs text-gray-400 whitespace-nowrap">
             {new Date(skill.created_at).toLocaleDateString()}
           </span>
-          <button
-            onClick={(e) => { e.stopPropagation(); onEdit(skill.slug); }}
-            className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
-            title="Edit"
-          >
-            <Pencil size={14} />
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); onDelete(skill.slug); }}
-            className="p-1 text-gray-400 hover:text-red-600 transition-colors"
-            title="Delete"
-          >
-            <Trash2 size={14} />
-          </button>
+          {onEdit && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onEdit(skill.slug); }}
+              className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+              title="Edit"
+            >
+              <Pencil size={14} />
+            </button>
+          )}
+          {onDelete && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(skill.slug); }}
+              className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+              title="Delete"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
         </div>
       </div>
       {skill.summary && (
