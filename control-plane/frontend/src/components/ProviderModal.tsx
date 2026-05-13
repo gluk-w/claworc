@@ -499,19 +499,24 @@ export default function ProviderModal({
             </div>
           )}
 
+          {/* Base URL — always shown for custom providers; also shown for catalog providers
+               that don't supply a base_url (e.g. a newly-added provider whose catalog
+               entry hasn't been deployed yet). */}
+          {showForm && !isCodex && (isCustomProvider || (mode === "create" && selectedCatalog && !selectedCatalog.base_url)) && (
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Base URL</label>
+              <input
+                type="text"
+                value={mBaseURL}
+                onChange={(e) => setMBaseURL(e.target.value)}
+                placeholder="https://api.example.com/v1"
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          )}
+
           {isCustomProvider && !isCodex && (
             <>
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Base URL</label>
-                <input
-                  type="text"
-                  value={mBaseURL}
-                  onChange={(e) => setMBaseURL(e.target.value)}
-                  placeholder="https://api.example.com/v1"
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
               <div>
                 <label className="block text-xs text-gray-500 mb-1">API Type</label>
                 <select
