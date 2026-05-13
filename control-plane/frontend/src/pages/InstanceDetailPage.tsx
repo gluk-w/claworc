@@ -38,6 +38,7 @@ import {
   useUpdateInstanceImage,
 } from "@/hooks/useInstances";
 import { useProviders } from "@/hooks/useProviders";
+import { useSettings } from "@/hooks/useSettings";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { fetchCatalogProviderDetail } from "@/api/llm";
 import type { CatalogProviderDetail } from "@/api/llm";
@@ -69,6 +70,7 @@ export default function InstanceDetailPage() {
   const qc = useQueryClient();
   const { isAdmin } = useAuth();
   const { data: instance, isLoading } = useInstance(instanceId);
+  const { data: settings } = useSettings();
   const { data: allProviders = [] } = useProviders();
 
   // Fetch catalog model lists for all catalog providers (used in edit mode)
@@ -829,6 +831,7 @@ export default function InstanceDetailPage() {
           {/* Environment Variables */}
           <EnvVarsEditor
             values={instance.env_vars ?? {}}
+            inheritedValues={settings?.default_env_vars ?? {}}
             title="Environment Variables"
             description="Per-instance values override globals with the same name. Values are encrypted at rest. Saving restarts this instance so the change takes effect immediately."
             onSave={handleSaveEnvVars}
