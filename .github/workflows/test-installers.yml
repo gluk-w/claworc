@@ -52,12 +52,6 @@ jobs:
           send "/tmp/claworc-test\r"
           expect "Proceed?"
           send "y\r"
-          expect "Admin username"
-          send "admin\r"
-          expect "Admin password:"
-          send "testpass123\r"
-          expect "Confirm password:"
-          send "testpass123\r"
           expect eof
           EXPECT_EOF
 
@@ -173,12 +167,6 @@ jobs:
           send "/tmp/claworc-test\r"
           expect "Proceed?"
           send "y\r"
-          expect "Admin username"
-          send "admin\r"
-          expect "Admin password:"
-          send "testpass123\r"
-          expect "Confirm password:"
-          send "testpass123\r"
           expect eof
           EXPECT_EOF
 
@@ -257,10 +245,7 @@ jobs:
             "",            # Port (default)
             "$env:TEMP\claworc-test",  # Data dir
             "y",           # Proceed
-            "",            # Remove existing (if any)
-            "admin",       # Admin username
-            "testpass123", # Password
-            "testpass123"  # Confirm password
+            ""             # Remove existing (if any)
           )
 
           function Read-Host {
