@@ -13,7 +13,7 @@ The project consists of the following components:
 
 ## Repository Structure
 
-- `agent/` - Base docker image with OpenClaw instance (`claworc/openclaw`) and images with various browsers `claworc/claworc-browser-<browser>`
+- `agent/` - Base docker image with OpenClaw instance (`claworc/openclaw`) and images with various browsers `claworc/<browser>-browser`
 - `control-plane/` - Main application (Go backend + React frontend)
     - `main.go` - Entry point, Chi router, embedded SPA serving
     - `internal/` - Go packages (config, database, handlers, middleware, orchestrator, sshproxy, sshterminal)
@@ -51,6 +51,8 @@ for local development.
 
 **Crypto** (`internal/crypto/crypto.go`): API keys encrypted at rest in SQLite using Fernet. The Fernet key is 
 auto-generated on first run and stored in the `settings` table.
+
+**Database migrations** (`internal/database/migrations/`): Goose v3 invoked as a library, embedded into the binary, applied at startup from `database.Init()`. New migrations are versioned Go files in the `migrations` subpackage that use the GORM Migrator interface; model types live in `internal/database/models/` and are re-exported by the `database` package via type aliases for backward compat. See `docs/migrations.md` for the full spec, including the `make migration` workflow that delegates to the `migration-author` subagent.
 
 **SSH Proxy** (`internal/sshproxy/`): Unified package consolidating SSH key management, connection management, 
 tunnel management, health monitoring, automatic reconnection, connection state tracking, and connection event logging. 

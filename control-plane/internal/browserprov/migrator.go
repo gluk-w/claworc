@@ -154,7 +154,7 @@ func (m *Migrator) run(ctx context.Context, h *taskmanager.Handle, instanceID ui
 		// its existing legacy image and the user can retry once the new
 		// image is available (e.g. after pushing it to the registry, or
 		// building it locally with `docker build -f agent/instance/Dockerfile`
-		// -t glukw/claworc-agent:latest agent/instance/`).
+		// -t claworc/openclaw:latest agent/instance/`).
 		revertSnapshot(instanceID, prev, storageChanged)
 		return fmt.Errorf("rollout new agent image: %w (instance left on legacy image; build/push the agent image first or update default_agent_image)", err)
 	}
@@ -213,7 +213,7 @@ func (m *Migrator) makeRollback(instanceID uint) taskmanager.OnCancel {
 
 // deriveBrowserImage maps a legacy combined image name to the corresponding
 // browser-only image. e.g. glukw/openclaw-vnc-chromium:latest →
-// glukw/claworc-browser-chromium:latest. Returns "" when no mapping applies;
+// claworc/chromium-browser:latest. Returns "" when no mapping applies;
 // callers fall back to default_browser_image.
 func deriveBrowserImage(legacy string) string {
 	idx := strings.Index(legacy, "openclaw-vnc-")
@@ -229,6 +229,5 @@ func deriveBrowserImage(legacy string) string {
 		variant = rest[:colon]
 		tag = rest[colon+1:]
 	}
-	prefix := legacy[:idx]
-	return fmt.Sprintf("%sclaworc-browser-%s:%s", prefix, variant, tag)
+	return fmt.Sprintf("claworc/%s-browser:%s", variant, tag)
 }

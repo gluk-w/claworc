@@ -104,8 +104,8 @@ func TestIsLegacyEmbedded(t *testing.T) {
 		{"glukw/openclaw-vnc-chrome:v1.2.3", true},
 		{"glukw/openclaw-vnc-brave:latest", true},
 		{"docker.io/glukw/openclaw-vnc-chromium:latest", true},
-		{"glukw/claworc-agent:latest", false},
-		{"glukw/claworc-browser-chromium:latest", false},
+		{"claworc/openclaw:latest", false},
+		{"claworc/chromium-browser:latest", false},
 		{"", true},
 		{"random/image:tag", false},
 	}

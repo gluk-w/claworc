@@ -17,7 +17,7 @@ func (stubOrch) BackendName() string                      { return "stub" }
 func TestBuildApplySpec_DownloadsSubpath_AffinityAndInitContainers(t *testing.T) {
 	p := &LocalProvider{orch: stubOrch{}}
 	spec := p.buildApplySpec("bot-foo", SessionParams{
-		Image:         "glukw/claworc-browser-chromium:latest",
+		Image:         "claworc/chromium-browser:latest",
 		StorageSize:   "10Gi",
 		VNCResolution: "1920x1080",
 	})

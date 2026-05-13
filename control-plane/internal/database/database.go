@@ -99,35 +99,6 @@ func openDialector(d gorm.Dialector, driver Driver, pool PoolConfig) (*gorm.DB, 
 	return gdb, nil
 }
 
-// autoMigrateMain runs GORM AutoMigrate for every model owned by the main
-// database. Kept as the schema source of truth for the baseline; new
-// schema deltas should ship as goose migrations layered on top (see
-// migrations.go).
-func autoMigrateMain(gdb *gorm.DB) error {
-	return gdb.AutoMigrate(
-		&Instance{},
-		&Setting{},
-		&User{},
-		&UserInstance{},
-		&WebAuthnCredential{},
-		&LLMProvider{},
-		&LLMGatewayKey{},
-		&Skill{},
-		&Backup{},
-		&BackupSchedule{},
-		&SharedFolder{},
-		&KanbanBoard{},
-		&KanbanTask{},
-		&KanbanComment{},
-		&KanbanArtifact{},
-		&InstanceSoul{},
-		&BrowserSession{},
-		&Team{},
-		&TeamMember{},
-		&TeamProvider{},
-	)
-}
-
 // migrateProviderAPIKeys moves API keys from the settings table into the
 // LLMProvider.APIKey column. Handles two legacy formats:
 //   - api_key:provider:<id>  (previous migration format)
@@ -191,7 +162,7 @@ func seedDefaults() error {
 		// the slim agent image; the browser variant is launched lazily as a
 		// separate pod/container by the configured provider.
 		"default_agent_image":           "claworc/openclaw:latest",
-		"default_browser_image":         "glukw/claworc-browser-chromium:latest",
+		"default_browser_image":         "claworc/chromium-browser:latest",
 		"default_browser_provider":      "auto",
 		"default_browser_idle_minutes":  "15",
 		"default_browser_ready_seconds": "120",
@@ -375,12 +346,44 @@ func ListBackups(instanceID uint) ([]Backup, error) {
 	return backups, nil
 }
 
-func ListAllBackups() ([]Backup, error) {
-	var backups []Backup
-	if err := DB.Order("created_at DESC").Find(&backups).Error; err != nil {
-		return nil, err
+type ListBackupsOptions struct {
+	Limit        int
+	Offset       int
+	InstanceName string
+	UserID       uint
+	IsAdmin      bool
+}
+
+func ListAllBackupsPaginated(opts ListBackupsOptions) ([]Backup, int64, error) {
+	if opts.Limit <= 0 {
+		opts.Limit = 50
 	}
-	return backups, nil
+	if opts.Limit > 100 {
+		opts.Limit = 100
+	}
+	if opts.Offset < 0 {
+		opts.Offset = 0
+	}
+
+	q := DB.Model(&Backup{})
+	if opts.InstanceName != "" {
+		q = q.Where("instance_name = ?", opts.InstanceName)
+	}
+	if !opts.IsAdmin {
+		q = q.Where("instance_id IN (?)",
+			DB.Model(&UserInstance{}).Select("instance_id").Where("user_id = ?", opts.UserID))
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var backups []Backup
+	if err := q.Order("created_at DESC").Limit(opts.Limit).Offset(opts.Offset).Find(&backups).Error; err != nil {
+		return nil, 0, err
+	}
+	return backups, total, nil
 }
 
 func UpdateBackup(id uint, updates map[string]interface{}) error {
@@ -464,19 +467,41 @@ func DeleteSharedFolder(id uint) error {
 	return DB.Delete(&SharedFolder{}, id).Error
 }
 
-// GetSharedFoldersForInstance returns all shared folders that include the given instance ID.
+// GetSharedFoldersForInstance returns all shared folders that include the given
+// instance. A folder covers the instance if its ID is in the folder's
+// InstanceIDs list, OR the instance's TeamID is in the folder's TeamIDs list.
+// The team check makes newly-created instances in a covered team pick up the
+// folder automatically without a manual update.
 func GetSharedFoldersForInstance(instanceID uint) ([]SharedFolder, error) {
+	var inst Instance
+	teamID := uint(0)
+	if err := DB.Select("id", "team_id").First(&inst, instanceID).Error; err == nil {
+		teamID = inst.TeamID
+	}
+
 	var all []SharedFolder
 	if err := DB.Find(&all).Error; err != nil {
 		return nil, err
 	}
 	var result []SharedFolder
 	for _, sf := range all {
+		covered := false
 		for _, id := range ParseSharedFolderInstanceIDs(sf.InstanceIDs) {
 			if id == instanceID {
-				result = append(result, sf)
+				covered = true
 				break
 			}
+		}
+		if !covered && teamID != 0 {
+			for _, tid := range ParseTeamIDs(sf.TeamIDs) {
+				if tid == teamID {
+					covered = true
+					break
+				}
+			}
+		}
+		if covered {
+			result = append(result, sf)
 		}
 	}
 	return result, nil

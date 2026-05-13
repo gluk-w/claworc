@@ -2,30 +2,24 @@ package database
 
 import (
 	"context"
-	"database/sql"
-	"embed"
 	"fmt"
-	"io/fs"
 
 	"github.com/pressly/goose/v3"
-	"gorm.io/gorm"
+
+	"github.com/gluk-w/claworc/control-plane/internal/database/migrations"
 )
 
-// migrationFS embeds the SQL migration files. Files are versioned and named
-// goose-style (e.g. 00002_add_users_email.sql). See docs/databases.md.
-// The directory is intentionally kept empty in the initial commit — the
-// baseline schema is materialized by AutoMigrate (registered as a Go
-// migration below), and future schema deltas should land here as
-// hand-written SQL.
+// RunMigrations applies the full migration set against the active main
+// DB. It hands the live *gorm.DB and dialect string to the migrations
+// subpackage (so Go migrations can drive AutoMigrate and the GORM
+// Migrator interface), then merges the subpackage's Go migrations with
+// the SQL files embedded in internal/database/migrations into goose's
+// global registry and runs goose Up.
 //
-//go:embed migrations/*.sql
-var migrationFS embed.FS
-
-// RunMigrations runs goose against the active main DB. It registers a Go
-// baseline migration (v1) that re-uses GORM AutoMigrate to materialize the
-// 17-model schema, then applies any SQL delta migrations embedded in
-// migrations/. Idempotent: existing installs that already have the schema
-// pass through the baseline as a no-op and get stamped at v1.
+// Idempotent: already-applied migrations are skipped by goose, and the
+// global registry is reset on every call so the function is safe to
+// invoke multiple times in the same process (used by tests that drive
+// the full Init() path).
 func RunMigrations(ctx context.Context) error {
 	if DB == nil {
 		return fmt.Errorf("RunMigrations called before Init")
@@ -47,15 +41,43 @@ func RunMigrations(ctx context.Context) error {
 		return fmt.Errorf("goose dialect: %w", err)
 	}
 
-	registerGoMigrations()
+	// Wire the live DB into the migrations subpackage so Go migrations
+	// can call DB() and WithMigrator at apply time.
+	migrations.Configure(DB, string(resolved.Driver))
 
-	sub, err := fs.Sub(migrationFS, "migrations")
-	if err != nil {
-		return fmt.Errorf("locate embedded migrations: %w", err)
+	// Run AutoMigrate against every model on every boot. Additive schema
+	// changes (new tables, new columns, new indexes) land for free on
+	// fresh installs and upgrades, so the only migrations that need to be
+	// hand-written are data backfills and the few schema changes
+	// AutoMigrate can't express (type changes, drops, renames). See
+	// docs/migrations.md for the full policy.
+	if err := migrations.AutoMigrateAll(DB); err != nil {
+		return fmt.Errorf("auto-migrate: %w", err)
 	}
-	goose.SetBaseFS(sub)
 
-	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
+	// Reset the goose global registry and re-register every Go migration
+	// declared in the subpackage. Resetting is necessary because
+	// AddNamedMigrationContext panics on duplicates — and any single
+	// process may call RunMigrations more than once (notably in tests).
+	goose.ResetGlobalMigrations()
+	for _, m := range migrations.All() {
+		goose.AddNamedMigrationContext(m.Source, m.UpFnContext, m.DownFnContext)
+	}
+
+	// All migrations are Go; no embedded .sql files remain. Pass nil to
+	// SetBaseFS so goose's default os.DirFS is used; combined with the
+	// "." directory argument below, goose finds no .sql files (the
+	// control-plane binary's working directory has none) and applies
+	// only the Go migrations registered above.
+	goose.SetBaseFS(nil)
+
+	// WithAllowMissing tolerates the case where an older version is in the
+	// registry but not yet applied to the DB while a newer version *is*
+	// applied — which happens for any dev DB that ran an intermediate
+	// state of this branch where v2 was removed from the registry and v3+
+	// were stamped. On main installs (v1+v2 stamped) and fresh installs
+	// the option is a no-op.
+	if err := goose.UpContext(ctx, sqlDB, ".", goose.WithAllowMissing()); err != nil {
 		return fmt.Errorf("goose up: %w", err)
 	}
 	return nil
@@ -74,136 +96,7 @@ func gooseDialect(d Driver) (string, error) {
 	}
 }
 
-var goMigrationsRegistered bool
-
-// registerGoMigrations wires up Go-based migrations exactly once per process.
-// goose's registry is global, so calling Add* twice panics.
-func registerGoMigrations() {
-	if goMigrationsRegistered {
-		return
-	}
-	goMigrationsRegistered = true
-
-	// 00001_baseline: materialize the schema via GORM AutoMigrate.
-	//
-	// AutoMigrate is idempotent and works across SQLite/Postgres/MySQL, so
-	// for upgrades on existing SQLite installs this is effectively a no-op.
-	// For fresh installs on any driver it creates every table, index, and
-	// foreign key declared on the GORM models.
-	goose.AddNamedMigrationContext("00001_baseline.go",
-		func(ctx context.Context, tx *sql.Tx) error {
-			// AutoMigrate needs a *gorm.DB; use the package global which is
-			// already opened against the correct dialect. The migration runs
-			// inside a goose-managed transaction, but AutoMigrate manages
-			// its own DDL — tx is unused here intentionally.
-			_ = tx
-			return autoMigrateMain(DB)
-		},
-		func(ctx context.Context, tx *sql.Tx) error {
-			// Down for the baseline is intentionally not implemented:
-			// dropping every table is destructive and out of scope.
-			return fmt.Errorf("baseline migration is not reversible")
-		},
-	)
-
-	// 00004_seed_teams: data backfill on top of 00003_create_teams.sql.
-	// Ensures the seeded "Default" team exists, backfills any instance
-	// that came in with team_id=0, mirrors existing UserInstance grants
-	// into TeamMember(role=user), and promotes users whose legacy
-	// can_create_instances flag was set to manager of the Default team.
-	// Safe to re-run.
-	goose.AddNamedMigrationContext("00004_seed_teams.go",
-		func(ctx context.Context, tx *sql.Tx) error {
-			_ = tx
-			return seedTeamsAndBackfill(DB)
-		},
-		func(ctx context.Context, tx *sql.Tx) error {
-			return fmt.Errorf("seed_teams migration is not reversible")
-		},
-	)
-}
-
-// seedTeamsAndBackfill creates a "Default Team" only when the teams
-// table is empty, backfills any instance with team_id=0 to point at the
-// first team, mirrors UserInstance rows into TeamMember(role=user), and
-// promotes users with can_create_instances=true to manager of that team.
-// Idempotent.
-//
-// The teams/team_members/team_providers tables are created by the
-// sibling SQL migration 00003_create_teams.sql. The instances.team_id
-// column is added here via AutoMigrate so it's idempotent: on fresh
-// installs the baseline already created it from the current Instance
-// model (no-op); on upgrades the baseline is stamped, leaving this
-// AutoMigrate call to add the column.
-func seedTeamsAndBackfill(gdb *gorm.DB) error {
-	if err := gdb.AutoMigrate(&Instance{}); err != nil {
-		return fmt.Errorf("auto-migrate instances.team_id: %w", err)
-	}
-
-	var teamCount int64
-	if err := gdb.Model(&Team{}).Count(&teamCount).Error; err != nil {
-		return fmt.Errorf("count teams: %w", err)
-	}
-	var defaultTeam Team
-	if teamCount == 0 {
-		defaultTeam = Team{Name: "Default Team", Description: "Default team"}
-		if err := gdb.Create(&defaultTeam).Error; err != nil {
-			return fmt.Errorf("seed default team: %w", err)
-		}
-	} else {
-		if err := gdb.Order("id asc").First(&defaultTeam).Error; err != nil {
-			return fmt.Errorf("load anchor team: %w", err)
-		}
-	}
-
-	if err := gdb.Model(&Instance{}).Where("team_id IS NULL OR team_id = 0").
-		Update("team_id", defaultTeam.ID).Error; err != nil {
-		return fmt.Errorf("backfill instance.team_id: %w", err)
-	}
-
-	var grants []UserInstance
-	if err := gdb.Find(&grants).Error; err != nil {
-		return fmt.Errorf("load user_instances: %w", err)
-	}
-	for _, g := range grants {
-		var inst Instance
-		if err := gdb.First(&inst, g.InstanceID).Error; err != nil {
-			continue
-		}
-		teamID := inst.TeamID
-		if teamID == 0 {
-			teamID = defaultTeam.ID
-		}
-		var existing int64
-		gdb.Model(&TeamMember{}).Where("team_id = ? AND user_id = ?", teamID, g.UserID).Count(&existing)
-		if existing == 0 {
-			gdb.Create(&TeamMember{TeamID: teamID, UserID: g.UserID, Role: "user"})
-		}
-	}
-
-	var creators []User
-	if err := gdb.Where("can_create_instances = ?", true).Find(&creators).Error; err != nil {
-		return fmt.Errorf("load creators: %w", err)
-	}
-	for _, u := range creators {
-		var existing TeamMember
-		err := gdb.Where("team_id = ? AND user_id = ?", defaultTeam.ID, u.ID).First(&existing).Error
-		if err != nil {
-			gdb.Create(&TeamMember{TeamID: defaultTeam.ID, UserID: u.ID, Role: "manager"})
-		} else if existing.Role != "manager" {
-			gdb.Model(&existing).Update("role", "manager")
-		}
-	}
-
-	return nil
-}
-
-// resetGoMigrationsForTest is exposed for tests so multiple Init/Migrate
-// cycles in a single process don't trigger the "register once" guard.
-func resetGoMigrationsForTest() {
-	goMigrationsRegistered = false
-	goose.ResetGlobalMigrations()
-}
-
-// Compile-time guard: ensure DB satisfies the gorm.DB shape we use.
-var _ = (*gorm.DB)(nil)
+// resetGoMigrationsForTest is retained as a no-op for test code that
+// used to clear in-package registration state. RunMigrations now resets
+// goose's global registry on every call, so no cleanup is required.
+func resetGoMigrationsForTest() {}
