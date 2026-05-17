@@ -311,7 +311,7 @@ function ApiKeysTab({
                   ? `Expires in ${formatExpiresIn(p.oauth_expires_at - Date.now())}`
                   : "ChatGPT account not linked"
                 : null;
-              const displayModels = (p.models || []).map((m) => m.id);
+              const displayModels = p.models || [];
               return (
                 <div key={p.id}>
                   <div className="flex items-center py-3 -mx-2 px-2 rounded transition-colors">
@@ -354,9 +354,10 @@ function ApiKeysTab({
                       <p className="text-xs text-gray-400 italic">No models available.</p>
                     ) : (
                       <div className="flex flex-wrap gap-1">
-                        {displayModels.map((id) => (
-                          <span key={id} className="font-mono text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
-                            {id}
+                        {displayModels.map((m) => (
+                          <span key={m.id} className="inline-flex items-center gap-1 font-mono text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
+                            {m.id}
+                            {m.input?.includes("image") && <Eye size={10} />}
                           </span>
                         ))}
                       </div>

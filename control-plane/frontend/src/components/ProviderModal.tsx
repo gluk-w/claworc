@@ -69,6 +69,7 @@ export default function ProviderModal({
     id: "",
     name: "",
     reasoning: false,
+    vision: false,
     contextWindow: "",
     maxTokens: "",
     costInput: "",
@@ -121,7 +122,7 @@ export default function ProviderModal({
       setMShowApiKey(false);
       setMApiType("openai-completions");
       setMModels([]);
-      setMModelDraft({ id: "", name: "", reasoning: false, contextWindow: "", maxTokens: "", costInput: "", costOutput: "" });
+      setMModelDraft({ id: "", name: "", reasoning: false, vision: false, contextWindow: "", maxTokens: "", costInput: "", costOutput: "" });
       setMShowOptionalFields(false);
     } else if (provider) {
       setMCatalogKey("");
@@ -131,7 +132,7 @@ export default function ProviderModal({
       setMShowApiKey(false);
       setMApiType(provider.api_type || "openai-completions");
       setMModels(provider.models || []);
-      setMModelDraft({ id: "", name: "", reasoning: false, contextWindow: "", maxTokens: "", costInput: "", costOutput: "" });
+      setMModelDraft({ id: "", name: "", reasoning: false, vision: false, contextWindow: "", maxTokens: "", costInput: "", costOutput: "" });
       setMShowOptionalFields(false);
     }
   }, [open, mode, provider]);
@@ -390,6 +391,7 @@ export default function ProviderModal({
     if (!mModelDraft.id.trim() || !mModelDraft.name.trim()) return;
     const model: ProviderModel = { id: mModelDraft.id.trim(), name: mModelDraft.name.trim() };
     if (mModelDraft.reasoning) model.reasoning = true;
+    if (mModelDraft.vision) model.input = ["text", "image"];
     if (mModelDraft.contextWindow) model.contextWindow = parseInt(mModelDraft.contextWindow, 10);
     if (mModelDraft.maxTokens) model.maxTokens = parseInt(mModelDraft.maxTokens, 10);
     const hasInputCost = !!mModelDraft.costInput;
@@ -403,7 +405,7 @@ export default function ProviderModal({
       };
     }
     setMModels((prev) => [...prev, model]);
-    setMModelDraft({ id: "", name: "", reasoning: false, contextWindow: "", maxTokens: "", costInput: "", costOutput: "" });
+    setMModelDraft({ id: "", name: "", reasoning: false, vision: false, contextWindow: "", maxTokens: "", costInput: "", costOutput: "" });
     setMShowOptionalFields(false);
   };
 
@@ -543,6 +545,12 @@ export default function ProviderModal({
                       <div key={i} className="flex items-center justify-between px-2 py-1.5 bg-gray-50 border border-gray-200 rounded text-xs">
                         <span className="font-mono text-gray-700">{m.id}</span>
                         <span className="text-gray-500 mx-2 truncate">{m.name}</span>
+                        {m.input?.includes("image") && (
+                          <span className="inline-flex items-center gap-0.5 text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded text-[10px] font-medium mr-1">
+                            <Eye className="w-3 h-3" />
+                            vision
+                          </span>
+                        )}
                         <button
                           type="button"
                           onClick={() => setMModels((prev) => prev.filter((_, idx) => idx !== i))}
@@ -582,7 +590,7 @@ export default function ProviderModal({
                     onClick={() => setMShowOptionalFields((v) => !v)}
                     className="text-xs text-gray-400 hover:text-gray-600"
                   >
-                    {mShowOptionalFields ? "Hide optional fields" : "Optional fields (reasoning, context window, cost...)"}
+                    {mShowOptionalFields ? "Hide optional fields" : "Optional fields (reasoning, vision, context window, cost...)"}
                   </button>
                   {mShowOptionalFields && (
                     <div className="space-y-2 pt-1">
@@ -593,6 +601,14 @@ export default function ProviderModal({
                           onChange={(e) => setMModelDraft((d) => ({ ...d, reasoning: e.target.checked }))}
                         />
                         Reasoning model
+                      </label>
+                      <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={mModelDraft.vision}
+                          onChange={(e) => setMModelDraft((d) => ({ ...d, vision: e.target.checked }))}
+                        />
+                        Vision (image support)
                       </label>
                       <div className="grid grid-cols-2 gap-2">
                         <div>

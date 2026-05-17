@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, EyeOff, Trash2 } from "lucide-react";
 
 // Keep in sync with ReservedEnvVarNames in control-plane/internal/handlers/envvars.go.
 const RESERVED = new Set([
@@ -19,6 +19,8 @@ export interface EnvVarsDelta {
 interface Props {
   /** Current plaintext values from the API. */
   values: Record<string, string>;
+  /** Read-only values inherited from a broader scope, e.g. global settings. */
+  inheritedValues?: Record<string, string>;
   /** Section title shown in the card header. */
   title: string;
   /** Help text rendered below the title. */
@@ -70,6 +72,7 @@ function buildInitialRows(values: Record<string, string>): EditRow[] {
 
 export default function EnvVarsEditor({
   values,
+  inheritedValues = {},
   title,
   description,
   onSave,
@@ -82,6 +85,8 @@ export default function EnvVarsEditor({
   const [rows, setRows] = useState<EditRow[]>(() =>
     inline ? buildInitialRows(values) : [],
   );
+  const [showValues, setShowValues] = useState(false);
+  const [showInheritedValues, setShowInheritedValues] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // In inline mode, report the current valid map upward whenever rows change.
@@ -227,34 +232,81 @@ export default function EnvVarsEditor({
   };
 
   const valueKeys = useMemo(() => Object.keys(values).sort(), [values]);
+  const inheritedKeys = useMemo(
+    () => Object.keys(inheritedValues).filter((key) => values[key] === undefined).sort(),
+    [inheritedValues, values],
+  );
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-sm font-medium text-gray-900">{title}</h3>
         {!inline && mode === "display" && (
-          <button
-            type="button"
-            onClick={beginEdit}
-            className="text-xs text-blue-600 hover:text-blue-800"
-          >
-            Edit
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setShowValues((prev) => !prev)}
+              className="text-gray-400 hover:text-gray-600"
+              title={showValues ? "Hide values" : "Show values"}
+              aria-label={showValues ? "Hide values" : "Show values"}
+            >
+              {showValues ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+            <button
+              type="button"
+              onClick={beginEdit}
+              className="text-xs text-blue-600 hover:text-blue-800"
+            >
+              Edit
+            </button>
+          </div>
         )}
       </div>
       <p className="text-xs text-gray-500 mb-4">{description}</p>
 
       {mode === "display" ? (
-        valueKeys.length === 0 ? (
+        valueKeys.length === 0 && inheritedKeys.length === 0 ? (
           <p className="text-sm text-gray-400 italic">{emptyMessage}</p>
         ) : (
-          <div className="divide-y divide-gray-100">
-            {valueKeys.map((k) => (
-              <div key={k} className="py-2 flex items-center justify-between gap-4">
-                <span className="text-sm font-mono text-gray-900">{k}</span>
-                <span className="text-xs font-mono text-gray-500 truncate">{values[k]}</span>
+          <div className="space-y-4">
+            {valueKeys.length > 0 && (
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
+                  Instance
+                </p>
+                <div className="divide-y divide-gray-100">
+                  {valueKeys.map((k) => (
+                    <div key={k} className="py-2 flex items-center justify-between gap-4">
+                      <span className="text-sm font-mono text-gray-900">{k}</span>
+                      <span className="text-xs font-mono text-gray-500 truncate">{showValues ? values[k] : "••••••••"}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
+            )}
+
+            {inheritedKeys.length > 0 && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowInheritedValues((prev) => !prev)}
+                  className="flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-gray-500 mb-2 hover:text-gray-700"
+                >
+                  {showInheritedValues ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                  <span>Inherited From Global Settings</span>
+                </button>
+                {showInheritedValues && (
+                  <div className="divide-y divide-gray-100">
+                    {inheritedKeys.map((k) => (
+                      <div key={k} className="py-2 flex items-center justify-between gap-4">
+                        <span className="text-sm font-mono text-gray-700">{k}</span>
+                        <span className="text-xs font-mono text-gray-400 truncate">{showValues ? inheritedValues[k] : "••••••••"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )
       ) : (

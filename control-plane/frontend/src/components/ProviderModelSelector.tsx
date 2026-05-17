@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye } from "lucide-react";
 import ProviderIcon from "@/components/ProviderIcon";
 import type { LLMProvider } from "@/types/instance";
 import type { CatalogProviderDetail } from "@/api/llm";
@@ -19,6 +19,7 @@ interface ModelEntry {
   name: string;
   tag?: string | null;
   description?: string | null;
+  vision?: boolean;
 }
 
 const TAG_STYLES: Record<string, string> = {
@@ -126,12 +127,13 @@ export default function ProviderModelSelector({
         const isDynamic = !p.provider && !isCustom;
 
         const availableModels: ModelEntry[] = isCustom
-          ? (p.models ?? []).map((m) => ({ id: m.id, name: m.name }))
+          ? (p.models ?? []).map((m) => ({ id: m.id, name: m.name, vision: m.input?.includes("image") }))
           : (catalogDetail?.models ?? []).map((m) => ({
               id: m.model_id,
               name: m.model_name,
               tag: m.tag,
               description: m.description,
+              vision: m.vision,
             }));
 
         const selectedModels = providerModels[p.id] ?? [];
@@ -248,6 +250,12 @@ export default function ProviderModelSelector({
                                   {m.tag}
                                 </span>
                               )}
+                              {m.vision && (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-xs font-medium rounded bg-gray-100 text-gray-600">
+                                  <Eye size={10} />
+                                  vision
+                                </span>
+                              )}
                             </div>
                             {m.description && (
                               <div className="text-xs text-gray-500 mt-0.5">{m.description}</div>
@@ -268,7 +276,7 @@ export default function ProviderModelSelector({
       {/* Instance-specific providers (always enabled, model selection only) */}
       {instanceProviders.map((p) => {
         const isOpen = expanded.has(p.id);
-        const availableModels: ModelEntry[] = (p.models ?? []).map((m) => ({ id: m.id, name: m.name }));
+        const availableModels: ModelEntry[] = (p.models ?? []).map((m) => ({ id: m.id, name: m.name, vision: m.input?.includes("image") }));
         const selectedModels = providerModels[p.id] ?? [];
         const iconKey = p.provider ? catalogDetailMap[p.provider]?.icon_key ?? undefined : undefined;
 
@@ -329,7 +337,15 @@ export default function ProviderModelSelector({
                       className="mt-0.5"
                     />
                     <div className="min-w-0 flex-1">
-                      <span className="text-sm text-gray-900">{m.name}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-900">{m.name}</span>
+                        {m.vision && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-xs font-medium rounded bg-gray-100 text-gray-600">
+                            <Eye size={10} />
+                            vision
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <span className="text-xs font-mono text-gray-400 shrink-0 mt-0.5">{m.id}</span>
                   </label>
