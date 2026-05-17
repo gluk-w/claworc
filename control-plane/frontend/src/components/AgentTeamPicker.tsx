@@ -90,7 +90,7 @@ function groupInstancesByTeam(
   return groups;
 }
 
-export default function InstanceTeamPicker(props: Props) {
+export default function AgentTeamPicker(props: Props) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -115,19 +115,19 @@ export default function InstanceTeamPicker(props: Props) {
       const sel = props.selected;
       if (sel.kind === "instance") {
         const inst = props.instances.find((i) => i.id === sel.instanceId);
-        return inst ? instanceLabel(inst) : props.placeholder ?? "Instance";
+        return inst ? instanceLabel(inst) : props.placeholder ?? "Agent";
       }
       if (sel.kind === "team") {
         const team = props.teams.find((t) => t.id === sel.teamId);
         return team ? team.name : props.placeholder ?? "Team";
       }
-      return props.placeholder ?? "All instances";
+      return props.placeholder ?? "All agents";
     }
     // multi
     const instanceIds = props.selectedInstanceIds;
     const teamIds = props.selectedTeamIds ?? [];
     if (teamIds.length === 0 && instanceIds.length === 0) {
-      return props.placeholder ?? "Select instances...";
+      return props.placeholder ?? "Select agents...";
     }
     const teamNames = teamIds
       .map((id) => props.teams.find((t) => t.id === id)?.name)
@@ -142,7 +142,7 @@ export default function InstanceTeamPicker(props: Props) {
       }
       return `${instanceIds.length} selected`;
     }
-    const noun = instanceIds.length === 1 ? "instance" : "instances";
+    const noun = instanceIds.length === 1 ? "agent" : "agents";
     return `${teamNames.join(", ")} + ${instanceIds.length} ${noun}`;
   }, [props]);
 
@@ -196,7 +196,7 @@ function SingleBody({
             allActive ? "bg-gray-100" : ""
           }`}
         >
-          All instances
+          All agents
         </button>
       )}
       {groups.map((group) => {

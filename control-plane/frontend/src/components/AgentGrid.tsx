@@ -11,14 +11,14 @@ import {
 } from "@dnd-kit/core";
 import {
   SortableContext,
-  verticalListSortingStrategy,
+  rectSortingStrategy,
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import InstanceRow from "./InstanceRow";
+import AgentCard from "./AgentCard";
 import type { Instance } from "@/types/instance";
 
-interface InstanceTableProps {
+interface AgentGridProps {
   instances: Instance[];
   onStart: (id: number) => void;
   onStop: (id: number) => void;
@@ -29,7 +29,7 @@ interface InstanceTableProps {
   loadingInstanceId?: number | null;
 }
 
-function SortableRow({
+function SortableCard({
   instance,
   onStart,
   onStop,
@@ -62,12 +62,8 @@ function SortableRow({
   };
 
   return (
-    <tr
-      ref={setNodeRef}
-      style={style}
-      className="border-b border-gray-100 hover:bg-gray-50"
-    >
-      <InstanceRow
+    <div ref={setNodeRef} style={style}>
+      <AgentCard
         instance={instance}
         onStart={onStart}
         onStop={onStop}
@@ -78,11 +74,11 @@ function SortableRow({
         dragHandleListeners={listeners}
         dragHandleAttributes={attributes}
       />
-    </tr>
+    </div>
   );
 }
 
-export default function InstanceTable({
+export default function AgentGrid({
   instances,
   onStart,
   onStop,
@@ -91,7 +87,7 @@ export default function InstanceTable({
   onDelete,
   onReorder,
   loadingInstanceId,
-}: InstanceTableProps) {
+}: AgentGridProps) {
   const [activeId, setActiveId] = useState<number | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -122,59 +118,45 @@ export default function InstanceTable({
   }
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-      >
-        <table className="w-full">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="w-8 px-1 py-3" />
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Name
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Status
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Created
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <SortableContext
-              items={instances.map((i) => i.id)}
-              strategy={verticalListSortingStrategy}
-            >
-              {instances.map((inst) => (
-                <SortableRow
-                  key={inst.id}
-                  instance={inst}
-                  onStart={onStart}
-                  onStop={onStop}
-                  onRestart={onRestart}
-                  onClone={onClone}
-                  onDelete={onDelete}
-                  loading={loadingInstanceId === inst.id}
-                />
-              ))}
-            </SortableContext>
-          </tbody>
-        </table>
-        <DragOverlay>
-          {activeInstance ? (
-            <div className="bg-white shadow-lg rounded px-4 py-2 text-sm font-medium text-gray-700 border">
-              {activeInstance.display_name}
-            </div>
-          ) : null}
-        </DragOverlay>
-      </DndContext>
-    </div>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <SortableContext
+          items={instances.map((i) => i.id)}
+          strategy={rectSortingStrategy}
+        >
+          {instances.map((inst) => (
+            <SortableCard
+              key={inst.id}
+              instance={inst}
+              onStart={onStart}
+              onStop={onStop}
+              onRestart={onRestart}
+              onClone={onClone}
+              onDelete={onDelete}
+              loading={loadingInstanceId === inst.id}
+            />
+          ))}
+        </SortableContext>
+      </div>
+      <DragOverlay>
+        {activeInstance ? (
+          <div className="shadow-lg rounded-xl">
+            <AgentCard
+              instance={activeInstance}
+              onStart={onStart}
+              onStop={onStop}
+              onRestart={onRestart}
+              onClone={onClone}
+              onDelete={onDelete}
+            />
+          </div>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
   );
 }

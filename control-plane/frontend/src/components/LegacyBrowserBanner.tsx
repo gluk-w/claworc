@@ -35,7 +35,7 @@ export default function LegacyBrowserBanner({ instanceId }: Props) {
           Legacy browser layout
         </p>
         <p className="mt-1 text-sm text-amber-800">
-          This instance still runs Chromium and noVNC inside the agent
+          This agent still runs Chromium and noVNC inside the agent
           container. Migrating moves them to a separate, on-demand browser pod
           saves resources when idle.
         </p>

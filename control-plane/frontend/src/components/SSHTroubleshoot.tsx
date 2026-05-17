@@ -161,7 +161,7 @@ export default function SSHTroubleshoot({ instanceId, containerImage, onClose }:
               SSH Public Key
             </h3>
             <p className="text-xs text-gray-500 mb-3">
-              Global control plane public key fingerprint. This key is shared across all instances.
+              Global control plane public key fingerprint. This key is shared across all agents.
             </p>
             {fingerprint.isLoading && (
               <p className="text-xs text-gray-400">Loading...</p>
@@ -189,8 +189,8 @@ export default function SSHTroubleshoot({ instanceId, containerImage, onClose }:
           <section>
             <h3 className="text-sm font-medium text-gray-900 mb-2">Troubleshooting Tips</h3>
             <ul className="text-xs text-gray-600 space-y-1.5 list-disc list-inside">
-              <li>Ensure the instance is running and the container has started.</li>
-              <li>If the instance was recently restarted, the SSH key may need to be re-uploaded — use Reconnect above.</li>
+              <li>Ensure the agent is running and the container has started.</li>
+              <li>If the agent was recently restarted, the SSH key may need to be re-uploaded — use Reconnect above.</li>
               <li>Check Connection Events on the Overview tab for recent errors.</li>
               <li>Repeated "health_check_failed" events may indicate the agent is under heavy load.</li>
               <li>If only the Browser pod fails, check that the browser deployment is Ready and the SSH NetworkPolicy allows port 22.</li>

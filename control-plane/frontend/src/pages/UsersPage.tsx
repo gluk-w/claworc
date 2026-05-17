@@ -156,7 +156,7 @@ function AccessSummary({ user }: { user: UserListItem }) {
       )}
       {user.instances.length > 0 && (
         <div className="flex items-center gap-1 flex-wrap">
-          <span className="text-xs text-gray-500">Instances:</span>
+          <span className="text-xs text-gray-500">Agents:</span>
           {user.instances.map((inst) => (
             <span
               key={inst.id}

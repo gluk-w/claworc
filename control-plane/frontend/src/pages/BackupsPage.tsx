@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Trash2, Download, Loader2, Pencil, Square, ChevronLeft, ChevronRight } from "lucide-react";
 import FolderInput from "@/components/FolderInput";
-import InstanceTeamPicker from "@/components/InstanceTeamPicker";
+import AgentTeamPicker from "@/components/AgentTeamPicker";
 import { useTeam } from "@/contexts/TeamContext";
 import type { Instance } from "@/types/instance";
 import {
@@ -128,7 +128,7 @@ export default function BackupsPage() {
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
-                    <th className="text-left px-4 py-3 font-medium text-gray-600">Instances</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Agents</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Schedule</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Paths</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Retention</th>
@@ -200,7 +200,7 @@ export default function BackupsPage() {
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Name</th>
-                    <th className="text-left px-4 py-3 font-medium text-gray-600">Instance</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Agent</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Size</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Date</th>
@@ -355,7 +355,7 @@ function ScheduleInstances({
   teams: { id: number; name: string }[];
 }) {
   if (instanceIDs === "ALL") {
-    return <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-purple-50 text-purple-700">All Instances</span>;
+    return <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-purple-50 text-purple-700">All Agents</span>;
   }
   let instIds: number[] = [];
   try {
@@ -518,14 +518,14 @@ function CreateBackupModal({
 
         <div className="space-y-4">
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Instance *</label>
-            <InstanceTeamPicker
+            <label className="block text-xs text-gray-500 mb-1">Agent *</label>
+            <AgentTeamPicker
               mode="single"
               instances={instances}
               teams={teams}
               allowAll={false}
               allowTeamSelect={false}
-              placeholder="Select instance..."
+              placeholder="Select agent..."
               selected={
                 selectedInstanceId != null
                   ? { kind: "instance", instanceId: selectedInstanceId }
@@ -687,7 +687,7 @@ function ScheduleModal({
 
         <div className="space-y-4">
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Instances *</label>
+            <label className="block text-xs text-gray-500 mb-1">Agents *</label>
             <div className="space-y-2">
               <label className="flex items-center gap-2">
                 <input
@@ -696,10 +696,10 @@ function ScheduleModal({
                   onChange={(e) => setAllInstances(e.target.checked)}
                   className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
-                <span className="text-sm text-gray-700">All Instances</span>
+                <span className="text-sm text-gray-700">All Agents</span>
               </label>
               {!allInstances && (
-                <InstanceTeamPicker
+                <AgentTeamPicker
                   mode="multi"
                   instances={instances}
                   teams={teams}

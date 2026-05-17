@@ -33,6 +33,7 @@ export default function TeamsPage() {
       updateTeam(id, { name }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["teams"] });
+      qc.invalidateQueries({ queryKey: ["auth", "me"] });
       setEditingId(null);
       successToast("Team renamed");
     },
@@ -43,6 +44,7 @@ export default function TeamsPage() {
     mutationFn: (id: number) => deleteTeam(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["teams"] });
+      qc.invalidateQueries({ queryKey: ["auth", "me"] });
       setDeleteTarget(null);
       successToast("Team deleted");
     },
@@ -99,7 +101,7 @@ export default function TeamsPage() {
               <tr>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Name</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Members</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Instances</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Agents</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-600">Actions</th>
               </tr>
             </thead>
@@ -143,7 +145,7 @@ export default function TeamsPage() {
                     <button
                       onClick={() => goToInstances(team.id)}
                       className="text-blue-600 hover:text-blue-800"
-                      title="View instances"
+                      title="View agents"
                     >
                       {team.instance_count ?? 0}
                     </button>

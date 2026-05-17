@@ -72,6 +72,7 @@ function MembersTab({ team }: { team: Team }) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["teams", team.id, "members"] });
       qc.invalidateQueries({ queryKey: ["teams"] });
+      qc.invalidateQueries({ queryKey: ["auth", "me"] });
     },
     onError: (err) => errorToast("Failed", err),
   });
@@ -80,6 +81,7 @@ function MembersTab({ team }: { team: Team }) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["teams", team.id, "members"] });
       qc.invalidateQueries({ queryKey: ["teams"] });
+      qc.invalidateQueries({ queryKey: ["auth", "me"] });
     },
     onError: (err) => errorToast("Failed to remove", err),
   });
@@ -206,7 +208,7 @@ function ProvidersTab({ team }: { team: Team }) {
   return (
     <div>
       <p className="text-sm text-gray-500 mb-3">
-        Choose which global LLM providers this team's instances may use. An
+        Choose which global LLM providers this team's agents may use. An
         empty list means no restriction (all global providers are available).
       </p>
       <ul className="divide-y divide-gray-100">

@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { errorToast } from "@/utils/toast";
-import InstanceForm from "@/components/InstanceForm";
+import AgentForm from "@/components/AgentForm";
 import { useCreateInstance } from "@/hooks/useInstances";
 import { useTeam } from "@/contexts/TeamContext";
 import { useAuth } from "@/contexts/AuthContext";
 
 
-export default function CreateInstancePage() {
+export default function CreateAgentPage() {
   const navigate = useNavigate();
   const createMutation = useCreateInstance();
   const { teams, activeTeamId } = useTeam();
@@ -45,7 +45,7 @@ export default function CreateInstancePage() {
           Back to Dashboard
         </button>
         <div className="max-w-2xl bg-white rounded-lg border border-gray-200 p-6 text-sm text-gray-700">
-          You don't have permission to create instances. Ask an admin to make
+          You don't have permission to create agents. Ask an admin to make
           you a manager of a team.
         </div>
       </div>
@@ -63,11 +63,11 @@ export default function CreateInstancePage() {
       </button>
 
       <h1 className="text-xl font-semibold text-gray-900 mb-6">
-        Create Instance
+        Create Agent
       </h1>
 
       <div className="max-w-2xl">
-        <InstanceForm
+        <AgentForm
           teams={allowedTeams}
           teamId={teamId}
           onTeamIdChange={setTeamId}
@@ -78,9 +78,9 @@ export default function CreateInstancePage() {
               },
               onError: (error: any) => {
                 if (error.response?.status === 409) {
-                  errorToast("Failed to create instance", "An instance with the same name already exists");
+                  errorToast("Failed to create agent", "An agent with the same name already exists");
                 } else {
-                  errorToast("Failed to create instance", error);
+                  errorToast("Failed to create agent", error);
                 }
               },
             })

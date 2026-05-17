@@ -8,7 +8,7 @@ import { buildSSHTooltip } from "@/utils/sshTooltip";
 import type { Instance } from "@/types/instance";
 import type { SyntheticListenerMap } from "@dnd-kit/core/dist/hooks/utilities";
 
-interface InstanceRowProps {
+interface AgentCardProps {
   instance: Instance;
   onStart: (id: number) => void;
   onStop: (id: number) => void;
@@ -20,7 +20,7 @@ interface InstanceRowProps {
   dragHandleAttributes?: Record<string, any>;
 }
 
-export default function InstanceRow({
+export default function AgentCard({
   instance,
   onStart,
   onStop,
@@ -30,45 +30,41 @@ export default function InstanceRow({
   loading,
   dragHandleListeners,
   dragHandleAttributes,
-}: InstanceRowProps) {
+}: AgentCardProps) {
   const sshStatus = useSSHStatus(instance.id, instance.status === "running");
 
   const createdAt = instance.created_at
     ? formatDistanceToNow(new Date(instance.created_at), { addSuffix: true })
     : "";
 
+  const tooltip =
+    instance.status === "creating" && instance.status_message
+      ? instance.status_message
+      : buildSSHTooltip(sshStatus.data);
+
   return (
-    <>
-      <td className="w-8 px-1 py-3">
-        <button
-          className="cursor-grab touch-none text-gray-400 hover:text-gray-600"
-          {...dragHandleListeners}
-          {...dragHandleAttributes}
-        >
-          <GripVertical size={16} />
-        </button>
-      </td>
-      <td className="px-4 py-3">
-        <Link
-          data-testid={`instance-link-${instance.id}`}
-          to={`/instances/${instance.id}`}
-          className="text-sm font-medium text-blue-600 hover:text-blue-800"
-        >
-          {instance.display_name}
-        </Link>
-      </td>
-      <td className="px-4 py-3">
-        <StatusBadge
-          status={instance.status}
-          tooltip={
-            instance.status === "creating" && instance.status_message
-              ? instance.status_message
-              : buildSSHTooltip(sshStatus.data)
-          }
-        />
-      </td>
-      <td className="px-4 py-3 text-sm text-gray-500">{createdAt}</td>
-      <td className="px-4 py-3">
+    <div className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col gap-2 hover:shadow-sm hover:border-blue-300 transition-all">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <button
+            className="cursor-grab touch-none text-gray-400 hover:text-gray-600 shrink-0"
+            {...dragHandleListeners}
+            {...dragHandleAttributes}
+          >
+            <GripVertical size={16} />
+          </button>
+          <Link
+            data-testid={`instance-link-${instance.id}`}
+            to={`/instances/${instance.id}`}
+            className="text-sm font-medium text-blue-600 hover:text-blue-800 truncate"
+          >
+            {instance.display_name}
+          </Link>
+        </div>
+        <StatusBadge status={instance.status} tooltip={tooltip} />
+      </div>
+      <div className="text-xs text-gray-500">{createdAt}</div>
+      <div className="flex justify-end">
         <ActionButtons
           instance={instance}
           onStart={onStart}
@@ -78,7 +74,7 @@ export default function InstanceRow({
           onDelete={onDelete}
           loading={loading}
         />
-      </td>
-    </>
+      </div>
+    </div>
   );
 }

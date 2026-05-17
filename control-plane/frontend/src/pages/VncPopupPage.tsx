@@ -14,11 +14,11 @@ export default function VncPopupPage() {
   }
 
   if (!instance) {
-    return <div className="flex items-center justify-center h-screen bg-gray-900 text-gray-400">Instance not found.</div>;
+    return <div className="flex items-center justify-center h-screen bg-gray-900 text-gray-400">Agent not found.</div>;
   }
 
   if (instance.status !== "running") {
-    return <div className="flex items-center justify-center h-screen bg-gray-900 text-gray-400">Instance must be running to view Browser.</div>;
+    return <div className="flex items-center justify-center h-screen bg-gray-900 text-gray-400">Agent must be running to view Browser.</div>;
   }
 
   return (

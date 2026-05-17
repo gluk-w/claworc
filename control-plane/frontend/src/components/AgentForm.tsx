@@ -11,7 +11,7 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import type { InstanceCreatePayload } from "@/types/instance";
 import type { UserTeamMembership } from "@/types/auth";
 
-interface InstanceFormProps {
+interface AgentFormProps {
   onSubmit: (payload: InstanceCreatePayload) => void;
   onCancel: () => void;
   loading?: boolean;
@@ -20,14 +20,14 @@ interface InstanceFormProps {
   onTeamIdChange: (id: number) => void;
 }
 
-export default function InstanceForm({
+export default function AgentForm({
   onSubmit,
   onCancel,
   loading,
   teams,
   teamId,
   onTeamIdChange,
-}: InstanceFormProps) {
+}: AgentFormProps) {
   const [displayName, setDisplayName] = useState("");
   const [cpuRequest, setCpuRequest] = useState("");
   const [cpuLimit, setCpuLimit] = useState("");
@@ -157,9 +157,9 @@ export default function InstanceForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-8 pb-24">
-      {/* Instance */}
+      {/* Agent */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h3 className="text-sm font-medium text-gray-900 mb-4">Instance</h3>
+        <h3 className="text-sm font-medium text-gray-900 mb-4">Agent</h3>
         <div className="space-y-4">
           <div>
             <label className="block text-xs text-gray-500 mb-1">
@@ -317,7 +317,7 @@ export default function InstanceForm({
         inline
         values={{}}
         title="Environment Variables"
-        description="Applied to both the instance container and the browser pod. Per-instance values override globals with the same name. Values are encrypted at rest."
+        description="Applied to both the agent container and the browser pod. Per-agent values override globals with the same name. Values are encrypted at rest."
         onChange={setEnvVars}
       />
 

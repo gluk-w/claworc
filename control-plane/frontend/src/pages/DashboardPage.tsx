@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Plus, List, LayoutGrid } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import InstanceTable from "@/components/InstanceTable";
-import InstanceGrid from "@/components/InstanceGrid";
+import AgentTable from "@/components/AgentTable";
+import AgentGrid from "@/components/AgentGrid";
 import {
   useInstances,
   useStartInstance,
@@ -140,7 +140,7 @@ export default function DashboardPage() {
               }`}
             >
               <Plus size={14} />
-              Create instance
+              Create agent
             </Link>
           </div>
         )}
@@ -153,28 +153,28 @@ export default function DashboardPage() {
         <div className="text-center py-12 text-gray-500">Loading...</div>
       ) : !hasInstances ? (
         <div className="text-center py-12">
-          <p data-testid="empty-state-message" className="text-gray-500 mb-4">No instances yet.</p>
+          <p data-testid="empty-state-message" className="text-gray-500 mb-4">No agents yet.</p>
           {canCreateInstances ? (
             <Link
               to="/instances/new"
               className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
             >
               <Plus size={16} />
-              Create your first instance
+              Create your first agent
             </Link>
           ) : (
-            <p className="text-gray-400 text-sm">Ask an administrator to create an instance for you.</p>
+            <p className="text-gray-400 text-sm">Ask an administrator to create an agent for you.</p>
           )}
         </div>
       ) : viewMode === "grid" ? (
-        <InstanceGrid
+        <AgentGrid
           instances={instances!}
           {...sharedHandlers}
           onReorder={handleReorder}
           loadingInstanceId={loadingInstanceId}
         />
       ) : (
-        <InstanceTable
+        <AgentTable
           instances={instances!}
           {...sharedHandlers}
           onReorder={handleReorder}

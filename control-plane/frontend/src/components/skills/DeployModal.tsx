@@ -196,7 +196,7 @@ export default function DeployModal({
       <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 flex flex-col max-h-[80vh]">
         <div className="px-6 py-4 border-b border-gray-200">
           <h2 className="text-base font-semibold text-gray-900">
-            Deploy <span className="text-blue-600">{displayName}</span> to instances
+            Deploy <span className="text-blue-600">{displayName}</span> to agents
           </h2>
           {description && <p className="text-sm text-gray-500 mt-1">{description}</p>}
           {requiredEnvVars.length > 0 && (
@@ -214,7 +214,7 @@ export default function DeployModal({
 
         <div className="overflow-y-auto flex-1 px-6 py-4 flex flex-col gap-2">
           {!instances || instances.length === 0 ? (
-            <p className="text-sm text-gray-500">No instances available.</p>
+            <p className="text-sm text-gray-500">No agents available.</p>
           ) : (
             groupedInstances.map((group) => (
               <div key={group.teamId ?? "other"} className="flex flex-col gap-2">
@@ -333,7 +333,7 @@ export default function DeployModal({
                   Deploying…
                 </span>
               ) : (
-                `Deploy to ${selected.size} instance${selected.size !== 1 ? "s" : ""}`
+                `Deploy to ${selected.size} agent${selected.size !== 1 ? "s" : ""}`
               )}
             </button>
           )}

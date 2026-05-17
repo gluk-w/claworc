@@ -61,7 +61,7 @@ import { buildSSHTooltip } from "@/utils/sshTooltip";
 
 type Tab = "chat" | "terminal" | "files" | "config" | "logs" | "settings";
 
-export default function InstanceDetailPage() {
+export default function AgentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
@@ -234,7 +234,7 @@ export default function InstanceDetailPage() {
   if (!instance) {
     return (
       <div className="text-center py-12 text-gray-500">
-        Instance not found.
+        Agent not found.
       </div>
     );
   }
@@ -412,7 +412,7 @@ export default function InstanceDetailPage() {
           </div>
           <span className="text-sm font-semibold text-gray-900">{p.name}</span>
           {isInstanceProvider && (
-            <span className="px-1.5 py-0.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-full">Instance</span>
+            <span className="px-1.5 py-0.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-full">Agent</span>
           )}
           {p.api_type && p.api_type !== "openai-completions" && (
             <span className="px-1.5 py-0.5 text-xs font-mono text-gray-400 bg-gray-100 rounded">{p.api_type}</span>
@@ -580,7 +580,7 @@ export default function InstanceDetailPage() {
         <div className="space-y-8">
           {/* Instance Details — unified card */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <h3 className="text-sm font-medium text-gray-900 mb-4">Instance Details</h3>
+            <h3 className="text-sm font-medium text-gray-900 mb-4">Agent Details</h3>
             <div className="grid grid-cols-2 gap-y-4 gap-x-8">
               {/* Display Name — admin editable */}
               <div>
@@ -1146,7 +1146,7 @@ export default function InstanceDetailPage() {
               </div>
             </>
           ) : (
-            <TabPlaceholder message="Instance must be running to use Chat." />
+            <TabPlaceholder message="Agent must be running to use Chat." />
           )}
         </div>
       )}
@@ -1170,7 +1170,7 @@ export default function InstanceDetailPage() {
               visible={activeTab === "terminal"}
             />
           ) : (
-            <TabPlaceholder message="Instance must be running to use terminal." />
+            <TabPlaceholder message="Agent must be running to use terminal." />
           )}
         </div>
       )}
@@ -1180,7 +1180,7 @@ export default function InstanceDetailPage() {
           {instance.status === "running" ? (
             <FileBrowser instanceId={instanceId} initialPath={getFilesPathFromHash()} onPathChange={handleFilesPathChange} />
           ) : (
-            <TabPlaceholder message="Instance must be running to browse files." />
+            <TabPlaceholder message="Agent must be running to browse files." />
           )}
         </div>
       )}
@@ -1188,7 +1188,7 @@ export default function InstanceDetailPage() {
       {activeTab === "config" && (
         <div className="flex flex-col gap-4 h-[calc(100vh-142px)] min-h-[400px]">
           {instance.status !== "running" ? (
-            <TabPlaceholder message="Instance must be running to edit config." />
+            <TabPlaceholder message="Agent must be running to edit config." />
           ) : (
             <>
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden flex-1 min-h-0">
@@ -1243,7 +1243,7 @@ export default function InstanceDetailPage() {
               onClear={logsHook.clearLogs}
             />
           ) : (
-            <TabPlaceholder message="Instance must be running to view logs." />
+            <TabPlaceholder message="Agent must be running to view logs." />
           )}
         </div>
       )}

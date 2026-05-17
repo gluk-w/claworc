@@ -38,7 +38,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryKey: ["auth", "me"],
     queryFn: getCurrentUser,
     retry: false,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchInterval: 60_000,
   });
 
   const login = useCallback(

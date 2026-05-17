@@ -39,7 +39,7 @@ export default function AnalyticsConsentModal() {
         <p className="text-sm text-gray-600 mb-3">
           We'd like to collect <strong>anonymous</strong> usage statistics. We
           never collect API keys, env-var values, file paths, prompts, or
-          instance names. You can change your choice anytime in{" "}
+          agent names. You can change your choice anytime in{" "}
           <span className="font-medium">Settings → Anonymous Analytics</span>.
         </p>
         <p className="text-sm text-gray-600 mb-5">

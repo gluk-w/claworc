@@ -208,6 +208,7 @@ export default function UserModal({ mode, onClose }: UserModalProps) {
         });
       }
       queryClient.invalidateQueries({ queryKey: ["instances"] });
+      queryClient.invalidateQueries({ queryKey: ["auth", "me"] });
       successToast("User created");
       onClose();
     },
@@ -237,6 +238,7 @@ export default function UserModal({ mode, onClose }: UserModalProps) {
         });
       }
       queryClient.invalidateQueries({ queryKey: ["instances"] });
+      queryClient.invalidateQueries({ queryKey: ["auth", "me"] });
       successToast("User updated");
       onClose();
     },
@@ -356,7 +358,7 @@ export default function UserModal({ mode, onClose }: UserModalProps) {
 
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">
-                    Use Instances
+                    Manage Agents
                   </label>
                   <MultiSelect
                     options={instanceOptions}
@@ -365,11 +367,11 @@ export default function UserModal({ mode, onClose }: UserModalProps) {
                       setAssignedInstanceIds(sel.map((s) => s.value))
                     }
                     placeholder={
-                      hydrating ? "Loading..." : "Select instances..."
+                      hydrating ? "Loading..." : "Select agents..."
                     }
                     isDisabled={hydrating}
                     isLoading={hydrating}
-                    noOptionsMessage={() => "No instances available"}
+                    noOptionsMessage={() => "No agents available"}
                   />
                 </div>
               </>

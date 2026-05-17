@@ -125,7 +125,7 @@ export default function ActionButtons({
       </div>
       {showConfirm && (
         <ConfirmDialog
-          title="Delete Instance"
+          title="Delete Agent"
           message={`Are you sure you want to delete "${instance.display_name}"? This will remove all container resources and data.`}
           onConfirm={() => {
             setShowConfirm(false);

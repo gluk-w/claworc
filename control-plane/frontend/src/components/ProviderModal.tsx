@@ -452,7 +452,7 @@ export default function ProviderModal({
           )}
           {mode === "create" ? "Add Provider" : "Edit Provider"}
           {instanceId && (
-            <span className="text-xs font-normal text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">Instance</span>
+            <span className="text-xs font-normal text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">Agent</span>
           )}
         </h2>
 

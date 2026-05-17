@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useUsageStats, useResetUsageLogs } from "@/hooks/useProviders";
-import InstanceTeamPicker, {
+import AgentTeamPicker, {
   type SingleSelection,
-} from "@/components/InstanceTeamPicker";
+} from "@/components/AgentTeamPicker";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -137,8 +137,8 @@ export default function UsagePage() {
           />
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-500">Instance</label>
-          <InstanceTeamPicker
+          <label className="text-xs font-medium text-gray-500">Agent</label>
+          <AgentTeamPicker
             mode="single"
             instances={pickerInstances}
             teams={pickerTeams}

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { FolderOpen, Trash2, AlertTriangle } from "lucide-react";
-import InstanceTeamPicker from "@/components/InstanceTeamPicker";
+import AgentTeamPicker from "@/components/AgentTeamPicker";
 import { useTeam } from "@/contexts/TeamContext";
 import {
   fetchSharedFolders,
@@ -351,7 +351,7 @@ function FolderModal({
             <label className="block text-xs text-gray-500 mb-1">
               Instances
             </label>
-            <InstanceTeamPicker
+            <AgentTeamPicker
               mode="multi"
               instances={instances}
               teams={teams}

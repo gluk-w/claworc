@@ -592,7 +592,7 @@ function NewBoardModal({
           />
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Eligible Instances *</label>
+          <label className="block text-xs text-gray-500 mb-1">Eligible Agents *</label>
           <div className="border border-gray-300 rounded-md p-2 max-h-40 overflow-y-auto space-y-1">
             {instances?.map((i: any) => (
               <label key={i.id} className="flex items-center gap-2 text-sm">

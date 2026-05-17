@@ -474,9 +474,9 @@ function EnvironmentTab({
   return (
     <div className="space-y-8 max-w-2xl">
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h3 className="text-sm font-medium text-gray-900 mb-1">Instance Defaults</h3>
+        <h3 className="text-sm font-medium text-gray-900 mb-1">Agent Defaults</h3>
         <p className="text-xs text-gray-500 mb-4">
-          Applied only when a new instance is created. Changing these values does not affect existing instances.
+          Applied only when a new agent is created. Changing these values does not affect existing agents.
         </p>
         <div key={resetKey} className="space-y-4">
           <div>
@@ -527,7 +527,7 @@ function EnvironmentTab({
 
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h3 className="text-sm font-medium text-gray-900 mb-1">Browser Defaults</h3>
-        <p className="text-xs text-gray-500 mb-4">Browser settings used to launch a browser for each instance.</p>
+        <p className="text-xs text-gray-500 mb-4">Browser settings used to launch a browser for each agent.</p>
         <div key={resetKey} className="space-y-4">
           <div>
             <label className="block text-xs text-gray-500 mb-1">Image</label>

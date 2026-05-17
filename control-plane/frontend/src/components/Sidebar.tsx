@@ -81,7 +81,7 @@ export default function Sidebar() {
           >
             <Plus size={18} className="shrink-0" />
             <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden">
-              New Instance
+              New Agent
             </span>
           </Link>
         </div>
@@ -92,7 +92,7 @@ export default function Sidebar() {
         <Link to="/" className={navLinkClass("/")}>
           <Server size={18} className="shrink-0" />
           <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap overflow-hidden text-sm">
-            Instances
+            Agents
           </span>
         </Link>
         {isAdmin && (

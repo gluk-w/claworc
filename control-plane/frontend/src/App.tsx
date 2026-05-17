@@ -2,8 +2,8 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import Layout from "./components/Layout";
 import DashboardPage from "./pages/DashboardPage";
-import CreateInstancePage from "./pages/CreateInstancePage";
-import InstanceDetailPage from "./pages/InstanceDetailPage";
+import CreateAgentPage from "./pages/CreateAgentPage";
+import AgentDetailPage from "./pages/AgentDetailPage";
 import SettingsPage from "./pages/SettingsPage";
 import LoginPage from "./pages/LoginPage";
 import OnboardingPage from "./pages/OnboardingPage";
@@ -106,11 +106,11 @@ export default function App() {
           path="/instances/new"
           element={
             <InstanceCreatorRoute>
-              <CreateInstancePage />
+              <CreateAgentPage />
             </InstanceCreatorRoute>
           }
         />
-        <Route path="/instances/:id" element={<InstanceDetailPage />} />
+        <Route path="/instances/:id" element={<AgentDetailPage />} />
         <Route path="/shared-folders" element={<SharedFoldersPage />} />
         <Route path="/kanban" element={<KanbanPage />} />
         <Route path="/profile" element={<AccountPage />} />

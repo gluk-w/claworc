@@ -110,7 +110,7 @@ export default function ProviderModelSelector({
     ...instanceProviders.flatMap((p) =>
       (providerModels[p.id] ?? []).map((mid) => ({
         value: `${p.key}/${mid}`,
-        label: `${p.key}/${mid} (instance)`,
+        label: `${p.key}/${mid} (agent)`,
       }))
     ),
   ];
@@ -288,7 +288,7 @@ export default function ProviderModelSelector({
                   )}
                 </div>
                 <span className="text-sm font-semibold text-gray-900">{p.name}</span>
-                <span className="px-1.5 py-0.5 text-xs font-medium text-amber-700 bg-amber-100 border border-amber-200 rounded-full">Instance</span>
+                <span className="px-1.5 py-0.5 text-xs font-medium text-amber-700 bg-amber-100 border border-amber-200 rounded-full">Agent</span>
                 <span className="text-xs text-gray-400">{selectedModels.length} of {availableModels.length} models</span>
               </div>
               {isOpen ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
