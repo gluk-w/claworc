@@ -110,6 +110,11 @@ export default defineConfig({
         autoRewrite: true,
         ws: true,
       },
+      "/webhooks": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+        autoRewrite: true,
+      },
     },
   },
 });

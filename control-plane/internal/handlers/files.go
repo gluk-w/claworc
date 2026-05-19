@@ -19,6 +19,24 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// WriteInstanceFile writes content to absPath inside the instance over the
+// shared SSH connection, creating parent directories as needed. Used by
+// the file upload HTTP handler and by the webhook bridge for delivering
+// caller-supplied attachments into /tmp/webhooks/<session>/...
+func WriteInstanceFile(instanceID uint, absPath string, content []byte) error {
+	if SSHMgr == nil {
+		return fmt.Errorf("ssh manager not initialized")
+	}
+	client, ok := SSHMgr.GetConnection(instanceID)
+	if !ok {
+		return fmt.Errorf("no ssh connection for instance %d", instanceID)
+	}
+	if err := sshproxy.EnsureParentDir(client, absPath); err != nil {
+		return fmt.Errorf("ensure parent dir: %w", err)
+	}
+	return sshproxy.WriteFile(client, absPath, content)
+}
+
 func BrowseFiles(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {

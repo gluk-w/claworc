@@ -47,6 +47,7 @@ import ProviderIcon from "@/components/ProviderIcon";
 import ProviderModelSelector from "@/components/ProviderModelSelector";
 import ProviderModal from "@/components/ProviderModal";
 import EnvVarsEditor from "@/components/EnvVarsEditor";
+import WebhookSection from "@/components/WebhookSection";
 import LegacyBrowserBanner from "@/components/LegacyBrowserBanner";
 import AppToast from "@/components/AppToast";
 import toast from "react-hot-toast";
@@ -1026,6 +1027,9 @@ export default function AgentDetailPage() {
               )}
             </div>
           )}
+
+          {/* Webhook (per-instance) — admins and team managers */}
+          <WebhookSection instanceId={instanceId} />
 
           {/* SSH Connection Status */}
           <SSHStatus

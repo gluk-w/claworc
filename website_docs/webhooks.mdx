@@ -1,0 +1,153 @@
+---
+title: "Webhooks"
+description: "Send a message to an OpenClaw instance over HTTP and receive its reply"
+sidebarTitle: "Webhooks"
+---
+
+## Overview
+
+Every OpenClaw instance can expose a webhook so external systems — or other agents running inside Claworc —
+can send it a message over HTTP and receive the agent's reply synchronously. Each instance has its own webhook
+URL, its own set of API keys, and its own call history.
+
+The webhook accepts a `session_name` so repeated calls with the same name continue the same conversation with the agent.
+
+## Where to find it
+
+Open an OpenClaw instance and scroll the **Settings** tab to the **Webhook** section, just below **Enabled models**.
+The section is visible to admins and team managers.
+
+<Frame>
+  <img src="/images/webhook_disabled.png" alt="Webhook section in instance settings with no keys configured" />
+</Frame>
+
+## Public and private URLs
+
+Each instance has two webhook URLs:
+
+- **Public URL** — reachable from any caller that can hit your Claworc dashboard. Use this for external systems
+  (CI jobs, automation tools, partner integrations).
+- **Private URL** — reachable only from inside Claworc, at `http://127.0.0.1:<gateway-port>/webhooks/<uuid>`.
+  Use this when one OpenClaw instance needs to call another. It is not exposed to the public internet.
+
+Whether a given API key works on the public URL, the private URL, or both is controlled by the key's visibility,
+not the URLs themselves. The URLs are always shown; the keys decide who gets in.
+
+## API keys
+
+The webhook is disabled until at least one API key is configured. While the key list is empty, both URLs return
+`404` and the section shows an amber notice:
+
+> No keys are configured, so the webhook is disabled.
+
+Once you add a key, the matching URL starts accepting calls.
+
+<Frame>
+  <img src="/images/webhook_with_keys.png" alt="Webhook section with one public API key labeled 'master agent'" />
+</Frame>
+
+### Adding a key
+
+1. Click **+ Add key**.
+2. Enter a **Label** describing the caller (for example, `zapier`, `partner-x`, `master agent`). The label is required.
+3. Optionally tick **Accessible only to other AI agents within Claworc** to make the key private.
+4. Click **Save**.
+
+The new key appears in the list with its full value visible for the first time. Copy it now — afterwards the value
+is masked and only the first and last four characters remain visible.
+
+### Key controls
+
+Each row in the **API keys** list has these controls:
+
+- **Visibility toggle** — a globe icon means the key is public; a lock icon means it is private. Click it to flip.
+  The tooltip describes the current setting. A public key only authenticates against the public URL; a private key
+  only against the private URL.
+- **Show / hide** — the eye icon reveals or masks the key value.
+- **Copy** — copies the raw key to your clipboard.
+- **Regenerate** — replaces the token with a new random value. The previous value stops working immediately, so
+  any caller still using it will receive `401` until you give them the new value. A confirmation dialog protects
+  against accidental clicks.
+- **Delete** — removes the key. Callers using it start receiving `401`.
+
+## Calling the webhook
+
+Send a `POST` request to either URL with a bearer token in the `Authorization` header.
+
+### JSON body
+
+```bash
+curl -X POST "https://claworc.example.com/webhooks/<instance-uuid>" \
+  -H "Authorization: Bearer <api key>" \
+  -H "Content-Type: application/json" \
+  -d '{"session_name":"<session name>","message":"<message>"}'
+```
+
+### Fields
+
+- `session_name` — required. Must match `^[A-Za-z0-9._-]+$` (letters, digits, dashes, underscores, and dots).
+  Calls with the same `session_name` continue the same conversation with the agent.
+- `message` — the text the agent will receive.
+
+### Attachments
+
+To send files alongside the message, use `multipart/form-data` instead of JSON. Include `session_name` and
+`message` as form fields, and one or more `file` parts for the attachments. Uploaded files land at
+`/tmp/webhooks/<session_name>/<filename>` inside the instance, and the agent's prompt is prefixed with the
+attachment paths so it can read them.
+
+### Response
+
+The response is **plain text** — the agent's reply, with no JSON wrapper. The HTTP request stays open until the
+agent finishes generating the response, so size your HTTP client's read timeout to match the longest reply you
+expect.
+
+### Copy as…
+
+The chevron next to the copy icon on each URL row opens a menu with ready-to-use snippets:
+
+- **Copy URL** — the webhook URL on its own.
+- **Copy as fetch (JavaScript)** — a `fetch()` call with placeholder values.
+- **Copy as cURL** — a `curl` invocation with placeholder values.
+- **Copy as PowerShell** — an `Invoke-RestMethod` invocation with placeholder values.
+
+Each snippet uses the literal placeholders `<api key>`, `<session name>`, and `<message>` — replace them before
+running. For example, the fetch snippet looks like this:
+
+```javascript
+await fetch("https://claworc.example.com/webhooks/<instance-uuid>", {
+  method: "POST",
+  headers: {
+    "Authorization": "Bearer <api key>",
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({ session_name: "<session name>", message: "<message>" }),
+});
+```
+
+## Webhook events
+
+Click **Events** in the top-right of the **Webhook** section to open the events modal. It lists the last 100
+calls to this instance's webhook and refreshes every 10 seconds. Each row shows:
+
+- **When** — the request timestamp.
+- **Visibility** — `public` or `private`, depending on which URL was hit.
+- **Source IP** — the caller's IP address (taken from `X-Forwarded-For` if present).
+- **Session** — the `session_name` supplied in the request.
+- **Status** — the HTTP status code returned to the caller.
+- **Duration** — how long the call took, in milliseconds.
+- **Bytes (in/out)** — request body size and response body size.
+- **Key** — the last four characters of the API key that authenticated the call.
+- **Error** — the error message, if any.
+
+Use the events list to spot misconfigured callers (repeated `401`s), measure response time, or confirm that an
+expected integration is hitting the right instance.
+
+## Common HTTP status codes
+
+- `200` — success; the body contains the agent's reply.
+- `400` — the request was malformed, the `session_name` was missing, or it contained invalid characters.
+- `401` — the bearer token did not match any key for this endpoint's visibility.
+- `404` — no instance with that UUID exists, or no keys of the matching visibility are configured. Claworc
+  intentionally returns `404` rather than `401` in the latter case so callers cannot probe for valid instance UUIDs.
+- `502` — the agent failed to produce a reply. The response body contains the error message.

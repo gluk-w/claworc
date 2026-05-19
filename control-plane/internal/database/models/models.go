@@ -14,7 +14,19 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
+
+// BeforeCreate fills Instance.UUID with a fresh v4 UUID when the row is
+// created without one. The migration backfills pre-existing rows.
+func (i *Instance) BeforeCreate(_ *gorm.DB) error {
+	if i.UUID == "" {
+		i.UUID = uuid.New().String()
+	}
+	return nil
+}
 
 // IsLegacyEmbedded reports whether the given container image refers to the
 // legacy combined agent+browser image. Legacy instances run Chromium and VNC
@@ -44,7 +56,11 @@ type Skill struct {
 }
 
 type Instance struct {
-	ID               uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	ID uint `gorm:"primaryKey;autoIncrement" json:"id"`
+	// UUID is a stable, non-enumerable identifier used in webhook URLs and
+	// any other surface that should not leak the sequential ID. Auto-filled
+	// by BeforeCreate; backfilled for pre-existing rows by migration 00007.
+	UUID             string `gorm:"uniqueIndex" json:"uuid"`
 	Name             string `gorm:"uniqueIndex;not null" json:"name"`
 	DisplayName      string `gorm:"not null" json:"display_name"`
 	Status           string `gorm:"not null;default:creating" json:"status"`

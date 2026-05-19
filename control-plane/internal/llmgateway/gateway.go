@@ -48,11 +48,33 @@ func (fw *flushingWriter) Write(p []byte) (int, error) {
 
 var gatewayServer *http.Server
 
+// extraRoutes lets callers (main.go) register additional routes on the
+// gateway mux before Start binds. Used for the private webhook trigger
+// route, whose handler lives in the handlers package (which already
+// imports llmgateway, so we can't go the other direction). Each entry
+// installs a path prefix → handler on the mux.
+type extraRoute struct {
+	pattern string
+	handler http.HandlerFunc
+}
+
+var registeredRoutes []extraRoute
+
+// RegisterRoute installs an additional pattern → handler on the gateway
+// mux. Must be called before Start. Patterns follow net/http.ServeMux
+// semantics — a trailing slash subtree match wins over the catch-all "/".
+func RegisterRoute(pattern string, handler http.HandlerFunc) {
+	registeredRoutes = append(registeredRoutes, extraRoute{pattern: pattern, handler: handler})
+}
+
 // Start creates the LLM gateway HTTP server and starts it in a goroutine.
 // host should be "127.0.0.1" — the gateway is internal only and reachable from
 // containers via the SSH agent-listener tunnel.
 func Start(ctx context.Context, host string, port int) error {
 	mux := http.NewServeMux()
+	for _, rt := range registeredRoutes {
+		mux.HandleFunc(rt.pattern, rt.handler)
+	}
 	mux.HandleFunc("/", handleProxy)
 
 	addr := fmt.Sprintf("%s:%d", host, port)

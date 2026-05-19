@@ -29,7 +29,8 @@
               "accessing",
               "skills",
               "backups",
-              "shared-folders"
+              "shared-folders",
+              "webhooks"
             ]
           },
           {
