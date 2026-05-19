@@ -156,7 +156,9 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
   // Regression for https://github.com/gluk-w/claworc/issues/127. sharp is a
   // native addon (libvips) used by openclaw's image pipeline (Telegram,
   // screenshots). Upstream openclaw lazy-imports sharp but no longer
-  // declares it in package.json, so the Dockerfile installs it explicitly.
+  // declares it in package.json, so the Dockerfile installs it explicitly
+  // (see `npm install --no-save sharp` in agent/instance/Dockerfile, plus
+  // the libvips42 apt package).
   describe("sharp image dependency (issue #127)", () => {
     const cdOpenclaw = 'cd "$(npm root -g)/openclaw"';
 
@@ -171,6 +173,20 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
       ]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    });
+
+    it("openclaw runtime still references sharp", () => {
+      // If upstream stops importing sharp, the Dockerfile's explicit
+      // `npm install --no-save sharp` (and the libvips42 apt package) become
+      // dead weight — surface that so we can drop them. We grep the bundled
+      // dist for any `sharp` reference (string literal in dynamic import,
+      // static import, etc).
+      const result = exec(container!, [
+        "bash",
+        "-c",
+        `${cdOpenclaw} && grep -rEq "['\\"]sharp['\\"]" dist`,
+      ]);
+      expect(result.exitCode).toBe(0);
     });
   });
 });
