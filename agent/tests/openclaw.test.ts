@@ -96,6 +96,13 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
     expect(result.exitCode).toBe(0);
 
     const config = JSON.parse(result.stdout);
+    // Upstream openclaw adds/removes built-in skills frequently. Collapse
+    // the dynamic `skills.entries` map to a single representative shape so
+    // the snapshot tracks the schema, not the changing skill catalog.
+    if (config?.skills?.entries && typeof config.skills.entries === "object") {
+      const sample = Object.values(config.skills.entries)[0] ?? {};
+      config.skills.entries = { "<skill>": sample };
+    }
     expect(structureOf(config)).toMatchSnapshot();
   });
 
