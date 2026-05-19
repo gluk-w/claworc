@@ -49,16 +49,6 @@ exports[`agent image > openclaw.json structure matches snapshot 1`] = `
   "session": {
     "dmScope": "string",
   },
-  "skills": {
-    "entries": {
-      "<skill>": {
-        "enabled": "boolean",
-      },
-    },
-    "install": {
-      "nodeManager": "string",
-    },
-  },
   "tools": {
     "profile": "string",
   },

@@ -96,13 +96,15 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
     expect(result.exitCode).toBe(0);
 
     const config = JSON.parse(result.stdout);
-    // Upstream openclaw adds/removes built-in skills frequently. Collapse
-    // the dynamic `skills.entries` map to a single representative shape so
-    // the snapshot tracks the schema, not the changing skill catalog.
-    if (config?.skills?.entries && typeof config.skills.entries === "object") {
-      const sample = Object.values(config.skills.entries)[0] ?? {};
-      config.skills.entries = { "<skill>": sample };
-    }
+    // Strip upstream-owned plugin/skill catalogs entirely. They're not
+    // schema we depend on, they change weekly as openclaw adds/removes
+    // built-ins, and they're shaped completely differently between
+    // `openclaw@latest` (uses `skills.entries.*`) and `openclaw@stable`
+    // (uses `plugins.entries.*`) — so a single snapshot can't track both.
+    // The stable parts of the config (gateway, browser, agents, meta, ...)
+    // are what our integration actually cares about.
+    delete config.skills;
+    delete config.plugins;
     expect(structureOf(config)).toMatchSnapshot();
   });
 
