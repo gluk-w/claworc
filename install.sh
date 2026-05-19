@@ -61,27 +61,51 @@ install_docker() {
     echo "Docker is available."
     echo ""
 
+    # --- Detect existing installation ----------------------------------------
+
+    DEFAULT_PORT="8000"
+    DEFAULT_DATA_DIR="$HOME/.claworc/data"
+
+    if docker container inspect "$CONTAINER_NAME" &>/dev/null; then
+        CURRENT_IMAGE="$(docker inspect -f '{{.Config.Image}}' "$CONTAINER_NAME" 2>/dev/null || true)"
+        CURRENT_PORT="$(docker inspect -f '{{ with (index .NetworkSettings.Ports "8000/tcp") }}{{ (index . 0).HostPort }}{{ end }}' "$CONTAINER_NAME" 2>/dev/null || true)"
+        CURRENT_DATA_DIR="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$CONTAINER_NAME" 2>/dev/null | grep '^CLAWORC_DATA_PATH=' | cut -d= -f2- || true)"
+
+        [[ -n "$CURRENT_PORT" ]]     && DEFAULT_PORT="$CURRENT_PORT"
+        [[ -n "$CURRENT_DATA_DIR" ]] && DEFAULT_DATA_DIR="$CURRENT_DATA_DIR"
+
+        case "$CURRENT_IMAGE" in
+            claworc/claworc*|"$DASHBOARD_IMAGE"*)
+                echo "Existing installation detected ($CONTAINER_NAME, image: $CURRENT_IMAGE)."
+                echo "It will be reinstalled with $DASHBOARD_IMAGE:$TAG; port and data directory will be preserved."
+                ;;
+            *)
+                echo "Existing installation detected ($CONTAINER_NAME, image: ${CURRENT_IMAGE:-unknown})."
+                echo "This installer will upgrade it to $DASHBOARD_IMAGE:$TAG and preserve your port and data directory."
+                ;;
+        esac
+
+        printf "Proceed? [Y/n]: "
+        read -r answer </dev/tty
+        case "${answer:-y}" in
+            [Yy]*) REMOVE_EXISTING=1 ;;
+            *)     echo "Aborted."; exit 1 ;;
+        esac
+        echo ""
+    fi
+
     # --- Configuration -------------------------------------------------------
 
-    prompt PORT        "Dashboard port"      "8000"
-    prompt DATA_DIR    "Data directory"       "$HOME/.claworc/data"
+    prompt PORT        "Dashboard port"      "$DEFAULT_PORT"
+    prompt DATA_DIR    "Data directory"      "$DEFAULT_DATA_DIR"
     echo ""
 
     # Resolve to absolute path (mkdir first since parent may not exist yet)
     mkdir -p "$DATA_DIR"
     DATA_DIR="$(cd "$DATA_DIR" && pwd)"
 
-    # --- Detect existing installation ----------------------------------------
-
-    if docker container inspect "$CONTAINER_NAME" &>/dev/null; then
-        echo "Existing installation detected ($CONTAINER_NAME)."
-        printf "Remove and reinstall? [Y/n]: "
-        read -r answer </dev/tty
-        case "${answer:-y}" in
-            [Yy]*) docker rm -f "$CONTAINER_NAME" >/dev/null ;;
-            *)     echo "Aborted."; exit 1 ;;
-        esac
-        echo ""
+    if [[ "${REMOVE_EXISTING:-0}" == "1" ]]; then
+        docker rm -f "$CONTAINER_NAME" >/dev/null
     fi
 
     # --- Summary -------------------------------------------------------------

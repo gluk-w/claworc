@@ -89,6 +89,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@common": path.resolve(__dirname, "./src/common"),
+      "@app": path.resolve(__dirname, "./src/app"),
     },
   },
   server: {

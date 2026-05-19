@@ -1,0 +1,168 @@
+import { Routes, Route, Navigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import Layout from "@common/components/Layout";
+import DashboardPage from "./pages/DashboardPage";
+import CreateAgentPage from "./pages/CreateAgentPage";
+import AgentDetailPage from "./pages/AgentDetailPage";
+import SettingsPage from "./pages/SettingsPage";
+import LoginPage from "./pages/LoginPage";
+import OnboardingPage from "./pages/OnboardingPage";
+import BackendUnavailablePage from "./pages/BackendUnavailablePage";
+import UsersPage from "./pages/UsersPage";
+import TeamsPage from "./pages/TeamsPage";
+import UsagePage from "./pages/UsagePage";
+import AccountPage from "./pages/AccountPage";
+import VncPopupPage from "./pages/VncPopupPage";
+import ChatPopupPage from "./pages/ChatPopupPage";
+import SkillsPage from "./pages/SkillsPage";
+import BackupsPage from "./pages/BackupsPage";
+import SharedFoldersPage from "./pages/SharedFoldersPage";
+import KanbanPage from "./pages/KanbanPage";
+import { useAuth } from "@common/contexts/AuthContext";
+import { checkSetupRequired } from "@common/api/auth";
+
+function useSetupRequired() {
+  return useQuery({
+    queryKey: ["auth", "setup-required"],
+    queryFn: checkSetupRequired,
+    retry: false,
+    staleTime: 30_000,
+  });
+}
+
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { user, isLoading, isBackendUnavailable } = useAuth();
+  if (isLoading) return null;
+  if (isBackendUnavailable) return <BackendUnavailablePage />;
+  if (!user) return <Navigate to="/login" replace />;
+  return <>{children}</>;
+}
+
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const { isAdmin, isLoading, isBackendUnavailable } = useAuth();
+  if (isLoading) return null;
+  if (isBackendUnavailable) return <BackendUnavailablePage />;
+  if (!isAdmin) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+function LoginRoute() {
+  const { isBackendUnavailable, isLoading } = useAuth();
+  if (isLoading) return null;
+  if (isBackendUnavailable) return <BackendUnavailablePage />;
+  return <LoginPage />;
+}
+
+function InstanceCreatorRoute({ children }: { children: React.ReactNode }) {
+  const { canCreateInstances, isLoading, isBackendUnavailable } = useAuth();
+  if (isLoading) return null;
+  if (isBackendUnavailable) return <BackendUnavailablePage />;
+  if (!canCreateInstances) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+export default function App() {
+  const { data: setupRequired, isLoading: setupLoading } = useSetupRequired();
+
+  if (setupLoading) return null;
+
+  if (setupRequired) {
+    return (
+      <Routes>
+        <Route path="/" element={<OnboardingPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    );
+  }
+
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginRoute />} />
+      <Route
+        path="/instances/:id/vnc"
+        element={
+          <ProtectedRoute>
+            <VncPopupPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/instances/:id/chat"
+        element={
+          <ProtectedRoute>
+            <ChatPopupPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        element={
+          <ProtectedRoute>
+            <Layout />
+          </ProtectedRoute>
+        }
+      >
+        <Route path="/" element={<DashboardPage />} />
+        <Route
+          path="/instances/new"
+          element={
+            <InstanceCreatorRoute>
+              <CreateAgentPage />
+            </InstanceCreatorRoute>
+          }
+        />
+        <Route path="/instances/:id" element={<AgentDetailPage />} />
+        <Route path="/shared-folders" element={<SharedFoldersPage />} />
+        <Route path="/kanban" element={<KanbanPage />} />
+        <Route path="/profile" element={<AccountPage />} />
+        <Route
+          path="/settings"
+          element={
+            <AdminRoute>
+              <SettingsPage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="/users"
+          element={
+            <AdminRoute>
+              <UsersPage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="/teams"
+          element={
+            <AdminRoute>
+              <TeamsPage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="/usage"
+          element={
+            <AdminRoute>
+              <UsagePage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="/skills"
+          element={
+            <ProtectedRoute>
+              <SkillsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/backups"
+          element={
+            <ProtectedRoute>
+              <BackupsPage />
+            </ProtectedRoute>
+          }
+        />
+      </Route>
+    </Routes>
+  );
+}

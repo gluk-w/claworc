@@ -1,0 +1,89 @@
+import {
+  createContext,
+  useContext,
+  useCallback,
+  type ReactNode,
+} from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  getCurrentUser,
+  login as apiLogin,
+  logout as apiLogout,
+} from "@common/api/auth";
+import type { User, LoginRequest } from "@common/types/auth";
+import { isBackendUnavailableError } from "@common/utils/http";
+
+interface AuthContextValue {
+  user: User | null;
+  isLoading: boolean;
+  isAdmin: boolean;
+  canCreateInstances: boolean;
+  isBackendUnavailable: boolean;
+  login: (data: LoginRequest) => Promise<User>;
+  logout: () => Promise<void>;
+  refetch: () => void;
+}
+
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
+
+  const {
+    data: user,
+    isLoading,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ["auth", "me"],
+    queryFn: getCurrentUser,
+    retry: false,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchInterval: 60_000,
+  });
+
+  const login = useCallback(
+    async (data: LoginRequest) => {
+      const u = await apiLogin(data);
+      queryClient.setQueryData(["auth", "me"], u);
+      return u;
+    },
+    [queryClient],
+  );
+
+  const logout = useCallback(async () => {
+    await apiLogout();
+    queryClient.setQueryData(["auth", "me"], null);
+    queryClient.clear();
+  }, [queryClient]);
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user: user ?? null,
+        isLoading,
+        isAdmin: user?.role === "admin",
+        // Admins always; otherwise users who manage at least one team.
+        canCreateInstances:
+          user?.role === "admin" ||
+          (user?.teams ?? []).some((t) => t.role === "manager"),
+        isBackendUnavailable: !user && isBackendUnavailableError(error),
+        login,
+        logout,
+        refetch: () => {
+          refetch();
+        },
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  return ctx;
+}
