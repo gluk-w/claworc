@@ -6,21 +6,20 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/netip"
 	"os"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	dockerclient "github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/go-units"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
+	dockerclient "github.com/moby/moby/client"
 )
 
 const (
@@ -50,8 +49,7 @@ func (d *DockerOrchestrator) Initialize(ctx context.Context) error {
 		return fmt.Errorf("docker client: %w", err)
 	}
 
-	_, err = d.client.Ping(ctx)
-	if err != nil {
+	if _, err := d.client.Ping(ctx, dockerclient.PingOptions{}); err != nil {
 		return fmt.Errorf("docker ping: %w", err)
 	}
 
@@ -65,11 +63,10 @@ func (d *DockerOrchestrator) Initialize(ctx context.Context) error {
 }
 
 func (d *DockerOrchestrator) ensureNetwork(ctx context.Context) error {
-	_, err := d.client.NetworkInspect(ctx, networkName, network.InspectOptions{})
-	if err == nil {
+	if _, err := d.client.NetworkInspect(ctx, networkName, dockerclient.NetworkInspectOptions{}); err == nil {
 		return nil
 	}
-	_, err = d.client.NetworkCreate(ctx, networkName, network.CreateOptions{
+	_, err := d.client.NetworkCreate(ctx, networkName, dockerclient.NetworkCreateOptions{
 		Driver: "bridge",
 		Labels: map[string]string{"managed-by": labelManagedBy},
 	})
@@ -103,12 +100,12 @@ func (d *DockerOrchestrator) volumeName(name, suffix string) string {
 // CloneVolume copies srcVolName into dstVolName via a one-shot alpine helper.
 // The destination volume is created if it does not already exist.
 func (d *DockerOrchestrator) CloneVolume(ctx context.Context, srcVolName, dstVolName string) error {
-	if _, err := d.client.VolumeInspect(ctx, srcVolName); err != nil {
+	if _, err := d.client.VolumeInspect(ctx, srcVolName, dockerclient.VolumeInspectOptions{}); err != nil {
 		// Source volume doesn't exist — nothing to clone. Treat as success so
 		// callers can call this unconditionally on every clone.
 		return nil
 	}
-	if _, err := d.client.VolumeCreate(ctx, volume.CreateOptions{
+	if _, err := d.client.VolumeCreate(ctx, dockerclient.VolumeCreateOptions{
 		Name:   dstVolName,
 		Labels: map[string]string{"managed-by": labelManagedBy},
 	}); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already exists") {
@@ -155,15 +152,14 @@ func parseMemoryToBytes(memStr string) int64 {
 
 func (d *DockerOrchestrator) ensureImage(ctx context.Context, img string) error {
 	// Check if image exists locally first
-	_, _, err := d.client.ImageInspectWithRaw(ctx, img)
-	if err == nil {
+	if _, err := d.client.ImageInspect(ctx, img); err == nil {
 		log.Printf("Image %s found locally", utils.SanitizeForLog(img))
 		return nil
 	}
 
 	// Image not found locally, try to pull
 	log.Printf("Image %s not found locally, pulling...", utils.SanitizeForLog(img))
-	reader, err := d.client.ImagePull(ctx, img, image.PullOptions{})
+	reader, err := d.client.ImagePull(ctx, img, dockerclient.ImagePullOptions{})
 	if err != nil {
 		return fmt.Errorf("pull image %s: %w", img, err)
 	}
@@ -188,7 +184,7 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	progress("Creating volumes...")
 	for _, suffix := range volumeSuffixes {
 		volName := d.volumeName(params.Name, suffix)
-		_, err := d.client.VolumeCreate(ctx, volume.CreateOptions{
+		_, err := d.client.VolumeCreate(ctx, dockerclient.VolumeCreateOptions{
 			Name:   volName,
 			Labels: map[string]string{"managed-by": labelManagedBy, "instance": params.Name},
 		})
@@ -200,7 +196,7 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	// Create shared folder volumes
 	for _, sfm := range params.SharedFolderMounts {
 		volName := fmt.Sprintf("claworc-shared-%d", sfm.VolumeID)
-		_, err := d.client.VolumeCreate(ctx, volume.CreateOptions{
+		_, err := d.client.VolumeCreate(ctx, dockerclient.VolumeCreateOptions{
 			Name:   volName,
 			Labels: map[string]string{"managed-by": labelManagedBy, "type": "shared-folder"},
 		})
@@ -216,19 +212,20 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 func (d *DockerOrchestrator) CloneVolumes(ctx context.Context, srcName, dstName string) error {
 	// Stop destination container while we copy data into its volumes
 	timeout := 30
-	d.client.ContainerStop(ctx, dstName, container.StopOptions{Timeout: &timeout})
+	d.client.ContainerStop(ctx, dstName, dockerclient.ContainerStopOptions{Timeout: &timeout})
 
 	for _, suffix := range volumeSuffixes {
 		srcVol := d.volumeName(srcName, suffix)
 		dstVol := d.volumeName(dstName, suffix)
 		if err := d.copyVolume(ctx, srcVol, dstVol); err != nil {
 			// Best-effort: restart destination even on error
-			d.client.ContainerStart(ctx, dstName, container.StartOptions{})
+			d.client.ContainerStart(ctx, dstName, dockerclient.ContainerStartOptions{})
 			return fmt.Errorf("copy volume %s: %w", suffix, err)
 		}
 	}
 
-	return d.client.ContainerStart(ctx, dstName, container.StartOptions{})
+	_, err := d.client.ContainerStart(ctx, dstName, dockerclient.ContainerStartOptions{})
+	return err
 }
 
 func (d *DockerOrchestrator) copyVolume(ctx context.Context, srcVol, dstVol string) error {
@@ -245,23 +242,26 @@ func (d *DockerOrchestrator) copyVolume(ctx context.Context, srcVol, dstVol stri
 		},
 	}
 
-	resp, err := d.client.ContainerCreate(ctx, containerCfg, hostCfg, nil, nil, "")
+	resp, err := d.client.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
+		Config:     containerCfg,
+		HostConfig: hostCfg,
+	})
 	if err != nil {
 		return fmt.Errorf("create copy container: %w", err)
 	}
-	defer d.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer d.client.ContainerRemove(ctx, resp.ID, dockerclient.ContainerRemoveOptions{Force: true})
 
-	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := d.client.ContainerStart(ctx, resp.ID, dockerclient.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("start copy container: %w", err)
 	}
 
-	statusCh, errCh := d.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waitResult := d.client.ContainerWait(ctx, resp.ID, dockerclient.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 	select {
-	case err := <-errCh:
+	case err := <-waitResult.Error:
 		if err != nil {
 			return fmt.Errorf("wait for copy container: %w", err)
 		}
-	case status := <-statusCh:
+	case status := <-waitResult.Result:
 		if status.StatusCode != 0 {
 			return fmt.Errorf("copy failed with exit code %d", status.StatusCode)
 		}
@@ -271,15 +271,15 @@ func (d *DockerOrchestrator) copyVolume(ctx context.Context, srcVol, dstVol stri
 
 func (d *DockerOrchestrator) DeleteInstance(ctx context.Context, name string) error {
 	// Remove container
-	err := d.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
-	if err != nil && !dockerclient.IsErrNotFound(err) {
+	_, err := d.client.ContainerRemove(ctx, name, dockerclient.ContainerRemoveOptions{Force: true})
+	if err != nil && !cerrdefs.IsNotFound(err) {
 		log.Printf("Remove container %s: %v", utils.SanitizeForLog(name), err)
 	}
 
 	// Remove volumes
 	for _, suffix := range volumeSuffixes {
 		volName := d.volumeName(name, suffix)
-		if err := d.client.VolumeRemove(ctx, volName, true); err != nil && !dockerclient.IsErrNotFound(err) {
+		if _, err := d.client.VolumeRemove(ctx, volName, dockerclient.VolumeRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 			log.Printf("Remove volume %s: %v", utils.SanitizeForLog(volName), err)
 		}
 	}
@@ -288,35 +288,37 @@ func (d *DockerOrchestrator) DeleteInstance(ctx context.Context, name string) er
 
 func (d *DockerOrchestrator) DeleteSharedVolume(ctx context.Context, folderID uint) error {
 	volName := fmt.Sprintf("claworc-shared-%d", folderID)
-	if err := d.client.VolumeRemove(ctx, volName, true); err != nil && !dockerclient.IsErrNotFound(err) {
+	if _, err := d.client.VolumeRemove(ctx, volName, dockerclient.VolumeRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("remove shared volume %s: %w", volName, err)
 	}
 	return nil
 }
 
 func (d *DockerOrchestrator) StartInstance(ctx context.Context, name string) error {
-	return d.client.ContainerStart(ctx, name, container.StartOptions{})
+	_, err := d.client.ContainerStart(ctx, name, dockerclient.ContainerStartOptions{})
+	return err
 }
 
 func (d *DockerOrchestrator) StopInstance(ctx context.Context, name string) error {
 	timeout := 30
-	return d.client.ContainerStop(ctx, name, container.StopOptions{Timeout: &timeout})
+	_, err := d.client.ContainerStop(ctx, name, dockerclient.ContainerStopOptions{Timeout: &timeout})
+	return err
 }
 
 func (d *DockerOrchestrator) RestartInstance(ctx context.Context, name string, params CreateParams) error {
 	// Stop and remove the container, then recreate it so mount changes take effect
 	timeout := 30
-	if err := d.client.ContainerStop(ctx, name, container.StopOptions{Timeout: &timeout}); err != nil {
+	if _, err := d.client.ContainerStop(ctx, name, dockerclient.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		return fmt.Errorf("stop container %s: %w", name, err)
 	}
-	if err := d.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true}); err != nil && !dockerclient.IsErrNotFound(err) {
+	if _, err := d.client.ContainerRemove(ctx, name, dockerclient.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("remove container %s: %w", name, err)
 	}
 
 	// Ensure shared folder volumes exist
 	for _, sfm := range params.SharedFolderMounts {
 		volName := fmt.Sprintf("claworc-shared-%d", sfm.VolumeID)
-		_, err := d.client.VolumeCreate(ctx, volume.CreateOptions{
+		_, err := d.client.VolumeCreate(ctx, dockerclient.VolumeCreateOptions{
 			Name:   volName,
 			Labels: map[string]string{"managed-by": labelManagedBy, "type": "shared-folder"},
 		})
@@ -331,7 +333,7 @@ func (d *DockerOrchestrator) RestartInstance(ctx context.Context, name string, p
 func (d *DockerOrchestrator) UpdateImage(ctx context.Context, name string, params CreateParams) error {
 	// Force-pull the latest image (bypass local cache)
 	log.Printf("Force-pulling image %s for instance %s", params.ContainerImage, utils.SanitizeForLog(name))
-	reader, err := d.client.ImagePull(ctx, params.ContainerImage, image.PullOptions{})
+	reader, err := d.client.ImagePull(ctx, params.ContainerImage, dockerclient.ImagePullOptions{})
 	if err != nil {
 		return fmt.Errorf("pull image %s: %w", params.ContainerImage, err)
 	}
@@ -341,8 +343,8 @@ func (d *DockerOrchestrator) UpdateImage(ctx context.Context, name string, param
 
 	// Stop and remove the old container (volumes are preserved)
 	timeout := 30
-	d.client.ContainerStop(ctx, name, container.StopOptions{Timeout: &timeout})
-	if err := d.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true}); err != nil && !dockerclient.IsErrNotFound(err) {
+	d.client.ContainerStop(ctx, name, dockerclient.ContainerStopOptions{Timeout: &timeout})
+	if _, err := d.client.ContainerRemove(ctx, name, dockerclient.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("remove container %s: %w", name, err)
 	}
 
@@ -394,8 +396,8 @@ func (d *DockerOrchestrator) createContainer(ctx context.Context, params CreateP
 		Hostname: strings.TrimPrefix(params.Name, "bot-"),
 		Env:      env,
 		Labels:   map[string]string{"managed-by": labelManagedBy, "instance": params.Name},
-		ExposedPorts: nat.PortSet{
-			"22/tcp": struct{}{},
+		ExposedPorts: network.PortSet{
+			network.MustParsePort("22/tcp"): struct{}{},
 		},
 		Healthcheck: &container.HealthConfig{
 			Test:          []string{"CMD-SHELL", "bash -c '>/dev/tcp/127.0.0.1/22'"},
@@ -414,8 +416,8 @@ func (d *DockerOrchestrator) createContainer(ctx context.Context, params CreateP
 			NanoCPUs: nanoCPUs,
 			Memory:   memLimit,
 		},
-		PortBindings: nat.PortMap{
-			"22/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: ""}},
+		PortBindings: network.PortMap{
+			network.MustParsePort("22/tcp"): []network.PortBinding{{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: ""}},
 		},
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 	}
@@ -426,27 +428,32 @@ func (d *DockerOrchestrator) createContainer(ctx context.Context, params CreateP
 		},
 	}
 
-	resp, err := d.client.ContainerCreate(ctx, containerCfg, hostCfg, netCfg, nil, params.Name)
+	resp, err := d.client.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
+		Config:           containerCfg,
+		HostConfig:       hostCfg,
+		NetworkingConfig: netCfg,
+		Name:             params.Name,
+	})
 	if err != nil {
 		return fmt.Errorf("create container: %w", err)
 	}
 
-	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := d.client.ContainerStart(ctx, resp.ID, dockerclient.ContainerStartOptions{}); err != nil {
 		return err
 	}
 
 	// Fix ownership of shared folder mounts so the claworc user (1000:1000) can write to them.
 	// New Docker volumes are owned by root by default.
 	for _, sfm := range params.SharedFolderMounts {
-		execCfg := container.ExecOptions{
+		execCfg := dockerclient.ExecCreateOptions{
 			Cmd: []string{"chown", "claworc:claworc", sfm.MountPath},
 		}
-		idResp, err := d.client.ContainerExecCreate(ctx, resp.ID, execCfg)
+		idResp, err := d.client.ExecCreate(ctx, resp.ID, execCfg)
 		if err != nil {
 			log.Printf("Failed to create chown exec for %s: %v", sfm.MountPath, err)
 			continue
 		}
-		if err := d.client.ContainerExecStart(ctx, idResp.ID, container.ExecStartOptions{}); err != nil {
+		if _, err := d.client.ExecStart(ctx, idResp.ID, dockerclient.ExecStartOptions{}); err != nil {
 			log.Printf("Failed to chown %s: %v", sfm.MountPath, err)
 		}
 	}
@@ -455,18 +462,22 @@ func (d *DockerOrchestrator) createContainer(ctx context.Context, params CreateP
 }
 
 func (d *DockerOrchestrator) GetInstanceStatus(ctx context.Context, name string) (string, error) {
-	inspect, err := d.client.ContainerInspect(ctx, name)
+	inspect, err := d.client.ContainerInspect(ctx, name, dockerclient.ContainerInspectOptions{})
 	if err != nil {
-		if dockerclient.IsErrNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			return "stopped", nil
 		}
 		return "error", nil
 	}
 
-	status := inspect.State.Status
+	state := inspect.Container.State
+	if state == nil {
+		return "stopped", nil
+	}
+	status := state.Status
 	health := ""
-	if inspect.State.Health != nil {
-		health = inspect.State.Health.Status
+	if state.Health != nil {
+		health = string(state.Health.Status)
 	}
 
 	switch status {
@@ -489,15 +500,18 @@ func (d *DockerOrchestrator) GetInstanceStatus(ctx context.Context, name string)
 }
 
 func (d *DockerOrchestrator) GetInstanceImageInfo(ctx context.Context, name string) (string, error) {
-	inspect, err := d.client.ContainerInspect(ctx, name)
+	inspect, err := d.client.ContainerInspect(ctx, name, dockerclient.ContainerInspectOptions{})
 	if err != nil {
-		if dockerclient.IsErrNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			return "", nil
 		}
 		return "", fmt.Errorf("inspect container: %w", err)
 	}
-	tag := inspect.Config.Image
-	sha := inspect.Image
+	tag := ""
+	if inspect.Container.Config != nil {
+		tag = inspect.Container.Config.Image
+	}
+	sha := inspect.Container.Image
 	if len(sha) > 19 { // "sha256:" (7) + 12 chars
 		sha = sha[:19]
 	}
@@ -517,10 +531,11 @@ func (d *DockerOrchestrator) GetSSHAddress(ctx context.Context, instanceID uint)
 	if err := database.DB.First(&inst, instanceID).Error; err != nil {
 		return "", 0, fmt.Errorf("instance %d not found: %w", instanceID, err)
 	}
-	inspect, err := d.client.ContainerInspect(ctx, inst.Name)
+	inspect, err := d.client.ContainerInspect(ctx, inst.Name, dockerclient.ContainerInspectOptions{})
 	if err != nil {
 		return "", 0, fmt.Errorf("inspect container for instance %d: %w", instanceID, err)
 	}
+	netSettings := inspect.Container.NetworkSettings
 
 	// Detect whether the control-plane itself is running inside a Docker container.
 	// /.dockerenv is created by the Docker runtime in every container.
@@ -531,44 +546,48 @@ func (d *DockerOrchestrator) GetSSHAddress(ctx context.Context, instanceID uint)
 
 	// Inside Docker: use the container IP on the claworc bridge network for
 	// direct container-to-container communication (no port mapping needed).
-	if runningInDocker {
-		if ep, ok := inspect.NetworkSettings.Networks[networkName]; ok && ep.IPAddress != "" {
-			return ep.IPAddress, 22, nil
+	if runningInDocker && netSettings != nil {
+		if ep, ok := netSettings.Networks[networkName]; ok && ep.IPAddress.IsValid() {
+			return ep.IPAddress.String(), 22, nil
 		}
 	}
 
 	// On the host (e.g. macOS / Windows): Docker bridge IPs are not routable
 	// from the host OS, so use the published host port on the loopback instead.
-	if bindings, ok := inspect.NetworkSettings.Ports["22/tcp"]; ok && len(bindings) > 0 {
-		port := 0
-		fmt.Sscanf(bindings[0].HostPort, "%d", &port)
-		if port > 0 {
-			return "127.0.0.1", port, nil
+	if netSettings != nil {
+		if bindings, ok := netSettings.Ports[network.MustParsePort("22/tcp")]; ok && len(bindings) > 0 {
+			port := 0
+			fmt.Sscanf(bindings[0].HostPort, "%d", &port)
+			if port > 0 {
+				return "127.0.0.1", port, nil
+			}
 		}
 	}
 
 	// Fallback: on Linux hosts bridge IPs are routable from the host, so the
 	// container IP still works even when we're not inside Docker ourselves.
-	if ep, ok := inspect.NetworkSettings.Networks[networkName]; ok && ep.IPAddress != "" {
-		return ep.IPAddress, 22, nil
+	if netSettings != nil {
+		if ep, ok := netSettings.Networks[networkName]; ok && ep.IPAddress.IsValid() {
+			return ep.IPAddress.String(), 22, nil
+		}
 	}
 
 	return "", 0, fmt.Errorf("cannot determine SSH address for instance %d", instanceID)
 }
 
 func (d *DockerOrchestrator) UpdateResources(ctx context.Context, name string, params UpdateResourcesParams) error {
-	updateCfg := container.UpdateConfig{
-		Resources: container.Resources{
+	updateOpts := dockerclient.ContainerUpdateOptions{
+		Resources: &container.Resources{
 			NanoCPUs: parseCPUToNanoCPUs(params.CPULimit),
 			Memory:   parseMemoryToBytes(params.MemoryLimit),
 		},
 	}
-	_, err := d.client.ContainerUpdate(ctx, name, updateCfg)
+	_, err := d.client.ContainerUpdate(ctx, name, updateOpts)
 	return err
 }
 
 func (d *DockerOrchestrator) GetContainerStats(ctx context.Context, name string) (*ContainerStats, error) {
-	resp, err := d.client.ContainerStatsOneShot(ctx, name)
+	resp, err := d.client.ContainerStats(ctx, name, dockerclient.ContainerStatsOptions{Stream: false})
 	if err != nil {
 		return nil, fmt.Errorf("container stats: %w", err)
 	}
@@ -599,9 +618,9 @@ func (d *DockerOrchestrator) GetContainerStats(ctx context.Context, name string)
 	var cpuPercent float64
 	if memLimit > 0 && statsJSON.CPUStats.CPUUsage.TotalUsage > 0 {
 		// Calculate CPU % of limit using NanoCPUs from container config
-		inspect, err := d.client.ContainerInspect(ctx, name)
-		if err == nil && inspect.HostConfig.NanoCPUs > 0 {
-			limitCores := float64(inspect.HostConfig.NanoCPUs) / 1e9
+		inspect, err := d.client.ContainerInspect(ctx, name, dockerclient.ContainerInspectOptions{})
+		if err == nil && inspect.Container.HostConfig != nil && inspect.Container.HostConfig.NanoCPUs > 0 {
+			limitCores := float64(inspect.Container.HostConfig.NanoCPUs) / 1e9
 			cpuPercent = (cpuCores / limitCores) * 100
 		}
 	}
@@ -663,18 +682,18 @@ func stripDockerLogHeaders(data []byte) string {
 }
 
 func (d *DockerOrchestrator) ExecInInstance(ctx context.Context, name string, cmd []string) (string, string, int, error) {
-	execCfg := container.ExecOptions{
+	execCfg := dockerclient.ExecCreateOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
 	}
 
-	execID, err := d.client.ContainerExecCreate(ctx, name, execCfg)
+	execID, err := d.client.ExecCreate(ctx, name, execCfg)
 	if err != nil {
 		return "", "", -1, fmt.Errorf("exec create: %w", err)
 	}
 
-	resp, err := d.client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{})
+	resp, err := d.client.ExecAttach(ctx, execID.ID, dockerclient.ExecAttachOptions{})
 	if err != nil {
 		return "", "", -1, fmt.Errorf("exec attach: %w", err)
 	}
@@ -686,7 +705,7 @@ func (d *DockerOrchestrator) ExecInInstance(ctx context.Context, name string, cm
 	}
 
 	// Get exit code
-	inspectResp, err := d.client.ContainerExecInspect(ctx, execID.ID)
+	inspectResp, err := d.client.ExecInspect(ctx, execID.ID, dockerclient.ExecInspectOptions{})
 	if err != nil {
 		return string(output), "", -1, fmt.Errorf("exec inspect: %w", err)
 	}
@@ -698,18 +717,18 @@ func (d *DockerOrchestrator) ExecInInstance(ctx context.Context, name string, cm
 }
 
 func (d *DockerOrchestrator) StreamExecInInstance(ctx context.Context, name string, cmd []string, stdout io.Writer) (string, int, error) {
-	execCfg := container.ExecOptions{
+	execCfg := dockerclient.ExecCreateOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
 	}
 
-	execID, err := d.client.ContainerExecCreate(ctx, name, execCfg)
+	execID, err := d.client.ExecCreate(ctx, name, execCfg)
 	if err != nil {
 		return "", -1, fmt.Errorf("exec create: %w", err)
 	}
 
-	resp, err := d.client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{})
+	resp, err := d.client.ExecAttach(ctx, execID.ID, dockerclient.ExecAttachOptions{})
 	if err != nil {
 		return "", -1, fmt.Errorf("exec attach: %w", err)
 	}
@@ -720,7 +739,7 @@ func (d *DockerOrchestrator) StreamExecInInstance(ctx context.Context, name stri
 		return stderrBuf.String(), -1, fmt.Errorf("stream exec output: %w", err)
 	}
 
-	inspectResp, err := d.client.ContainerExecInspect(ctx, execID.ID)
+	inspectResp, err := d.client.ExecInspect(ctx, execID.ID, dockerclient.ExecInspectOptions{})
 	if err != nil {
 		return stderrBuf.String(), -1, fmt.Errorf("exec inspect: %w", err)
 	}

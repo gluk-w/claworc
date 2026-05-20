@@ -9,15 +9,15 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/netip"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/go-connections/nat"
-
-	dockerclient "github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	dockerclient "github.com/moby/moby/client"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -67,7 +67,7 @@ func newDockerTestEnv(t *testing.T) *dockerTestEnv {
 	// Verify Docker is reachable
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := cli.Ping(ctx); err != nil {
+	if _, err := cli.Ping(ctx, dockerclient.PingOptions{}); err != nil {
 		t.Fatalf("docker ping: %v", err)
 	}
 
@@ -79,8 +79,8 @@ func (e *dockerTestEnv) cleanup(t *testing.T) {
 	ctx := context.Background()
 	for _, inst := range e.instances {
 		timeout := 5
-		e.client.ContainerStop(ctx, inst.containerID, container.StopOptions{Timeout: &timeout})
-		e.client.ContainerRemove(ctx, inst.containerID, container.RemoveOptions{Force: true})
+		e.client.ContainerStop(ctx, inst.containerID, dockerclient.ContainerStopOptions{Timeout: &timeout})
+		e.client.ContainerRemove(ctx, inst.containerID, dockerclient.ContainerRemoveOptions{Force: true})
 	}
 }
 
@@ -90,47 +90,57 @@ func (e *dockerTestEnv) startAgent(t *testing.T, name string) *agentInstance {
 	t.Helper()
 	ctx := context.Background()
 
+	port22 := network.MustParsePort("22/tcp")
+
 	containerCfg := &container.Config{
 		Image: agentImage(),
 		Labels: map[string]string{
 			"managed-by": "claworc-inttest",
 			"test":       name,
 		},
-		ExposedPorts: nat.PortSet{
-			"22/tcp": struct{}{},
+		ExposedPorts: network.PortSet{
+			port22: struct{}{},
 		},
 	}
 
 	hostCfg := &container.HostConfig{
 		Privileged: false,
-		PortBindings: nat.PortMap{
-			"22/tcp": []nat.PortBinding{
-				{HostIP: "127.0.0.1", HostPort: "0"}, // random port
+		PortBindings: network.PortMap{
+			port22: []network.PortBinding{
+				{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: "0"}, // random port
 			},
 		},
 	}
 
 	// Remove any stale container with the same name from a previous run
-	e.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
+	e.client.ContainerRemove(ctx, name, dockerclient.ContainerRemoveOptions{Force: true})
 
-	resp, err := e.client.ContainerCreate(ctx, containerCfg, hostCfg, nil, nil, name)
+	resp, err := e.client.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
+		Config:     containerCfg,
+		HostConfig: hostCfg,
+		Name:       name,
+	})
 	if err != nil {
 		t.Fatalf("create container %s: %v", name, err)
 	}
 
-	if err := e.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := e.client.ContainerStart(ctx, resp.ID, dockerclient.ContainerStartOptions{}); err != nil {
 		// Clean up on failure
-		e.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		e.client.ContainerRemove(ctx, resp.ID, dockerclient.ContainerRemoveOptions{Force: true})
 		t.Fatalf("start container %s: %v", name, err)
 	}
 
 	// Get the mapped port
-	inspect, err := e.client.ContainerInspect(ctx, resp.ID)
+	inspect, err := e.client.ContainerInspect(ctx, resp.ID, dockerclient.ContainerInspectOptions{})
 	if err != nil {
 		t.Fatalf("inspect container %s: %v", name, err)
 	}
 
-	bindings, ok := inspect.NetworkSettings.Ports["22/tcp"]
+	netSettings := inspect.Container.NetworkSettings
+	if netSettings == nil {
+		t.Fatalf("container %s: no network settings", name)
+	}
+	bindings, ok := netSettings.Ports[port22]
 	if !ok || len(bindings) == 0 {
 		t.Fatalf("container %s: no port mapping for 22/tcp", name)
 	}
@@ -150,18 +160,18 @@ func (e *dockerTestEnv) startAgent(t *testing.T, name string) *agentInstance {
 
 // execInContainer runs a command inside a container and returns stdout.
 func (e *dockerTestEnv) execInContainer(ctx context.Context, containerID string, cmd []string) (string, error) {
-	execCfg := container.ExecOptions{
+	execCfg := dockerclient.ExecCreateOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
 	}
 
-	execID, err := e.client.ContainerExecCreate(ctx, containerID, execCfg)
+	execID, err := e.client.ExecCreate(ctx, containerID, execCfg)
 	if err != nil {
 		return "", fmt.Errorf("exec create: %w", err)
 	}
 
-	resp, err := e.client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{})
+	resp, err := e.client.ExecAttach(ctx, execID.ID, dockerclient.ExecAttachOptions{})
 	if err != nil {
 		return "", fmt.Errorf("exec attach: %w", err)
 	}
@@ -172,7 +182,7 @@ func (e *dockerTestEnv) execInContainer(ctx context.Context, containerID string,
 		return "", fmt.Errorf("read output: %w", err)
 	}
 
-	inspectResp, err := e.client.ContainerExecInspect(ctx, execID.ID)
+	inspectResp, err := e.client.ExecInspect(ctx, execID.ID, dockerclient.ExecInspectOptions{})
 	if err != nil {
 		return string(output), fmt.Errorf("exec inspect: %w", err)
 	}

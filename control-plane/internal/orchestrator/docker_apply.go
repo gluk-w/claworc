@@ -4,17 +4,17 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/netip"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	dockerclient "github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/go-units"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
+	dockerclient "github.com/moby/moby/client"
 )
 
 // Apply creates or updates the workload described by spec. Volumes that don't
@@ -39,11 +39,11 @@ func (d *DockerOrchestrator) Apply(ctx context.Context, spec WorkloadSpec) error
 
 	// Stop + remove any existing container with the same name so the new spec
 	// rolls out cleanly. Volumes are separate objects and survive.
-	if _, err := d.client.ContainerInspect(ctx, spec.Name); err == nil {
+	if _, err := d.client.ContainerInspect(ctx, spec.Name, dockerclient.ContainerInspectOptions{}); err == nil {
 		timeout := 30
-		_ = d.client.ContainerStop(ctx, spec.Name, container.StopOptions{Timeout: &timeout})
-		_ = d.client.ContainerRemove(ctx, spec.Name, container.RemoveOptions{Force: true})
-	} else if !dockerclient.IsErrNotFound(err) {
+		_, _ = d.client.ContainerStop(ctx, spec.Name, dockerclient.ContainerStopOptions{Timeout: &timeout})
+		_, _ = d.client.ContainerRemove(ctx, spec.Name, dockerclient.ContainerRemoveOptions{Force: true})
+	} else if !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("inspect existing container %s: %w", spec.Name, err)
 	}
 
@@ -54,11 +54,16 @@ func (d *DockerOrchestrator) Apply(ctx context.Context, spec WorkloadSpec) error
 	}
 
 	containerCfg, hostCfg, netCfg := d.buildContainerConfig(spec)
-	resp, err := d.client.ContainerCreate(ctx, containerCfg, hostCfg, netCfg, nil, spec.Name)
+	resp, err := d.client.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
+		Config:           containerCfg,
+		HostConfig:       hostCfg,
+		NetworkingConfig: netCfg,
+		Name:             spec.Name,
+	})
 	if err != nil {
 		return fmt.Errorf("create container %s: %w", spec.Name, err)
 	}
-	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := d.client.ContainerStart(ctx, resp.ID, dockerclient.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("start container %s: %w", spec.Name, err)
 	}
 	return nil
@@ -68,10 +73,10 @@ func (d *DockerOrchestrator) Apply(ctx context.Context, spec WorkloadSpec) error
 // spec.Volumes. Shared volumes are preserved.
 func (d *DockerOrchestrator) DeleteWorkload(ctx context.Context, spec WorkloadSpec) error {
 	timeout := 30
-	if err := d.client.ContainerStop(ctx, spec.Name, container.StopOptions{Timeout: &timeout}); err != nil && !dockerclient.IsErrNotFound(err) {
+	if _, err := d.client.ContainerStop(ctx, spec.Name, dockerclient.ContainerStopOptions{Timeout: &timeout}); err != nil && !cerrdefs.IsNotFound(err) {
 		log.Printf("stop container %s: %v", spec.Name, err)
 	}
-	if err := d.client.ContainerRemove(ctx, spec.Name, container.RemoveOptions{Force: true}); err != nil && !dockerclient.IsErrNotFound(err) {
+	if _, err := d.client.ContainerRemove(ctx, spec.Name, dockerclient.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 		log.Printf("remove container %s: %v", spec.Name, err)
 	}
 
@@ -79,7 +84,7 @@ func (d *DockerOrchestrator) DeleteWorkload(ctx context.Context, spec WorkloadSp
 		if vol.Shared {
 			continue
 		}
-		if err := d.client.VolumeRemove(ctx, vol.Name, true); err != nil {
+		if _, err := d.client.VolumeRemove(ctx, vol.Name, dockerclient.VolumeRemoveOptions{Force: true}); err != nil {
 			log.Printf("remove volume %s: %v", vol.Name, err)
 		}
 	}
@@ -97,25 +102,29 @@ func (d *DockerOrchestrator) EnsureSSHAccess(ctx context.Context, name string, p
 // container IP on the claworc bridge when the control plane runs inside Docker,
 // otherwise the published host port on loopback.
 func (d *DockerOrchestrator) WorkloadSSHAddress(ctx context.Context, name string) (string, int, error) {
-	inspect, err := d.client.ContainerInspect(ctx, name)
+	inspect, err := d.client.ContainerInspect(ctx, name, dockerclient.ContainerInspectOptions{})
 	if err != nil {
 		return "", 0, fmt.Errorf("inspect container %s: %w", name, err)
 	}
+	netSettings := inspect.Container.NetworkSettings
+	if netSettings == nil {
+		return "", 0, fmt.Errorf("no network settings for %s", name)
+	}
 
 	if _, err := os.Stat("/.dockerenv"); err == nil {
-		if ep, ok := inspect.NetworkSettings.Networks[networkName]; ok && ep.IPAddress != "" {
-			return ep.IPAddress, 22, nil
+		if ep, ok := netSettings.Networks[networkName]; ok && ep.IPAddress.IsValid() {
+			return ep.IPAddress.String(), 22, nil
 		}
 	}
-	if bindings, ok := inspect.NetworkSettings.Ports["22/tcp"]; ok && len(bindings) > 0 {
+	if bindings, ok := netSettings.Ports[network.MustParsePort("22/tcp")]; ok && len(bindings) > 0 {
 		port := 0
 		fmt.Sscanf(bindings[0].HostPort, "%d", &port)
 		if port > 0 {
 			return "127.0.0.1", port, nil
 		}
 	}
-	if ep, ok := inspect.NetworkSettings.Networks[networkName]; ok && ep.IPAddress != "" {
-		return ep.IPAddress, 22, nil
+	if ep, ok := netSettings.Networks[networkName]; ok && ep.IPAddress.IsValid() {
+		return ep.IPAddress.String(), 22, nil
 	}
 	return "", 0, fmt.Errorf("cannot determine SSH address for %s", name)
 }
@@ -135,7 +144,7 @@ func (d *DockerOrchestrator) applyVolumesDocker(ctx context.Context, vols []Volu
 		}
 		// VolumeCreate is idempotent on Docker — it returns the existing
 		// volume if one with the same name already exists.
-		if _, err := d.client.VolumeCreate(ctx, volume.CreateOptions{Name: vol.Name, Labels: labels}); err != nil {
+		if _, err := d.client.VolumeCreate(ctx, dockerclient.VolumeCreateOptions{Name: vol.Name, Labels: labels}); err != nil {
 			return fmt.Errorf("create volume %s: %w", vol.Name, err)
 		}
 	}
@@ -181,16 +190,16 @@ func (d *DockerOrchestrator) buildContainerConfig(spec WorkloadSpec) (*container
 		})
 	}
 
-	exposed := nat.PortSet{}
-	bindings := nat.PortMap{}
+	exposed := network.PortSet{}
+	bindings := network.PortMap{}
 	for _, p := range spec.Ports {
-		key := nat.Port(fmt.Sprintf("%d/tcp", p.ContainerPort))
+		key := network.MustParsePort(fmt.Sprintf("%d/tcp", p.ContainerPort))
 		exposed[key] = struct{}{}
 		// Only port 22 needs publishing; CDP/VNC stay loopback-only inside the
 		// container per the SSH-tunnel design. Publishing 22 lets the host
 		// reach SSH when the control plane runs outside Docker.
 		if p.ContainerPort == 22 {
-			bindings[key] = []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: ""}}
+			bindings[key] = []network.PortBinding{{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: ""}}
 		}
 	}
 
@@ -268,22 +277,25 @@ func (d *DockerOrchestrator) runInitContainer(ctx context.Context, ic InitContai
 
 	cfg := &container.Config{Image: image, Cmd: ic.Command}
 	hostCfg := &container.HostConfig{Mounts: mounts}
-	resp, err := d.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, "")
+	resp, err := d.client.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
+		Config:     cfg,
+		HostConfig: hostCfg,
+	})
 	if err != nil {
 		return fmt.Errorf("create init container: %w", err)
 	}
-	defer d.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	defer d.client.ContainerRemove(ctx, resp.ID, dockerclient.ContainerRemoveOptions{Force: true})
 
-	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := d.client.ContainerStart(ctx, resp.ID, dockerclient.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("start init container: %w", err)
 	}
-	statusCh, errCh := d.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	waitResult := d.client.ContainerWait(ctx, resp.ID, dockerclient.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 	select {
-	case err := <-errCh:
+	case err := <-waitResult.Error:
 		if err != nil {
 			return fmt.Errorf("wait init container: %w", err)
 		}
-	case status := <-statusCh:
+	case status := <-waitResult.Result:
 		if status.StatusCode != 0 {
 			return fmt.Errorf("init container exited with status %d", status.StatusCode)
 		}
