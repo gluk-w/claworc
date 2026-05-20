@@ -262,7 +262,7 @@ func runWebhookRequest(w http.ResponseWriter, r *http.Request, isPrivate bool) {
 	if err != nil {
 		logRow.StatusCode = http.StatusBadGateway
 		logRow.ErrorMessage = err.Error()
-		log.Printf("[webhook] instance=%d session=%s bridge error: %v", inst.ID, utils.SanitizeForLog(call.SessionName), err)
+		log.Printf("[webhook] instance=%d session=%s bridge error: %s", inst.ID, utils.SanitizeForLog(call.SessionName), utils.SanitizeForLog(err.Error()))
 		http.Error(w, "agent error: "+err.Error(), http.StatusBadGateway)
 		return
 	}
