@@ -246,6 +246,15 @@ function ApiKeysTab({
   const [editingBrave, setEditingBrave] = useState(false);
   const [braveValue, setBraveValue] = useState("");
   const [showBrave, setShowBrave] = useState(false);
+  const [expandedModels, setExpandedModels] = useState<Set<number>>(new Set());
+  const toggleExpandedModels = (id: number) => {
+    setExpandedModels((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const syncMutation = useMutation({
     mutationFn: syncAllProviders,
@@ -351,16 +360,33 @@ function ApiKeysTab({
                   <div className="pb-3 px-2">
                     {displayModels.length === 0 ? (
                       <p className="text-xs text-gray-400 italic">No models available.</p>
-                    ) : (
-                      <div className="flex flex-wrap gap-1">
-                        {displayModels.map((m) => (
-                          <span key={m.id} className="inline-flex items-center gap-1 font-mono text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
-                            {m.id}
-                            {m.input?.includes("image") && <Eye size={10} />}
-                          </span>
-                        ))}
-                      </div>
-                    )}
+                    ) : (() => {
+                      const isExpanded = expandedModels.has(p.id);
+                      const collapsible = displayModels.length > 10;
+                      return (
+                        <>
+                          <div
+                            className={`flex flex-wrap gap-1 ${collapsible && !isExpanded ? "max-h-[4.75rem] overflow-hidden" : ""}`}
+                          >
+                            {displayModels.map((m) => (
+                              <span key={m.id} className="inline-flex items-center gap-1 font-mono text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
+                                {m.id}
+                                {m.input?.includes("image") && <Eye size={10} />}
+                              </span>
+                            ))}
+                          </div>
+                          {collapsible && (
+                            <button
+                              type="button"
+                              onClick={() => toggleExpandedModels(p.id)}
+                              className="mt-1 text-xs text-blue-600 hover:text-blue-800"
+                            >
+                              {isExpanded ? "Show less" : `... show all (${displayModels.length})`}
+                            </button>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
               );

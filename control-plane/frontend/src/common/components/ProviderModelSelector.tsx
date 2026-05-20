@@ -226,7 +226,7 @@ export default function ProviderModelSelector({
                     {p.provider && !catalogDetail ? "Loading models..." : "No models available."}
                   </div>
                 ) : (
-                  <div className="divide-y divide-gray-100">
+                  <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
                     {availableModels.map((m) => {
                       const checked = selectedModels.includes(m.id);
                       return (
@@ -324,6 +324,7 @@ export default function ProviderModelSelector({
                     Deselect all
                   </button>
                 </div>
+                <div className="max-h-80 overflow-y-auto space-y-1">
                 {availableModels.map((m) => (
                   <label key={m.id} className="flex items-start gap-3 py-1.5 px-2 rounded hover:bg-amber-50 cursor-pointer">
                     <input
@@ -350,6 +351,7 @@ export default function ProviderModelSelector({
                     <span className="text-xs font-mono text-gray-400 shrink-0 mt-0.5">{m.id}</span>
                   </label>
                 ))}
+                </div>
               </div>
             )}
           </div>
