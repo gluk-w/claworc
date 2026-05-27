@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +14,12 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
+
+const webhookSessionPrefix = "claworc-webhook-"
+
+// webhookGetTunnelPort is the getTunnelPort call used by RunWebhookBridge.
+// Replaced in tests to inject a local fake-gateway port.
+var webhookGetTunnelPort = getTunnelPort
 
 // WebhookAttachment is a single file delivered alongside a webhook
 // request. The bridge writes Content into the instance at
@@ -24,7 +31,8 @@ type WebhookAttachment struct {
 
 // RunWebhookBridge dials the OpenClaw gateway for the given instance,
 // uploads any attachments into /tmp/webhooks/<sessionName>/, sends a
-// single chat.send frame using sessionName as the OpenClaw session key,
+// single chat.send frame using the claworc-webhook-<sessionName> key
+// (so webhook sessions are identifiable in OpenClaw's session list),
 // and reads gateway events until the lifecycle/end frame arrives.
 // Returns the final cumulative assistant text.
 //
@@ -47,10 +55,11 @@ func RunWebhookBridge(ctx context.Context, instanceID uint, sessionName, message
 	// preamble describing them for the agent.
 	var attachmentPaths []string
 	for _, a := range attachments {
-		if a.Filename == "" {
+		safe := filepath.Base(a.Filename)
+		if safe == "" || safe == "." || safe == "/" {
 			continue
 		}
-		dst := "/tmp/webhooks/" + sessionName + "/" + a.Filename
+		dst := "/tmp/webhooks/" + sessionName + "/" + safe
 		if err := WriteInstanceFile(instanceID, dst, a.Content); err != nil {
 			return "", fmt.Errorf("upload %s: %w", a.Filename, err)
 		}
@@ -71,7 +80,7 @@ func RunWebhookBridge(ctx context.Context, instanceID uint, sessionName, message
 		finalMessage = b.String()
 	}
 
-	port, err := getTunnelPort(instanceID, "gateway")
+	port, err := webhookGetTunnelPort(instanceID, "gateway")
 	if err != nil {
 		return "", fmt.Errorf("no gateway tunnel: %w", err)
 	}
@@ -91,18 +100,22 @@ func RunWebhookBridge(ctx context.Context, instanceID uint, sessionName, message
 	}
 	defer gwConn.CloseNow()
 
+	ocSessionKey := webhookSessionPrefix + sessionName
 	requestID := fmt.Sprintf("webhook-%d", time.Now().UnixNano())
 	sendFrame := map[string]any{
 		"type":   "req",
 		"id":     requestID,
 		"method": "chat.send",
 		"params": map[string]any{
-			"sessionKey":     sessionName,
+			"sessionKey":     ocSessionKey,
 			"message":        finalMessage,
-			"idempotencyKey": sessionName + "-" + requestID,
+			"idempotencyKey": ocSessionKey + "-" + requestID,
 		},
 	}
-	sendJSON, _ := json.Marshal(sendFrame)
+	sendJSON, err := json.Marshal(sendFrame)
+	if err != nil {
+		return "", fmt.Errorf("marshal chat.send: %w", err)
+	}
 	if err := gwConn.Write(ctx, websocket.MessageText, sendJSON); err != nil {
 		return "", fmt.Errorf("send chat.send: %w", err)
 	}
