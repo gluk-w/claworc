@@ -58,7 +58,16 @@ export default function LoginPage() {
       navigate("/");
     } catch (err) {
       const networkOrServer = getNetworkOrServerError(err);
-      setError(networkOrServer ?? "Passkey authentication failed");
+      if (networkOrServer) {
+        setError(networkOrServer);
+      } else if (isAxiosError(err)) {
+        const detail = err.response?.data?.detail;
+        setError(typeof detail === "string" ? detail : "Passkey authentication failed");
+      } else if (err instanceof Error && err.name === "NotAllowedError") {
+        setError("Authentication was cancelled. Please try again.");
+      } else {
+        setError("Passkey authentication failed");
+      }
     } finally {
       setLoading(false);
     }
