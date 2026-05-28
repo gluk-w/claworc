@@ -297,8 +297,18 @@ type SharedFolder struct {
 	OwnerID     uint      `gorm:"not null;index" json:"owner_id"`
 	InstanceIDs string    `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint IDs
 	TeamIDs     string    `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint team IDs
-	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	// HostPath, when non-empty, makes this folder a host bind mount backed by
+	// the given host directory instead of a managed volume/PVC. It is gated by
+	// the CLAWORC_ALLOWED_HOST_MOUNTS allowlist and is immutable after creation.
+	HostPath string `gorm:"type:text;default:''" json:"host_path"`
+	// ReadOnly controls whether a host-backed mount is mounted read-only.
+	// Host-backed folders default to read-only (enforced in the create handler).
+	// No GORM `default` tag here on purpose: with one, GORM treats a false value
+	// as "unset" and lets the DB default win, so an explicit read-write choice
+	// would be silently flipped back to read-only on insert.
+	ReadOnly  bool      `json:"read_only"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 // ParseSharedFolderInstanceIDs deserializes the JSON instance IDs field.

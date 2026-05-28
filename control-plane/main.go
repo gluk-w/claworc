@@ -403,6 +403,7 @@ func main() {
 			// Shared Folders
 			r.Get("/shared-folders", handlers.ListSharedFolders)
 			r.Post("/shared-folders", handlers.CreateSharedFolder)
+			r.Get("/shared-folders/host-mount-config", handlers.HostMountConfig)
 			r.Get("/shared-folders/{id}", handlers.GetSharedFolder)
 			r.Put("/shared-folders/{id}", handlers.UpdateSharedFolder)
 			r.Delete("/shared-folders/{id}", handlers.DeleteSharedFolder)

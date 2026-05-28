@@ -177,7 +177,7 @@ dev:
 	@echo "Control plane: http://localhost:8000"
 	@echo "Frontend:      http://localhost:5173"
 	@echo ""
-	CLAWORC_AUTH_DISABLED=true CLAWORC_LLM_RESPONSE_LOG=$(CURDIR)/llm-responses.log goreman -set-ports=false start
+	CLAWORC_AUTH_DISABLED=true CLAWORC_LLM_RESPONSE_LOG=$(CURDIR)/llm-responses.log CLAWORC_ALLOWED_HOST_MOUNTS=/tmp,~/ goreman -set-ports=false start
 
 ssh-integration-test:
 	docker build -f agent/instance/Dockerfile -t claworc-agent:local agent/instance/

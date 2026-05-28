@@ -1,10 +1,17 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { FolderOpen, Trash2, AlertTriangle } from "lucide-react";
+import {
+  FolderOpen,
+  Trash2,
+  AlertTriangle,
+  ChevronRight,
+  ChevronDown,
+} from "lucide-react";
 import AgentTeamPicker from "@common/components/AgentTeamPicker";
 import { useTeam } from "@common/contexts/TeamContext";
 import {
   fetchSharedFolders,
+  fetchHostMountConfig,
   createSharedFolder,
   updateSharedFolder,
   deleteSharedFolder,
@@ -208,6 +215,11 @@ function FolderModal({
 
   const [name, setName] = useState(folder?.name ?? "");
   const [mountPath, setMountPath] = useState(folder?.mount_path ?? "");
+  const [mountToHost, setMountToHost] = useState(
+    !!folder?.host_path,
+  );
+  const [hostPath, setHostPath] = useState(folder?.host_path ?? "");
+  const [readOnly, setReadOnly] = useState(folder?.read_only ?? true);
   const [selectedInstances, setSelectedInstances] = useState<number[]>(
     folder?.instance_ids ?? [],
   );
@@ -225,6 +237,11 @@ function FolderModal({
     queryFn: fetchSharedFolders,
   });
 
+  const { data: hostMountConfig } = useQuery({
+    queryKey: ["host-mount-config"],
+    queryFn: fetchHostMountConfig,
+  });
+
   const trimmedMountPath = mountPath.trim();
   const duplicateMountPath =
     trimmedMountPath !== "" &&
@@ -232,8 +249,25 @@ function FolderModal({
       (f) => f.mount_path === trimmedMountPath && f.id !== folder?.id,
     );
 
+  const trimmedHostPath = hostPath.trim();
+  const allowedPrefixes = hostMountConfig?.allowed_prefixes ?? [];
+  const hostPathWithinAllowlist =
+    trimmedHostPath.startsWith("/") &&
+    !trimmedHostPath.includes("..") &&
+    allowedPrefixes.some(
+      (p) => trimmedHostPath === p || trimmedHostPath.startsWith(p + "/"),
+    );
+  const hostPathInvalid = mountToHost && !hostPathWithinAllowlist;
+
   const createMutation = useMutation({
-    mutationFn: () => createSharedFolder({ name, mount_path: mountPath }),
+    mutationFn: () =>
+      createSharedFolder({
+        name,
+        mount_path: mountPath,
+        ...(mountToHost
+          ? { host_path: trimmedHostPath, read_only: readOnly }
+          : {}),
+      }),
     onSuccess: (created) => {
       // If anything is selected, attach it in a second PUT.
       if (selectedInstances.length > 0 || selectedTeamIds.length > 0) {
@@ -258,6 +292,7 @@ function FolderModal({
         name,
         instance_ids: selectedInstances,
         team_ids: selectedTeamIds,
+        ...(folder?.host_path ? { read_only: readOnly } : {}),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["shared-folders"] });
@@ -269,7 +304,10 @@ function FolderModal({
 
   const isPending = createMutation.isPending || updateMutation.isPending;
   const canSave =
-    name.trim() !== "" && mountPath.startsWith("/") && !duplicateMountPath;
+    name.trim() !== "" &&
+    mountPath.startsWith("/") &&
+    !duplicateMountPath &&
+    !hostPathInvalid;
 
   const origIds = folder?.instance_ids ?? [];
   const hasInstanceChanges =
@@ -346,6 +384,81 @@ function FolderModal({
               </p>
             )}
           </div>
+
+          {hostMountConfig?.enabled && (
+            <div>
+              <button
+                type="button"
+                onClick={() => !folder && setMountToHost((v) => !v)}
+                disabled={!!folder}
+                aria-expanded={mountToHost}
+                className="flex items-center gap-1.5 text-sm text-gray-700 hover:text-gray-900 disabled:cursor-not-allowed"
+              >
+                {mountToHost ? (
+                  <ChevronDown size={16} className="text-gray-400" />
+                ) : (
+                  <ChevronRight size={16} className="text-gray-400" />
+                )}
+                <span>Mount to Host</span>
+              </button>
+              <p className="text-xs text-gray-400 mt-1">
+                Back this folder with a directory on the host instead of a
+                managed volume.
+              </p>
+
+              {mountToHost && (
+                <div className="mt-3 space-y-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">
+                      Host Path
+                    </label>
+                    <input
+                      type="text"
+                      value={hostPath}
+                      onChange={(e) => setHostPath(e.target.value)}
+                      readOnly={!!folder}
+                      className={`w-full px-3 py-1.5 border rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        folder
+                          ? "bg-gray-50 text-gray-500 cursor-not-allowed border-gray-300"
+                          : hostPathInvalid
+                            ? "border-red-300"
+                            : "border-gray-300"
+                      }`}
+                      placeholder="/Users/example/shared/obsidian"
+                    />
+                    {folder ? (
+                      <p className="text-xs text-gray-400 mt-1">
+                        Host path cannot be changed after creation.
+                      </p>
+                    ) : hostPathInvalid ? (
+                      <p className="text-xs text-red-600 mt-1">
+                        Host path must be within an allowed location:{" "}
+                        {allowedPrefixes.join(", ")}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-gray-400 mt-1">
+                        Allowed locations: {allowedPrefixes.join(", ")}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">
+                      Access Mode
+                    </label>
+                    <select
+                      value={readOnly ? "ro" : "rw"}
+                      onChange={(e) => setReadOnly(e.target.value === "ro")}
+                      className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="ro">Read-only</option>
+                      <option value="rw">Read-write</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="block text-xs text-gray-500 mb-1">

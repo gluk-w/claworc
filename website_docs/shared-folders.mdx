@@ -52,6 +52,59 @@ Recommended mount paths: `/shared/<name>` or `/data/<name>`.
   Stopped instances pick up the change on their next start.
 </Warning>
 
+## Host-backed folders
+
+By default, a shared folder is backed by a Claworc-managed volume. You can instead back a folder
+with a real directory on the host machine — a Docker bind mount, or a Kubernetes `hostPath` volume.
+Use this to connect an instance to an existing local workflow, for example mounting an
+Obsidian or Syncthing vault into the instance so the agent reads and writes the same files you do.
+
+### Enabling host-backed folders
+
+Host-backed folders are disabled by default and must be enabled by an operator. They are gated by
+the `CLAWORC_ALLOWED_HOST_MOUNTS` environment variable, which lists the host path prefixes that may
+back a folder. See [Environment variables](/environment-variables).
+
+When `CLAWORC_ALLOWED_HOST_MOUNTS` is empty, the **Mount to Host** option is hidden in the dashboard
+and any host path is rejected. When it is set, you can back a folder with any host directory that
+resolves to a location within one of the allowed prefixes.
+
+### Creating a host-backed folder
+
+1. Open **Shared Folders** in the sidebar and click **New Folder**.
+2. Enter a name and a mount path as usual.
+3. Expand the **Mount to Host** region.
+4. Enter a **Host Path**. The dashboard shows the permitted prefixes and validates your entry inline.
+   The path must resolve to a location within one of the allowed prefixes.
+5. Pick an **Access Mode**. **Read-only** is the default; choose **Read-write** only if the instance
+   must write back to the host directory.
+6. Click **Create**.
+
+If the host directory does not exist, Claworc creates it automatically (including parent directories),
+as long as it is within an allowed prefix.
+
+The host path is fixed once the folder is created. You can change the access mode later, which restarts
+mapped running instances like any other shared-folder change.
+
+<Warning>
+  Host bind mounts give an instance direct access to files on the host. Keep these precautions in mind:
+
+  - Prefer **Read-only** unless the instance must write back to the host.
+  - Allowed prefixes should be scoped narrowly to a dedicated shared directory, not broad roots
+    like `/` or `/home`.
+  - The Docker socket and the Claworc data directory (`CLAWORC_DATA_PATH`) are always blocked, even
+    if an allowed prefix would otherwise permit them.
+  - Paths are normalized and symlink-resolved. Paths using `..` traversal or symlinks that escape an
+    allowed prefix are rejected.
+</Warning>
+
+<Note>
+  On Kubernetes, a host-backed folder becomes a `hostPath` volume bound to the node the instance's pod
+  runs on. This is intended for single-node clusters. On multi-node clusters, the directory must exist
+  with the same contents on every node the pod might run on, and symlink checks run on the control plane
+  only — they cannot inspect node filesystems.
+</Note>
+
 ## Deleting a shared folder
 
 Click the delete icon on the folder row and confirm. This removes the database record and

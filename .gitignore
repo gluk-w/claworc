@@ -1,4 +1,5 @@
 # Local development files
+.air
 .env
 !.env.development
 data/

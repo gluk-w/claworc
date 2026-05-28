@@ -19,6 +19,11 @@ type Settings struct {
 	RPOrigins    []string `envconfig:"RP_ORIGINS" default:"http://localhost:8000"`
 	RPID         string   `envconfig:"RP_ID" default:"localhost"`
 
+	// AllowedHostMounts is the operator-controlled allowlist of host path
+	// prefixes within which shared folders may be backed by a host bind mount.
+	// Empty (the default) disables host-backed shared folders entirely.
+	AllowedHostMounts []string `envconfig:"ALLOWED_HOST_MOUNTS" default:""`
+
 	// Terminal session settings
 	TerminalHistoryLines   int    `envconfig:"TERMINAL_HISTORY_LINES" default:"1000"`
 	TerminalRecordingDir   string `envconfig:"TERMINAL_RECORDING_DIR" default:""`

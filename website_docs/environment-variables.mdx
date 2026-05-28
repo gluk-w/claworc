@@ -14,6 +14,7 @@ All Claworc configuration is done via environment variables with the `CLAWORC_` 
 | `CLAWORC_BACKUPS_PATH` | *(empty)* | Directory for backup archives. When empty, backups are written under `<CLAWORC_DATA_PATH>/backups`. Set this to place backups on a separate (for example, cheaper or slower) volume. The directory must exist and be writable. |
 | `CLAWORC_K8S_NAMESPACE` | `claworc` | Kubernetes namespace where agent instances are created. Must exist before starting. |
 | `CLAWORC_DOCKER_HOST` | *(empty)* | Docker socket or TCP address. Example: `unix:///var/run/docker.sock`. Leave empty to auto-detect orchestrator (Kubernetes takes priority). |
+| `CLAWORC_ALLOWED_HOST_MOUNTS` | *(empty)* | Comma-separated list of host path prefixes within which shared folders may be backed by a host directory (bind mount). Empty disables host-backed shared folders entirely. Only paths inside these prefixes are allowed; the Docker socket and `CLAWORC_DATA_PATH` are always blocked. See [Shared folders](/shared-folders). |
 
 ## Authentication
 

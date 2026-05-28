@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -117,6 +118,38 @@ func (d *DockerOrchestrator) CloneVolume(ctx context.Context, srcVolName, dstVol
 	return d.copyVolume(ctx, srcVolName, dstVolName)
 }
 
+// ensureHostBindDir creates a host bind-mount source directory (recursively) if
+// it is within the CLAWORC_ALLOWED_HOST_MOUNTS allowlist. Re-checking the
+// allowlist here keeps directory creation safe even though the path was already
+// validated when the shared folder was created.
+func ensureHostBindDir(hostPath string) error {
+	clean := filepath.Clean(hostPath)
+	allowed := false
+	for _, prefix := range config.Cfg.AllowedHostMounts {
+		prefix = strings.TrimSpace(prefix)
+		if prefix == "" {
+			continue
+		}
+		prefix = filepath.Clean(prefix)
+		if clean == prefix || strings.HasPrefix(clean, prefix+"/") {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return fmt.Errorf("path is not within an allowed mount prefix")
+	}
+	if info, err := os.Stat(clean); err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("path exists but is not a directory")
+		}
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.MkdirAll(clean, 0o755)
+}
+
 func parseCPUToNanoCPUs(cpuStr string) int64 {
 	if strings.HasSuffix(cpuStr, "m") {
 		val := cpuStr[:len(cpuStr)-1]
@@ -198,16 +231,7 @@ func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreatePa
 	}
 
 	// Create shared folder volumes
-	for _, sfm := range params.SharedFolderMounts {
-		volName := fmt.Sprintf("claworc-shared-%d", sfm.VolumeID)
-		_, err := d.client.VolumeCreate(ctx, volume.CreateOptions{
-			Name:   volName,
-			Labels: map[string]string{"managed-by": labelManagedBy, "type": "shared-folder"},
-		})
-		if err != nil {
-			log.Printf("Shared volume %s may already exist: %v", volName, err)
-		}
-	}
+	d.ensureSharedVolumes(ctx, params.SharedFolderMounts)
 
 	progress("Creating container...")
 	return d.createContainer(ctx, params)
@@ -314,7 +338,19 @@ func (d *DockerOrchestrator) RestartInstance(ctx context.Context, name string, p
 	}
 
 	// Ensure shared folder volumes exist
-	for _, sfm := range params.SharedFolderMounts {
+	d.ensureSharedVolumes(ctx, params.SharedFolderMounts)
+
+	return d.createContainer(ctx, params)
+}
+
+// ensureSharedVolumes creates the managed Docker volumes backing each
+// non-host-backed shared folder. Existing volumes are tolerated.
+func (d *DockerOrchestrator) ensureSharedVolumes(ctx context.Context, mounts []SharedFolderMount) {
+	for _, sfm := range mounts {
+		// host-backed folders need no managed volume
+		if sfm.HostPath != "" {
+			continue
+		}
 		volName := fmt.Sprintf("claworc-shared-%d", sfm.VolumeID)
 		_, err := d.client.VolumeCreate(ctx, volume.CreateOptions{
 			Name:   volName,
@@ -324,8 +360,6 @@ func (d *DockerOrchestrator) RestartInstance(ctx context.Context, name string, p
 			log.Printf("Shared volume %s may already exist: %v", volName, err)
 		}
 	}
-
-	return d.createContainer(ctx, params)
 }
 
 func (d *DockerOrchestrator) UpdateImage(ctx context.Context, name string, params CreateParams) error {
@@ -371,6 +405,21 @@ func (d *DockerOrchestrator) createContainer(ctx context.Context, params CreateP
 		{Type: mount.TypeVolume, Source: d.volumeName(params.Name, "home"), Target: "/home/claworc"},
 	}
 	for _, sfm := range params.SharedFolderMounts {
+		if sfm.HostPath != "" {
+			// Create the host directory (recursively) so the bind mount can
+			// attach. Only paths within the operator allowlist are created, so
+			// a stale/shrunken allowlist can never auto-create arbitrary dirs.
+			if err := ensureHostBindDir(sfm.HostPath); err != nil {
+				return fmt.Errorf("prepare host mount %q: %w", sfm.HostPath, err)
+			}
+			mounts = append(mounts, mount.Mount{
+				Type:     mount.TypeBind,
+				Source:   sfm.HostPath,
+				Target:   sfm.MountPath,
+				ReadOnly: sfm.ReadOnly,
+			})
+			continue
+		}
 		mounts = append(mounts, mount.Mount{
 			Type:   mount.TypeVolume,
 			Source: fmt.Sprintf("claworc-shared-%d", sfm.VolumeID),
@@ -436,8 +485,12 @@ func (d *DockerOrchestrator) createContainer(ctx context.Context, params CreateP
 	}
 
 	// Fix ownership of shared folder mounts so the claworc user (1000:1000) can write to them.
-	// New Docker volumes are owned by root by default.
+	// New Docker volumes are owned by root by default. Host-backed bind mounts are
+	// skipped — we never modify ownership of the operator's host directories.
 	for _, sfm := range params.SharedFolderMounts {
+		if sfm.HostPath != "" {
+			continue
+		}
 		execCfg := container.ExecOptions{
 			Cmd: []string{"chown", "claworc:claworc", sfm.MountPath},
 		}

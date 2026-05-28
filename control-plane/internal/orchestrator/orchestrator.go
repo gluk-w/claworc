@@ -76,6 +76,11 @@ type ContainerOrchestrator interface {
 type SharedFolderMount struct {
 	VolumeID  uint   // SharedFolder.ID, used to derive volume name
 	MountPath string // Container mount path
+	// HostPath, when non-empty, makes this a host bind mount backed by the given
+	// host directory instead of a managed volume/PVC.
+	HostPath string
+	// ReadOnly mounts the source read-only (used for host-backed mounts).
+	ReadOnly bool
 }
 
 type CreateParams struct {

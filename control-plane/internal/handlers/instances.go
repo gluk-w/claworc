@@ -680,6 +680,8 @@ func getSharedFolderMounts(instanceID uint) []orchestrator.SharedFolderMount {
 		mounts = append(mounts, orchestrator.SharedFolderMount{
 			VolumeID:  sf.ID,
 			MountPath: sf.MountPath,
+			HostPath:  sf.HostPath,
+			ReadOnly:  sf.ReadOnly,
 		})
 	}
 	return mounts
