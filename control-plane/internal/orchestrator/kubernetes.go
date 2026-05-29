@@ -761,11 +761,11 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 func buildInitContainers(sfMounts []SharedFolderMount, privileged bool) []corev1.Container {
 	containers := []corev1.Container{{
 		Name:  "fix-home-selinux",
-		Image: "busybox:latest",
-		// chcon may fail on non-SELinux filesystems or nodes — that's fine,
-		// the `|| true` keeps the pod startable on plain Ubuntu/COS clusters.
+		Image: "quay.io/fedora/fedora-minimal:latest",
+		// chcon may fail on non-SELinux nodes — || true keeps the pod startable.
+		// Errors are intentionally left on stderr so they appear in pod logs.
 		Command: []string{"sh", "-c",
-			"chcon -R -l s0:c0,c0 /home/claworc /home/linuxbrew/.linuxbrew 2>/dev/null || true"},
+			"chcon -R -l s0:c0,c0 /home/claworc /home/linuxbrew/.linuxbrew || true"},
 		SecurityContext: &corev1.SecurityContext{Privileged: &privileged},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "home-data", MountPath: "/home/claworc"},
