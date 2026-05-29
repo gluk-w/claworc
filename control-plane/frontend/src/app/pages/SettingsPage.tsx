@@ -12,6 +12,9 @@ import {
 import ProviderIcon from "@common/components/ProviderIcon";
 import ProviderModal from "@common/components/ProviderModal";
 import EnvVarsEditor from "@common/components/EnvVarsEditor";
+import SimpleKVEditor from "@common/components/SimpleKVEditor";
+import TolerationsEditor from "@common/components/TolerationsEditor";
+import { useHealth } from "@common/hooks/useHealth";
 import StickyActionBar from "@common/components/StickyActionBar";
 import Page from "@common/components/Page";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -482,6 +485,41 @@ function EnvironmentTab({
   handleSaveEnvVars: (delta: { set: Record<string, string>; unset: string[] }) => Promise<void>;
   isSaving: boolean;
 }) {
+  const { data: health } = useHealth();
+  const isKubernetes = health?.orchestrator_backend === "kubernetes";
+  const placementMutation = useUpdateSettings();
+  const [editingGlobalAffinity, setEditingGlobalAffinity] = useState(false);
+  const [pendingGlobalAffinity, setPendingGlobalAffinity] = useState("");
+  const [globalAffinityError, setGlobalAffinityError] = useState<string | null>(null);
+
+  const handleSaveGlobalPodAnnotations = async (next: Record<string, string>) => {
+    await placementMutation.mutateAsync({ default_pod_annotations: next });
+  };
+  const handleSaveGlobalNodeSelector = async (next: Record<string, string>) => {
+    await placementMutation.mutateAsync({ default_node_selector: next });
+  };
+  const handleSaveGlobalTolerations = async (next: import("@common/types/instance").Toleration[]) => {
+    await placementMutation.mutateAsync({ default_tolerations: next });
+  };
+  const handleSaveGlobalAffinity = async () => {
+    const trimmed = pendingGlobalAffinity.trim();
+    if (trimmed !== "") {
+      try {
+        JSON.parse(trimmed);
+      } catch {
+        setGlobalAffinityError("Invalid JSON — check syntax and try again.");
+        return;
+      }
+    }
+    try {
+      await placementMutation.mutateAsync({ default_affinity: trimmed });
+      setEditingGlobalAffinity(false);
+      setGlobalAffinityError(null);
+    } catch (err) {
+      setGlobalAffinityError(err instanceof Error ? err.message : "Failed to save.");
+    }
+  };
+
   const resourceFields: {
     key: string;
     label: string;
@@ -618,6 +656,117 @@ function EnvironmentTab({
         isSaving={isSaving}
         emptyMessage="No global environment variables set."
       />
+
+      {/* Pod Placement — Kubernetes only */}
+      {isKubernetes && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+          <div>
+            <h3 className="text-sm font-medium text-gray-900 mb-0.5">Pod Placement</h3>
+            <p className="text-xs text-gray-500">
+              Global defaults applied to every pod. Per-instance settings merge on top (maps) or append (tolerations).
+            </p>
+          </div>
+
+          <SimpleKVEditor
+            values={settings.default_pod_annotations ?? {}}
+            title="Pod Annotations"
+            description="Annotations applied to every pod template by default."
+            onSave={handleSaveGlobalPodAnnotations}
+            isSaving={placementMutation.isPending}
+            emptyMessage="No global pod annotations."
+            keyPlaceholder="karpenter.sh/do-not-disrupt"
+            valuePlaceholder="true"
+          />
+
+          <SimpleKVEditor
+            values={settings.default_node_selector ?? {}}
+            title="Node Selector"
+            description="Schedule all pods on nodes matching these labels unless overridden per-instance."
+            onSave={handleSaveGlobalNodeSelector}
+            isSaving={placementMutation.isPending}
+            emptyMessage="No global node selector."
+            keyPlaceholder="topology.kubernetes.io/zone"
+            valuePlaceholder="us-east-1a"
+          />
+
+          <TolerationsEditor
+            values={settings.default_tolerations ?? []}
+            onSave={handleSaveGlobalTolerations}
+            isSaving={placementMutation.isPending}
+          />
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium text-gray-700">Affinity (JSON)</span>
+              {!editingGlobalAffinity && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingGlobalAffinity(settings.default_affinity ?? "");
+                    setGlobalAffinityError(null);
+                    setEditingGlobalAffinity(true);
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mb-2">
+              Raw K8s affinity spec. Used when an instance has no per-instance affinity set.
+            </p>
+            {!editingGlobalAffinity ? (
+              settings.default_affinity ? (
+                <pre className="text-xs font-mono text-gray-700 bg-gray-50 rounded p-3 overflow-x-auto whitespace-pre-wrap break-all">
+                  {(() => {
+                    try {
+                      return JSON.stringify(JSON.parse(settings.default_affinity), null, 2);
+                    } catch {
+                      return settings.default_affinity;
+                    }
+                  })()}
+                </pre>
+              ) : (
+                <p className="text-sm text-gray-400 italic">No global affinity configured.</p>
+              )
+            ) : (
+              <div>
+                <textarea
+                  value={pendingGlobalAffinity}
+                  onChange={(e) => {
+                    setPendingGlobalAffinity(e.target.value);
+                    setGlobalAffinityError(null);
+                  }}
+                  rows={8}
+                  placeholder={'{\n  "nodeAffinity": {\n    ...\n  }\n}'}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                />
+                {globalAffinityError && (
+                  <p className="text-xs text-red-600 mt-1">{globalAffinityError}</p>
+                )}
+                <div className="flex justify-end gap-3 mt-3">
+                  <button
+                    type="button"
+                    onClick={() => { setEditingGlobalAffinity(false); setGlobalAffinityError(null); }}
+                    disabled={placementMutation.isPending}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveGlobalAffinity}
+                    disabled={placementMutation.isPending}
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {placementMutation.isPending ? "Saving..." : "Save"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

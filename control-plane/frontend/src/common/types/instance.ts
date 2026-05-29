@@ -52,6 +52,10 @@ export interface Instance {
   browser_storage?: string;
   browser_active?: boolean;
   team_id: number;
+  pod_annotations: Record<string, string>;
+  node_selector: Record<string, string>;
+  tolerations: Toleration[];
+  affinity: string;
 }
 
 // Keep as distinct type for future detail-only fields
@@ -81,6 +85,14 @@ export interface InstanceCreatePayload {
   team_id?: number;
 }
 
+export interface Toleration {
+  key?: string;
+  operator: "Equal" | "Exists";
+  value?: string;
+  effect?: "NoSchedule" | "PreferNoSchedule" | "NoExecute" | "";
+  tolerationSeconds?: number;
+}
+
 export interface InstanceUpdatePayload {
   brave_api_key?: string;
   models?: { disabled: string[]; extra: string[] };
@@ -102,6 +114,10 @@ export interface InstanceUpdatePayload {
   browser_idle_minutes?: number | null;
   browser_storage?: string;
   team_id?: number;
+  pod_annotations?: Record<string, string>;
+  node_selector?: Record<string, string>;
+  tolerations?: Toleration[];
+  affinity?: string;
 }
 
 export interface InstanceStats {
