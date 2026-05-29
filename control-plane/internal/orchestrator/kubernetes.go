@@ -761,7 +761,7 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 func buildInitContainers(sfMounts []SharedFolderMount, privileged bool) []corev1.Container {
 	containers := []corev1.Container{{
 		Name:  "fix-home-selinux",
-		Image: "quay.io/fedora/fedora-minimal:latest",
+		Image: "fedora:latest",
 		// chcon may fail on non-SELinux nodes — || true keeps the pod startable.
 		// Errors are intentionally left on stderr so they appear in pod logs.
 		Command: []string{"sh", "-c",
