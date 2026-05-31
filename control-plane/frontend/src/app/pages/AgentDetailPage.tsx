@@ -50,6 +50,7 @@ import EnvVarsEditor from "@common/components/EnvVarsEditor";
 import WebhookSection from "@common/components/WebhookSection";
 import LegacyBrowserBanner from "@common/components/LegacyBrowserBanner";
 import AppToast from "@common/components/AppToast";
+import { infoToast } from "@common/utils/toast";
 import toast from "react-hot-toast";
 import { useSSHStatus, useSSHEvents } from "@common/hooks/useSSHStatus";
 import { useInstanceLogs } from "@common/hooks/useInstanceLogs";
@@ -555,11 +556,16 @@ export default function AgentDetailPage() {
           onClone={(id) =>
             cloneMutation.mutate({ id, displayName: instance.display_name })
           }
-          onDelete={(id) =>
-            deleteMutation.mutate(id, {
-              onSuccess: () => navigate("/"),
-            })
-          }
+          onDelete={(id) => {
+            // Kick off deletion and leave the detail page right away — the agent
+            // is gone from the user's perspective. The slow browser-pod teardown
+            // finishes in the background; useDeleteInstance invalidates the list
+            // on success and surfaces an errorToast on failure (both fire even
+            // after we navigate away).
+            deleteMutation.mutate(id);
+            infoToast("Deleting agent…", instance.display_name);
+            navigate("/");
+          }}
         />
       </div>
 
