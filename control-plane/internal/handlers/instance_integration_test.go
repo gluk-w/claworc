@@ -23,7 +23,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
-	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
+	"github.com/gluk-w/claworc/control-plane/internal/internalproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
@@ -90,7 +90,7 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 	// Otherwise pick a random free port so tests don't conflict with the local dev server.
 	var gatewayPort int
 	if os.Getenv("CLAWORC_LLM_GATEWAY_PORT") != "" {
-		gatewayPort = config.Cfg.LLMGatewayPort
+		gatewayPort = config.Cfg.InternalProxyPort
 	} else {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
@@ -98,7 +98,7 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 		}
 		gatewayPort = ln.Addr().(*net.TCPAddr).Port
 		ln.Close()
-		config.Cfg.LLMGatewayPort = gatewayPort
+		config.Cfg.InternalProxyPort = gatewayPort
 	}
 
 	sshSigner, sshPublicKey, err := sshproxy.EnsureKeyPair(dataDir)
@@ -144,10 +144,10 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 		log.Fatalf("orchestrator init: %v", err)
 	}
 
-	if err := llmgateway.Start(ctx, "127.0.0.1", gatewayPort); err != nil {
+	if err := internalproxy.Start(ctx, "127.0.0.1", gatewayPort); err != nil {
 		log.Fatalf("LLM gateway start: %v", err)
 	}
-	tunnelMgr.SetLLMGatewayAddr(fmt.Sprintf("127.0.0.1:%d", gatewayPort))
+	tunnelMgr.SetInternalProxyAddr(fmt.Sprintf("127.0.0.1:%d", gatewayPort))
 
 	if orch := orchestrator.Get(); orch != nil {
 		sshMgr.SetOrchestrator(orch)
@@ -312,7 +312,7 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 func TestMain(m *testing.M) {
 	url, cancel, cleanup := launchEmbeddedServer()
 	sessionURL = url
-	sessionGatewayPort = config.Cfg.LLMGatewayPort
+	sessionGatewayPort = config.Cfg.InternalProxyPort
 	code := m.Run()
 	cancel()
 	cleanup()

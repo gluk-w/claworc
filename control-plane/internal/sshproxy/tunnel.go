@@ -97,7 +97,7 @@ type TunnelManager struct {
 	cancel       context.CancelFunc
 	healthCancel context.CancelFunc
 
-	llmGatewayAddr string // local address of the LLM gateway (set by SetLLMGatewayAddr)
+	internalProxyAddr string // local address of the LLM gateway (set by SetInternalProxyAddr)
 
 	// cdpDialProvider, when set, lets the reconciler ask "should this instance
 	// get a CDP agent-listener tunnel?" once per StartTunnelsForInstance. ok=true
@@ -134,11 +134,11 @@ func NewTunnelManager(sshMgr *SSHManager) *TunnelManager {
 	}
 }
 
-// SetLLMGatewayAddr sets the local address of the LLM gateway for agent-listener tunnels.
+// SetInternalProxyAddr sets the local address of the LLM gateway for agent-listener tunnels.
 // Call this before the background tunnel manager starts reconciling.
-func (tm *TunnelManager) SetLLMGatewayAddr(addr string) {
+func (tm *TunnelManager) SetInternalProxyAddr(addr string) {
 	tm.mu.Lock()
-	tm.llmGatewayAddr = addr
+	tm.internalProxyAddr = addr
 	tm.mu.Unlock()
 }
 
@@ -354,11 +354,11 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID
 	if !needsRecreation {
 		// Healthy: ensure missing optional tunnels (LLMProxy, CDP) are created.
 		tm.mu.RLock()
-		llmAddr := tm.llmGatewayAddr
+		internalAddr := tm.internalProxyAddr
 		hasLLMProxy := false
 		hasCDP := false
 		for _, t := range tm.tunnels[instanceID] {
-			if t.Label == "LLMProxy" && t.Status == "active" {
+			if t.Label == "InternalProxy" && t.Status == "active" {
 				hasLLMProxy = true
 			}
 			// CDP "idle" means the listener is alive but the browser pod is
@@ -368,13 +368,13 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID
 			}
 		}
 		tm.mu.RUnlock()
-		if llmAddr != "" && !hasLLMProxy {
+		if internalAddr != "" && !hasLLMProxy {
 			var agentPort int
-			fmt.Sscanf(llmAddr, "127.0.0.1:%d", &agentPort)
+			fmt.Sscanf(internalAddr, "127.0.0.1:%d", &agentPort)
 			if agentPort == 0 {
 				agentPort = 40001
 			}
-			if err := tm.CreateAgentListenerTunnel(ctx, instanceID, "LLMProxy", agentPort, llmAddr); err != nil {
+			if err := tm.CreateAgentListenerTunnel(ctx, instanceID, "InternalProxy", agentPort, internalAddr); err != nil {
 				log.Printf("Failed to create LLM proxy tunnel for instance %d: %v", instanceID, err)
 			}
 		}
@@ -422,16 +422,16 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID
 
 	// Create LLM proxy agent-listener tunnel if gateway is configured
 	tm.mu.RLock()
-	llmAddr := tm.llmGatewayAddr
+	internalAddr := tm.internalProxyAddr
 	tm.mu.RUnlock()
-	if llmAddr != "" {
+	if internalAddr != "" {
 		// Extract port from the LLM gateway address for use as the agent-side port
 		var agentPort int
-		fmt.Sscanf(llmAddr, "127.0.0.1:%d", &agentPort)
+		fmt.Sscanf(internalAddr, "127.0.0.1:%d", &agentPort)
 		if agentPort == 0 {
 			agentPort = 40001
 		}
-		if err := tm.CreateAgentListenerTunnel(ctx, instanceID, "LLMProxy", agentPort, llmAddr); err != nil {
+		if err := tm.CreateAgentListenerTunnel(ctx, instanceID, "InternalProxy", agentPort, internalAddr); err != nil {
 			log.Printf("Failed to create LLM proxy tunnel for instance %d: %v", instanceID, err)
 		}
 	}

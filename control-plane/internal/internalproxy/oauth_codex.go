@@ -9,7 +9,7 @@
 // id via a per-provider sync.Mutex so a burst of in-flight requests triggers
 // only one network refresh.
 
-package llmgateway
+package internalproxy
 
 import (
 	"context"
@@ -38,7 +38,7 @@ const (
 	// accepted. The control plane does NOT bind this port — see oauth_login.go
 	// for the manual-paste flow that lets users complete login without
 	// reachability to the control plane.
-	CodexOAuthRedirectURI = "http://localhost:1455/auth/callback"
+	CodexOAuthRedirectURI  = "http://localhost:1455/auth/callback"
 	CodexOAuthAuthorizeURL = "https://auth.openai.com/oauth/authorize"
 	CodexOAuthTokenURL     = "https://auth.openai.com/oauth/token"
 	CodexOAuthScope        = "openid profile email offline_access"

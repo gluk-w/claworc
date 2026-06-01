@@ -48,6 +48,7 @@ import ProviderModelSelector from "@common/components/ProviderModelSelector";
 import ProviderModal from "@common/components/ProviderModal";
 import EnvVarsEditor from "@common/components/EnvVarsEditor";
 import WebhookSection from "@common/components/WebhookSection";
+import ConnectionsSection from "@common/components/ConnectionsSection";
 import LegacyBrowserBanner from "@common/components/LegacyBrowserBanner";
 import AppToast from "@common/components/AppToast";
 import { infoToast } from "@common/utils/toast";
@@ -1036,6 +1037,9 @@ export default function AgentDetailPage() {
 
           {/* Webhook (per-instance) — admins and team managers */}
           <WebhookSection instanceId={instanceId} />
+
+          {/* Composio connections (per-instance) */}
+          <ConnectionsSection instanceId={instanceId} />
 
           {/* SSH Connection Status */}
           <SSHStatus

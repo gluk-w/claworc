@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
-	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
+	"github.com/gluk-w/claworc/control-plane/internal/internalproxy"
 )
 
 // setupProvidersTestDB augments the shared setupTestDB with the LLMProvider
@@ -23,15 +23,15 @@ func setupProvidersTestDB(t *testing.T) {
 	}
 }
 
-// stubTokenServer points the llmgateway token endpoint at a local httptest
+// stubTokenServer points the internalproxy token endpoint at a local httptest
 // server with the given handler. Returns a cleanup that restores the URL.
 func stubTokenServer(t *testing.T, h http.HandlerFunc) func() {
 	t.Helper()
 	srv := httptest.NewServer(h)
-	prev := llmgateway.OverrideCodexTokenURLForTest(srv.URL)
+	prev := internalproxy.OverrideCodexTokenURLForTest(srv.URL)
 	return func() {
 		srv.Close()
-		llmgateway.OverrideCodexTokenURLForTest(prev)
+		internalproxy.OverrideCodexTokenURLForTest(prev)
 	}
 }
 

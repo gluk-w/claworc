@@ -6,7 +6,7 @@
 // looks up the real provider URL and API key, and proxies the request to the actual LLM
 // provider using the correct auth header for the provider's API type.
 
-package llmgateway
+package internalproxy
 
 import (
 	"bytes"
@@ -51,7 +51,7 @@ var gatewayServer *http.Server
 // extraRoutes lets callers (main.go) register additional routes on the
 // gateway mux before Start binds. Used for the private webhook trigger
 // route, whose handler lives in the handlers package (which already
-// imports llmgateway, so we can't go the other direction). Each entry
+// imports internalproxy, so we can't go the other direction). Each entry
 // installs a path prefix → handler on the mux.
 type extraRoute struct {
 	pattern string

@@ -1,7 +1,7 @@
 // keys.go manages per-instance per-provider gateway auth keys.
 // Gateway keys use the "claworc-vk-<random>" prefix.
 
-package llmgateway
+package internalproxy
 
 import (
 	"crypto/rand"

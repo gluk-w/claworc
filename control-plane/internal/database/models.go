@@ -34,6 +34,8 @@ type (
 	WebAuthnCredential = models.WebAuthnCredential
 	WebhookApiKey      = models.WebhookApiKey
 	WebhookLog         = models.WebhookLog
+	ComposioConnection = models.ComposioConnection
+	ComposioAuthConfig = models.ComposioAuthConfig
 )
 
 // Helper re-exports keep `database.ParseTeamIDs(...)` etc. working for
