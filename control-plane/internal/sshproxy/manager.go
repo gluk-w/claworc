@@ -75,8 +75,19 @@ type SSHManager struct {
 
 	// Host key store for Trust On First Use (TOFU) verification.
 	// Maps instance ID to the host key seen on first connection.
-	hostKeyMu sync.RWMutex
-	hostKeys  map[uint]ssh.PublicKey
+	hostKeyMu    sync.RWMutex
+	hostKeys     map[uint]*hostKeyEntry
+	hostKeyStore HostKeyStore // optional persistence; nil = in-memory only
+}
+
+// hostKeyEntry tracks a verified SSH host key and whether it was loaded from
+// persistent storage (fromDB=true) vs established in the current session
+// (fromDB=false). Keys loaded from the DB are accepted more leniently on
+// mismatch — if the pod restarted while the platform was down, the stored key
+// is stale and the new key should be trusted via TOFU.
+type hostKeyEntry struct {
+	key    ssh.PublicKey
+	fromDB bool
 }
 
 // managedConn wraps an SSH client with its cancel function for stopping keepalive.
@@ -107,26 +118,52 @@ func (m *SSHManager) hostKeyCallback(instanceID uint) ssh.HostKeyCallback {
 		if !exists {
 			m.hostKeyMu.Lock()
 			// Double-check after acquiring write lock.
-			if known2, exists2 := m.hostKeys[instanceID]; exists2 {
+			if entry2, exists2 := m.hostKeys[instanceID]; exists2 {
 				m.hostKeyMu.Unlock()
-				if string(known2.Marshal()) != string(key.Marshal()) {
+				if string(entry2.key.Marshal()) != string(key.Marshal()) {
 					return fmt.Errorf("host key mismatch for instance %d: expected %s, got %s",
-						instanceID, ssh.FingerprintSHA256(known2), ssh.FingerprintSHA256(key))
+						instanceID, ssh.FingerprintSHA256(entry2.key), ssh.FingerprintSHA256(key))
 				}
 				return nil
 			}
-			m.hostKeys[instanceID] = key
+			m.hostKeys[instanceID] = &hostKeyEntry{key: key, fromDB: false}
+			store := m.hostKeyStore
+			m.hostKeyMu.Unlock()
 			log.Printf("[ssh] Stored host key for instance %d (%s %s)",
 				instanceID, key.Type(), ssh.FingerprintSHA256(key))
-			m.hostKeyMu.Unlock()
+			m.persistHostKey(store, instanceID, key)
 			return nil
 		}
 
-		if string(known.Marshal()) != string(key.Marshal()) {
+		if string(known.key.Marshal()) != string(key.Marshal()) {
+			if known.fromDB {
+				// Key was loaded from DB persistence; the pod probably restarted
+				// while the platform was down. Accept the new key via TOFU and
+				// update the store so future restarts see the current key.
+				log.Printf("[ssh] Host key changed for instance %d (stale DB entry, accepting new key via TOFU): old=%s new=%s",
+					instanceID, ssh.FingerprintSHA256(known.key), ssh.FingerprintSHA256(key))
+				m.hostKeyMu.Lock()
+				m.hostKeys[instanceID] = &hostKeyEntry{key: key, fromDB: false}
+				store := m.hostKeyStore
+				m.hostKeyMu.Unlock()
+				m.persistHostKey(store, instanceID, key)
+				return nil
+			}
 			return fmt.Errorf("host key mismatch for instance %d: expected %s, got %s",
-				instanceID, ssh.FingerprintSHA256(known), ssh.FingerprintSHA256(key))
+				instanceID, ssh.FingerprintSHA256(known.key), ssh.FingerprintSHA256(key))
 		}
 		return nil
+	}
+}
+
+// persistHostKey saves a host key to the store in the background. Errors are
+// logged but do not affect the SSH connection — persistence is best-effort.
+func (m *SSHManager) persistHostKey(store HostKeyStore, instanceID uint, key ssh.PublicKey) {
+	if store == nil {
+		return
+	}
+	if err := store.Save(instanceID, key.Marshal()); err != nil {
+		log.Printf("[ssh] Failed to persist host key for instance %d: %v", instanceID, err)
 	}
 }
 
@@ -134,7 +171,22 @@ func (m *SSHManager) hostKeyCallback(instanceID uint) ssh.HostKeyCallback {
 func (m *SSHManager) ClearHostKey(instanceID uint) {
 	m.hostKeyMu.Lock()
 	delete(m.hostKeys, instanceID)
+	store := m.hostKeyStore
 	m.hostKeyMu.Unlock()
+	if store != nil {
+		if err := store.Delete(instanceID); err != nil {
+			log.Printf("[ssh] Failed to delete persisted host key for instance %d: %v", instanceID, err)
+		}
+	}
+}
+
+// ResetInstance clears the stored host key and rate-limit state for an instance.
+// Call this when a bot pod is restarted so the next connection attempt proceeds
+// without a stale host key or accumulated failure cooldown.
+func (m *SSHManager) ResetInstance(instanceID uint) {
+	m.ClearHostKey(instanceID)
+	m.rateLimiter.Reset(instanceID)
+	log.Printf("[ssh] Reset host key and rate limit state for instance %d", instanceID)
 }
 
 // getPublicKey returns the current public key string, safe for concurrent use during key rotation.
@@ -166,8 +218,33 @@ func NewSSHManager(privateKey ssh.Signer, publicKey string) *SSHManager {
 		stateTracker: newStateTracker(),
 		eventLog:     newEventLog(),
 		rateLimiter:  NewRateLimiter(),
-		hostKeys:     make(map[uint]ssh.PublicKey),
+		hostKeys:     make(map[uint]*hostKeyEntry),
 	}
+}
+
+// SetHostKeyStore wires a persistent store into the manager and pre-loads all
+// previously seen host keys. Call this once during initialisation, before any
+// connections are established. If the store returns an error, the method logs
+// the failure and continues with in-memory-only mode (safe, but means a fresh
+// TOFU round after every platform restart until the store becomes healthy).
+func (m *SSHManager) SetHostKeyStore(store HostKeyStore) {
+	all, err := store.LoadAll()
+	if err != nil {
+		log.Printf("[ssh] Failed to load persisted host keys (in-memory only): %v", err)
+		return
+	}
+	m.hostKeyMu.Lock()
+	for instanceID, raw := range all {
+		key, err := ssh.ParsePublicKey(raw)
+		if err != nil {
+			log.Printf("[ssh] Skipping corrupt persisted key for instance %d: %v", instanceID, err)
+			continue
+		}
+		m.hostKeys[instanceID] = &hostKeyEntry{key: key, fromDB: true}
+	}
+	m.hostKeyStore = store
+	m.hostKeyMu.Unlock()
+	log.Printf("[ssh] Loaded %d host key(s) from persistent store", len(all))
 }
 
 // RateLimiter returns the connection rate limiter for external inspection.

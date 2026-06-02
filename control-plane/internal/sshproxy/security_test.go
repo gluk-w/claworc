@@ -621,7 +621,7 @@ func TestSecurity_HostKeyIsolationBetweenInstances(t *testing.T) {
 	}
 
 	// Keys should be different (different servers)
-	if string(key1.Marshal()) == string(key2.Marshal()) {
+	if string(key1.key.Marshal()) == string(key2.key.Marshal()) {
 		t.Error("different servers should have different host keys")
 	}
 }

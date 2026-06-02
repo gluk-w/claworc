@@ -1121,6 +1121,7 @@ type instanceUpdateRequest struct {
 	BrowserIdleMinutes *int              `json:"browser_idle_minutes"` // non-legacy only; null = global default
 	BrowserStorage     *string           `json:"browser_storage"`      // non-legacy only
 	TeamID             *uint             `json:"team_id"`              // admin or manager of both source+target
+	ContainerImage     *string           `json:"container_image"`      // admin only
 }
 
 func UpdateInstance(w http.ResponseWriter, r *http.Request) {
@@ -1333,6 +1334,18 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		database.DB.Model(&inst).Update("vnc_resolution", *body.VNCResolution)
+	}
+
+	// Update container image (admin only). Only updates the DB record — the
+	// running deployment is not restarted. Use the Update Image button in the
+	// UI (or POST /update-image) to apply the new image to a running instance.
+	if body.ContainerImage != nil {
+		user := middleware.GetUser(r)
+		if user == nil || user.Role != "admin" {
+			writeError(w, http.StatusForbidden, "Only admins can change the container image")
+			return
+		}
+		database.DB.Model(&inst).Update("container_image", *body.ContainerImage)
 	}
 
 	// Update env vars (PATCH-style: set+unset). Only write and restart when the
