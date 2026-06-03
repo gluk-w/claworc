@@ -345,18 +345,64 @@ func UploadSkill(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, skillToResponse(skill))
 }
 
+// isSafeSlug reports whether slug is a single, safe path component: non-empty,
+// no path separators, and not a "." / ".." traversal element.
+func isSafeSlug(slug string) bool {
+	if slug == "" || slug == "." || slug == ".." {
+		return false
+	}
+	if strings.ContainsRune(slug, '/') || strings.ContainsRune(slug, '\\') {
+		return false
+	}
+	// filepath.Clean of a safe single component is the component itself.
+	return filepath.Clean(slug) == slug
+}
+
+// safeJoin joins a user-supplied (slash-separated) relative name onto baseDir,
+// guaranteeing the result stays within baseDir. It rejects absolute paths and
+// any ".." traversal that would escape baseDir.
+func safeJoin(baseDir, name string) (string, error) {
+	cleanName := path.Clean("/" + filepath.ToSlash(name)) // force-rooted, collapses ".."
+	rel := strings.TrimPrefix(cleanName, "/")
+	if rel == "" || rel == "." {
+		return "", fmt.Errorf("empty path")
+	}
+	dest := filepath.Join(baseDir, filepath.FromSlash(rel))
+	// Defense in depth: confirm dest is contained within baseDir.
+	prefix := baseDir + string(os.PathSeparator)
+	if dest != baseDir && !strings.HasPrefix(dest, prefix) {
+		return "", fmt.Errorf("path escapes base directory")
+	}
+	return dest, nil
+}
+
 // saveSkillToLibrary writes the given file map to {DataPath}/skills/{slug} and
 // creates the matching database record. The caller is responsible for any
 // pre-existing slug handling (overwrite, unique-suffix, etc.). On DB failure the
 // freshly-written directory is removed so the filesystem and DB stay in sync.
 func saveSkillToLibrary(slug string, fm *skillFrontmatter, files map[string][]byte) (database.Skill, error) {
-	destDir := filepath.Join(config.Cfg.DataPath, "skills", slug)
+	// The slug and file names originate from user-controlled input (request body
+	// and downloaded archive entry names). Validate them so the resulting paths
+	// cannot escape {DataPath}/skills via separators or ".." traversal.
+	if !isSafeSlug(slug) {
+		return database.Skill{}, fmt.Errorf("invalid skill slug %q", slug)
+	}
+
+	skillsRoot := filepath.Join(config.Cfg.DataPath, "skills")
+	destDir, err := safeJoin(skillsRoot, slug)
+	if err != nil {
+		return database.Skill{}, fmt.Errorf("invalid skill slug %q: %w", slug, err)
+	}
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return database.Skill{}, fmt.Errorf("create skill directory: %w", err)
 	}
 
 	for name, data := range files {
-		destPath := filepath.Join(destDir, filepath.FromSlash(name))
+		destPath, err := safeJoin(destDir, name)
+		if err != nil {
+			os.RemoveAll(destDir)
+			return database.Skill{}, fmt.Errorf("invalid skill file path %q: %w", name, err)
+		}
 		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 			os.RemoveAll(destDir)
 			return database.Skill{}, fmt.Errorf("create directory: %w", err)
