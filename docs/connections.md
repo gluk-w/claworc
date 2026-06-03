@@ -94,9 +94,30 @@ derived value — any client-supplied `user_id`/`connected_account_id` is stripp
 `GET /tools` is scoped to the instance's `ACTIVE` toolkits; with no connections it
 returns an empty list rather than the full catalog.
 
-> OpenClaw does not have a generic HTTP-tool config, so wiring the agent to these
-> endpoints (e.g. a skill per connection) is left to the user — the control plane
-> only brokers the HTTP and injects the secret.
+## Generated skill
+
+When a connection becomes `ACTIVE`, the control plane auto-generates an OpenClaw
+skill and writes it into the instance at
+`/home/claworc/.openclaw/skills/claworc-<toolkit-slug>/SKILL.md`.
+
+- **Name** — `claworc-<toolkit-slug>` (e.g. `claworc-gmail`).
+- **Description** — `Integration with <Toolkit Name>. <toolkit description>` (the
+  description is fetched from Composio).
+- **Body** — a discovery `curl` recipe (`GET /connections/tools`) followed by one
+  section per tool. Each tool section lists the tool description, every input and
+  output parameter (name, type, required flag, description), and a complete
+  example `curl` request (full execute URL, `Authorization` header, and a JSON
+  request body with a placeholder per input parameter). The instance's connection
+  secret value is baked directly into the `Authorization: Bearer …` header of
+  every example.
+
+The skill is (re)generated on connect and whenever the instance reconnects over
+SSH (so it survives container recreation), and removed on disconnect — unless
+another active connection still uses the same toolkit.
+
+Generation lives in `internal/internalproxy/composio_skill.go`
+(`GenerateConnectionSkill` / `BuildConnectionSkill`); deployment over SSH reuses
+the existing skill-deploy path in `internal/handlers/`.
 
 ## Lifecycle
 
@@ -104,7 +125,8 @@ returns an empty list rather than the full catalog.
   survive because Composio holds the tokens keyed by the stable UUID-derived
   `user_id`.
 - **Connection delete** — best-effort delete of the Composio connected account,
-  then the local row is removed.
+  then the local row is removed, then the generated skill is removed from the
+  instance (unless another active connection still uses the same toolkit).
 - **Instance delete** — best-effort delete of every connected account, then the
   connection rows are removed; the secret dies with the instance row.
 
@@ -124,6 +146,7 @@ returns an empty list rather than the full catalog.
 |------|-------------|
 | `control-plane/internal/internalproxy/composio.go` | `/connections/` broker (allowlist, key/user_id injection) |
 | `control-plane/internal/internalproxy/composio_client.go` | Control-plane Composio REST client (wizard) |
+| `control-plane/internal/internalproxy/composio_skill.go` | Generates the `claworc-<toolkit>` skill (toolkit/tool fetch + SKILL.md builder) |
 | `control-plane/internal/internalproxy/connection_keys.go` | `CLAWORC_CONNECTION_SECRET` generation / resolution |
 | `control-plane/internal/handlers/composio.go` | REST handlers for the wizard + connection CRUD |
 | `control-plane/internal/database/models/models.go` | `ComposioConnection`, `ComposioAuthConfig` |

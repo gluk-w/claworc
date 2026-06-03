@@ -21,6 +21,7 @@ const tunnelLabelMap: Record<string, string> = {
   CDP: "Browser CDP",
   Gateway: "OpenClaw",
   LLMProxy: "API Gateway",
+  InternalProxy: "Internal Proxy",
 };
 
 interface SSHStatusProps {

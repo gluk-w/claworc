@@ -1,0 +1,85 @@
+---
+title: "Connections"
+description: "Connect OAuth services like Gmail and Google Analytics to an OpenClaw instance"
+sidebarTitle: "Connections"
+---
+
+## Overview
+
+Connections let an OpenClaw instance use OAuth-backed services — Gmail, Google
+Analytics, and many others — through [Composio](https://composio.dev). The
+credentials never reach the instance: the control plane holds your Composio API
+key and brokers every request, so an instance can act on a connected account
+without ever seeing a token.
+
+Each instance has its own set of connections.
+
+## Prerequisites
+
+A Composio API key must be set once for the whole dashboard.
+
+<Steps>
+  <Step title="Open settings">
+    Click **Settings**, then open the **API Keys** tab.
+  </Step>
+  <Step title="Add the Composio API key">
+    In the **Composio API Key** section, click **Change**, paste your key, and
+    save. The key is stored encrypted and is never sent to any instance.
+  </Step>
+</Steps>
+
+<Note>
+  Without a Composio API key, the **Add connection** wizard will report that
+  Composio is not configured.
+</Note>
+
+## Where to find it
+
+Open an OpenClaw instance and scroll the **Settings** tab to the **Connections**
+section, below **Webhook**.
+
+## Add a connection
+
+<Steps>
+  <Step title="Start the wizard">
+    Click **Add connection**. A window lists the services you can connect.
+  </Step>
+  <Step title="Pick a service">
+    Search for and select a service, such as **Gmail**.
+  </Step>
+  <Step title="Authorize">
+    A popup opens the provider's sign-in page. Sign in and approve access. The
+    popup closes itself when it finishes.
+  </Step>
+  <Step title="Done">
+    The connection appears in the list with an **Active** status once
+    authorization completes. The list refreshes automatically.
+  </Step>
+</Steps>
+
+<Tip>
+  If the popup is blocked, allow popups for the dashboard and try again — the
+  wizard also keeps checking the connection status on its own.
+</Tip>
+
+## Connection status
+
+Each connection shows one of:
+
+- **Active** — authorized and ready to use.
+- **Initiated** — authorization has not finished yet.
+- **Failed** / **Expired** — authorization did not complete or is no longer
+  valid. Remove the connection and add it again.
+
+## Remove a connection
+
+Click the trash icon next to a connection and confirm. This revokes the linked
+account at Composio and removes it from the instance.
+
+## How instances use a connection
+
+The instance reaches connected services only through Claworc's internal proxy,
+authenticated by a secret that Claworc injects into every instance automatically.
+Wiring a specific action into the agent — for example, a skill that sends an
+email — is up to you; the connection makes the service available, and the proxy
+keeps the credentials on the control plane.

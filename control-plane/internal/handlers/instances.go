@@ -1056,6 +1056,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), inst.Name, models, gatewayProviders, config.Cfg.InternalProxyPort)
+			deployActiveConnectionSkills(inst.ID)
 		})
 
 	var totalInstances int64
@@ -1413,6 +1414,7 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.InternalProxyPort)
+			deployActiveConnectionSkills(instID)
 		}()
 	}
 

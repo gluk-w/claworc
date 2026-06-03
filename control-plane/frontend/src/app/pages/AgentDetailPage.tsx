@@ -1035,11 +1035,11 @@ export default function AgentDetailPage() {
             </div>
           )}
 
-          {/* Webhook (per-instance) — admins and team managers */}
-          <WebhookSection instanceId={instanceId} />
-
           {/* Composio connections (per-instance) */}
           <ConnectionsSection instanceId={instanceId} />
+
+          {/* Webhook (per-instance) — admins and team managers */}
+          <WebhookSection instanceId={instanceId} />
 
           {/* SSH Connection Status */}
           <SSHStatus
