@@ -1,4 +1,4 @@
-package llmgateway
+package internalproxy
 
 import (
 	"encoding/json"

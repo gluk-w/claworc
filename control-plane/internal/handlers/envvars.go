@@ -18,6 +18,7 @@ import (
 var ReservedEnvVarNames = []string{
 	"OPENCLAW_GATEWAY_TOKEN",
 	"CLAWORC_INSTANCE_ID",
+	"CLAWORC_CONNECTION_SECRET",
 	"OPENCLAW_INITIAL_MODELS",
 	"OPENCLAW_INITIAL_PROVIDERS",
 }
@@ -88,7 +89,6 @@ func decryptEnvVars(encrypted map[string]string) map[string]string {
 	}
 	return out
 }
-
 
 // LoadGlobalEnvVars reads default_env_vars from the settings table and returns
 // the decrypted {KEY: value} map. Errors loading the setting are swallowed —

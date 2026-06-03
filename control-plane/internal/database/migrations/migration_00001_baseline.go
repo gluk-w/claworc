@@ -62,5 +62,7 @@ func AutoMigrateAll(gdb interface {
 		&models.TeamProvider{},
 		&models.WebhookApiKey{},
 		&models.WebhookLog{},
+		&models.ComposioConnection{},
+		&models.ComposioAuthConfig{},
 	)
 }

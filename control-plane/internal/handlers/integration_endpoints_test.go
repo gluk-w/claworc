@@ -524,7 +524,7 @@ func TestIntegration_LLMGateway(t *testing.T) {
 			json.NewDecoder(resp.Body).Decode(&status)
 			resp.Body.Close()
 			for _, tun := range status.Tunnels {
-				if tun.Label == "LLMProxy" && tun.Status == "active" {
+				if tun.Label == "InternalProxy" && tun.Status == "active" {
 					t.Logf("LLMProxy tunnel is active ✓")
 					goto tunnelReady
 				}

@@ -6,6 +6,8 @@ export interface RestartingInstance {
 
 export interface Settings {
   brave_api_key: string;
+  /** Masked Composio API key (e.g. "****abcd"). Empty if not configured. */
+  composio_api_key: string;
   default_models: string[];
   default_container_image: string;
   default_agent_image: string;
@@ -35,6 +37,7 @@ export interface Settings {
 export interface SettingsUpdatePayload {
   default_models?: string[];
   brave_api_key?: string;
+  composio_api_key?: string;
   default_container_image?: string;
   default_vnc_resolution?: string;
   default_cpu_request?: string;

@@ -22,7 +22,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
-	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
+	"github.com/gluk-w/claworc/control-plane/internal/internalproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/moderator"
 	"github.com/gluk-w/claworc/control-plane/internal/modwiring"
@@ -163,13 +163,18 @@ func main() {
 	// binds. The gateway is reachable only from inside instances, so this
 	// route is the inter-agent webhook surface authenticated by
 	// IsPrivate=true keys.
-	llmgateway.RegisterRoute("/webhooks/", handlers.PrivateWebhookTrigger)
+	internalproxy.RegisterRoute("/webhooks/", handlers.PrivateWebhookTrigger)
+
+	// Composio connections broker: lets instances reach Composio's REST API
+	// (authenticated by their CLAWORC_CONNECTION_SECRET) without holding the
+	// Composio API key. Same internal-only server / SSH tunnel as the LLM proxy.
+	internalproxy.RegisterRoute(internalproxy.ConnectionsPrefix, internalproxy.HandleConnections)
 
 	// Start LLM gateway (internal only, reachable via SSH agent-listener tunnel)
-	if err := llmgateway.Start(ctx, "127.0.0.1", config.Cfg.LLMGatewayPort); err != nil {
+	if err := internalproxy.Start(ctx, "127.0.0.1", config.Cfg.InternalProxyPort); err != nil {
 		log.Printf("WARNING: LLM gateway failed to start: %v", err)
 	}
-	tunnelMgr.SetLLMGatewayAddr(fmt.Sprintf("127.0.0.1:%d", config.Cfg.LLMGatewayPort))
+	tunnelMgr.SetInternalProxyAddr(fmt.Sprintf("127.0.0.1:%d", config.Cfg.InternalProxyPort))
 
 	// Configure SSH manager with orchestrator for automatic reconnection
 	if orch := orchestrator.Get(); orch != nil {
@@ -344,6 +349,13 @@ func main() {
 			r.Get("/instances/{id}/providers", handlers.ListInstanceProviders)
 			r.Post("/instances/{id}/update-image", handlers.UpdateInstanceImage)
 			r.Get("/ssh-fingerprint", handlers.GetSSHFingerprint)
+
+			// Composio connections
+			r.Get("/connections/toolkits", handlers.ListComposioToolkits)
+			r.Get("/instances/{id}/connections", handlers.ListConnections)
+			r.Post("/instances/{id}/connections", handlers.InitiateConnection)
+			r.Post("/instances/{id}/connections/confirm", handlers.ConfirmConnection)
+			r.Delete("/instances/{id}/connections/{connID}", handlers.DeleteConnection)
 
 			// Files
 			r.Get("/instances/{id}/files/browse", handlers.BrowseFiles)

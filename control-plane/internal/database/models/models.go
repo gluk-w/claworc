@@ -60,29 +60,36 @@ type Instance struct {
 	// UUID is a stable, non-enumerable identifier used in webhook URLs and
 	// any other surface that should not leak the sequential ID. Auto-filled
 	// by BeforeCreate; backfilled for pre-existing rows by migration 00007.
-	UUID             string `gorm:"uniqueIndex" json:"uuid"`
-	Name             string `gorm:"uniqueIndex;not null" json:"name"`
-	DisplayName      string `gorm:"not null" json:"display_name"`
-	Status           string `gorm:"not null;default:creating" json:"status"`
-	CPURequest       string `gorm:"default:500m" json:"cpu_request"`
-	CPULimit         string `gorm:"default:2000m" json:"cpu_limit"`
-	MemoryRequest    string `gorm:"default:1Gi" json:"memory_request"`
-	MemoryLimit      string `gorm:"default:4Gi" json:"memory_limit"`
-	StorageHomebrew  string `gorm:"default:10Gi" json:"storage_homebrew"`
-	StorageHome      string `gorm:"default:10Gi" json:"storage_home"`
-	BraveAPIKey      string `json:"-"`
-	ContainerImage   string `json:"container_image"`
-	VNCResolution    string `json:"vnc_resolution"`
-	GatewayToken     string `json:"-"`
-	ModelsConfig     string `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
-	DefaultModel     string `gorm:"default:''" json:"-"`
-	LogPaths         string `gorm:"type:text;default:''" json:"log_paths"`          // JSON: {"openclaw":"/custom/path.log",...}
-	AllowedSourceIPs string `gorm:"type:text;default:''" json:"allowed_source_ips"` // Comma-separated IPs/CIDRs for SSH connection restrictions
-	EnabledProviders string `gorm:"type:text;default:'[]'" json:"-"`                // JSON array of LLMProvider IDs enabled for this instance
-	Timezone         string `gorm:"default:''" json:"timezone"`
-	UserAgent        string `gorm:"default:''" json:"user_agent"`
-	EnvVars          string `gorm:"type:text;default:'{}'" json:"-"` // JSON map KEY -> fernet-encrypted value
-	SortOrder        int    `gorm:"not null;default:0" json:"sort_order"`
+	UUID            string `gorm:"uniqueIndex" json:"uuid"`
+	Name            string `gorm:"uniqueIndex;not null" json:"name"`
+	DisplayName     string `gorm:"not null" json:"display_name"`
+	Status          string `gorm:"not null;default:creating" json:"status"`
+	CPURequest      string `gorm:"default:500m" json:"cpu_request"`
+	CPULimit        string `gorm:"default:2000m" json:"cpu_limit"`
+	MemoryRequest   string `gorm:"default:1Gi" json:"memory_request"`
+	MemoryLimit     string `gorm:"default:4Gi" json:"memory_limit"`
+	StorageHomebrew string `gorm:"default:10Gi" json:"storage_homebrew"`
+	StorageHome     string `gorm:"default:10Gi" json:"storage_home"`
+	BraveAPIKey     string `json:"-"`
+	ContainerImage  string `json:"container_image"`
+	VNCResolution   string `json:"vnc_resolution"`
+	GatewayToken    string `json:"-"`
+	// ConnectionSecret authenticates this instance to the internal proxy's
+	// /connections/ Composio broker. Fernet-encrypted at rest; lazily generated
+	// and re-ensured on every (re)create so the CLAWORC_CONNECTION_SECRET env var
+	// is always present. ConnectionSecretHash is a SHA-256 of the plaintext, kept
+	// indexed so the proxy can resolve the instance without decrypting every row.
+	ConnectionSecret     string `json:"-"`
+	ConnectionSecretHash string `gorm:"index" json:"-"`
+	ModelsConfig         string `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
+	DefaultModel         string `gorm:"default:''" json:"-"`
+	LogPaths             string `gorm:"type:text;default:''" json:"log_paths"`          // JSON: {"openclaw":"/custom/path.log",...}
+	AllowedSourceIPs     string `gorm:"type:text;default:''" json:"allowed_source_ips"` // Comma-separated IPs/CIDRs for SSH connection restrictions
+	EnabledProviders     string `gorm:"type:text;default:'[]'" json:"-"`                // JSON array of LLMProvider IDs enabled for this instance
+	Timezone             string `gorm:"default:''" json:"timezone"`
+	UserAgent            string `gorm:"default:''" json:"user_agent"`
+	EnvVars              string `gorm:"type:text;default:'{}'" json:"-"` // JSON map KEY -> fernet-encrypted value
+	SortOrder            int    `gorm:"not null;default:0" json:"sort_order"`
 	// On-demand browser-pod fields. Only consulted when ContainerImage does
 	// not match IsLegacyEmbedded(). All four are optional and fall back to
 	// admin-level defaults from the settings table.
@@ -238,6 +245,32 @@ type LLMRequestLog struct {
 	RequestedAt       time.Time `gorm:"not null;index"`
 }
 
+// ComposioConnection is a third-party OAuth connection (Gmail, Google Analytics,
+// …) linked to an instance via Composio. Credentials never touch the control
+// plane — Composio holds the OAuth tokens, keyed by the per-instance user_id.
+// The fields below are opaque Composio identifiers, not secrets.
+type ComposioConnection struct {
+	ID                         uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	InstanceID                 uint      `gorm:"not null;index" json:"instance_id"`
+	ToolkitSlug                string    `gorm:"not null" json:"toolkit_slug"`
+	Name                       string    `gorm:"not null" json:"name"`
+	ComposioConnectedAccountID string    `gorm:"index" json:"-"`
+	AuthConfigID               string    `json:"-"`
+	Status                     string    `gorm:"not null;default:INITIATED" json:"status"` // INITIATED|ACTIVE|FAILED|EXPIRED
+	AccountLabel               string    `gorm:"default:''" json:"account_label"`
+	CreatedAt                  time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt                  time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// ComposioAuthConfig caches the Composio-managed auth_config id created per
+// toolkit, so we reuse one auth config across all instances/connections of that
+// toolkit instead of creating a new one each time.
+type ComposioAuthConfig struct {
+	ToolkitSlug  string    `gorm:"primaryKey" json:"toolkit_slug"`
+	AuthConfigID string    `gorm:"not null" json:"-"`
+	CreatedAt    time.Time `gorm:"autoCreateTime" json:"created_at"`
+}
+
 type Setting struct {
 	Key       string    `gorm:"primaryKey" json:"key"`
 	Value     string    `gorm:"not null" json:"value"`
@@ -291,12 +324,12 @@ type BackupSchedule struct {
 // multiple instances at the same path. InstanceIDs is a JSON array of
 // instance IDs this folder is mapped to.
 type SharedFolder struct {
-	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	Name        string    `gorm:"not null" json:"name"`
-	MountPath   string    `gorm:"not null" json:"mount_path"`
-	OwnerID     uint      `gorm:"not null;index" json:"owner_id"`
-	InstanceIDs string    `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint IDs
-	TeamIDs     string    `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint team IDs
+	ID          uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name        string `gorm:"not null" json:"name"`
+	MountPath   string `gorm:"not null" json:"mount_path"`
+	OwnerID     uint   `gorm:"not null;index" json:"owner_id"`
+	InstanceIDs string `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint IDs
+	TeamIDs     string `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint team IDs
 	// HostPath, when non-empty, makes this folder a host bind mount backed by
 	// the given host directory instead of a managed volume/PVC. It is gated by
 	// the CLAWORC_ALLOWED_HOST_MOUNTS allowlist and is immutable after creation.

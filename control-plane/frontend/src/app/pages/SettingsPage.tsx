@@ -65,8 +65,25 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.hash]);
 
+  // When the hash names a section (not a tab), scroll it into view once the
+  // selected tab's content has rendered. Used by deep links like
+  // /settings#composio-api-key.
+  useEffect(() => {
+    const anchor = location.hash.slice(1);
+    if (!anchor || isTabKey(anchor) || isLoading) return;
+    const t = window.setTimeout(() => {
+      document
+        .getElementById(anchor)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+    return () => window.clearTimeout(t);
+  }, [location.hash, isLoading, activeTab]);
+
   // Deferred-save state shared across tabs.
   const [pendingBraveKey, setPendingBraveKey] = useState<string | null>(null);
+  const [pendingComposioKey, setPendingComposioKey] = useState<string | null>(
+    null,
+  );
   const [resources, setResources] = useState<Record<string, string>>({});
   const [pendingAnalyticsConsent, setPendingAnalyticsConsent] = useState<
     "opt_in" | "opt_out" | null
@@ -94,6 +111,7 @@ export default function SettingsPage() {
 
   const hasChanges =
     pendingBraveKey !== null ||
+    pendingComposioKey !== null ||
     Object.keys(resources).length > 0 ||
     pendingAnalyticsConsent !== null;
   const stickyVisible =
@@ -106,12 +124,15 @@ export default function SettingsPage() {
     if (!resourcesValid) return;
     const payload: SettingsUpdatePayload = { ...resources };
     if (pendingBraveKey !== null) payload.brave_api_key = pendingBraveKey;
+    if (pendingComposioKey !== null)
+      payload.composio_api_key = pendingComposioKey;
     if (pendingAnalyticsConsent !== null)
       payload.analytics_consent = pendingAnalyticsConsent;
 
     updateMutation.mutate(payload, {
       onSuccess: () => {
         setPendingBraveKey(null);
+        setPendingComposioKey(null);
         setResources({});
         setPendingAnalyticsConsent(null);
       },
@@ -120,6 +141,7 @@ export default function SettingsPage() {
 
   const handleReset = () => {
     setPendingBraveKey(null);
+    setPendingComposioKey(null);
     setResources({});
     setPendingAnalyticsConsent(null);
     setResetKey((k) => k + 1);
@@ -158,6 +180,8 @@ export default function SettingsPage() {
             settings={settings}
             pendingBraveKey={pendingBraveKey}
             setPendingBraveKey={setPendingBraveKey}
+            pendingComposioKey={pendingComposioKey}
+            setPendingComposioKey={setPendingComposioKey}
           />
         )}
         {activeTab === "environment" && (
@@ -231,10 +255,14 @@ function ApiKeysTab({
   settings,
   pendingBraveKey,
   setPendingBraveKey,
+  pendingComposioKey,
+  setPendingComposioKey,
 }: {
   settings: Settings;
   pendingBraveKey: string | null;
   setPendingBraveKey: (v: string | null) => void;
+  pendingComposioKey: string | null;
+  setPendingComposioKey: (v: string | null) => void;
 }) {
   const queryClient = useQueryClient();
   const { data: providers = [] } = useProviders();
@@ -246,6 +274,9 @@ function ApiKeysTab({
   const [editingBrave, setEditingBrave] = useState(false);
   const [braveValue, setBraveValue] = useState("");
   const [showBrave, setShowBrave] = useState(false);
+  const [editingComposio, setEditingComposio] = useState(false);
+  const [composioValue, setComposioValue] = useState("");
+  const [showComposio, setShowComposio] = useState(false);
   const [expandedModels, setExpandedModels] = useState<Set<number>>(new Set());
   const toggleExpandedModels = (id: number) => {
     setExpandedModels((prev) => {
@@ -443,6 +474,70 @@ function ApiKeysTab({
             <button
               type="button"
               onClick={() => setEditingBrave(true)}
+              className="text-xs text-blue-600 hover:text-blue-800"
+            >
+              Change
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div
+        id="composio-api-key"
+        className="bg-white rounded-lg border border-gray-200 p-6"
+      >
+        <h3 className="text-sm font-medium text-gray-900 mb-4">
+          Composio API Key
+        </h3>
+        <p className="text-xs text-gray-500 mb-3">
+          Enables OAuth Connections (Gmail, Google Analytics, …) on agents. The
+          key stays on the control plane and is never sent to agents.
+        </p>
+        {editingComposio ? (
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <input
+                type={showComposio ? "text" : "password"}
+                value={composioValue}
+                onChange={(e) => {
+                  setComposioValue(e.target.value);
+                  setPendingComposioKey(e.target.value);
+                }}
+                className="w-full px-3 py-1.5 pr-10 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter Composio API key"
+              />
+              <button
+                type="button"
+                onClick={() => setShowComposio(!showComposio)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                {showComposio ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setEditingComposio(false);
+                setComposioValue("");
+                setPendingComposioKey(null);
+              }}
+              className="px-3 py-1.5 text-xs text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-500 font-mono">
+              {pendingComposioKey !== null
+                ? pendingComposioKey
+                  ? "****" + pendingComposioKey.slice(-4)
+                  : "(not set)"
+                : settings.composio_api_key || "(not set)"}
+            </span>
+            <button
+              type="button"
+              onClick={() => setEditingComposio(true)}
               className="text-xs text-blue-600 hover:text-blue-800"
             >
               Change

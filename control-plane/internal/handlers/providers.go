@@ -20,7 +20,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
-	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
+	"github.com/gluk-w/claworc/control-plane/internal/internalproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
@@ -321,18 +321,18 @@ func exchangeCodexOAuth(ctx context.Context, in *providerOAuthRequest) (
 	if in == nil || strings.TrimSpace(in.CodeVerifier) == "" || strings.TrimSpace(in.RedirectURL) == "" {
 		return "", "", "", "", 0, fmt.Errorf("oauth.code_verifier and oauth.redirect_url are required")
 	}
-	code, _, parseErr := llmgateway.ExtractCodeAndState(in.RedirectURL)
+	code, _, parseErr := internalproxy.ExtractCodeAndState(in.RedirectURL)
 	if parseErr != nil {
 		return "", "", "", "", 0, parseErr
 	}
 	if code == "" {
 		return "", "", "", "", 0, fmt.Errorf("redirect URL does not contain an auth code")
 	}
-	tok, err := llmgateway.ExchangeCodexAuthCode(ctx, code, in.CodeVerifier, llmgateway.CodexOAuthRedirectURI)
+	tok, err := internalproxy.ExchangeCodexAuthCode(ctx, code, in.CodeVerifier, internalproxy.CodexOAuthRedirectURI)
 	if err != nil {
 		return "", "", "", "", 0, err
 	}
-	return llmgateway.BuildOAuthFieldsFromTokens(tok)
+	return internalproxy.BuildOAuthFieldsFromTokens(tok)
 }
 
 type providerResp struct {
@@ -430,7 +430,7 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 	if apiType == "" {
 		apiType = "openai-completions"
 	}
-	if llmgateway.IsOAuthAPIType(apiType) {
+	if internalproxy.IsOAuthAPIType(apiType) {
 		if body.OAuth == nil {
 			writeError(w, http.StatusBadRequest, "OAuth completion required for openai-codex-responses providers")
 			return
@@ -477,7 +477,7 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 		}
 		p.InstanceID = body.InstanceID
 	}
-	if llmgateway.IsOAuthAPIType(apiType) {
+	if internalproxy.IsOAuthAPIType(apiType) {
 		encA, encR, email, accountID, expiresAt, err := exchangeCodexOAuth(r.Context(), body.OAuth)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "ChatGPT login failed: "+err.Error())
@@ -507,7 +507,7 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 		if database.DB.First(&inst, *p.InstanceID).Error == nil {
 			enabledIDs := parseEnabledProviders(inst.EnabledProviders)
 			allIDs := allProviderIDsForInstance(inst.ID, enabledIDs)
-			if err := llmgateway.EnsureKeysForInstance(inst.ID, allIDs); err != nil {
+			if err := internalproxy.EnsureKeysForInstance(inst.ID, allIDs); err != nil {
 				log.Printf("Failed to ensure gateway keys for instance %d after provider create: %s", inst.ID, utils.SanitizeForLog(err.Error()))
 			}
 			reconfigureInstanceAsync(inst.ID)
@@ -566,7 +566,7 @@ func UpdateProvider(w http.ResponseWriter, r *http.Request) {
 		p.APIKey = encrypted
 	}
 	if body.OAuth != nil {
-		if !llmgateway.IsOAuthAPIType(p.APIType) {
+		if !internalproxy.IsOAuthAPIType(p.APIType) {
 			writeError(w, http.StatusBadRequest, "Provider does not use OAuth")
 			return
 		}
@@ -628,7 +628,7 @@ func pushProviderUpdateToInstances(providerID uint) {
 			continue
 		}
 		allIDs := allProviderIDsForInstance(inst.ID, ids)
-		llmgateway.EnsureKeysForInstance(inst.ID, allIDs)
+		internalproxy.EnsureKeysForInstance(inst.ID, allIDs)
 		database.DB.First(&inst, inst.ID)
 		models := resolveInstanceModels(inst)
 		gatewayProviders := resolveGatewayProviders(inst)
@@ -644,7 +644,7 @@ func pushProviderUpdateToInstances(providerID uint) {
 			ConfigureInstance(
 				bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName,
 				models, gatewayProviders,
-				config.Cfg.LLMGatewayPort,
+				config.Cfg.InternalProxyPort,
 			)
 		}()
 	}
@@ -667,7 +667,7 @@ func reconfigureInstanceAsync(instID uint) {
 	}
 	enabledIDs := parseEnabledProviders(inst.EnabledProviders)
 	allIDs := allProviderIDsForInstance(inst.ID, enabledIDs)
-	llmgateway.EnsureKeysForInstance(inst.ID, allIDs)
+	internalproxy.EnsureKeysForInstance(inst.ID, allIDs)
 	database.DB.First(&inst, inst.ID)
 	models := resolveInstanceModels(inst)
 	gatewayProviders := resolveGatewayProviders(inst)
@@ -683,7 +683,7 @@ func reconfigureInstanceAsync(instID uint) {
 		ConfigureInstance(
 			bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName,
 			models, gatewayProviders,
-			config.Cfg.LLMGatewayPort,
+			config.Cfg.InternalProxyPort,
 		)
 	}()
 }
@@ -1236,8 +1236,8 @@ func probeProviderURL(ctx context.Context, baseURL, pathSuffix, apiType, apiKey 
 	}
 
 	// Set auth and probe headers via API type abstraction
-	at := llmgateway.GetAPIType(apiType)
-	at.SetAuthHeader(req, llmgateway.AuthMaterial{APIKey: apiKey})
+	at := internalproxy.GetAPIType(apiType)
+	at.SetAuthHeader(req, internalproxy.AuthMaterial{APIKey: apiKey})
 	at.ProbeHeaders(req)
 
 	resp, doErr := providerProbeClient.Do(req)
@@ -1267,7 +1267,7 @@ func TestProviderKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	at := llmgateway.GetAPIType(body.APIType)
+	at := internalproxy.GetAPIType(body.APIType)
 	probePath := strings.TrimPrefix(at.ProbeURL(body.BaseURL), strings.TrimRight(body.BaseURL, "/"))
 
 	statusCode, respBody, err := probeProviderURL(r.Context(), body.BaseURL, probePath, body.APIType, body.APIKey)
@@ -1381,4 +1381,3 @@ func GetUsageLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, result)
 }
-

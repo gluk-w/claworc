@@ -30,7 +30,8 @@
               "skills",
               "backups",
               "shared-folders",
-              "webhooks"
+              "webhooks",
+              "connections"
             ]
           },
           {

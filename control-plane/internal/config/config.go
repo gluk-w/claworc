@@ -7,8 +7,8 @@ import (
 )
 
 type Settings struct {
-	DataPath     string   `envconfig:"DATA_PATH" default:"/app/data"`
-	BackupsPath  string   `envconfig:"BACKUPS_PATH" default:""`
+	DataPath    string `envconfig:"DATA_PATH" default:"/app/data"`
+	BackupsPath string `envconfig:"BACKUPS_PATH" default:""`
 	// Database is a URL-style connection string covering driver, credentials,
 	// host, and database name. Empty means "use SQLite at DataPath" (default
 	// behavior, fully backwards compatible). See docs/databases.md.
@@ -30,8 +30,8 @@ type Settings struct {
 	TerminalSessionTimeout string `envconfig:"TERMINAL_SESSION_TIMEOUT" default:"30m"`
 
 	// LLM gateway settings
-	LLMGatewayPort int    `envconfig:"LLM_GATEWAY_PORT" default:"40001"`
-	LLMResponseLog string `envconfig:"LLM_RESPONSE_LOG" default:""`
+	InternalProxyPort int    `envconfig:"LLM_GATEWAY_PORT" default:"40001"`
+	LLMResponseLog    string `envconfig:"LLM_RESPONSE_LOG" default:""`
 }
 
 var Cfg Settings
