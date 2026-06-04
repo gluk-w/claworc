@@ -175,6 +175,25 @@ func main() {
 	if orch := orchestrator.Get(); orch != nil {
 		sshMgr.SetOrchestrator(orch)
 	}
+
+	// Wire persistent SSH host key store so keys survive platform restarts.
+	// SetHostKeyStore loads all previously seen keys from DB before any
+	// connections are established; errors fall back to in-memory-only mode.
+	sshMgr.SetHostKeyStore(database.NewHostKeyStore())
+
+	// Watch for pod restarts and reset SSH state immediately, so the reconnect
+	// loop isn't blocked by a stale rate-limit or host key. No-op if the
+	// orchestrator is not Kubernetes or if the watch cannot be established.
+	if orch := orchestrator.Get(); orch != nil {
+		orchestrator.StartPodWatch(ctx, orch, func(instanceName string) {
+			var inst database.Instance
+			if err := database.DB.Where("name = ?", instanceName).First(&inst).Error; err != nil {
+				return
+			}
+			sshMgr.ResetInstance(inst.ID)
+		})
+	}
+
 	sshMgr.StartHealthChecker(ctx)
 
 	// Build InstanceFactory: resolves an active SSH connection by instance name.

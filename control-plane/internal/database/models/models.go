@@ -433,3 +433,12 @@ type WebAuthnCredential struct {
 	AAGUID          []byte    `json:"-"`
 	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
 }
+
+// SSHHostKey persists the SSH host key (raw SSH wire-format bytes) seen during
+// TOFU for each bot instance. This lets the platform survive restarts without
+// re-trusting every bot from scratch. Stored per instance ID; one row per bot.
+type SSHHostKey struct {
+	InstanceID uint      `gorm:"primaryKey"`
+	PublicKey  []byte    `gorm:"not null"`
+	StoredAt   time.Time `gorm:"autoUpdateTime"`
+}
