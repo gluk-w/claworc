@@ -2,6 +2,7 @@ package config
 
 import (
 	"log"
+	"time"
 
 	"github.com/kelseyhightower/envconfig"
 )
@@ -32,6 +33,12 @@ type Settings struct {
 	// LLM gateway settings
 	LLMGatewayPort int    `envconfig:"LLM_GATEWAY_PORT" default:"40001"`
 	LLMResponseLog string `envconfig:"LLM_RESPONSE_LOG" default:""`
+
+	// WebhookIdleTimeout bounds how long the synchronous webhook bridge waits
+	// for the *next* event from OpenClaw before giving up. The deadline resets
+	// on every frame received, so an actively-streaming agent is never cut off;
+	// only a genuine stall trips it.
+	WebhookIdleTimeout time.Duration `envconfig:"WEBHOOK_IDLE_TIMEOUT" default:"120s"`
 }
 
 var Cfg Settings

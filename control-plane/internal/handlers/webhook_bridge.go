@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
@@ -120,17 +121,27 @@ func RunWebhookBridge(ctx context.Context, instanceID uint, sessionName, message
 		return "", fmt.Errorf("send chat.send: %w", err)
 	}
 
+	// Idle (activity-based) deadline: each read is bounded by idle, and the
+	// timer re-arms on every frame received. An agent that keeps streaming
+	// events is never cut off; only a genuine stall (no events for idle) trips.
+	idle := config.Cfg.WebhookIdleTimeout
+	if idle <= 0 {
+		idle = 120 * time.Second
+	}
+
 	var assistantText string
 	for {
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		default:
-		}
-		_, data, err := gwConn.Read(ctx)
+		readCtx, cancel := context.WithTimeout(ctx, idle)
+		_, data, err := gwConn.Read(readCtx)
+		cancel()
 		if err != nil {
+			// Parent ctx cancelled => client disconnected or its own deadline.
 			if ctx.Err() != nil {
 				return "", ctx.Err()
+			}
+			// Per-read deadline fired => OpenClaw produced no events for idle.
+			if readCtx.Err() == context.DeadlineExceeded {
+				return "", fmt.Errorf("openclaw idle timeout: no events for %s", idle)
 			}
 			return "", fmt.Errorf("gateway read: %w", err)
 		}
