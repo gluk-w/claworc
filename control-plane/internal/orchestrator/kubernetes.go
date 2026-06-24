@@ -394,14 +394,19 @@ func (k *KubernetesOrchestrator) GetSSHAddress(ctx context.Context, instanceID u
 	if err != nil {
 		return "", 0, fmt.Errorf("list pods for instance %d: %w", instanceID, err)
 	}
-	if len(pods.Items) == 0 {
-		return "", 0, fmt.Errorf("no pods found for instance %d", instanceID)
+	// Skip terminating pods: during a rolling update both the old (Terminating)
+	// and new pod exist simultaneously. Connecting to the old pod stores its SSH
+	// host key, which then mismatches the new pod's key when the reconnect retries.
+	for _, pod := range pods.Items {
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
+		if pod.Status.PodIP == "" {
+			continue
+		}
+		return pod.Status.PodIP, 22, nil
 	}
-	pod := pods.Items[0]
-	if pod.Status.PodIP == "" {
-		return "", 0, fmt.Errorf("pod %s has no IP assigned (instance %d)", pod.Name, instanceID)
-	}
-	return pod.Status.PodIP, 22, nil
+	return "", 0, fmt.Errorf("no running pod found for instance %d (name: %s)", instanceID, inst.Name)
 }
 
 func (k *KubernetesOrchestrator) UpdateResources(ctx context.Context, name string, params UpdateResourcesParams) error {

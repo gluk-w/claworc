@@ -114,10 +114,8 @@ func (m *SSHManager) reconnectWithBackoff(ctx context.Context, instanceID uint, 
 		Details:    reason,
 	})
 
-	// Close stale connection and clear the stored host key before attempting
-	// reconnect. The container may have restarted with a new host key.
+	// Close stale connection before reconnecting.
 	m.Close(instanceID)
-	m.ClearHostKey(instanceID)
 
 	backoff := reconnectInitialBackoff
 	var lastErr error
@@ -130,6 +128,12 @@ func (m *SSHManager) reconnectWithBackoff(ctx context.Context, instanceID uint, 
 		}
 
 		log.Printf("SSH reconnect attempt %d/%d for instance %d", attempt, maxRetries, instanceID)
+
+		// Clear the stored host key before each attempt. During a Kubernetes rolling
+		// update, GetSSHAddress may briefly return the old (terminating) pod, whose
+		// SSH key gets stored. Clearing before every attempt ensures a stale key from
+		// a failed attempt never blocks the next one.
+		m.ClearHostKey(instanceID)
 
 		// Re-upload the global public key before each attempt
 		// (agent may have restarted, losing authorized_keys)
