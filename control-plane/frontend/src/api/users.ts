@@ -17,6 +17,7 @@ export interface UserListInstanceRef {
 export interface UserListItem {
   id: number;
   username: string;
+  email: string;
   role: string;
   last_login_at: string;
   created_at: string;
@@ -32,11 +33,13 @@ export async function fetchUsers(): Promise<UserListItem[]> {
 export interface CreatedUser {
   id: number;
   username: string;
+  email: string;
   role: string;
 }
 
 export async function createUser(data: {
   username: string;
+  email?: string;
   password: string;
   role: string;
 }): Promise<CreatedUser> {
@@ -53,6 +56,13 @@ export async function updateUserRole(
   role: string,
 ): Promise<void> {
   await client.put(`/users/${id}/role`, { role });
+}
+
+export async function updateUserEmail(
+  id: number,
+  email: string,
+): Promise<void> {
+  await client.put(`/users/${id}/email`, { email });
 }
 
 export async function getUserInstances(

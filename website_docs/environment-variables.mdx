@@ -22,6 +22,9 @@ All Claworc configuration is done via environment variables with the `CLAWORC_` 
 | `CLAWORC_AUTH_DISABLED` | `false` | Set to `true` to disable all authentication. **Never use in production.** |
 | `CLAWORC_RP_ORIGINS` | `http://localhost:8000` | Allowed origins for WebAuthn passkey registration. Set to your dashboard URL in production. Comma-separated for multiple values. |
 | `CLAWORC_RP_ID` | `localhost` | Relying Party ID for WebAuthn. Must match the domain of your dashboard. Example: `claworc.example.com`. |
+| `CLAWORC_CF_ACCESS_ENABLED` | `false` | Enable [Cloudflare Access](/authentication#cloudflare-access-zero-trust) header authentication. Replaces the built-in login. |
+| `CLAWORC_CF_ACCESS_TEAM_DOMAIN` | _(empty)_ | Cloudflare Access team domain, e.g. `https://myteam.cloudflareaccess.com`. Required when Cloudflare Access is enabled. |
+| `CLAWORC_CF_ACCESS_AUD` | _(empty)_ | Cloudflare Access application AUD tag. Required when Cloudflare Access is enabled. |
 
 <Warning>
   `CLAWORC_RP_ID` must match the domain users access the dashboard from. Passkey registration will fail if this is wrong.

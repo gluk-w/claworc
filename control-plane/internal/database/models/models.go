@@ -229,8 +229,14 @@ type Setting struct {
 }
 
 type User struct {
-	ID                 uint       `gorm:"primaryKey;autoIncrement" json:"id"`
-	Username           string     `gorm:"uniqueIndex;not null;size:64" json:"username"`
+	ID       uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	Username string `gorm:"uniqueIndex;not null;size:64" json:"username"`
+	// Email is used to match Cloudflare Access (Zero Trust) identities to a
+	// user. Uniqueness among populated values is enforced in the application
+	// layer (handlers) rather than via a unique index, since existing users
+	// have an empty email and a SQL UNIQUE constraint would treat all empty
+	// strings as colliding. Stored normalized (lowercased, trimmed).
+	Email              string     `gorm:"index;size:255" json:"email"`
 	PasswordHash       string     `gorm:"not null" json:"-"`
 	Role               string     `gorm:"not null;default:user" json:"role"`
 	CanCreateInstances bool       `gorm:"not null;default:false" json:"can_create_instances"`

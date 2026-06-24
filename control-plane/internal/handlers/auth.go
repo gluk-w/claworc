@@ -57,7 +57,33 @@ func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// cfBlocksBuiltinLogin reports whether the built-in login/setup flows are
+// disabled because Cloudflare Access is the active authentication mode. When it
+// returns true it has already written a 403 response.
+func cfBlocksBuiltinLogin(w http.ResponseWriter) bool {
+	if config.Cfg.CFAccessEnabled {
+		writeError(w, http.StatusForbidden, "Built-in login is disabled (Cloudflare Access is enabled)")
+		return true
+	}
+	return false
+}
+
+// AuthConfig is a public endpoint describing the active authentication mode so
+// the SPA can render the appropriate login experience (and logout target).
+func AuthConfig(w http.ResponseWriter, r *http.Request) {
+	resp := map[string]interface{}{
+		"cf_access_enabled": config.Cfg.CFAccessEnabled,
+	}
+	if config.Cfg.CFAccessEnabled && config.Cfg.CFAccessTeamDomain != "" {
+		resp["logout_url"] = config.Cfg.CFAccessTeamDomain + "/cdn-cgi/access/logout"
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func Login(w http.ResponseWriter, r *http.Request) {
+	if cfBlocksBuiltinLogin(w) {
+		return
+	}
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -151,6 +177,9 @@ func SetupRequired(w http.ResponseWriter, r *http.Request) {
 }
 
 func SetupCreateAdmin(w http.ResponseWriter, r *http.Request) {
+	if cfBlocksBuiltinLogin(w) {
+		return
+	}
 	count, err := database.UserCount()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Database error")
@@ -333,6 +362,9 @@ func WebAuthnRegisterFinish(w http.ResponseWriter, r *http.Request) {
 }
 
 func WebAuthnLoginBegin(w http.ResponseWriter, r *http.Request) {
+	if cfBlocksBuiltinLogin(w) {
+		return
+	}
 	options, session, err := auth.WebAuthn.BeginDiscoverableLogin(
 		func(opts *protocol.PublicKeyCredentialRequestOptions) {
 			opts.UserVerification = protocol.VerificationPreferred
@@ -349,6 +381,9 @@ func WebAuthnLoginBegin(w http.ResponseWriter, r *http.Request) {
 }
 
 func WebAuthnLoginFinish(w http.ResponseWriter, r *http.Request) {
+	if cfBlocksBuiltinLogin(w) {
+		return
+	}
 	session, ok := auth.GetChallenge(0)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "No pending login challenge")

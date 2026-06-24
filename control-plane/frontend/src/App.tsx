@@ -6,6 +6,7 @@ import CreateInstancePage from "./pages/CreateInstancePage";
 import InstanceDetailPage from "./pages/InstanceDetailPage";
 import SettingsPage from "./pages/SettingsPage";
 import LoginPage from "./pages/LoginPage";
+import CloudflareLoginNotice from "./pages/CloudflareLoginNotice";
 import OnboardingPage from "./pages/OnboardingPage";
 import BackendUnavailablePage from "./pages/BackendUnavailablePage";
 import UsersPage from "./pages/UsersPage";
@@ -47,9 +48,16 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
 }
 
 function LoginRoute() {
-  const { isBackendUnavailable, isLoading } = useAuth();
-  if (isLoading) return null;
+  const { user, isBackendUnavailable, isLoading, cfAccessEnabled, cfConfigLoading } =
+    useAuth();
+  if (isLoading || cfConfigLoading) return null;
   if (isBackendUnavailable) return <BackendUnavailablePage />;
+  if (cfAccessEnabled) {
+    // Cloudflare Access establishes identity; a signed-in user shouldn't see a
+    // login page. Otherwise show the notice instead of the built-in form.
+    if (user) return <Navigate to="/" replace />;
+    return <CloudflareLoginNotice />;
+  }
   return <LoginPage />;
 }
 

@@ -230,6 +230,27 @@ func GetUserByID(id uint) (*User, error) {
 	return &u, nil
 }
 
+// GetUserByEmail looks up a user by email (case-insensitive). Emails are stored
+// normalized (lowercased, trimmed), so the caller's email is normalized here to
+// match. An empty email never matches a user — important so that users without
+// an email set cannot be selected by an empty/absent identity claim.
+func GetUserByEmail(email string) (*User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var u User
+	if err := DB.Where("email = ?", email).First(&u).Error; err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// UpdateUserEmail sets a user's email. Pass an empty string to clear it.
+func UpdateUserEmail(id uint, email string) error {
+	return DB.Model(&User{}).Where("id = ?", id).Update("email", email).Error
+}
+
 func CreateUser(user *User) error {
 	return DB.Create(user).Error
 }

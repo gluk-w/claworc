@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/auth"
@@ -79,6 +80,7 @@ func ListUsers(w http.ResponseWriter, r *http.Request) {
 	type userResponse struct {
 		ID          uint          `json:"id"`
 		Username    string        `json:"username"`
+		Email       string        `json:"email"`
 		Role        string        `json:"role"`
 		LastLoginAt string        `json:"last_login_at"`
 		CreatedAt   string        `json:"created_at"`
@@ -102,6 +104,7 @@ func ListUsers(w http.ResponseWriter, r *http.Request) {
 		result = append(result, userResponse{
 			ID:          u.ID,
 			Username:    u.Username,
+			Email:       u.Email,
 			Role:        u.Role,
 			LastLoginAt: lastLogin,
 			CreatedAt:   formatTimestamp(u.CreatedAt),
@@ -116,6 +119,7 @@ func ListUsers(w http.ResponseWriter, r *http.Request) {
 func CreateUser(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Username string `json:"username"`
+		Email    string `json:"email"`
 		Password string `json:"password"`
 		Role     string `json:"role"`
 	}
@@ -137,6 +141,12 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	email := normalizeEmail(body.Email)
+	if email != "" && emailInUse(email, 0) {
+		writeError(w, http.StatusConflict, "Email already in use")
+		return
+	}
+
 	hash, err := auth.HashPassword(body.Password)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to hash password")
@@ -145,6 +155,7 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 
 	user := &database.User{
 		Username:     body.Username,
+		Email:        email,
 		PasswordHash: hash,
 		Role:         body.Role,
 	}
@@ -167,8 +178,59 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"id":       user.ID,
 		"username": user.Username,
+		"email":    user.Email,
 		"role":     user.Role,
 	})
+}
+
+// normalizeEmail lowercases and trims an email, matching how emails are stored
+// and looked up (see database.GetUserByEmail).
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+// emailInUse reports whether a normalized, non-empty email already belongs to a
+// user other than excludeID. Uniqueness is enforced here rather than via a DB
+// unique index (empty emails on existing users would collide). excludeID 0
+// excludes nobody.
+func emailInUse(email string, excludeID uint) bool {
+	existing, err := database.GetUserByEmail(email)
+	if err != nil {
+		return false
+	}
+	return existing.ID != excludeID
+}
+
+// UpdateUserEmail sets or clears a user's email (admin only). An empty email
+// clears it. Non-empty emails must be unique.
+func UpdateUserEmail(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "userId"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid user ID")
+		return
+	}
+
+	var body struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	email := normalizeEmail(body.Email)
+	if email != "" && emailInUse(email, uint(id)) {
+		writeError(w, http.StatusConflict, "Email already in use")
+		return
+	}
+
+	if err := database.UpdateUserEmail(uint(id), email); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to update email")
+		return
+	}
+
+	analyticsTrackUserUpdated(r, uint(id))
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func DeleteUser(w http.ResponseWriter, r *http.Request) {

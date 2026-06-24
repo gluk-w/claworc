@@ -6,6 +6,7 @@ import {
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  getAuthConfig,
   getCurrentUser,
   login as apiLogin,
   logout as apiLogout,
@@ -19,6 +20,10 @@ interface AuthContextValue {
   isAdmin: boolean;
   canCreateInstances: boolean;
   isBackendUnavailable: boolean;
+  // Cloudflare Access (Zero Trust) mode. When enabled, the built-in login is
+  // replaced and identity comes from Cloudflare's verified headers.
+  cfAccessEnabled: boolean;
+  cfConfigLoading: boolean;
   login: (data: LoginRequest) => Promise<User>;
   logout: () => Promise<void>;
   refetch: () => void;
@@ -41,6 +46,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     staleTime: 5 * 60 * 1000,
   });
 
+  const { data: authConfig, isLoading: cfConfigLoading } = useQuery({
+    queryKey: ["auth", "config"],
+    queryFn: getAuthConfig,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  });
+
   const login = useCallback(
     async (data: LoginRequest) => {
       const u = await apiLogin(data);
@@ -51,10 +63,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    // In Cloudflare Access mode there is no Claworc session to clear; logging
+    // out means ending the Cloudflare Access session via its logout endpoint.
+    if (authConfig?.cf_access_enabled && authConfig.logout_url) {
+      queryClient.clear();
+      window.location.href = authConfig.logout_url;
+      return;
+    }
     await apiLogout();
     queryClient.setQueryData(["auth", "me"], null);
     queryClient.clear();
-  }, [queryClient]);
+  }, [queryClient, authConfig]);
 
   return (
     <AuthContext.Provider
@@ -67,6 +86,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           user?.role === "admin" ||
           (user?.teams ?? []).some((t) => t.role === "manager"),
         isBackendUnavailable: !user && isBackendUnavailableError(error),
+        cfAccessEnabled: authConfig?.cf_access_enabled ?? false,
+        cfConfigLoading,
         login,
         logout,
         refetch: () => {

@@ -6,12 +6,14 @@ import {
   getUserInstances,
   getUserTeams,
   setUserInstances,
+  updateUserEmail,
   updateUserRole,
   type UserListItem,
 } from "@/api/users";
 import { fetchInstances } from "@/api/instances";
 import { fetchTeams, removeTeamMember, setTeamMember } from "@/api/teams";
 import MultiSelect from "@/components/MultiSelect";
+import { useAuth } from "@/contexts/AuthContext";
 import { errorToast, successToast } from "@/utils/toast";
 
 type Mode = { kind: "create" } | { kind: "edit"; user: UserListItem };
@@ -23,10 +25,12 @@ interface UserModalProps {
 
 export default function UserModal({ mode, onClose }: UserModalProps) {
   const queryClient = useQueryClient();
+  const { cfAccessEnabled } = useAuth();
   const isEdit = mode.kind === "edit";
   const editingUser = mode.kind === "edit" ? mode.user : null;
 
   const [username, setUsername] = useState(editingUser?.username ?? "");
+  const [email, setEmail] = useState(editingUser?.email ?? "");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
@@ -194,6 +198,7 @@ export default function UserModal({ mode, onClose }: UserModalProps) {
     mutationFn: async () => {
       const newUser = await createUser({
         username,
+        email: email.trim(),
         password,
         role: fullAccess ? "admin" : "user",
       });
@@ -221,6 +226,9 @@ export default function UserModal({ mode, onClose }: UserModalProps) {
       if (desiredRole !== editingUser.role) {
         await updateUserRole(editingUser.id, desiredRole);
       }
+      if (email.trim() !== (editingUser.email ?? "")) {
+        await updateUserEmail(editingUser.id, email.trim());
+      }
       const touched = await applyPermissions(
         editingUser.id,
         hydratedMemberships,
@@ -245,9 +253,15 @@ export default function UserModal({ mode, onClose }: UserModalProps) {
 
   const isPending = createMutation.isPending || editMutation.isPending;
 
+  // In Cloudflare Access mode an email is required so the account can be matched
+  // to a verified identity.
+  const emailOk = !cfAccessEnabled || email.trim().length > 0;
   const canSubmit = isEdit
-    ? !isPending && !hydrating
-    : username.trim().length > 0 && password.length > 0 && !isPending;
+    ? !isPending && !hydrating && emailOk
+    : username.trim().length > 0 &&
+      password.length > 0 &&
+      emailOk &&
+      !isPending;
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -321,6 +335,25 @@ export default function UserModal({ mode, onClose }: UserModalProps) {
                 </div>
               </div>
             )}
+
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">
+                Email{cfAccessEnabled ? " *" : ""}
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="user@example.com"
+                autoFocus={isEdit}
+              />
+              <p className="mt-1 text-xs text-gray-400">
+                {cfAccessEnabled
+                  ? "Required to match this user's Cloudflare Access identity."
+                  : "Used to match Cloudflare Access (Zero Trust) identities."}
+              </p>
+            </div>
 
             <label className="flex items-center gap-2 text-sm text-gray-700">
               <input

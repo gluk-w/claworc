@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/auth"
 	"github.com/gluk-w/claworc/control-plane/internal/backup"
 	"github.com/gluk-w/claworc/control-plane/internal/browserprov"
+	"github.com/gluk-w/claworc/control-plane/internal/cfaccess"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
@@ -135,6 +137,19 @@ func main() {
 	// Init session store
 	sessionStore := auth.NewSessionStore()
 	handlers.SessionStore = sessionStore
+
+	// Cloudflare Access (Zero Trust) verifier. Constructed only when enabled;
+	// nil otherwise, which leaves RequireAuth on the session-cookie path.
+	var cfVerifier middleware.CFVerifier
+	if config.Cfg.CFAccessEnabled {
+		cfVerifier = cfaccess.NewVerifier(
+			config.Cfg.CFAccessCertsURL,
+			config.Cfg.CFAccessAUD,
+			config.Cfg.CFAccessIssuer,
+		)
+		log.Printf("Cloudflare Access authentication enabled (team=%s, aud=%s)",
+			config.Cfg.CFAccessTeamDomain, config.Cfg.CFAccessAUD)
+	}
 
 	// Session cleanup goroutine
 	go func() {
@@ -286,6 +301,7 @@ func main() {
 	// API v1
 	r.Route("/api/v1", func(r chi.Router) {
 		// Auth endpoints (no auth required)
+		r.Get("/auth/config", handlers.AuthConfig)
 		r.Post("/auth/login", handlers.Login)
 		r.Get("/auth/setup-required", handlers.SetupRequired)
 		r.Post("/auth/setup", handlers.SetupCreateAdmin)
@@ -294,7 +310,7 @@ func main() {
 
 		// Auth endpoints (auth required)
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.RequireAuth(sessionStore))
+			r.Use(middleware.RequireAuth(sessionStore, cfVerifier))
 
 			r.Post("/auth/logout", handlers.Logout)
 			r.Get("/auth/me", handlers.GetCurrentUser)
@@ -307,7 +323,7 @@ func main() {
 
 		// Protected routes (require auth)
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.RequireAuth(sessionStore))
+			r.Use(middleware.RequireAuth(sessionStore, cfVerifier))
 
 			// Tasks (long-running goroutine registry)
 			r.Get("/tasks", handlers.ListTasks)
@@ -481,6 +497,7 @@ func main() {
 				r.Post("/users", handlers.CreateUser)
 				r.Delete("/users/{userId}", handlers.DeleteUser)
 				r.Put("/users/{userId}/role", handlers.UpdateUserRole)
+				r.Put("/users/{userId}/email", handlers.UpdateUserEmail)
 				r.Get("/users/{userId}/teams", handlers.GetUserTeamsHandler)
 				r.Get("/users/{userId}/instances", handlers.GetUserAssignedInstances)
 				r.Put("/users/{userId}/instances", handlers.SetUserAssignedInstances)
@@ -491,7 +508,7 @@ func main() {
 
 	// OpenClaw control proxy (top-level, outside /api/v1/)
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.RequireAuth(sessionStore))
+		r.Use(middleware.RequireAuth(sessionStore, cfVerifier))
 		r.HandleFunc("/openclaw/{id}/*", handlers.ControlProxy)
 	})
 
@@ -541,7 +558,12 @@ func runCLICommand(command string) {
 	fs := flag.NewFlagSet(command, flag.ExitOnError)
 	username := fs.String("username", "", "Username")
 	password := fs.String("password", "", "Password")
+	// email is used to match Cloudflare Access identities; relevant when
+	// bootstrapping the first admin before enabling CF_ACCESS_ENABLED.
+	email := fs.String("email", "", "Email (optional; used for Cloudflare Access matching)")
 	fs.Parse(os.Args[2:])
+
+	normalizedEmail := strings.ToLower(strings.TrimSpace(*email))
 
 	if *username == "" || *password == "" {
 		fmt.Fprintf(os.Stderr, "Usage: claworc --%s --username <user> --password <pass>\n", command)
@@ -565,10 +587,16 @@ func runCLICommand(command string) {
 			if err := database.UpdateUserPassword(existing.ID, hash); err != nil {
 				log.Fatalf("Failed to update admin password: %v", err)
 			}
+			if normalizedEmail != "" {
+				if err := database.UpdateUserEmail(existing.ID, normalizedEmail); err != nil {
+					log.Fatalf("Failed to update admin email: %v", err)
+				}
+			}
 			fmt.Printf("Admin user '%s' already exists — password updated.\n", *username)
 		} else {
 			user := &database.User{
 				Username:     *username,
+				Email:        normalizedEmail,
 				PasswordHash: hash,
 				Role:         "admin",
 			}
