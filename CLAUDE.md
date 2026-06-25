@@ -83,6 +83,12 @@ Backend settings use `envconfig` with `CLAWORC_` env prefix (see `internal/confi
 - `CLAWORC_CF_ACCESS_ENABLED` - Enable Cloudflare Access (Zero Trust) header auth; replaces built-in login (default: `false`)
 - `CLAWORC_CF_ACCESS_TEAM_DOMAIN` - Cloudflare Access team domain, e.g. `https://myteam.cloudflareaccess.com` (required when CF Access is enabled)
 - `CLAWORC_CF_ACCESS_AUD` - Cloudflare Access application AUD tag (required when CF Access is enabled)
+- `CLAWORC_ALLOWED_HOST_MOUNTS` - Comma-separated allowlist of host path prefixes within which shared folders may be backed by a host bind mount. Empty (default) disables host-backed shared folders entirely. See `docs/shared-folders.md`.
+- `CLAWORC_WEBHOOK_IDLE_TIMEOUT` - Idle gap the synchronous webhook bridge tolerates between events from OpenClaw before giving up (default: `120s`). The deadline re-arms on every event, so an actively-streaming agent is never cut off; only a genuine stall trips it.
+
+## Terminology
+
+- **"Agent" (user-facing) = "Instance" (code)**: The UI calls them "Agents" but the backend, database, API paths (`/api/v1/instances`), routes (`/instances/...`), TypeScript types (`Instance`), and Go types all use `Instance`. When editing user-visible strings use "Agent"; when editing code identifiers, types, routes, or API paths keep `Instance`.
 
 ## Key Conventions
 

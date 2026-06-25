@@ -9,9 +9,28 @@ import (
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
+	"github.com/gluk-w/claworc/control-plane/internal/taskmanager"
 	"github.com/go-chi/chi/v5"
 	"gorm.io/gorm"
 )
+
+// cancelActiveBrowserSpawn cancels any in-flight browser.spawn task for the
+// instance. Delete and Stop call this so tearing down the browser pod can't
+// race a concurrent spawn that would recreate it, and the "Starting browser…"
+// toast stops spinning (the canceled task ends and its toast auto-dismisses).
+// Best-effort: no-op when TaskMgr is nil or nothing is in flight.
+func cancelActiveBrowserSpawn(instanceID uint) {
+	if TaskMgr == nil {
+		return
+	}
+	for _, t := range TaskMgr.List(taskmanager.Filter{
+		Type:       taskmanager.TaskBrowserSpawn,
+		InstanceID: instanceID,
+		OnlyActive: true,
+	}) {
+		_ = TaskMgr.Cancel(t.ID) // ignore ErrAlreadyTerminal / ErrNotFound
+	}
+}
 
 // browserStatusResponse is the JSON shape used by GET /browser/status. The
 // frontend desktop tab polls this to render a "starting browser" loading
@@ -118,6 +137,9 @@ func BrowserStop(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "browser bridge not configured")
 		return
 	}
+	// A stop while a spawn is still in flight must cancel the spawn, otherwise it
+	// finishes and re-marks the session running right after we stop it.
+	cancelActiveBrowserSpawn(uint(id))
 	if err := BrowserStopper.StopSession(r.Context(), uint(id)); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

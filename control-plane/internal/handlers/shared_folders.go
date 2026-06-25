@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/analytics"
+	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
@@ -22,6 +25,136 @@ var reservedMountPrefixes = []string{
 	"/home/claworc",
 	"/home/linuxbrew",
 	"/dev/shm",
+}
+
+// ValidateHostMountPath verifies that a host bind-mount source path is permitted
+// by the operator allowlist. It is the single security gate for host-backed
+// shared folders. allowed is the list of permitted host path prefixes; an empty
+// list means the feature is disabled and every path is rejected.
+func ValidateHostMountPath(hostPath string, allowed []string) error {
+	// 1. Feature gate.
+	hasPrefix := false
+	for _, p := range allowed {
+		if strings.TrimSpace(p) != "" {
+			hasPrefix = true
+			break
+		}
+	}
+	if !hasPrefix {
+		return fmt.Errorf("host bind mounts are not enabled")
+	}
+
+	// 2. Absolute and already-clean (rejects "..", "//", trailing slashes).
+	if !strings.HasPrefix(hostPath, "/") {
+		return fmt.Errorf("host path must be absolute")
+	}
+	if filepath.Clean(hostPath) != hostPath {
+		return fmt.Errorf("host path must be a clean, absolute path (no '..', '.', or trailing slashes)")
+	}
+	if strings.Contains(hostPath, "..") {
+		return fmt.Errorf("host path must not contain '..'")
+	}
+
+	// 3. Allowlist containment (cleaned-vs-cleaned).
+	if !pathWithinAllowlist(hostPath, allowed) {
+		return fmt.Errorf("host path is not within an allowed prefix")
+	}
+
+	// 4. Symlink hardening: resolve and re-check. EvalSymlinks fails if the path
+	//    does not exist on the control-plane host (e.g. Kubernetes node paths);
+	//    in that case we fall back to the lexical check already performed above.
+	//    The allowlist prefixes are resolved too so that a symlinked ancestor of
+	//    the prefix itself (e.g. macOS /var -> /private/var) does not cause a
+	//    false rejection — only an escape beyond the resolved prefix is blocked.
+	if resolved, err := filepath.EvalSymlinks(hostPath); err == nil {
+		if !pathWithinAllowlist(resolved, resolveAllowlist(allowed)) {
+			return fmt.Errorf("host path resolves (via symlink) outside the allowed prefixes")
+		}
+	}
+
+	// 5. Defense-in-depth denylist of sensitive paths, even if the allowlist
+	//    would otherwise permit them.
+	for _, denied := range hostMountDenylist() {
+		if hostPath == denied || strings.HasPrefix(hostPath, denied+"/") {
+			return fmt.Errorf("host path overlaps a protected location")
+		}
+	}
+
+	return nil
+}
+
+// pathWithinAllowlist reports whether p equals or is nested under any non-empty
+// allowlisted prefix. Both sides are cleaned before comparison.
+func pathWithinAllowlist(p string, allowed []string) bool {
+	cp := filepath.Clean(p)
+	for _, prefix := range allowed {
+		prefix = strings.TrimSpace(prefix)
+		if prefix == "" {
+			continue
+		}
+		prefix = filepath.Clean(prefix)
+		if cp == prefix || strings.HasPrefix(cp, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureHostPathDir creates the host bind-mount source directory (recursively)
+// if it does not yet exist. It only applies to the Docker backend, where the
+// control plane shares the host filesystem; on Kubernetes the path lives on the
+// node and is created/managed there. The caller must have already validated the
+// path against the allowlist. Returns ok=false with a user-facing message if the
+// directory cannot be created or is occupied by a non-directory.
+func ensureHostPathDir(hostPath string) (ok bool, msg string) {
+	orch := orchestrator.Get()
+	if orch == nil || orch.BackendName() != "docker" {
+		return true, ""
+	}
+	if info, err := os.Stat(hostPath); err == nil {
+		if !info.IsDir() {
+			return false, "host path exists but is not a directory"
+		}
+		return true, ""
+	} else if !os.IsNotExist(err) {
+		return false, "host path is not accessible"
+	}
+	if err := os.MkdirAll(hostPath, 0o755); err != nil {
+		return false, "could not create host directory"
+	}
+	return true, ""
+}
+
+// resolveAllowlist returns the allowlist prefixes with symlinks resolved where
+// possible, so the resolved-path containment check compares like with like.
+func resolveAllowlist(allowed []string) []string {
+	out := make([]string, 0, len(allowed))
+	for _, prefix := range allowed {
+		prefix = strings.TrimSpace(prefix)
+		if prefix == "" {
+			continue
+		}
+		if resolved, err := filepath.EvalSymlinks(prefix); err == nil {
+			out = append(out, resolved)
+		} else {
+			out = append(out, prefix)
+		}
+	}
+	return out
+}
+
+// hostMountDenylist returns paths that must never be bind-mounted regardless of
+// the allowlist: the Claworc data directory (Fernet key + encrypted secrets),
+// the Docker socket, and the SSH key directory.
+func hostMountDenylist() []string {
+	denied := []string{
+		"/var/run/docker.sock",
+		"/run/docker.sock",
+	}
+	if dp := strings.TrimSpace(config.Cfg.DataPath); dp != "" {
+		denied = append(denied, filepath.Clean(dp))
+	}
+	return denied
 }
 
 func isValidMountPath(p string) bool {
@@ -67,6 +200,8 @@ func ListSharedFolders(w http.ResponseWriter, r *http.Request) {
 		ID          uint   `json:"id"`
 		Name        string `json:"name"`
 		MountPath   string `json:"mount_path"`
+		HostPath    string `json:"host_path"`
+		ReadOnly    bool   `json:"read_only"`
 		OwnerID     uint   `json:"owner_id"`
 		InstanceIDs []uint `json:"instance_ids"`
 		TeamIDs     []uint `json:"team_ids"`
@@ -79,6 +214,8 @@ func ListSharedFolders(w http.ResponseWriter, r *http.Request) {
 			ID:          sf.ID,
 			Name:        sf.Name,
 			MountPath:   sf.MountPath,
+			HostPath:    sf.HostPath,
+			ReadOnly:    sf.ReadOnly,
 			OwnerID:     sf.OwnerID,
 			InstanceIDs: database.ParseSharedFolderInstanceIDs(sf.InstanceIDs),
 			TeamIDs:     database.ParseTeamIDs(sf.TeamIDs),
@@ -99,6 +236,8 @@ func CreateSharedFolder(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name      string `json:"name"`
 		MountPath string `json:"mount_path"`
+		HostPath  string `json:"host_path"`
+		ReadOnly  *bool  `json:"read_only"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
@@ -122,10 +261,28 @@ func CreateSharedFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Host-backed folders default to read-only.
+	readOnly := true
+	if body.HostPath != "" {
+		if err := ValidateHostMountPath(body.HostPath, config.Cfg.AllowedHostMounts); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid host path: %v", err))
+			return
+		}
+		if ok, msg := ensureHostPathDir(body.HostPath); !ok {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid host path: %s", msg))
+			return
+		}
+		if body.ReadOnly != nil {
+			readOnly = *body.ReadOnly
+		}
+	}
+
 	sf := &database.SharedFolder{
 		Name:      body.Name,
 		MountPath: body.MountPath,
 		OwnerID:   user.ID,
+		HostPath:  body.HostPath,
+		ReadOnly:  readOnly,
 	}
 	if err := database.CreateSharedFolder(sf); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to create shared folder")
@@ -143,10 +300,32 @@ func CreateSharedFolder(w http.ResponseWriter, r *http.Request) {
 		"id":           sf.ID,
 		"name":         sf.Name,
 		"mount_path":   sf.MountPath,
+		"host_path":    sf.HostPath,
+		"read_only":    sf.ReadOnly,
 		"owner_id":     sf.OwnerID,
 		"instance_ids": []uint{},
 		"team_ids":     []uint{},
 		"created_at":   sf.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	})
+}
+
+// HostMountConfig reports whether host-backed shared folders are enabled and,
+// if so, the allowlisted host path prefixes. The frontend uses this to decide
+// whether to show the "Mount to Host" option and to hint allowed locations.
+func HostMountConfig(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUser(r) == nil {
+		writeError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	prefixes := []string{}
+	for _, p := range config.Cfg.AllowedHostMounts {
+		if p = strings.TrimSpace(p); p != "" {
+			prefixes = append(prefixes, p)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"enabled":          len(prefixes) > 0,
+		"allowed_prefixes": prefixes,
 	})
 }
 
@@ -178,6 +357,8 @@ func GetSharedFolder(w http.ResponseWriter, r *http.Request) {
 		"id":           sf.ID,
 		"name":         sf.Name,
 		"mount_path":   sf.MountPath,
+		"host_path":    sf.HostPath,
+		"read_only":    sf.ReadOnly,
 		"owner_id":     sf.OwnerID,
 		"instance_ids": database.ParseSharedFolderInstanceIDs(sf.InstanceIDs),
 		"team_ids":     database.ParseTeamIDs(sf.TeamIDs),
@@ -212,6 +393,8 @@ func UpdateSharedFolder(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name        *string `json:"name"`
 		MountPath   *string `json:"mount_path"`
+		HostPath    *string `json:"host_path"`
+		ReadOnly    *bool   `json:"read_only"`
 		InstanceIDs *[]uint `json:"instance_ids"`
 		TeamIDs     *[]uint `json:"team_ids"`
 	}
@@ -220,9 +403,25 @@ func UpdateSharedFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Host path is immutable after creation.
+	if body.HostPath != nil && *body.HostPath != sf.HostPath {
+		writeError(w, http.StatusBadRequest, "Host path cannot be changed after creation")
+		return
+	}
+
 	updates := map[string]interface{}{}
 	if body.Name != nil && *body.Name != "" {
 		updates["name"] = *body.Name
+	}
+	readOnlyChanged := false
+	if body.ReadOnly != nil && *body.ReadOnly != sf.ReadOnly {
+		// Read-only mode only affects host-backed folders.
+		if sf.HostPath == "" {
+			writeError(w, http.StatusBadRequest, "Read-only mode only applies to host-backed shared folders")
+			return
+		}
+		updates["read_only"] = *body.ReadOnly
+		readOnlyChanged = true
 	}
 	if body.MountPath != nil {
 		if !isValidMountPath(*body.MountPath) {
@@ -287,7 +486,7 @@ func UpdateSharedFolder(w http.ResponseWriter, r *http.Request) {
 	oldEffective := expandFolderEffectiveInstances(oldInstanceIDs, oldTeamIDs)
 	newEffective := expandFolderEffectiveInstances(newInstanceIDs, newTeamIDs)
 
-	for _, target := range computeFolderUpdateRestartTargets(oldEffective, newEffective, mountPathChanged, membershipChanged) {
+	for _, target := range computeFolderUpdateRestartTargets(oldEffective, newEffective, mountPathChanged || readOnlyChanged, membershipChanged) {
 		var inst database.Instance
 		if err := database.DB.First(&inst, target.InstanceID).Error; err != nil {
 			continue

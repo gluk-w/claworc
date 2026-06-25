@@ -14,7 +14,19 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
+
+// BeforeCreate fills Instance.UUID with a fresh v4 UUID when the row is
+// created without one. The migration backfills pre-existing rows.
+func (i *Instance) BeforeCreate(_ *gorm.DB) error {
+	if i.UUID == "" {
+		i.UUID = uuid.New().String()
+	}
+	return nil
+}
 
 // IsLegacyEmbedded reports whether the given container image refers to the
 // legacy combined agent+browser image. Legacy instances run Chromium and VNC
@@ -44,7 +56,11 @@ type Skill struct {
 }
 
 type Instance struct {
-	ID               uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	ID uint `gorm:"primaryKey;autoIncrement" json:"id"`
+	// UUID is a stable, non-enumerable identifier used in webhook URLs and
+	// any other surface that should not leak the sequential ID. Auto-filled
+	// by BeforeCreate; backfilled for pre-existing rows by migration 00007.
+	UUID             string `gorm:"uniqueIndex" json:"uuid"`
 	Name             string `gorm:"uniqueIndex;not null" json:"name"`
 	DisplayName      string `gorm:"not null" json:"display_name"`
 	Status           string `gorm:"not null;default:creating" json:"status"`
@@ -287,8 +303,18 @@ type SharedFolder struct {
 	OwnerID     uint      `gorm:"not null;index" json:"owner_id"`
 	InstanceIDs string    `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint IDs
 	TeamIDs     string    `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint team IDs
-	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	// HostPath, when non-empty, makes this folder a host bind mount backed by
+	// the given host directory instead of a managed volume/PVC. It is gated by
+	// the CLAWORC_ALLOWED_HOST_MOUNTS allowlist and is immutable after creation.
+	HostPath string `gorm:"type:text;default:''" json:"host_path"`
+	// ReadOnly controls whether a host-backed mount is mounted read-only.
+	// Host-backed folders default to read-only (enforced in the create handler).
+	// No GORM `default` tag here on purpose: with one, GORM treats a false value
+	// as "unset" and lets the DB default win, so an explicit read-write choice
+	// would be silently flipped back to read-only on insert.
+	ReadOnly  bool      `json:"read_only"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 // ParseSharedFolderInstanceIDs deserializes the JSON instance IDs field.

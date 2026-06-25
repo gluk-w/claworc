@@ -1,13 +1,16 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
+	"github.com/gluk-w/claworc/control-plane/internal/taskmanager"
 )
 
 func TestStopInstance_StopsTunnels(t *testing.T) {
@@ -95,6 +98,61 @@ func TestDeleteInstance_StopsTunnels(t *testing.T) {
 	tunnels := tm.GetTunnelsForInstance(inst.ID)
 	if len(tunnels) != 0 {
 		t.Errorf("expected 0 tunnels after delete, got %d", len(tunnels))
+	}
+}
+
+// TestDeleteInstance_CancelsInflightBrowserSpawn verifies that deleting an
+// instance cancels its in-flight browser.spawn task, so the "Starting
+// browser…" toast stops spinning and the spawn can't recreate the pod we just
+// deleted.
+func TestDeleteInstance_CancelsInflightBrowserSpawn(t *testing.T) {
+	setupTestDB(t)
+	tm := withTaskMgr(t)
+
+	mock := &mockOrchestrator{}
+	orchestrator.Set(mock)
+	defer orchestrator.Set(nil)
+
+	inst := createTestInstance(t, "bot-del", "Delete Test")
+
+	// A long-running, cancellable spawn task that blocks until its ctx is
+	// canceled — mimicking doSpawn waiting on a cold-starting browser pod.
+	started := make(chan struct{})
+	taskID := tm.Start(taskmanager.StartOpts{
+		Type:       taskmanager.TaskBrowserSpawn,
+		InstanceID: inst.ID,
+		Title:      "Starting browser for Delete Test",
+		OnCancel:   func(context.Context) {},
+		Run: func(ctx context.Context, _ *taskmanager.Handle) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	})
+	<-started
+
+	req := buildRequest(t, "DELETE", "/api/v1/instances/1", nil, map[string]string{"id": fmt.Sprintf("%d", inst.ID)})
+	w := httptest.NewRecorder()
+	DeleteInstance(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected status 204, got %d (body: %s)", w.Code, w.Body.String())
+	}
+
+	// The spawn task must reach the canceled terminal state.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		task, ok := tm.Get(taskID)
+		if !ok {
+			t.Fatalf("task %s no longer known", taskID)
+		}
+		if task.State == taskmanager.StateCanceled {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected task to be canceled, got state %q", task.State)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

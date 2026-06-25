@@ -35,12 +35,15 @@ RUN apt-get update && \
       sudo && \
     echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen && \
     if [ "$USE_CHINA_MIRRORS" = "true" ]; then npm config set registry https://registry.npmmirror.com; fi && \
-    npm install -g openclaw@${OPENCLAW_VERSION} && \
-    # OpenClaw lists `sharp` only under pnpm's `onlyBuiltDependencies`, not
-    # `dependencies`, so `npm install -g openclaw` never installs it. The
-    # image pipeline (Telegram, screenshots) lazy-imports `sharp` at runtime
-    # — without this step it throws ERR_MODULE_NOT_FOUND. See issue #127.
-    (cd "$(npm root -g)/openclaw" && npm install --no-save sharp) && \
+    npm install -g --legacy-peer-deps openclaw@${OPENCLAW_VERSION} && \
+    # Upstream openclaw doesn't declare `sharp` in its published
+    # package.json at all (neither dependencies, optionalDependencies,
+    # peerDependencies, nor pnpm.onlyBuiltDependencies), but the image
+    # pipeline (Telegram, screenshots) still lazy-imports it at runtime on
+    # Linux via src/media/image-ops.ts — without this step it throws
+    # ERR_MODULE_NOT_FOUND. See issue #127. The agent-test suite's
+    # "openclaw can load sharp for image processing" check guards this.
+    (cd "$(npm root -g)/openclaw" && npm install --no-save --legacy-peer-deps sharp) && \
     curl -sSL https://install.python-poetry.org | POETRY_HOME=/usr/local python3 - && \
     rm -rf /var/lib/apt/lists/*
 

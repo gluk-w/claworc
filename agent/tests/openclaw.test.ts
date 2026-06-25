@@ -96,6 +96,15 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
     expect(result.exitCode).toBe(0);
 
     const config = JSON.parse(result.stdout);
+    // Strip upstream-owned plugin/skill catalogs entirely. They're not
+    // schema we depend on, they change weekly as openclaw adds/removes
+    // built-ins, and they're shaped completely differently between
+    // `openclaw@latest` (uses `skills.entries.*`) and `openclaw@stable`
+    // (uses `plugins.entries.*`) — so a single snapshot can't track both.
+    // The stable parts of the config (gateway, browser, agents, meta, ...)
+    // are what our integration actually cares about.
+    delete config.skills;
+    delete config.plugins;
     expect(structureOf(config)).toMatchSnapshot();
   });
 
@@ -155,24 +164,12 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
 
   // Regression for https://github.com/gluk-w/claworc/issues/127. sharp is a
   // native addon (libvips) used by openclaw's image pipeline (Telegram,
-  // screenshots). It silently went missing when sharp 0.34 switched to
-  // prebuilt binaries that need libvips on the system.
+  // screenshots). Upstream openclaw lazy-imports sharp but no longer
+  // declares it in package.json, so the Dockerfile installs it explicitly
+  // (see `npm install --no-save sharp` in agent/instance/Dockerfile, plus
+  // the libvips42 apt package).
   describe("sharp image dependency (issue #127)", () => {
     const cdOpenclaw = 'cd "$(npm root -g)/openclaw"';
-
-    it("openclaw still declares sharp as a build dependency", () => {
-      // If upstream openclaw drops sharp, the runtime check below loses its
-      // meaning — surface that change so we can revisit the Dockerfile.
-      // openclaw lists sharp under pnpm's `onlyBuiltDependencies` rather
-      // than `dependencies`/`optional`/`peer`, so check all four locations.
-      const result = exec(container!, [
-        "bash",
-        "-c",
-        `${cdOpenclaw} && node -e "const p=require('./package.json'); const inField=(o)=>o&&(o.sharp||(Array.isArray(o)&&o.includes('sharp'))); const found=inField(p.dependencies)||inField(p.optionalDependencies)||inField(p.peerDependencies)||inField(p.pnpm&&p.pnpm.onlyBuiltDependencies); if(!found){process.exit(2)} console.log('ok')"`,
-      ]);
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout.trim()).toBe("ok");
-    });
 
     it("openclaw can load sharp for image processing", () => {
       // Resolve sharp the same way openclaw does at runtime — from its own
@@ -185,6 +182,20 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
       ]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    });
+
+    it("openclaw runtime still references sharp", () => {
+      // If upstream stops importing sharp, the Dockerfile's explicit
+      // `npm install --no-save sharp` (and the libvips42 apt package) become
+      // dead weight — surface that so we can drop them. We grep the bundled
+      // dist for any `sharp` reference (string literal in dynamic import,
+      // static import, etc).
+      const result = exec(container!, [
+        "bash",
+        "-c",
+        `${cdOpenclaw} && grep -rEq "['\\"]sharp['\\"]" dist`,
+      ]);
+      expect(result.exitCode).toBe(0);
     });
   });
 });

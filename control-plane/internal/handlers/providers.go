@@ -220,6 +220,9 @@ func catalogModelToProviderModel(m catalogRootModel) database.ProviderModel {
 		ContextWindow: m.ContextWindow,
 		MaxTokens:     m.MaxTokens,
 	}
+	if m.Vision {
+		pm.Input = []string{"text", "image"}
+	}
 	if m.InputCost > 0 || m.OutputCost > 0 || m.CachedReadCost > 0 || m.CachedWriteCost > 0 {
 		pm.Cost = &database.ProviderModelCost{
 			Input:      m.InputCost,

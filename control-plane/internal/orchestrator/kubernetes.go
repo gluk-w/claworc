@@ -113,8 +113,12 @@ func (k *KubernetesOrchestrator) CreateInstance(ctx context.Context, params Crea
 		}
 	}
 
-	// Create shared folder PVCs (ReadWriteMany for multi-pod access)
+	// Create shared folder PVCs (ReadWriteMany for multi-pod access).
 	for _, sfm := range params.SharedFolderMounts {
+		// Host-backed folders use a hostPath volume and need no PVC.
+		if sfm.HostPath != "" {
+			continue
+		}
 		pvcName := fmt.Sprintf("shared-folder-%d", sfm.VolumeID)
 		_, err := k.clientset.CoreV1().PersistentVolumeClaims(ns).Get(ctx, pvcName, metav1.GetOptions{})
 		if errors.IsNotFound(err) {
@@ -271,6 +275,10 @@ func (k *KubernetesOrchestrator) RestartInstance(ctx context.Context, name strin
 
 	// Ensure shared folder PVCs exist
 	for _, sfm := range params.SharedFolderMounts {
+		// host-backed folders need no PVC
+		if sfm.HostPath != "" {
+			continue
+		}
 		pvcName := fmt.Sprintf("shared-folder-%d", sfm.VolumeID)
 		_, err := k.clientset.CoreV1().PersistentVolumeClaims(ns).Get(ctx, pvcName, metav1.GetOptions{})
 		if errors.IsNotFound(err) {
@@ -661,8 +669,8 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 			corev1.EnvVar{Name: "DISPLAY_HEIGHT", Value: parts[1]},
 		)
 	}
-	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "OPENCLAW_GATEWAY_TOKEN", Value: token})
+	for k, v := range params.EnvVars {
+		envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
 	}
 	if params.Timezone != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "TZ", Value: params.Timezone})
@@ -753,11 +761,11 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 func buildInitContainers(sfMounts []SharedFolderMount, privileged bool) []corev1.Container {
 	containers := []corev1.Container{{
 		Name:  "fix-home-selinux",
-		Image: "busybox:latest",
-		// chcon may fail on non-SELinux filesystems or nodes — that's fine,
-		// the `|| true` keeps the pod startable on plain Ubuntu/COS clusters.
+		Image: "fedora:latest",
+		// chcon may fail on non-SELinux nodes — || true keeps the pod startable.
+		// Errors are intentionally left on stderr so they appear in pod logs.
 		Command: []string{"sh", "-c",
-			"chcon -R -l s0:c0,c0 /home/claworc /home/linuxbrew/.linuxbrew 2>/dev/null || true"},
+			"chcon -R -l s0:c0,c0 /home/claworc /home/linuxbrew/.linuxbrew || true"},
 		SecurityContext: &corev1.SecurityContext{Privileged: &privileged},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "home-data", MountPath: "/home/claworc"},
@@ -768,18 +776,25 @@ func buildInitContainers(sfMounts []SharedFolderMount, privileged bool) []corev1
 		var chownCmds []string
 		var volumeMounts []corev1.VolumeMount
 		for _, sfm := range sfMounts {
+			// Host-backed mounts use hostPath volumes; never chown the node's
+			// host directories.
+			if sfm.HostPath != "" {
+				continue
+			}
 			chownCmds = append(chownCmds, fmt.Sprintf("chown 1000:1000 %s", sfm.MountPath))
 			volumeMounts = append(volumeMounts, corev1.VolumeMount{
 				Name:      fmt.Sprintf("shared-%d", sfm.VolumeID),
 				MountPath: sfm.MountPath,
 			})
 		}
-		containers = append(containers, corev1.Container{
-			Name:         "fix-shared-permissions",
-			Image:        "busybox:latest",
-			Command:      []string{"sh", "-c", strings.Join(chownCmds, " && ")},
-			VolumeMounts: volumeMounts,
-		})
+		if len(chownCmds) > 0 {
+			containers = append(containers, corev1.Container{
+				Name:         "fix-shared-permissions",
+				Image:        "busybox:latest",
+				Command:      []string{"sh", "-c", strings.Join(chownCmds, " && ")},
+				VolumeMounts: volumeMounts,
+			})
+		}
 	}
 	return containers
 }
@@ -789,13 +804,30 @@ func appendSharedVolumeMounts(base []corev1.VolumeMount, sfMounts []SharedFolder
 		base = append(base, corev1.VolumeMount{
 			Name:      fmt.Sprintf("shared-%d", sfm.VolumeID),
 			MountPath: sfm.MountPath,
+			ReadOnly:  sfm.HostPath != "" && sfm.ReadOnly,
 		})
 	}
 	return base
 }
 
 func appendSharedVolumes(base []corev1.Volume, sfMounts []SharedFolderMount) []corev1.Volume {
+	hostPathDir := corev1.HostPathDirectory
 	for _, sfm := range sfMounts {
+		// Host-backed folders use a hostPath volume pinned to the node the pod
+		// is scheduled on; managed folders use the shared-folder PVC.
+		if sfm.HostPath != "" {
+			hp := sfm.HostPath
+			base = append(base, corev1.Volume{
+				Name: fmt.Sprintf("shared-%d", sfm.VolumeID),
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: hp,
+						Type: &hostPathDir,
+					},
+				},
+			})
+			continue
+		}
 		base = append(base, corev1.Volume{
 			Name: fmt.Sprintf("shared-%d", sfm.VolumeID),
 			VolumeSource: corev1.VolumeSource{

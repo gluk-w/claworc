@@ -28,10 +28,17 @@ modifying or creating UI must follow these conventions exactly. The Settings pag
 18. [Large Scrollable Modal](#18-large-scrollable-modal-separated-headerfooter)
 19. [Empty State (multi-line)](#19-empty-state-multi-line)
 20. [Checkbox / Radio Styling](#20-checkbox--radio-styling)
+21. [Multi-Select (`MultiSelect` component)](#21-multi-select-multiselect-component)
+22. [Page Skeleton (`<Page>` component)](#22-page-skeleton-page-component)
+23. [Empty State (`<EmptyState>` component)](#23-empty-state-emptystate-component)
 
 ---
 
 ## 1. Page Layout
+
+> **Use the `<Page>` component (Section 22) instead of hand-rolling this layout.** The snippet below
+> documents what `<Page>` renders so that pages with unusual title rows (e.g. `AgentDetailPage`,
+> `DashboardPage`, `KanbanPage`) can reproduce the conventions.
 
 ```
 <div>
@@ -389,7 +396,8 @@ Cancel on the left, primary action on the right.
 ### Required parent adjustments
 
 - Add `pb-24` to the form / page's outer scroll container so the last section isn't clipped
-  behind the bar when it's visible.
+  behind the bar when it's visible. When using `<Page>` (Section 22), pass `stickyBarSpace` instead
+  of adding `pb-24` manually.
 - For form-level usage, keep a back-link or breadcrumb at the top of the page so users can
   leave a pristine form (the bar is hidden then, so there is no Cancel button reachable from it).
 
@@ -572,7 +580,8 @@ See `useCreationToast` in `src/hooks/useInstances.ts` for the canonical pattern.
 
 ## 11. Page Header with Action Button
 
-Used in `UsersPage.tsx` (Create User), `SkillsPage.tsx` (Upload Skill).
+> **Use `<Page title="..." actions={<button .../>}>` (Section 22) instead of hand-rolling this row.**
+> The snippet below documents the underlying classes for pages that opt out of `<Page>`.
 
 ```tsx
 <div className="flex items-center justify-between mb-6">
@@ -589,6 +598,11 @@ Used in `UsersPage.tsx` (Create User), `SkillsPage.tsx` (Upload Skill).
 ---
 
 ## 12. Tab Navigation
+
+> For **page-level** tabs, pass the `tabs`, `activeTab`, and `onTabChange` props to `<Page>`
+> (Section 22) — it renders this exact strip for you. Use the standalone pattern below only for
+> tabs that live inside another container (e.g. inside a card) or when tabs need URL-hash routing
+> (`AgentDetailPage`, `SettingsPage`).
 
 Used in `SkillsPage.tsx` (Library/Discover), `InstanceDetailPage.tsx` (Overview/Browser/Terminal/…).
 
@@ -760,6 +774,9 @@ Used in `DeployModal.tsx`. Variant of the standard modal when the body may overf
 
 ## 19. Empty State (multi-line)
 
+> **Use `<EmptyState>` (Section 23) instead of hand-rolling this block.** The snippet below
+> documents the underlying classes.
+
 Used in `SkillsPage.tsx`, `DashboardPage.tsx`.
 
 ```tsx
@@ -834,3 +851,151 @@ Key rules:
 - The menu portals to `document.body` with `z-index: 9999` so it renders above modals.
 - Label uses `text-xs text-gray-500 mb-1` (same as other form labels).
 - Options use `{ value: number, label: string }` shape (`MultiSelectOption` type is exported).
+
+---
+
+## 22. Page Skeleton (`<Page>` component)
+
+The `<Page>` component (`src/common/components/Page.tsx`) is the **required** wrapper for in-app
+pages rendered inside the sidebar `Layout`. It standardizes the title row, the optional
+title-row action buttons, an optional tab strip, and the content-width constraint. Use it instead
+of hand-rolling the patterns documented in Sections 1, 11, and 12.
+
+### API
+
+| Prop | Type | Notes |
+|---|---|---|
+| `title` | `ReactNode` (required) | Rendered inside an `<h1>` with the standard heading classes. |
+| `actions` | `ReactNode` | Right-side buttons in the title row. Use the button sizes from Section 4 (small secondary or primary `px-3 py-1.5 text-sm`). Multiple buttons can be siblings inside a Fragment. |
+| `banner` | `ReactNode` | Renders between the title row and the tabs / content (e.g. an amber warning banner from Section 7). |
+| `tabs` | `{ key: string; label: string }[]` | Optional. When present, `<Page>` renders the standard tab strip (Section 12). |
+| `activeTab` | `string` | Required if `tabs` is set. |
+| `onTabChange` | `(key: string) => void` | Required if `tabs` is set. |
+| `width` | `"narrow" \| "full"` (default `"full"`) | `"narrow"` applies `max-w-2xl` to the content area (Settings-style forms). |
+| `stickyBarSpace` | `boolean` (default `false`) | Adds `pb-24` to the content area when a `StickyActionBar` (Section 5) is present, so the last section isn't clipped. |
+| `children` | `ReactNode` | The page content. `<Page>` does not impose `space-y-*` between sections — apply it on the child wrapper if needed. |
+
+### Common shapes
+
+**Plain page (no actions, no tabs):**
+
+```tsx
+<Page title="AI Usage">
+  <div className="space-y-6">{/* content */}</div>
+</Page>
+```
+
+**Title + action button (canonical CRUD page):**
+
+```tsx
+<Page
+  title="Users"
+  actions={
+    <button
+      onClick={() => setShowCreate(true)}
+      className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+    >
+      Create User
+    </button>
+  }
+>
+  {/* table */}
+</Page>
+```
+
+**Multiple actions:** wrap them in a Fragment. `<Page>` wraps the slot in `flex items-center gap-2`.
+
+```tsx
+<Page
+  title="Backups"
+  actions={
+    <>
+      <button className="… text-gray-700 bg-white border border-gray-300 …">Schedule Backups</button>
+      <button className="… text-white bg-blue-600 …">Create Backup</button>
+    </>
+  }
+>
+  {/* … */}
+</Page>
+```
+
+**Tabs (controlled, no URL routing):**
+
+```tsx
+<Page
+  title="Skills"
+  actions={isAdmin ? <UploadButton /> : undefined}
+  tabs={[{ key: "library", label: "Library" }, { key: "discover", label: "Discover" }]}
+  activeTab={tab}
+  onTabChange={(k) => setTab(k as Tab)}
+>
+  {/* tab content */}
+</Page>
+```
+
+**Narrow form page with sticky save bar (Settings-style):**
+
+```tsx
+<Page title="Settings" width="narrow" stickyBarSpace>
+  <div className="space-y-8">{/* cards */}</div>
+  <StickyActionBar visible={hasChanges}>{/* … */}</StickyActionBar>
+</Page>
+```
+
+### When NOT to use
+
+- **Pre-auth / chromeless screens** (`LoginPage`, `OnboardingPage`, `BackendUnavailablePage`,
+  `VncPopupPage`, `ChatPopupPage`) — these are not rendered inside the sidebar Layout.
+- **Pages whose title row is not a plain h1** — e.g. `DashboardPage` (TeamSelector replaces the
+  heading), `KanbanPage` (board selector inline with the heading), `AgentDetailPage` (banner above
+  the title + StatusBadge inline + hash-routed tabs). Reproduce the conventions from Sections 1
+  and 11 by hand for these.
+
+### Rendered structure
+
+```tsx
+<div>
+  <div className="flex items-center justify-between mb-6">
+    <h1 className="text-xl font-semibold text-gray-900">{title}</h1>
+    {actions && <div className="flex items-center gap-2">{actions}</div>}
+  </div>
+  {banner}
+  {tabs && (
+    <div className="flex border-b border-gray-200 mb-6">{/* tab buttons */}</div>
+  )}
+  <div className={`${width === "narrow" ? "max-w-2xl" : ""} ${stickyBarSpace ? "pb-24" : ""}`}>
+    {children}
+  </div>
+</div>
+```
+
+---
+
+## 23. Empty State (`<EmptyState>` component)
+
+The `<EmptyState>` component (`src/common/components/EmptyState.tsx`) renders the two standard
+empty-state patterns — the centered multi-line block (Section 19) and the inline italic notice
+(Section 7) — through a single component.
+
+### API
+
+| Prop | Type | Notes |
+|---|---|---|
+| `variant` | `"block" \| "inline"` (default `"block"`) | `block` for full-section empties; `inline` for in-card "no items configured" lines. |
+| `title` | `string` (required) | Primary message. |
+| `hint` | `string` | Secondary hint line (block variant only). |
+
+### Examples
+
+```tsx
+// Block variant — use when an entire section / page area is empty
+<EmptyState
+  title="No shared folders yet."
+  hint="Create one to share data between instances."
+/>
+
+// Inline variant — use inside a card, when only one logical group is empty
+<EmptyState variant="inline" title="No providers configured." />
+```
+
+Always prefer `<EmptyState>` over the raw markup in Sections 7 and 19.

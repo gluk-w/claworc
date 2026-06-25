@@ -680,6 +680,8 @@ func getSharedFolderMounts(instanceID uint) []orchestrator.SharedFolderMount {
 		mounts = append(mounts, orchestrator.SharedFolderMount{
 			VolumeID:  sf.ID,
 			MountPath: sf.MountPath,
+			HostPath:  sf.HostPath,
+			ReadOnly:  sf.ReadOnly,
 		})
 	}
 	return mounts
@@ -1594,6 +1596,9 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if orch := orchestrator.Get(); orch != nil {
+		// Cancel any in-flight browser spawn first so it can't recreate the pod
+		// we're about to delete (and so its toast stops spinning).
+		cancelActiveBrowserSpawn(inst.ID)
 		// Tear down the on-demand browser pod first so its container/volume
 		// don't outlive the agent. Best-effort: a failure here shouldn't
 		// block the agent cleanup or DB delete.
@@ -2063,6 +2068,9 @@ func cloneOnCancel(instanceID uint, cloneName string) taskmanager.OnCancel {
 				log.Printf("clone-cancel: stop tunnels for %d: %v", instanceID, err)
 			}
 		}
+		// Cancel any in-flight browser spawn for the destination so it can't
+		// recreate the pod we're about to delete.
+		cancelActiveBrowserSpawn(instanceID)
 		if BrowserAdmin != nil {
 			if err := BrowserAdmin.DeleteBrowserPod(ctx, instanceID); err != nil {
 				log.Printf("clone-cancel: delete browser pod for %s: %v", utils.SanitizeForLog(cloneName), err)

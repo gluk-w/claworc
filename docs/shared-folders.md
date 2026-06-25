@@ -17,6 +17,8 @@ Any authenticated user can create shared folders and map them to instances they 
 | `MountPath`   | string   | Container mount path (same on all mapped instances) |
 | `OwnerID`     | uint     | User who created the folder                        |
 | `InstanceIDs` | string   | JSON array of instance IDs mapped to this folder   |
+| `HostPath`    | string   | If set, the folder is a host bind mount backed by this host directory (else a managed volume). Immutable after creation. |
+| `ReadOnly`    | bool     | Whether a host-backed mount is mounted read-only (defaults to `true`) |
 | `CreatedAt`   | datetime | Creation timestamp                                 |
 | `UpdatedAt`   | datetime | Last update timestamp                              |
 
@@ -40,6 +42,12 @@ All endpoints require authentication. In the protected route group (not admin-on
 { "name": "Shared Data", "mount_path": "/shared/data" }
 ```
 
+For a host-backed folder, add `host_path` (and optionally `read_only`, default `true`):
+
+```json
+{ "name": "Obsidian Vault", "mount_path": "/shared/obsidian", "host_path": "/Users/example/shared/obsidian", "read_only": false }
+```
+
 ### Update Request
 
 All fields are optional:
@@ -59,11 +67,20 @@ All fields are optional:
   "id": 1,
   "name": "Shared Data",
   "mount_path": "/shared/data",
+  "host_path": "",
+  "read_only": true,
   "owner_id": 1,
   "instance_ids": [1, 3],
   "created_at": "2026-04-03T10:00:00Z"
 }
 ```
+
+Host-backed folders also expose a config endpoint that reports whether the feature
+is enabled and which host path prefixes are permitted:
+
+| Method | Path                                  | Description                                |
+|--------|---------------------------------------|--------------------------------------------|
+| `GET`  | `/shared-folders/host-mount-config`   | `{ "enabled": bool, "allowed_prefixes": [] }` |
 
 ## Volume Lifecycle
 
@@ -76,21 +93,25 @@ Volumes are created by the orchestrator when an instance starts or restarts with
 
 ### Mounting
 
-When an instance is created, restarted, or has its image updated, the orchestrator reads shared folder mappings from the database and adds the corresponding volume mounts to the container/pod spec.
+When an instance is created, restarted, or has its image updated, the orchestrator reads shared folder mappings 
+from the database and adds the corresponding volume mounts to the container/pod spec.
 
 The mount path is the same for all instances mapped to a given shared folder.
 
 ### Automatic Restart on Mapping Changes
 
-When instance mappings or the mount path are changed (via `UpdateSharedFolder` or `DeleteSharedFolder`), all affected running instances are **automatically restarted** in the background. This includes:
+When instance mappings or the mount path are changed (via `UpdateSharedFolder` or `DeleteSharedFolder`), 
+all affected running instances are **automatically restarted** in the background. This includes:
 
 - Instances that were added to the folder (gain the mount)
 - Instances that were removed from the folder (lose the mount)
 - All mapped instances when the mount path changes
 
-The restart recreates the container (Docker: stop + remove + create; K8s: deployment update) with the current set of mounts. Stopped instances are skipped and will pick up changes on their next start.
+The restart recreates the container (Docker: stop + remove + create; K8s: deployment update) with the 
+current set of mounts. Stopped instances are skipped and will pick up changes on their next start.
 
-The helper `restartInstanceAsync` (in `instances.go`) handles SSH tunnel teardown, status updates, and the async restart. `buildCreateParams` constructs the full `CreateParams` from a database `Instance`.
+The helper `restartInstanceAsync` (in `instances.go`) handles SSH tunnel teardown, status updates, 
+and the async restart. `buildCreateParams` constructs the full `CreateParams` from a database `Instance`.
 
 ### Deletion
 
@@ -102,6 +123,56 @@ When a shared folder is deleted from the database:
 Orphaned volumes can be cleaned up manually:
 - Docker: `docker volume ls --filter label=type=shared-folder`
 - K8s: `kubectl get pvc -l type=shared-folder`
+
+## Host-Backed Shared Folders
+
+A shared folder can optionally be backed by a directory on the **host** (a Docker
+bind mount, or a Kubernetes `hostPath` volume) instead of a Claworc-managed volume.
+This is useful for integrating an instance with an existing local workflow — for
+example mounting an Obsidian/Syncthing vault into the agent.
+
+### Enabling the feature (operator opt-in)
+
+Host bind mounts are the most dangerous container primitive — an unrestricted bind
+mount could expose the Docker socket, the Claworc data directory, or arbitrary host
+files. The feature is therefore **disabled by default** and gated entirely by an
+operator-controlled allowlist:
+
+```
+CLAWORC_ALLOWED_HOST_MOUNTS=/Users/example/shared,/srv/data
+```
+
+- If the variable is unset/empty, the "Mount to Host" option is hidden in the UI and
+  the API rejects any request that includes a `host_path`.
+- If set, a host path is only accepted when it resolves to a location **within** one
+  of the listed prefixes.
+
+### Validation rules
+
+A `host_path` must:
+- Be absolute and already clean (no `..`, `.`, `//`, or trailing slashes)
+- Resolve (including through symlinks) to a path within an allowlisted prefix
+- Not overlap a protected location: the Docker socket or the Claworc data directory
+
+The container-side `mount_path` keeps the usual restrictions (see *Mount Path
+Restrictions* below).
+
+### Behavior
+
+- **Read-only by default.** New host-backed folders mount read-only; read-write must
+  be chosen explicitly. The access mode can be changed later (mapped instances
+  restart automatically); the host path itself is immutable after creation.
+- **No ownership changes.** Unlike managed volumes, Claworc never `chown`s a
+  host-backed mount — the operator's host directory is left untouched.
+
+### Kubernetes caveat
+
+On Kubernetes a host-backed folder becomes a `hostPath` volume, which binds to the
+filesystem of whichever **node** the pod is scheduled on. This is intended for
+single-node clusters; on multi-node clusters the directory must exist (with the same
+contents) on every eligible node. Symlink resolution is performed on the control
+plane only and cannot inspect node paths, so operators must trust the configured
+node directories.
 
 ## Access Control
 

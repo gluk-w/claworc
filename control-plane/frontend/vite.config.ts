@@ -89,6 +89,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@common": path.resolve(__dirname, "./src/common"),
+      "@app": path.resolve(__dirname, "./src/app"),
     },
   },
   server: {
@@ -109,6 +111,11 @@ export default defineConfig({
         changeOrigin: true,
         autoRewrite: true,
         ws: true,
+      },
+      "/webhooks": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+        autoRewrite: true,
       },
     },
   },

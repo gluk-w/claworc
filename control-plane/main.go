@@ -174,6 +174,12 @@ func main() {
 	backup.TaskMgr = taskMgr
 	reconcileStuckTasks()
 
+	// Register the private webhook trigger on the gateway mux before it
+	// binds. The gateway is reachable only from inside instances, so this
+	// route is the inter-agent webhook surface authenticated by
+	// IsPrivate=true keys.
+	llmgateway.RegisterRoute("/webhooks/", handlers.PrivateWebhookTrigger)
+
 	// Start LLM gateway (internal only, reachable via SSH agent-listener tunnel)
 	if err := llmgateway.Start(ctx, "127.0.0.1", config.Cfg.LLMGatewayPort); err != nil {
 		log.Printf("WARNING: LLM gateway failed to start: %v", err)
@@ -368,6 +374,14 @@ func main() {
 			r.Post("/instances/{id}/files/copy", handlers.CopyFile)
 			r.Get("/instances/{id}/files/search", handlers.SearchFiles)
 
+			// Webhook (per-instance) — admin or team manager via CanAccessInstance
+			r.Get("/instances/{id}/webhook", handlers.GetInstanceWebhook)
+			r.Post("/instances/{id}/webhook/keys", handlers.CreateInstanceWebhookKey)
+			r.Patch("/instances/{id}/webhook/keys/{keyId}", handlers.UpdateInstanceWebhookKey)
+			r.Post("/instances/{id}/webhook/keys/{keyId}/regenerate", handlers.RegenerateInstanceWebhookKey)
+			r.Delete("/instances/{id}/webhook/keys/{keyId}", handlers.DeleteInstanceWebhookKey)
+			r.Get("/instances/{id}/webhook/logs", handlers.ListInstanceWebhookLogs)
+
 			// Chat WebSocket
 			r.Get("/instances/{id}/chat", handlers.ChatProxy)
 
@@ -405,6 +419,7 @@ func main() {
 			// Shared Folders
 			r.Get("/shared-folders", handlers.ListSharedFolders)
 			r.Post("/shared-folders", handlers.CreateSharedFolder)
+			r.Get("/shared-folders/host-mount-config", handlers.HostMountConfig)
 			r.Get("/shared-folders/{id}", handlers.GetSharedFolder)
 			r.Put("/shared-folders/{id}", handlers.UpdateSharedFolder)
 			r.Delete("/shared-folders/{id}", handlers.DeleteSharedFolder)
@@ -480,6 +495,7 @@ func main() {
 				r.Post("/skills", handlers.UploadSkill)
 				r.Delete("/skills/{slug}", handlers.DeleteSkill)
 				r.Get("/skills/clawhub/search", handlers.ClawhubSearch)
+				r.Post("/skills/clawhub/import", handlers.ImportClawhubSkill)
 				r.Put("/skills/{slug}/files/*", handlers.PutSkillFile)
 
 				// Teams CRUD + membership + provider whitelist
@@ -511,6 +527,11 @@ func main() {
 		r.Use(middleware.RequireAuth(sessionStore, cfVerifier))
 		r.HandleFunc("/openclaw/{id}/*", handlers.ControlProxy)
 	})
+
+	// Public webhook trigger — authenticated by a per-instance API key, no
+	// session required. The path uses the stable Instance.UUID to avoid
+	// leaking sequential IDs.
+	r.Post("/webhooks/{uuid}", handlers.PublicWebhookTrigger)
 
 	// SPA static files (embedded)
 	distFS, _ := fs.Sub(frontendFS, "frontend/dist")

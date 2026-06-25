@@ -22,7 +22,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
-    "axios": "^1.15.2",
+    "axios": "^1.16.0",
     "date-fns": "^4.1.0",
     "es-toolkit": "^1.44.0",
     "lucide-react": "^0.468.0",
@@ -30,7 +30,7 @@
     "react-dom": "^18.3.1",
     "react-hot-toast": "^2.6.0",
     "react-markdown": "^10.1.0",
-    "react-router-dom": "^7.1.0",
+    "react-router-dom": "^7.16.0",
     "react-select": "^5.10.2",
     "recharts": "^3.8.0",
     "remark-gfm": "^4.0.1"

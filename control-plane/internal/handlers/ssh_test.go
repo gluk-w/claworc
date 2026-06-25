@@ -158,6 +158,11 @@ type mockOrchestrator struct {
 	sshHost string
 	sshPort int
 
+	// sshAddrFunc, when set, overrides GetSSHAddress and lets a test return a
+	// distinct address per instance ID (used for deterministic per-instance
+	// behavior in concurrent rotation tests).
+	sshAddrFunc func(id uint) (string, int, error)
+
 	configureErr error
 	addressErr   error
 }
@@ -185,9 +190,12 @@ func (m *mockOrchestrator) CloneVolumes(_ context.Context, _, _ string) error   
 func (m *mockOrchestrator) ConfigureSSHAccess(_ context.Context, _ uint, _ string) error {
 	return m.configureErr
 }
-func (m *mockOrchestrator) GetSSHAddress(_ context.Context, _ uint) (string, int, error) {
+func (m *mockOrchestrator) GetSSHAddress(_ context.Context, id uint) (string, int, error) {
 	if m.addressErr != nil {
 		return "", 0, m.addressErr
+	}
+	if m.sshAddrFunc != nil {
+		return m.sshAddrFunc(id)
 	}
 	return m.sshHost, m.sshPort, nil
 }

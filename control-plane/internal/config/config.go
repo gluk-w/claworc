@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"strings"
+	"time"
 
 	"github.com/kelseyhightower/envconfig"
 )
@@ -32,6 +33,11 @@ type Settings struct {
 	CFAccessCertsURL   string `ignored:"true"`
 	CFAccessIssuer     string `ignored:"true"`
 
+	// AllowedHostMounts is the operator-controlled allowlist of host path
+	// prefixes within which shared folders may be backed by a host bind mount.
+	// Empty (the default) disables host-backed shared folders entirely.
+	AllowedHostMounts []string `envconfig:"ALLOWED_HOST_MOUNTS" default:""`
+
 	// Terminal session settings
 	TerminalHistoryLines   int    `envconfig:"TERMINAL_HISTORY_LINES" default:"1000"`
 	TerminalRecordingDir   string `envconfig:"TERMINAL_RECORDING_DIR" default:""`
@@ -40,6 +46,12 @@ type Settings struct {
 	// LLM gateway settings
 	LLMGatewayPort int    `envconfig:"LLM_GATEWAY_PORT" default:"40001"`
 	LLMResponseLog string `envconfig:"LLM_RESPONSE_LOG" default:""`
+
+	// WebhookIdleTimeout bounds how long the synchronous webhook bridge waits
+	// for the *next* event from OpenClaw before giving up. The deadline resets
+	// on every frame received, so an actively-streaming agent is never cut off;
+	// only a genuine stall trips it.
+	WebhookIdleTimeout time.Duration `envconfig:"WEBHOOK_IDLE_TIMEOUT" default:"120s"`
 }
 
 var Cfg Settings

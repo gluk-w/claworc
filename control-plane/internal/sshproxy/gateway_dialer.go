@@ -53,7 +53,7 @@ func DialGateway(ctx context.Context, localPort int, gatewayToken string) (*webs
 		"method": "connect",
 		"params": map[string]any{
 			"minProtocol": 3,
-			"maxProtocol": 3,
+			"maxProtocol": 4,
 			"client": map[string]any{
 				"id":       "openclaw-control-ui",
 				"version":  "1.0.0",
