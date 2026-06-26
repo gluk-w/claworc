@@ -185,6 +185,11 @@ type LLMProvider struct {
 	APIType    string `gorm:"size:100;default:'openai-completions'" json:"api_type"`
 	APIKey     string `gorm:"type:text;default:''" json:"-"`   // Fernet-encrypted upstream API key
 	Models     string `gorm:"type:text;default:'[]'" json:"-"` // JSON []ProviderModel
+	// CfAIGatewayToken is the Fernet-encrypted Cloudflare AI Gateway
+	// authentication token, sent as `cf-aig-authorization` when the gateway is
+	// in Authenticated mode. Empty for all other providers (and for
+	// unauthenticated Cloudflare gateways). Used by api_type cloudflare-ai-gateway.
+	CfAIGatewayToken string `gorm:"column:cf_ai_gateway_token;type:text;default:''" json:"-"`
 	// OAuth credentials for providers that authenticate via OAuth instead of a
 	// static API key (currently: openai-codex-responses against ChatGPT).
 	// All four are zero-valued for static-key providers. Explicit column names
@@ -297,12 +302,12 @@ type BackupSchedule struct {
 // multiple instances at the same path. InstanceIDs is a JSON array of
 // instance IDs this folder is mapped to.
 type SharedFolder struct {
-	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	Name        string    `gorm:"not null" json:"name"`
-	MountPath   string    `gorm:"not null" json:"mount_path"`
-	OwnerID     uint      `gorm:"not null;index" json:"owner_id"`
-	InstanceIDs string    `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint IDs
-	TeamIDs     string    `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint team IDs
+	ID          uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name        string `gorm:"not null" json:"name"`
+	MountPath   string `gorm:"not null" json:"mount_path"`
+	OwnerID     uint   `gorm:"not null;index" json:"owner_id"`
+	InstanceIDs string `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint IDs
+	TeamIDs     string `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint team IDs
 	// HostPath, when non-empty, makes this folder a host bind mount backed by
 	// the given host directory instead of a managed volume/PVC. It is gated by
 	// the CLAWORC_ALLOWED_HOST_MOUNTS allowlist and is immutable after creation.

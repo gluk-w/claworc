@@ -297,6 +297,10 @@ type providerRequest struct {
 	APIKey     string                   `json:"api_key"`
 	InstanceID *uint                    `json:"instance_id,omitempty"` // non-nil = instance-specific provider
 	OAuth      *providerOAuthRequest    `json:"oauth,omitempty"`       // present for openai-codex-responses create/reconnect
+	// CfAIGatewayToken is the Cloudflare AI Gateway authentication token for an
+	// Authenticated gateway (api_type cloudflare-ai-gateway). On update, an
+	// empty string leaves the stored token unchanged (parity with api_key).
+	CfAIGatewayToken string `json:"cf_aig_token"`
 }
 
 // providerOAuthRequest carries the client-side PKCE verifier and the redirect
@@ -336,20 +340,21 @@ func exchangeCodexOAuth(ctx context.Context, in *providerOAuthRequest) (
 }
 
 type providerResp struct {
-	ID             uint                     `json:"id"`
-	Key            string                   `json:"key"`
-	InstanceID     *uint                    `json:"instance_id,omitempty"`
-	Provider       string                   `json:"provider"`
-	Name           string                   `json:"name"`
-	BaseURL        string                   `json:"base_url"`
-	APIType        string                   `json:"api_type"`
-	MaskedAPIKey   string                   `json:"masked_api_key"`
-	Models         []database.ProviderModel `json:"models"`
-	OAuthConnected bool                     `json:"oauth_connected"`
-	OAuthEmail     string                   `json:"oauth_email,omitempty"`
-	OAuthExpiresAt int64                    `json:"oauth_expires_at,omitempty"`
-	CreatedAt      string                   `json:"created_at"`
-	UpdatedAt      string                   `json:"updated_at"`
+	ID                  uint                     `json:"id"`
+	Key                 string                   `json:"key"`
+	InstanceID          *uint                    `json:"instance_id,omitempty"`
+	Provider            string                   `json:"provider"`
+	Name                string                   `json:"name"`
+	BaseURL             string                   `json:"base_url"`
+	APIType             string                   `json:"api_type"`
+	MaskedAPIKey        string                   `json:"masked_api_key"`
+	Models              []database.ProviderModel `json:"models"`
+	CfAIGatewayTokenSet bool                     `json:"cf_aig_token_set"`
+	OAuthConnected      bool                     `json:"oauth_connected"`
+	OAuthEmail          string                   `json:"oauth_email,omitempty"`
+	OAuthExpiresAt      int64                    `json:"oauth_expires_at,omitempty"`
+	CreatedAt           string                   `json:"created_at"`
+	UpdatedAt           string                   `json:"updated_at"`
 }
 
 func toProviderResp(p database.LLMProvider) providerResp {
@@ -360,20 +365,21 @@ func toProviderResp(p database.LLMProvider) providerResp {
 		}
 	}
 	return providerResp{
-		ID:             p.ID,
-		Key:            p.Key,
-		InstanceID:     p.InstanceID,
-		Provider:       p.Provider,
-		Name:           p.Name,
-		BaseURL:        p.BaseURL,
-		APIType:        p.APIType,
-		MaskedAPIKey:   masked,
-		Models:         database.ParseProviderModels(p.Models),
-		OAuthConnected: p.OAuthRefreshToken != "" && p.OAuthExpiresAt > 0,
-		OAuthEmail:     p.OAuthEmail,
-		OAuthExpiresAt: p.OAuthExpiresAt,
-		CreatedAt:      formatTimestamp(p.CreatedAt),
-		UpdatedAt:      formatTimestamp(p.UpdatedAt),
+		ID:                  p.ID,
+		Key:                 p.Key,
+		InstanceID:          p.InstanceID,
+		Provider:            p.Provider,
+		Name:                p.Name,
+		BaseURL:             p.BaseURL,
+		APIType:             p.APIType,
+		MaskedAPIKey:        masked,
+		Models:              database.ParseProviderModels(p.Models),
+		CfAIGatewayTokenSet: p.CfAIGatewayToken != "",
+		OAuthConnected:      p.OAuthRefreshToken != "" && p.OAuthExpiresAt > 0,
+		OAuthEmail:          p.OAuthEmail,
+		OAuthExpiresAt:      p.OAuthExpiresAt,
+		CreatedAt:           formatTimestamp(p.CreatedAt),
+		UpdatedAt:           formatTimestamp(p.UpdatedAt),
 	}
 }
 
@@ -463,6 +469,14 @@ func CreateProvider(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		p.APIKey = encrypted
+	}
+	if token := strings.TrimSpace(body.CfAIGatewayToken); token != "" {
+		encrypted, err := utils.Encrypt(token)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to encrypt gateway token")
+			return
+		}
+		p.CfAIGatewayToken = encrypted
 	}
 	if body.InstanceID != nil {
 		// Instance-specific provider — check access
@@ -564,6 +578,14 @@ func UpdateProvider(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		p.APIKey = encrypted
+	}
+	if token := strings.TrimSpace(body.CfAIGatewayToken); token != "" {
+		encrypted, err := utils.Encrypt(token)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to encrypt gateway token")
+			return
+		}
+		p.CfAIGatewayToken = encrypted
 	}
 	if body.OAuth != nil {
 		if !llmgateway.IsOAuthAPIType(p.APIType) {
@@ -1381,4 +1403,3 @@ func GetUsageLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, result)
 }
-
