@@ -80,8 +80,6 @@ export default function ProviderModal({
   const [mApiType, setMApiType] = useState("openai-completions");
   const [mCfAccountId, setMCfAccountId] = useState("");
   const [mCfGatewayName, setMCfGatewayName] = useState("");
-  const [mCfToken, setMCfToken] = useState("");
-  const [mShowCfToken, setMShowCfToken] = useState(false);
   const [mModels, setMModels] = useState<ProviderModel[]>([]);
   const [mModelDraft, setMModelDraft] = useState({
     id: "",
@@ -141,8 +139,6 @@ export default function ProviderModal({
       setMApiType("openai-completions");
       setMCfAccountId("");
       setMCfGatewayName("");
-      setMCfToken("");
-      setMShowCfToken(false);
       setMModels([]);
       setMModelDraft({ id: "", name: "", reasoning: false, vision: false, contextWindow: "", maxTokens: "", costInput: "", costOutput: "" });
       setMShowOptionalFields(false);
@@ -156,8 +152,6 @@ export default function ProviderModal({
       const cf = provider.api_type === CLOUDFLARE_API_TYPE ? parseCloudflareBaseUrl(provider.base_url) : null;
       setMCfAccountId(cf?.accountId ?? "");
       setMCfGatewayName(cf?.gatewayName ?? "");
-      setMCfToken("");
-      setMShowCfToken(false);
       setMModels(provider.models || []);
       setMModelDraft({ id: "", name: "", reasoning: false, vision: false, contextWindow: "", maxTokens: "", costInput: "", costOutput: "" });
       setMShowOptionalFields(false);
@@ -234,12 +228,11 @@ export default function ProviderModal({
       setMApiType("openai-completions");
     } else if (val === CLOUDFLARE_GATEWAY) {
       setMProvider("");
-      setMName("");
+      setMName("Cloudflare AI Gateway");
       setMBaseURL("");
       setMApiType(CLOUDFLARE_API_TYPE);
       setMCfAccountId("");
       setMCfGatewayName("");
-      setMCfToken("");
     } else if (val) {
       const cat = catalogProviders.find((c) => c.name === val);
       if (cat) {
@@ -389,11 +382,10 @@ export default function ProviderModal({
           api_type: apiType,
           models,
           api_key: mApiKey.trim() || undefined,
-          cf_aig_token: isCloudflareGateway ? (mCfToken.trim() || undefined) : undefined,
           instance_id: instanceId,
         });
       } else {
-        const payload: { name: string; base_url: string; api_type?: string; models?: ProviderModel[]; api_key?: string; cf_aig_token?: string } = {
+        const payload: { name: string; base_url: string; api_type?: string; models?: ProviderModel[]; api_key?: string } = {
           name: mName,
           base_url: effectiveBaseURL,
         };
@@ -403,7 +395,6 @@ export default function ProviderModal({
         }
         if (isCloudflareGateway) {
           payload.models = mModels;
-          if (mCfToken.trim()) payload.cf_aig_token = mCfToken.trim();
         }
         if (mApiKey.trim()) {
           payload.api_key = mApiKey.trim();
@@ -521,12 +512,16 @@ export default function ProviderModal({
                 <option value="" disabled hidden>
                   {catalogLoading || syncingCatalog ? "Loading providers..." : ""}
                 </option>
-                {catalogProviders.map((cat) => (
-                  <option key={cat.name} value={cat.name}>
-                    {cat.label}
-                  </option>
-                ))}
-                <option value={CLOUDFLARE_GATEWAY}>Cloudflare AI Gateway</option>
+                {[
+                  ...catalogProviders.map((cat) => ({ value: cat.name, label: cat.label })),
+                  { value: CLOUDFLARE_GATEWAY, label: "Cloudflare AI Gateway - Unified Billing" },
+                ]
+                  .sort((a, b) => a.label.localeCompare(b.label))
+                  .map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
                 <option value={CUSTOM_PROVIDER}>Custom (self-hosted / unlisted)</option>
               </select>
             </div>
@@ -593,33 +588,6 @@ export default function ProviderModal({
                 <p className="text-xs text-gray-400 mt-1">
                   Both are in your Cloudflare dashboard under AI &rsaquo; AI Gateway.
                 </p>
-              </div>
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">
-                  Gateway Token{" "}
-                  <span className="text-gray-400">
-                    (only for Authenticated gateways
-                    {isCloudflareEdit && provider?.cf_aig_token_set ? "; leave blank to keep current" : ""})
-                  </span>
-                </label>
-                <div className="relative">
-                  <input
-                    type={mShowCfToken ? "text" : "password"}
-                    value={mCfToken}
-                    onChange={(e) => setMCfToken(e.target.value)}
-                    placeholder={
-                      isCloudflareEdit && provider?.cf_aig_token_set ? "Enter new token to update" : "Optional"
-                    }
-                    className="w-full px-3 py-1.5 pr-10 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setMShowCfToken(!mShowCfToken)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  >
-                    {mShowCfToken ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </button>
-                </div>
               </div>
               {cloudflareBaseURL && (
                 <p className="text-xs text-gray-400">
@@ -794,9 +762,9 @@ export default function ProviderModal({
           {showForm && resolveApiType() !== "openai-codex-responses" && (
             <div>
               <label className="block text-xs text-gray-500 mb-1">
-                {isCloudflareGateway ? "Provider API Key" : "API Key"}{" "}
+                {isCloudflareGateway ? "Cloudflare API Token" : "API Key"}{" "}
                 {isCloudflareGateway && (
-                  <span className="text-gray-400">(upstream provider key, forwarded by the gateway)</span>
+                  <span className="text-gray-400">(token with AI Gateway Run permission; upstream billing handled by Cloudflare)</span>
                 )}
                 {mode === "edit" && (
                   <span className="text-gray-400">(leave blank to keep current)</span>
@@ -807,7 +775,11 @@ export default function ProviderModal({
                   type={mShowApiKey ? "text" : "password"}
                   value={mApiKey}
                   onChange={(e) => setMApiKey(e.target.value)}
-                  placeholder={mode === "edit" ? "Enter new key to update" : "Enter API key"}
+                  placeholder={
+                    mode === "edit"
+                      ? isCloudflareGateway ? "Enter new token to update" : "Enter new key to update"
+                      : isCloudflareGateway ? "Enter Cloudflare API token" : "Enter API key"
+                  }
                   className="w-full px-3 py-1.5 pr-10 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <button
@@ -891,7 +863,7 @@ export default function ProviderModal({
               )
             ) : (
               <>
-                {!isCodexEdit && !isCloudflareGateway && (
+                {!isCodexEdit && (
                   <button
                     type="button"
                     onClick={() => testMutation.mutate({ base_url: effectiveBaseURL, api_key: mApiKey, api_type: resolveApiType() })}

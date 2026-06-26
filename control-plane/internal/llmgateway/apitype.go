@@ -20,9 +20,6 @@ type AuthMaterial struct {
 	APIKey       string // for static-key types
 	OAuthAccess  string // OAuth access token (Bearer)
 	OAuthAccount string // chatgpt-account-id for openai-codex-responses
-	// CfAIGatewayToken is the Cloudflare AI Gateway authentication token sent as
-	// `cf-aig-authorization` for authenticated gateways (cloudflare-ai-gateway).
-	CfAIGatewayToken string
 }
 
 // APIType encapsulates all per-provider behavior: auth headers, URL rewriting,

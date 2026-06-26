@@ -1099,20 +1099,14 @@ func TestCloudflareAIGateway_GetAPIType(t *testing.T) {
 func TestCloudflareAIGateway_SetAuthHeader(t *testing.T) {
 	at := GetAPIType(APITypeCloudflareAIGateway)
 
-	// Authenticated gateway: both the upstream Bearer key and the gateway token.
+	// Unified Billing: the single Cloudflare API token is sent as Authorization
+	// Bearer (no cf-aig-authorization header).
 	req, _ := http.NewRequest("POST", "https://gateway.ai.cloudflare.com/v1/a/g/compat/chat/completions", nil)
-	at.SetAuthHeader(req, AuthMaterial{APIKey: "sk-upstream", CfAIGatewayToken: "cf-tok"})
-	if got := req.Header.Get("Authorization"); got != "Bearer sk-upstream" {
-		t.Errorf("Authorization: got %q, want Bearer sk-upstream", got)
+	at.SetAuthHeader(req, AuthMaterial{APIKey: "cf-token"})
+	if got := req.Header.Get("Authorization"); got != "Bearer cf-token" {
+		t.Errorf("Authorization: got %q, want Bearer cf-token", got)
 	}
-	if got := req.Header.Get("cf-aig-authorization"); got != "Bearer cf-tok" {
-		t.Errorf("cf-aig-authorization: got %q, want Bearer cf-tok", got)
-	}
-
-	// Unauthenticated gateway: no gateway token → header must be absent.
-	req2, _ := http.NewRequest("POST", "https://gateway.ai.cloudflare.com/v1/a/g/compat/chat/completions", nil)
-	at.SetAuthHeader(req2, AuthMaterial{APIKey: "sk-upstream"})
-	if got := req2.Header.Get("cf-aig-authorization"); got != "" {
+	if got := req.Header.Get("cf-aig-authorization"); got != "" {
 		t.Errorf("cf-aig-authorization: got %q, want empty", got)
 	}
 }

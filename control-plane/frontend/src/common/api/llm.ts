@@ -79,7 +79,6 @@ export async function createProvider(payload: {
   api_type?: string;
   models?: ProviderModel[];
   api_key?: string;
-  cf_aig_token?: string;
   instance_id?: number;
   oauth?: ProviderOAuthCompletion;
 }): Promise<LLMProvider> {
@@ -100,7 +99,6 @@ export async function updateProvider(
     api_type?: string;
     models?: ProviderModel[];
     api_key?: string;
-    cf_aig_token?: string;
     oauth?: ProviderOAuthCompletion;
   },
 ): Promise<LLMProvider> {

@@ -185,11 +185,6 @@ type LLMProvider struct {
 	APIType    string `gorm:"size:100;default:'openai-completions'" json:"api_type"`
 	APIKey     string `gorm:"type:text;default:''" json:"-"`   // Fernet-encrypted upstream API key
 	Models     string `gorm:"type:text;default:'[]'" json:"-"` // JSON []ProviderModel
-	// CfAIGatewayToken is the Fernet-encrypted Cloudflare AI Gateway
-	// authentication token, sent as `cf-aig-authorization` when the gateway is
-	// in Authenticated mode. Empty for all other providers (and for
-	// unauthenticated Cloudflare gateways). Used by api_type cloudflare-ai-gateway.
-	CfAIGatewayToken string `gorm:"column:cf_ai_gateway_token;type:text;default:''" json:"-"`
 	// OAuth credentials for providers that authenticate via OAuth instead of a
 	// static API key (currently: openai-codex-responses against ChatGPT).
 	// All four are zero-valued for static-key providers. Explicit column names

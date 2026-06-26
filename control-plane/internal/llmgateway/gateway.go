@@ -155,9 +155,6 @@ func authAndResolve(r *http.Request) (instanceID, providerID uint, providerKey, 
 		mat = AuthMaterial{OAuthAccess: access, OAuthAccount: account}
 	} else {
 		mat = AuthMaterial{APIKey: resolveRealAPIKey(key.Provider)}
-		if apiType == APITypeCloudflareAIGateway {
-			mat.CfAIGatewayToken = resolveCfAIGatewayToken(key.Provider)
-		}
 	}
 	return
 }
@@ -178,18 +175,6 @@ func resolveRealAPIKey(provider database.LLMProvider) string {
 		return ""
 	}
 	if decrypted, err := utils.Decrypt(provider.APIKey); err == nil {
-		return decrypted
-	}
-	return ""
-}
-
-// resolveCfAIGatewayToken decrypts and returns the Cloudflare AI Gateway
-// authentication token stored on the provider, or "" if unset/undecryptable.
-func resolveCfAIGatewayToken(provider database.LLMProvider) string {
-	if provider.CfAIGatewayToken == "" {
-		return ""
-	}
-	if decrypted, err := utils.Decrypt(provider.CfAIGatewayToken); err == nil {
 		return decrypted
 	}
 	return ""
