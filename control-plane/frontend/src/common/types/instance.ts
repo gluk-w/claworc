@@ -138,6 +138,7 @@ export interface LLMProvider {
   api_type: string;
   masked_api_key?: string;
   models: ProviderModel[] | null;
+  cf_aig_token_set?: boolean; // true if a Cloudflare AI Gateway token is stored
   oauth_connected?: boolean;
   oauth_email?: string;
   oauth_expires_at?: number;

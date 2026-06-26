@@ -47,6 +47,48 @@ func (openAICompletions) ProbeURL(baseURL string) string {
 
 func (openAICompletions) ProbeHeaders(*http.Request) {}
 
+// --- cloudflareAIGateway (Cloudflare AI Gateway universal /compat endpoint) ---
+
+// cloudflareAIGateway routes OpenAI-format requests through a Cloudflare AI
+// Gateway universal endpoint. The base URL embeds the account ID and gateway
+// name and ends in a provider segment (".../<account>/<gateway>/compat") rather
+// than a version segment, so the standard /v1 dedup in openAICompletions does
+// not fire. We strip the client's leading /v1 explicitly so the upstream path
+// becomes ".../compat/chat/completions". When the gateway is in Authenticated
+// mode, the gateway token is sent as cf-aig-authorization in addition to the
+// upstream provider's Bearer key.
+type cloudflareAIGateway struct{}
+
+func (cloudflareAIGateway) SetAuthHeader(req *http.Request, mat AuthMaterial) {
+	req.Header.Set("Authorization", "Bearer "+mat.APIKey)
+	if mat.CfAIGatewayToken != "" {
+		req.Header.Set("cf-aig-authorization", "Bearer "+mat.CfAIGatewayToken)
+	}
+}
+
+func (cloudflareAIGateway) RewritePath(baseURL, requestPath string) string {
+	// OpenClaw posts /v1/chat/completions; the compat base already ends in
+	// /compat, so drop the leading /v1 to yield .../compat/chat/completions.
+	if strings.HasPrefix(requestPath, "/v1/") {
+		return requestPath[3:]
+	}
+	return requestPath
+}
+
+func (cloudflareAIGateway) ParseUsage(body []byte) (int, int, int) {
+	return ParseUsageOpenAICompletions(body)
+}
+
+func (cloudflareAIGateway) ParseStreamingUsage(body []byte) (int, int, int) {
+	return ParseUsageOpenAICompletionsStream(body)
+}
+
+func (cloudflareAIGateway) ProbeURL(baseURL string) string {
+	return strings.TrimRight(baseURL, "/") + "/models"
+}
+
+func (cloudflareAIGateway) ProbeHeaders(*http.Request) {}
+
 // --- openAIResponses (embeds openAICompletions for shared auth/probe) ---
 
 type openAIResponses struct {

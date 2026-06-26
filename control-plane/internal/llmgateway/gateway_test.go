@@ -1059,6 +1059,22 @@ func TestBuildTargetURL(t *testing.T) {
 			"openai-completions",
 			"https://api.venice.ai/api/v1/chat/completions",
 		},
+		{
+			"cloudflare-ai-gateway: /compat base — strip leading /v1 from path",
+			"https://gateway.ai.cloudflare.com/v1/acct123/my-gateway/compat",
+			"/v1/chat/completions",
+			"",
+			"cloudflare-ai-gateway",
+			"https://gateway.ai.cloudflare.com/v1/acct123/my-gateway/compat/chat/completions",
+		},
+		{
+			"cloudflare-ai-gateway: path without /v1 prefix passes through",
+			"https://gateway.ai.cloudflare.com/v1/acct123/my-gateway/compat",
+			"/chat/completions",
+			"",
+			"cloudflare-ai-gateway",
+			"https://gateway.ai.cloudflare.com/v1/acct123/my-gateway/compat/chat/completions",
+		},
 	}
 
 	for _, tc := range cases {
@@ -1069,6 +1085,35 @@ func TestBuildTargetURL(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// --- 16b. cloudflareAIGateway — auth headers & registration ---
+
+func TestCloudflareAIGateway_GetAPIType(t *testing.T) {
+	if _, ok := GetAPIType(APITypeCloudflareAIGateway).(cloudflareAIGateway); !ok {
+		t.Fatalf("GetAPIType(%q) did not return cloudflareAIGateway", APITypeCloudflareAIGateway)
+	}
+}
+
+func TestCloudflareAIGateway_SetAuthHeader(t *testing.T) {
+	at := GetAPIType(APITypeCloudflareAIGateway)
+
+	// Authenticated gateway: both the upstream Bearer key and the gateway token.
+	req, _ := http.NewRequest("POST", "https://gateway.ai.cloudflare.com/v1/a/g/compat/chat/completions", nil)
+	at.SetAuthHeader(req, AuthMaterial{APIKey: "sk-upstream", CfAIGatewayToken: "cf-tok"})
+	if got := req.Header.Get("Authorization"); got != "Bearer sk-upstream" {
+		t.Errorf("Authorization: got %q, want Bearer sk-upstream", got)
+	}
+	if got := req.Header.Get("cf-aig-authorization"); got != "Bearer cf-tok" {
+		t.Errorf("cf-aig-authorization: got %q, want Bearer cf-tok", got)
+	}
+
+	// Unauthenticated gateway: no gateway token → header must be absent.
+	req2, _ := http.NewRequest("POST", "https://gateway.ai.cloudflare.com/v1/a/g/compat/chat/completions", nil)
+	at.SetAuthHeader(req2, AuthMaterial{APIKey: "sk-upstream"})
+	if got := req2.Header.Get("cf-aig-authorization"); got != "" {
+		t.Errorf("cf-aig-authorization: got %q, want empty", got)
 	}
 }
 
