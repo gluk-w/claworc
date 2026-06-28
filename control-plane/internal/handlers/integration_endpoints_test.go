@@ -451,12 +451,12 @@ func TestIntegration_LogsStreaming(t *testing.T) {
 	})
 }
 
-// ─── LLM Gateway ──────────────────────────────────────────────────────────────
+// ─── LLM Proxy ──────────────────────────────────────────────────────────────
 
-func TestIntegration_LLMGateway(t *testing.T) {
+func TestIntegration_LLMProxy(t *testing.T) {
 	// Port 40001 is required for the LLMProxy agent-listener tunnel (PermitListen restriction).
-	if sessionGatewayPort != 40001 {
-		t.Skipf("gateway port is %d, not 40001; LLMProxy tunnel disabled (port in use at startup)", sessionGatewayPort)
+	if sessionInternalProxyPort != 40001 {
+		t.Skipf("gateway port is %d, not 40001; LLMProxy tunnel disabled (port in use at startup)", sessionInternalProxyPort)
 	}
 	t.Parallel()
 

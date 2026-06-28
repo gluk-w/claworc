@@ -631,7 +631,7 @@ func pushProviderUpdateToInstances(providerID uint) {
 		internalproxy.EnsureKeysForInstance(inst.ID, allIDs)
 		database.DB.First(&inst, inst.ID)
 		models := resolveInstanceModels(inst)
-		gatewayProviders := resolveGatewayProviders(inst)
+		gatewayProviders := resolveLLMProviders(inst)
 		instID := inst.ID
 		instName := inst.Name
 		go func() {
@@ -670,7 +670,7 @@ func reconfigureInstanceAsync(instID uint) {
 	internalproxy.EnsureKeysForInstance(inst.ID, allIDs)
 	database.DB.First(&inst, inst.ID)
 	models := resolveInstanceModels(inst)
-	gatewayProviders := resolveGatewayProviders(inst)
+	gatewayProviders := resolveLLMProviders(inst)
 	instName := inst.Name
 	safeID := inst.ID
 	go func() {
@@ -839,8 +839,8 @@ func DeleteProvider(w http.ResponseWriter, r *http.Request) {
 
 	ownerInstanceID := p.InstanceID
 
-	// Cascade-delete gateway keys (API key is on the provider row itself)
-	database.DB.Where("provider_id = ?", id).Delete(&database.LLMGatewayKey{})
+	// Cascade-delete virtual keys (API key is on the provider row itself)
+	database.DB.Where("provider_id = ?", id).Delete(&database.LLMProxyKey{})
 	database.DB.Delete(&p)
 
 	var remaining int64

@@ -174,7 +174,7 @@ type ProviderModelCost struct {
 // LLMProvider stores admin-defined LLM provider configuration. Each provider
 // represents an upstream LLM service (e.g. Anthropic, OpenAI, a self-hosted
 // Ollama instance) accessed via an OpenAI-compatible base URL through the
-// internal LLM gateway.
+// internal proxy's LLM route.
 //
 // Global providers (InstanceID == nil) are shared across all instances.
 // Instance-specific providers (InstanceID != nil) belong to a single instance.
@@ -219,13 +219,14 @@ func ParseProviderModels(raw string) []ProviderModel {
 	return models
 }
 
-// LLMGatewayKey is a per-instance per-provider auth key issued to OpenClaw instances.
-// OpenClaw uses this as the gateway auth token when calling the internal LLM gateway.
-type LLMGatewayKey struct {
+// LLMProxyKey is a per-instance per-provider virtual key issued to OpenClaw
+// instances. OpenClaw presents it as the auth token when calling the internal
+// proxy's LLM route ("/"); the proxy resolves it to the real provider credential.
+type LLMProxyKey struct {
 	ID         uint        `gorm:"primaryKey;autoIncrement"`
-	InstanceID uint        `gorm:"not null;uniqueIndex:idx_lgk_inst_prov"`
-	ProviderID uint        `gorm:"not null;uniqueIndex:idx_lgk_inst_prov"` // FK → LLMProvider.ID
-	GatewayKey string      `gorm:"not null;uniqueIndex"`                   // "claworc-vk-<random>"
+	InstanceID uint        `gorm:"not null;uniqueIndex:idx_lpk_inst_prov"`
+	ProviderID uint        `gorm:"not null;uniqueIndex:idx_lpk_inst_prov"` // FK → LLMProvider.ID
+	VirtualKey string      `gorm:"not null;uniqueIndex"`                   // "claworc-vk-<random>"
 	Provider   LLMProvider `gorm:"foreignKey:ProviderID"`
 }
 

@@ -1,5 +1,5 @@
-// keys.go manages per-instance per-provider gateway auth keys.
-// Gateway keys use the "claworc-vk-<random>" prefix.
+// keys.go manages per-instance per-provider virtual keys for the internal
+// proxy's LLM route. Virtual keys use the "claworc-vk-<random>" prefix.
 
 package internalproxy
 
@@ -12,53 +12,53 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 )
 
-// generateGatewayKey generates a unique gateway auth key with "claworc-vk-" prefix.
-func generateGatewayKey() string {
+// generateVirtualKey generates a unique LLM proxy virtual key with "claworc-vk-" prefix.
+func generateVirtualKey() string {
 	b := make([]byte, 24)
 	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("failed to generate gateway key: %v", err))
+		panic(fmt.Sprintf("failed to generate virtual key: %v", err))
 	}
 	return "claworc-vk-" + hex.EncodeToString(b)
 }
 
-// EnsureKeysForInstance creates gateway keys for each enabled provider (if not already present)
+// EnsureKeysForInstance creates virtual keys for each enabled provider (if not already present)
 // and removes keys for providers that are no longer enabled.
 func EnsureKeysForInstance(instanceID uint, enabledProviderIDs []uint) error {
 	// Create keys for newly enabled providers
 	for _, providerID := range enabledProviderIDs {
-		var existing database.LLMGatewayKey
+		var existing database.LLMProxyKey
 		err := database.DB.Where("instance_id = ? AND provider_id = ?", instanceID, providerID).First(&existing).Error
 		if err == nil {
 			continue // already has a key
 		}
-		key := database.LLMGatewayKey{
+		key := database.LLMProxyKey{
 			InstanceID: instanceID,
 			ProviderID: providerID,
-			GatewayKey: generateGatewayKey(),
+			VirtualKey: generateVirtualKey(),
 		}
 		if err := database.DB.Create(&key).Error; err != nil {
-			return fmt.Errorf("create gateway key for instance %d, provider %d: %w", instanceID, providerID, err)
+			return fmt.Errorf("create virtual key for instance %d, provider %d: %w", instanceID, providerID, err)
 		}
-		log.Print("LLM gateway: created gateway key")
+		log.Print("LLM proxy: created virtual key")
 	}
 
 	// Remove keys for disabled providers
 	if len(enabledProviderIDs) == 0 {
-		database.DB.Where("instance_id = ?", instanceID).Delete(&database.LLMGatewayKey{})
+		database.DB.Where("instance_id = ?", instanceID).Delete(&database.LLMProxyKey{})
 	} else {
-		database.DB.Where("instance_id = ? AND provider_id NOT IN ?", instanceID, enabledProviderIDs).Delete(&database.LLMGatewayKey{})
+		database.DB.Where("instance_id = ? AND provider_id NOT IN ?", instanceID, enabledProviderIDs).Delete(&database.LLMProxyKey{})
 	}
 
 	return nil
 }
 
-// GetInstanceGatewayKeys returns a map of providerID → gatewayKey for the given instance.
-func GetInstanceGatewayKeys(instanceID uint) map[uint]string {
-	var keys []database.LLMGatewayKey
+// GetInstanceVirtualKeys returns a map of providerID → virtualKey for the given instance.
+func GetInstanceVirtualKeys(instanceID uint) map[uint]string {
+	var keys []database.LLMProxyKey
 	database.DB.Where("instance_id = ?", instanceID).Find(&keys)
 	result := make(map[uint]string, len(keys))
 	for _, k := range keys {
-		result[k.ProviderID] = k.GatewayKey
+		result[k.ProviderID] = k.VirtualKey
 	}
 	return result
 }

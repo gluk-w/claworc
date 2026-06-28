@@ -2,7 +2,7 @@
 
 > Part of the [Internal Proxy](./internal-proxy.md). Connections are served on the
 > `/connections/` route of the shared `internal/internalproxy` server, alongside
-> the [LLM gateway](./virtual-keys.md).
+> the [LLM proxy](./virtual-keys.md).
 
 ## Overview
 

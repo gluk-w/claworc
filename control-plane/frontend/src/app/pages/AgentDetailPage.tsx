@@ -172,7 +172,7 @@ export default function AgentDetailPage() {
   const [editingResolution, setEditingResolution] = useState(false);
   const [pendingResolution, setPendingResolution] = useState<string | null>(null);
 
-  // Gateway providers editing state
+  // LLM proxy providers editing state
   const [editingGatewayProviders, setEditingGatewayProviders] = useState(false);
   const [pendingProviders, setPendingProviders] = useState<number[] | null>(null);
   const [pendingProviderModels, setPendingProviderModels] = useState<Record<number, string[]> | null>(null);
@@ -501,7 +501,7 @@ export default function AgentDetailPage() {
           setPendingDefaultModel("");
           toast.custom(
             createElement(AppToast, {
-              title: "Gateway providers saved",
+              title: "Providers saved",
               description: "Instance is being configured in the background.",
               status: "success",
               toastId,
@@ -922,7 +922,7 @@ export default function AgentDetailPage() {
             emptyMessage="No instance-specific env vars. Globals from Settings apply."
           />
 
-          {/* LLM Gateway Providers (admin only) */}
+          {/* LLM proxy providers (admin only) */}
           {isAdmin && (
             <div className="bg-white rounded-lg border border-gray-200 p-6">
               <div className="flex items-center justify-between mb-4">

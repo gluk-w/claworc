@@ -1,7 +1,5 @@
 # Claworc
 
-## Project Overview
-
 OpenClaw Orchestrator (Claworc) manages multiple OpenClaw instances in Kubernetes or Docker.
 Each instance runs in its own container/pod and allows users easy access to a Chromium browser & terminal 
 for collaboration with the agent.
@@ -13,7 +11,10 @@ The project consists of the following components:
 
 ## Repository Structure
 
-- `agent/` - Base docker image with OpenClaw instance (`claworc/openclaw`) and images with various browsers `claworc/<browser>-browser`
+- `agent/` - Docker images
+    - `browser/` - Images with various browsers `claworc/<browser>-browser`
+    - `instance/` - Base Docker image with OpenClaw instance (`claworc/openclaw`) and all necessary tools
+    - `tests/` - Tests for the OpenClaw image
 - `control-plane/` - Main application (Go backend + React frontend)
     - `main.go` - Entry point, Chi router, embedded SPA serving
     - `internal/` - Go packages (config, database, handlers, middleware, orchestrator, sshproxy, sshterminal)
@@ -21,7 +22,6 @@ The project consists of the following components:
     - `Dockerfile` - Multi-stage build (Node frontend + Go backend)
 - `helm/` - Helm chart for deploying the dashboard to Kubernetes
 - `website/` - Landing page for claworc.com
-- `website_docs/` - End-user documentation powered by Mintlify. It is automatically deployed to claworc.com/docs
 - `docs/` - Detailed internal specs (architecture, API, data model, UI, features)
 
 ## Architecture
@@ -33,8 +33,13 @@ SPA middleware for client-side routing.
 **API routes**: All under `/api/v1/`. Instance CRUD at `/api/v1/instances`, settings at `/api/v1/settings`, 
 health at `/health`. Logs are streamed via SSE. WebSocket proxying for chat and VNC.
 
-**LLM Gateway**: Proxy for LLM requests that replaces virtual keys with real, globally configured API tokens. It
-records statistics in a separate SQLite database. See`docs/virtual-keys.md`.
+**Internal Proxy** (`internal/internalproxy/`): A single internal-only HTTP server (`127.0.0.1`, default
+port `40001`, `CLAWORC_INTERNAL_PROXY_PORT`) that lets instances reach external services without ever
+holding real credentials. Each request carries a Claworc-issued token; the proxy validates it, injects the
+real upstream credential, and forwards. It serves several routes: the LLM virtual-key proxy (`/`, swaps
+`claworc-vk-*` virtual keys for the real, globally configured provider API tokens and records usage stats in
+a separate SQLite database), the Composio connections broker (`/connections/`), and the inter-agent webhook
+trigger (`/webhooks/`). See `docs/internal-proxy.md` (LLM route details in `docs/virtual-keys.md`).
 
 **Orchestrator** (`internal/orchestrator/`): Thin abstraction over the underlying container runtime
 (Kubernetes or Docker). Its job is generic container primitives only — instance lifecycle, exec, file
@@ -52,7 +57,11 @@ for local development.
 **Crypto** (`internal/crypto/crypto.go`): API keys encrypted at rest in SQLite using Fernet. The Fernet key is 
 auto-generated on first run and stored in the `settings` table.
 
-**Database migrations** (`internal/database/migrations/`): Goose v3 invoked as a library, embedded into the binary, applied at startup from `database.Init()`. New migrations are versioned Go files in the `migrations` subpackage that use the GORM Migrator interface; model types live in `internal/database/models/` and are re-exported by the `database` package via type aliases for backward compat. See `docs/migrations.md` for the full spec, including the `make migration` workflow that delegates to the `migration-author` subagent.
+**Database migrations** (`internal/database/migrations/`): Goose v3 invoked as a library, embedded in the binary, 
+applied at startup from `database.Init()`. New migrations are versioned Go files in the `migrations` subpackage
+that use the GORM Migrator interface; model types live in `internal/database/models/` and are re-exported by
+the `database` package via type aliases for backward compat. See `docs/migrations.md` for the full spec, 
+including the `make migration` workflow that delegates to the `migration-author` subagent.
 
 **SSH Proxy** (`internal/sshproxy/`): Unified package consolidating SSH key management, connection management, 
 tunnel management, health monitoring, automatic reconnection, connection state tracking, and connection event logging. 
@@ -68,25 +77,13 @@ A ring-buffer scrollback captures recent output for replay on reconnect.
 (5s polling on instance list), React Router for SPA routing, Monaco Editor for JSON config editing, 
 Axios for API calls. The `@` import alias maps to `src/`.
 
-
-## Configuration
-
-Backend settings use `envconfig` with `CLAWORC_` env prefix (see `internal/config/config.go`):
-- `CLAWORC_DATA_PATH` - Data directory for SQLite database and SSH keys (default: `/app/data`)
-- `CLAWORC_BACKUPS_PATH` - Directory for backup archives (default: empty, falls back to `<DATA_PATH>/backups`)
-- `CLAWORC_K8S_NAMESPACE` - Target namespace (default: `claworc`)
-- `CLAWORC_TERMINAL_HISTORY_LINES` - Scrollback buffer size in lines (default: `1000`, `0` to disable)
-- `CLAWORC_TERMINAL_RECORDING_DIR` - Directory for audit recordings (default: empty, disabled)
-- `CLAWORC_TERMINAL_SESSION_TIMEOUT` - Idle detached session timeout (default: `30m`)
-- `CLAWORC_ALLOWED_HOST_MOUNTS` - Comma-separated allowlist of host path prefixes within which shared folders may be backed by a host bind mount. Empty (default) disables host-backed shared folders entirely. See `docs/shared-folders.md`.
-
-## Terminology
-
-- **"Agent" (user-facing) = "Instance" (code)**: The UI calls them "Agents" but the backend, database, API paths (`/api/v1/instances`), routes (`/instances/...`), TypeScript types (`Instance`), and Go types all use `Instance`. When editing user-visible strings use "Agent"; when editing code identifiers, types, routes, or API paths keep `Instance`.
+Backend settings use `envconfig` with `CLAWORC_` env prefix (see `internal/config/config.go`). 
+`CLAWORC_DATA_PATH` - Data directory for SQLite database and SSH keys.
 
 ## Key Conventions
 
-- K8s-safe instance names are derived from display names: lowercase, hyphens, prefixed with `bot-`, max 63 chars
+- **"Agent" (user-facing) = "Instance" (code)**: The UI calls them "Agents" but the backend, database, API paths (`/api/v1/instances`), routes (`/instances/...`), TypeScript types (`Instance`), and Go types all use `Instance`. When editing user-visible strings use "Agent"; when editing code identifiers, types, routes, or API paths keep `Instance`.
+- K8S-safe instance names are derived from display names: lowercase, hyphens, prefixed with `bot-`, max 63 chars
 - API keys are never returned in full by the API -- only masked (`****` + last 4 chars)
 - Instance status in API responses is enriched with live K8s/Docker status, not just the DB value
 - Global API key changes propagate to all instances without overrides

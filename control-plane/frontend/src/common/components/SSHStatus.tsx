@@ -20,7 +20,6 @@ const tunnelLabelMap: Record<string, string> = {
   VNC: "Browser",
   CDP: "Browser CDP",
   Gateway: "OpenClaw",
-  LLMProxy: "API Gateway",
   InternalProxy: "Internal Proxy",
 };
 

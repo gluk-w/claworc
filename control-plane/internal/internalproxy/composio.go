@@ -10,7 +10,7 @@
 //	GET  /connections/tools                 → list tools for the instance's connected toolkits
 //	POST /connections/tools/execute/{slug}  → execute a tool
 //
-// Everything else is rejected. The route is registered on the gateway mux via
+// Everything else is rejected. The route is registered on the internal proxy mux via
 // RegisterRoute("/connections/", HandleConnections) in main.go.
 
 package internalproxy
@@ -31,11 +31,11 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
 
-// ConnectionsPrefix is the gateway mux route prefix for the Composio broker.
+// ConnectionsPrefix is the internal proxy mux route prefix for the Composio broker.
 const ConnectionsPrefix = "/connections/"
 
 // composioHTTPClient is the upstream client used by the proxy. 300s timeout to
-// accommodate slow tool executions, mirroring the LLM gateway's client.
+// accommodate slow tool executions, mirroring the LLM proxy's client.
 var composioHTTPClient = &http.Client{Timeout: 300 * time.Second}
 
 // ComposioUserID derives the stable, non-enumerable Composio user_id for an
@@ -165,7 +165,7 @@ func forwardToComposio(w http.ResponseWriter, ctx context.Context, method, path 
 		rdr = bytes.NewReader(body)
 	}
 	// Use context.Background so a client disconnect doesn't sever an in-flight
-	// tool execution (mirrors the LLM gateway).
+	// tool execution (mirrors the LLM proxy).
 	req, err := http.NewRequestWithContext(context.Background(), method, ComposioBaseURL+path, rdr)
 	if err != nil {
 		connectionsError(w, http.StatusInternalServerError, "failed to build upstream request")

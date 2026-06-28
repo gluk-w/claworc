@@ -45,13 +45,13 @@ For admins, the dropdown also offers a `+ Create a team` action.
 
 A team can be restricted to a subset of the globally configured LLM
 providers. The whitelist is set on the team admin page (`/teams` →
-Providers tab) and applies when the gateway issues virtual keys to a new
+Providers tab) and applies when the LLM proxy issues virtual keys to a new
 or updated instance:
 
 - **Empty whitelist** — no restriction; the instance can use any global
   provider.
 - **Non-empty whitelist** — only the listed global providers are issued
-  gateway keys for the team's instances. Instance-specific providers
+  virtual keys for the team's instances. Instance-specific providers
   (those scoped to a single instance via the instance details page) are
   unaffected by team whitelists.
 

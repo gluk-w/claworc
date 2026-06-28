@@ -18,7 +18,7 @@ type (
 	ProviderModel      = models.ProviderModel
 	ProviderModelCost  = models.ProviderModelCost
 	LLMProvider        = models.LLMProvider
-	LLMGatewayKey      = models.LLMGatewayKey
+	LLMProxyKey        = models.LLMProxyKey
 	LLMRequestLog      = models.LLMRequestLog
 	Setting            = models.Setting
 	User               = models.User

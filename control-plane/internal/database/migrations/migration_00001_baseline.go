@@ -46,7 +46,7 @@ func AutoMigrateAll(gdb interface {
 		&models.UserInstance{},
 		&models.WebAuthnCredential{},
 		&models.LLMProvider{},
-		&models.LLMGatewayKey{},
+		&models.LLMProxyKey{},
 		&models.Skill{},
 		&models.Backup{},
 		&models.BackupSchedule{},

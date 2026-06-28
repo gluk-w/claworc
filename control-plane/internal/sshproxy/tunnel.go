@@ -97,7 +97,7 @@ type TunnelManager struct {
 	cancel       context.CancelFunc
 	healthCancel context.CancelFunc
 
-	internalProxyAddr string // local address of the LLM gateway (set by SetInternalProxyAddr)
+	internalProxyAddr string // local address of the internal proxy (set by SetInternalProxyAddr)
 
 	// cdpDialProvider, when set, lets the reconciler ask "should this instance
 	// get a CDP agent-listener tunnel?" once per StartTunnelsForInstance. ok=true
@@ -134,7 +134,7 @@ func NewTunnelManager(sshMgr *SSHManager) *TunnelManager {
 	}
 }
 
-// SetInternalProxyAddr sets the local address of the LLM gateway for agent-listener tunnels.
+// SetInternalProxyAddr sets the local address of the internal proxy for agent-listener tunnels.
 // Call this before the background tunnel manager starts reconciling.
 func (tm *TunnelManager) SetInternalProxyAddr(addr string) {
 	tm.mu.Lock()
@@ -420,12 +420,12 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID
 		log.Printf("Failed to create Gateway tunnel for instance %d: %v", instanceID, err)
 	}
 
-	// Create LLM proxy agent-listener tunnel if gateway is configured
+	// Create LLM proxy agent-listener tunnel if the internal proxy is configured
 	tm.mu.RLock()
 	internalAddr := tm.internalProxyAddr
 	tm.mu.RUnlock()
 	if internalAddr != "" {
-		// Extract port from the LLM gateway address for use as the agent-side port
+		// Extract port from the internal proxy address for use as the agent-side port
 		var agentPort int
 		fmt.Sscanf(internalAddr, "127.0.0.1:%d", &agentPort)
 		if agentPort == 0 {
