@@ -47,6 +47,35 @@ func (openAICompletions) ProbeURL(baseURL string) string {
 
 func (openAICompletions) ProbeHeaders(*http.Request) {}
 
+// --- cloudflareAIGateway (Cloudflare AI Gateway universal /compat endpoint) ---
+
+// cloudflareAIGateway routes OpenAI-format requests through a Cloudflare AI
+// Gateway universal (/compat) endpoint using Unified Billing: a single
+// Cloudflare API token is sent as `Authorization: Bearer`, and Cloudflare bills
+// and authenticates the upstream provider (no separate provider keys). Auth,
+// usage parsing, and probing are therefore identical to openAICompletions; the
+// only difference is the path. The base URL embeds the account ID and gateway
+// name and ends in ".../<account>/<gateway>/compat" rather than a version
+// segment, so we strip the client's leading /v1 to yield
+// ".../compat/chat/completions" (the standard /v1 dedup keys off a /vN suffix,
+// which this base does not have).
+type cloudflareAIGateway struct {
+	openAICompletions
+}
+
+func (cloudflareAIGateway) RewritePath(baseURL, requestPath string) string {
+	if strings.HasPrefix(requestPath, "/v1/") {
+		return requestPath[3:]
+	}
+	return requestPath
+}
+
+func (cloudflareAIGateway) ProbeURL(baseURL string) string {
+	// The compat base already carries the version-less /compat prefix; append
+	// /models directly rather than openAICompletions' /v1/models.
+	return strings.TrimRight(baseURL, "/") + "/models"
+}
+
 // --- openAIResponses (embeds openAICompletions for shared auth/probe) ---
 
 type openAIResponses struct {

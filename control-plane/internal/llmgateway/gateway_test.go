@@ -1059,6 +1059,22 @@ func TestBuildTargetURL(t *testing.T) {
 			"openai-completions",
 			"https://api.venice.ai/api/v1/chat/completions",
 		},
+		{
+			"cloudflare-ai-gateway: /compat base — strip leading /v1 from path",
+			"https://gateway.ai.cloudflare.com/v1/acct123/my-gateway/compat",
+			"/v1/chat/completions",
+			"",
+			"cloudflare-ai-gateway",
+			"https://gateway.ai.cloudflare.com/v1/acct123/my-gateway/compat/chat/completions",
+		},
+		{
+			"cloudflare-ai-gateway: path without /v1 prefix passes through",
+			"https://gateway.ai.cloudflare.com/v1/acct123/my-gateway/compat",
+			"/chat/completions",
+			"",
+			"cloudflare-ai-gateway",
+			"https://gateway.ai.cloudflare.com/v1/acct123/my-gateway/compat/chat/completions",
+		},
 	}
 
 	for _, tc := range cases {
@@ -1069,6 +1085,29 @@ func TestBuildTargetURL(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// --- 16b. cloudflareAIGateway — auth headers & registration ---
+
+func TestCloudflareAIGateway_GetAPIType(t *testing.T) {
+	if _, ok := GetAPIType(APITypeCloudflareAIGateway).(cloudflareAIGateway); !ok {
+		t.Fatalf("GetAPIType(%q) did not return cloudflareAIGateway", APITypeCloudflareAIGateway)
+	}
+}
+
+func TestCloudflareAIGateway_SetAuthHeader(t *testing.T) {
+	at := GetAPIType(APITypeCloudflareAIGateway)
+
+	// Unified Billing: the single Cloudflare API token is sent as Authorization
+	// Bearer (no cf-aig-authorization header).
+	req, _ := http.NewRequest("POST", "https://gateway.ai.cloudflare.com/v1/a/g/compat/chat/completions", nil)
+	at.SetAuthHeader(req, AuthMaterial{APIKey: "cf-token"})
+	if got := req.Header.Get("Authorization"); got != "Bearer cf-token" {
+		t.Errorf("Authorization: got %q, want Bearer cf-token", got)
+	}
+	if got := req.Header.Get("cf-aig-authorization"); got != "" {
+		t.Errorf("cf-aig-authorization: got %q, want empty", got)
 	}
 }
 

@@ -1381,4 +1381,3 @@ func GetUsageLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, result)
 }
-

@@ -166,6 +166,7 @@ calls the provider.
 | `github-copilot` | @anthropic-ai/sdk | `Authorization: Bearer` | dynamic | — |
 | `bedrock-converse-stream` | AWS SDK | `Authorization: Bearer` | AWS region URL | `https://bedrock-runtime.{region}.amazonaws.com` |
 | `ollama` | direct fetch `/api/chat` | `Authorization: Bearer` (empty ok) | root URL | `http://localhost:11434` |
+| `cloudflare-ai-gateway` | openai SDK `/chat/completions` | `Authorization: Bearer` (Cloudflare API token) | ends with `/compat` | `https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway}/compat` |
 
 ### Auth header notes
 
@@ -183,6 +184,16 @@ calls the provider.
   custom `baseUrl` is provided.
 - **`openai-completions` / `openai-responses`**: the gateway automatically de-duplicates `/v1`
   if `base_url` already ends with `/v1`.
+- **`cloudflare-ai-gateway`**: routes OpenAI-format requests through a Cloudflare AI Gateway
+  universal (`/compat`) endpoint using **Unified Billing** — a single Cloudflare API token (stored
+  as the provider's `api_key`) is sent as `Authorization: Bearer`, and Cloudflare authenticates and
+  bills the upstream provider, so no per-provider keys are needed. The account ID and gateway name
+  are path segments in `base_url` (`.../v1/{account_id}/{gateway}/compat`), so there is no separate
+  field for them — the **Add Provider → Cloudflare AI Gateway - Unified Billing** form in the UI
+  collects them and assembles the URL. Because the base ends in `/compat` (not `/v1`), the gateway
+  strips the client's leading `/v1` to produce `.../compat/chat/completions`. Models use
+  `provider/model` IDs (e.g. `openai/gpt-4o`). Auth, usage parsing, and probing are otherwise
+  identical to `openai-completions`.
 
 
 ## Testing with Virtual Keys

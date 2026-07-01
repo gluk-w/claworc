@@ -123,6 +123,62 @@ func TestGetUserByUsername(t *testing.T) {
 	}
 }
 
+func TestGetUserByEmail(t *testing.T) {
+	setupTestDB(t)
+	CreateUser(&User{Username: "emailed", Email: "person@example.com", PasswordHash: "h", Role: "user"})
+
+	// Exact match.
+	u, err := GetUserByEmail("person@example.com")
+	if err != nil {
+		t.Fatalf("GetUserByEmail: %v", err)
+	}
+	if u.Username != "emailed" {
+		t.Errorf("Username = %q, want %q", u.Username, "emailed")
+	}
+
+	// Case-insensitive + surrounding whitespace.
+	if _, err := GetUserByEmail("  Person@Example.com  "); err != nil {
+		t.Errorf("case-insensitive lookup failed: %v", err)
+	}
+
+	// Unknown email.
+	if _, err := GetUserByEmail("nobody@example.com"); err == nil {
+		t.Error("expected error for unknown email")
+	}
+
+	// Empty email must never match a user (e.g. users with no email set).
+	CreateUser(&User{Username: "noemail", PasswordHash: "h", Role: "user"})
+	if _, err := GetUserByEmail(""); err == nil {
+		t.Error("expected error for empty email lookup")
+	}
+	if _, err := GetUserByEmail("   "); err == nil {
+		t.Error("expected error for whitespace-only email lookup")
+	}
+}
+
+func TestUpdateUserEmail(t *testing.T) {
+	setupTestDB(t)
+	user := &User{Username: "upd", PasswordHash: "h", Role: "user"}
+	CreateUser(user)
+
+	if err := UpdateUserEmail(user.ID, "new@example.com"); err != nil {
+		t.Fatalf("UpdateUserEmail: %v", err)
+	}
+	got, _ := GetUserByID(user.ID)
+	if got.Email != "new@example.com" {
+		t.Errorf("Email = %q, want %q", got.Email, "new@example.com")
+	}
+
+	// Clearing the email.
+	if err := UpdateUserEmail(user.ID, ""); err != nil {
+		t.Fatalf("UpdateUserEmail clear: %v", err)
+	}
+	got, _ = GetUserByID(user.ID)
+	if got.Email != "" {
+		t.Errorf("Email = %q, want empty after clear", got.Email)
+	}
+}
+
 func TestDeleteUser_CascadesAssignments(t *testing.T) {
 	setupTestDB(t)
 	user := &User{Username: "doomed", PasswordHash: "h", Role: "user"}

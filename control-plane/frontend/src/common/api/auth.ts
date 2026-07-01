@@ -1,10 +1,16 @@
 import client from "./client";
 import type {
   User,
+  AuthConfig,
   LoginRequest,
   SetupRequest,
   WebAuthnCredential,
 } from "@common/types/auth";
+
+export async function getAuthConfig(): Promise<AuthConfig> {
+  const res = await client.get("/auth/config");
+  return res.data;
+}
 
 export async function login(data: LoginRequest): Promise<User> {
   const res = await client.post("/auth/login", data);

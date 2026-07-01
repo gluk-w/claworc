@@ -301,6 +301,12 @@ func buildOpenClawProvidersJSON(models []string, gatewayProviders map[string]Gat
 		if declaredAPI == llmgateway.APITypeOpenAICodexResponses {
 			declaredAPI = "openai-responses"
 		}
+		// Cloudflare AI Gateway's universal endpoint speaks the OpenAI
+		// completions format; OpenClaw talks plain OpenAI to the local gateway
+		// while the gateway handles the cf-specific path/auth upstream.
+		if declaredAPI == llmgateway.APITypeCloudflareAIGateway {
+			declaredAPI = "openai-completions"
+		}
 		providers[providerKey] = openclawProviderCfg{
 			BaseURL: fmt.Sprintf("http://127.0.0.1:%d", gatewayPort),
 			API:     declaredAPI,

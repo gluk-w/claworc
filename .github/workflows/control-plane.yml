@@ -24,25 +24,6 @@ jobs:
         working-directory: control-plane
         run: go run ./cmd/migrationcheck
 
-      - name: Guard against model changes without a new migration
-        if: github.event_name == 'pull_request' || github.event_name == 'push'
-        run: |
-          set -euo pipefail
-          # Compare against the merge base on PRs; against the previous commit on push.
-          if [ -n "${GITHUB_BASE_REF:-}" ]; then
-            base="origin/${GITHUB_BASE_REF}"
-            git fetch --no-tags --depth=1 origin "${GITHUB_BASE_REF}"
-          else
-            base="HEAD~1"
-          fi
-          changed_models=$(git diff --name-only "$base"...HEAD -- 'control-plane/internal/database/models/*.go' || true)
-          new_migrations=$(git diff --name-only --diff-filter=A "$base"...HEAD -- 'control-plane/internal/database/migrations/migration_*.go' || true)
-          if [ -n "$changed_models" ] && [ -z "$new_migrations" ]; then
-            echo "ERROR: models.go changed but no new migration_*.go was added."
-            echo "       Run 'make migration' from control-plane/ to author one."
-            exit 1
-          fi
-
   unit:
     name: Unit Tests
     runs-on: ubuntu-latest

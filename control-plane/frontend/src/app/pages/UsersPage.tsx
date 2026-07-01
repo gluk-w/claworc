@@ -61,6 +61,9 @@ export default function UsersPage() {
                 Username
               </th>
               <th className="text-left px-4 py-3 font-medium text-gray-600">
+                Email
+              </th>
+              <th className="text-left px-4 py-3 font-medium text-gray-600">
                 Access
               </th>
               <th className="text-left px-4 py-3 font-medium text-gray-600">
@@ -192,6 +195,13 @@ function UserRow({
         >
           {user.username}
         </button>
+      </td>
+      <td className="px-4 py-3 text-gray-600">
+        {user.email ? (
+          user.email
+        ) : (
+          <span className="text-xs text-gray-400">—</span>
+        )}
       </td>
       <td className="px-4 py-3">
         <AccessSummary user={user} />

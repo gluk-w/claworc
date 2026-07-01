@@ -7,8 +7,14 @@ export interface UserTeamMembership {
 export interface User {
   id: number;
   username: string;
+  email?: string;
   role: "admin" | "user";
   teams?: UserTeamMembership[];
+}
+
+export interface AuthConfig {
+  cf_access_enabled: boolean;
+  logout_url?: string;
 }
 
 export interface LoginRequest {

@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -29,7 +31,19 @@ func setupTestDB(t *testing.T) {
 	t.Cleanup(func() {
 		database.DB = nil
 		config.Cfg.AuthDisabled = false
+		config.Cfg.CFAccessEnabled = false
 	})
+}
+
+// stubCFVerifier is a CFVerifier returning a fixed email/error, so the CF
+// branch of RequireAuth can be exercised without a live JWKS endpoint.
+type stubCFVerifier struct {
+	email string
+	err   error
+}
+
+func (s stubCFVerifier) Verify(_ context.Context, _ string) (string, error) {
+	return s.email, s.err
 }
 
 func okHandler() http.Handler {
@@ -50,7 +64,7 @@ func TestRequireAuth_ValidSession(t *testing.T) {
 	user, _ := database.GetUserByUsername("alice")
 	sessionID, _ := store.Create(user.ID)
 
-	handler := RequireAuth(store)(okHandler())
+	handler := RequireAuth(store, nil)(okHandler())
 	req := httptest.NewRequest("GET", "/api/v1/test", nil)
 	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionID})
 	w := httptest.NewRecorder()
@@ -69,7 +83,7 @@ func TestRequireAuth_ValidSession(t *testing.T) {
 func TestRequireAuth_NoCookie(t *testing.T) {
 	setupTestDB(t)
 	store := auth.NewSessionStore()
-	handler := RequireAuth(store)(okHandler())
+	handler := RequireAuth(store, nil)(okHandler())
 
 	req := httptest.NewRequest("GET", "/api/v1/test", nil)
 	w := httptest.NewRecorder()
@@ -83,7 +97,7 @@ func TestRequireAuth_NoCookie(t *testing.T) {
 func TestRequireAuth_InvalidSession(t *testing.T) {
 	setupTestDB(t)
 	store := auth.NewSessionStore()
-	handler := RequireAuth(store)(okHandler())
+	handler := RequireAuth(store, nil)(okHandler())
 
 	req := httptest.NewRequest("GET", "/api/v1/test", nil)
 	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: "bogus-session-id"})
@@ -103,7 +117,7 @@ func TestRequireAuth_DeletedUser(t *testing.T) {
 	sessionID, _ := store.Create(user.ID)
 	database.DeleteUser(user.ID)
 
-	handler := RequireAuth(store)(okHandler())
+	handler := RequireAuth(store, nil)(okHandler())
 	req := httptest.NewRequest("GET", "/api/v1/test", nil)
 	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionID})
 	w := httptest.NewRecorder()
@@ -120,7 +134,7 @@ func TestRequireAuth_AuthDisabled(t *testing.T) {
 	database.CreateUser(&database.User{Username: "admin", PasswordHash: "h", Role: "admin"})
 
 	store := auth.NewSessionStore()
-	handler := RequireAuth(store)(okHandler())
+	handler := RequireAuth(store, nil)(okHandler())
 
 	req := httptest.NewRequest("GET", "/api/v1/test", nil)
 	w := httptest.NewRecorder()
@@ -141,7 +155,7 @@ func TestRequireAuth_AuthDisabled_NoAdmin(t *testing.T) {
 	config.Cfg.AuthDisabled = true
 
 	store := auth.NewSessionStore()
-	handler := RequireAuth(store)(okHandler())
+	handler := RequireAuth(store, nil)(okHandler())
 
 	req := httptest.NewRequest("GET", "/api/v1/test", nil)
 	w := httptest.NewRecorder()
@@ -149,6 +163,105 @@ func TestRequireAuth_AuthDisabled_NoAdmin(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", w.Code)
+	}
+}
+
+func TestRequireAuth_CFAccess_ValidMatch(t *testing.T) {
+	setupTestDB(t)
+	config.Cfg.CFAccessEnabled = true
+	database.CreateUser(&database.User{Username: "cfuser", Email: "cf@example.com", PasswordHash: "h", Role: "admin"})
+
+	store := auth.NewSessionStore()
+	handler := RequireAuth(store, stubCFVerifier{email: "cf@example.com"})(okHandler())
+
+	req := httptest.NewRequest("GET", "/api/v1/test", nil)
+	req.Header.Set(CFAccessHeader, "any-token")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var body map[string]string
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body["username"] != "cfuser" {
+		t.Errorf("username = %q, want %q", body["username"], "cfuser")
+	}
+}
+
+func TestRequireAuth_CFAccess_NoMatchingUser(t *testing.T) {
+	setupTestDB(t)
+	config.Cfg.CFAccessEnabled = true
+
+	store := auth.NewSessionStore()
+	handler := RequireAuth(store, stubCFVerifier{email: "unknown@example.com"})(okHandler())
+
+	req := httptest.NewRequest("GET", "/api/v1/test", nil)
+	req.Header.Set(CFAccessHeader, "any-token")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", w.Code)
+	}
+}
+
+func TestRequireAuth_CFAccess_MissingHeader(t *testing.T) {
+	setupTestDB(t)
+	config.Cfg.CFAccessEnabled = true
+
+	store := auth.NewSessionStore()
+	handler := RequireAuth(store, stubCFVerifier{email: "cf@example.com"})(okHandler())
+
+	req := httptest.NewRequest("GET", "/api/v1/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
+func TestRequireAuth_CFAccess_InvalidToken(t *testing.T) {
+	setupTestDB(t)
+	config.Cfg.CFAccessEnabled = true
+
+	store := auth.NewSessionStore()
+	handler := RequireAuth(store, stubCFVerifier{err: errors.New("bad signature")})(okHandler())
+
+	req := httptest.NewRequest("GET", "/api/v1/test", nil)
+	req.Header.Set(CFAccessHeader, "tampered")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
+func TestRequireAuth_CFAccessDisabled_UsesCookie(t *testing.T) {
+	// With CF disabled, a CF header is ignored and the session cookie path is
+	// used unchanged.
+	setupTestDB(t)
+	store := auth.NewSessionStore()
+	database.CreateUser(&database.User{Username: "cookieuser", PasswordHash: "h", Role: "user"})
+	user, _ := database.GetUserByUsername("cookieuser")
+	sessionID, _ := store.Create(user.ID)
+
+	handler := RequireAuth(store, stubCFVerifier{email: "cf@example.com"})(okHandler())
+	req := httptest.NewRequest("GET", "/api/v1/test", nil)
+	req.Header.Set(CFAccessHeader, "any-token") // ignored because CF disabled
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionID})
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var body map[string]string
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body["username"] != "cookieuser" {
+		t.Errorf("username = %q, want %q", body["username"], "cookieuser")
 	}
 }
 

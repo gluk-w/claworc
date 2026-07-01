@@ -2,6 +2,8 @@
 
 Claworc uses username/password authentication with optional passkey (WebAuthn) support. All API endpoints except `/health` require authentication.
 
+Optionally, Claworc can sit behind **Cloudflare Access (Zero Trust)** and authenticate users from Cloudflare's verified identity headers instead of the built-in login. See [Cloudflare Access (Zero Trust)](#cloudflare-access-zero-trust).
+
 ## First-Time Setup
 
 When Claworc starts with no users in the database, it enters **setup mode**. The first time you open the dashboard, you will see a "Create Admin Account" form instead of the login page. This creates the initial admin user.
@@ -106,6 +108,32 @@ kubectl exec deploy/claworc -n claworc -- /app/claworc --reset-password --userna
 
 Note: CLI password reset cannot invalidate in-memory sessions. Existing sessions will expire naturally within 1 hour. For immediate invalidation, use the admin UI.
 
+## Cloudflare Access (Zero Trust)
+
+When Claworc runs behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/), Cloudflare authenticates users at the edge and injects a signed JWT (`Cf-Access-Jwt-Assertion`) on every request. Enable `CLAWORC_CF_ACCESS_ENABLED` to have Claworc trust that identity instead of its built-in login.
+
+How it works:
+
+- **JWT verification.** Claworc verifies the `Cf-Access-Jwt-Assertion` token against your team's JWKS (`<team-domain>/cdn-cgi/access/certs`), checking the signature (RS256 only), the `aud` (your Access application's AUD tag), the issuer, and expiry. The plaintext `Cf-Access-Authenticated-User-Email` header is **not** trusted — only the verified `email` claim is used.
+- **Match existing accounts only.** The verified email is matched against an existing Claworc user's email. There is **no auto-provisioning**: an unknown email is rejected with `403`. Set each user's email on the **Users** page (or via the CLI for the first admin).
+- **Replaces built-in login.** While enabled, the username/password and passkey login endpoints and the first-run setup flow are disabled (`403`). The dashboard shows a "Sign in via Cloudflare Access" notice instead of a login form.
+- **Stateless, per-request.** Each request is verified from its JWT; Claworc does not issue its own session cookie in this mode. Revoke access by removing the user from your Cloudflare Access policy or deleting the Claworc user.
+- **Logout.** The dashboard's logout redirects to Cloudflare's `/cdn-cgi/access/logout` so the Access session itself ends.
+
+`CLAWORC_CF_ACCESS_ENABLED` and `CLAWORC_AUTH_DISABLED` are mutually exclusive; setting both is a startup error.
+
+### Bootstrap order
+
+Because the built-in login/setup is disabled in this mode, create the first admin (with an email) **before** enabling Cloudflare Access:
+
+```bash
+# Docker
+docker exec claworc-dashboard /app/claworc --create-admin \
+  --username admin --password <password> --email admin@example.com
+```
+
+Then set `CLAWORC_CF_ACCESS_ENABLED=true` (plus the team domain and AUD below) and restart. The `--email` flag also works on an existing admin to backfill their email.
+
 ## Configuration
 
 The following environment variables configure authentication behavior:
@@ -114,6 +142,9 @@ The following environment variables configure authentication behavior:
 |---|---|---|
 | `CLAWORC_RP_ORIGINS` | `http://localhost:8000` | WebAuthn relying party origins (your dashboard URL). Comma-separated for multiple values. |
 | `CLAWORC_RP_ID` | `localhost` | WebAuthn relying party ID (your domain name) |
+| `CLAWORC_CF_ACCESS_ENABLED` | `false` | Enable Cloudflare Access (Zero Trust) header authentication. Replaces the built-in login. |
+| `CLAWORC_CF_ACCESS_TEAM_DOMAIN` | _(empty)_ | Your Cloudflare Access team domain, e.g. `https://myteam.cloudflareaccess.com`. Required when CF Access is enabled. |
+| `CLAWORC_CF_ACCESS_AUD` | _(empty)_ | The Access application's AUD tag. Required when CF Access is enabled. |
 
 For production deployments, set these to match your actual domain:
 
@@ -128,7 +159,8 @@ CLAWORC_RP_ID=claworc.example.com
 
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/v1/auth/login` | Login with username/password |
+| GET | `/api/v1/auth/config` | Report the active auth mode (`cf_access_enabled`, `logout_url`) so the SPA renders the right login experience |
+| POST | `/api/v1/auth/login` | Login with username/password (returns `403` when Cloudflare Access is enabled) |
 | GET | `/api/v1/auth/setup-required` | Check if first-time setup is needed |
 | POST | `/api/v1/auth/setup` | Create initial admin (only when no users exist) |
 | POST | `/api/v1/auth/webauthn/login/begin` | Begin passkey login |
@@ -175,6 +207,7 @@ Backup endpoints require authentication; non-admin callers must be assigned to t
 | POST | `/api/v1/users` | Create a user |
 | DELETE | `/api/v1/users/{id}` | Delete a user |
 | PUT | `/api/v1/users/{id}/role` | Update user role |
+| PUT | `/api/v1/users/{id}/email` | Update user email (used for Cloudflare Access matching) |
 | PUT | `/api/v1/users/{id}/permissions` | Update user permission flags (e.g. `can_create_instances`) |
 | GET | `/api/v1/users/{id}/instances` | Get assigned instances |
 | PUT | `/api/v1/users/{id}/instances` | Set assigned instances |

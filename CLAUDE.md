@@ -52,6 +52,8 @@ for local development.
 **Crypto** (`internal/crypto/crypto.go`): API keys encrypted at rest in SQLite using Fernet. The Fernet key is 
 auto-generated on first run and stored in the `settings` table.
 
+**Cloudflare Access** (`internal/cfaccess/`): Optional Zero Trust header auth. Verifies the `Cf-Access-Jwt-Assertion` JWT against the team's JWKS (RS256, aud/iss/exp) and returns the email claim. Wired into `middleware.RequireAuth`, which matches the verified email to an existing user (no auto-provisioning) and replaces the built-in login when enabled. See `docs/auth.md`.
+
 **Database migrations** (`internal/database/migrations/`): Goose v3 invoked as a library, embedded into the binary, applied at startup from `database.Init()`. New migrations are versioned Go files in the `migrations` subpackage that use the GORM Migrator interface; model types live in `internal/database/models/` and are re-exported by the `database` package via type aliases for backward compat. See `docs/migrations.md` for the full spec, including the `make migration` workflow that delegates to the `migration-author` subagent.
 
 **SSH Proxy** (`internal/sshproxy/`): Unified package consolidating SSH key management, connection management, 
@@ -78,6 +80,9 @@ Backend settings use `envconfig` with `CLAWORC_` env prefix (see `internal/confi
 - `CLAWORC_TERMINAL_HISTORY_LINES` - Scrollback buffer size in lines (default: `1000`, `0` to disable)
 - `CLAWORC_TERMINAL_RECORDING_DIR` - Directory for audit recordings (default: empty, disabled)
 - `CLAWORC_TERMINAL_SESSION_TIMEOUT` - Idle detached session timeout (default: `30m`)
+- `CLAWORC_CF_ACCESS_ENABLED` - Enable Cloudflare Access (Zero Trust) header auth; replaces built-in login (default: `false`)
+- `CLAWORC_CF_ACCESS_TEAM_DOMAIN` - Cloudflare Access team domain, e.g. `https://myteam.cloudflareaccess.com` (required when CF Access is enabled)
+- `CLAWORC_CF_ACCESS_AUD` - Cloudflare Access application AUD tag (required when CF Access is enabled)
 - `CLAWORC_ALLOWED_HOST_MOUNTS` - Comma-separated allowlist of host path prefixes within which shared folders may be backed by a host bind mount. Empty (default) disables host-backed shared folders entirely. See `docs/shared-folders.md`.
 - `CLAWORC_WEBHOOK_IDLE_TIMEOUT` - Idle gap the synchronous webhook bridge tolerates between events from OpenClaw before giving up (default: `120s`). The deadline re-arms on every event, so an actively-streaming agent is never cut off; only a genuine stall trips it.
 

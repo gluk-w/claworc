@@ -245,8 +245,14 @@ type Setting struct {
 }
 
 type User struct {
-	ID                 uint       `gorm:"primaryKey;autoIncrement" json:"id"`
-	Username           string     `gorm:"uniqueIndex;not null;size:64" json:"username"`
+	ID       uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	Username string `gorm:"uniqueIndex;not null;size:64" json:"username"`
+	// Email is used to match Cloudflare Access (Zero Trust) identities to a
+	// user. Uniqueness among populated values is enforced in the application
+	// layer (handlers) rather than via a unique index, since existing users
+	// have an empty email and a SQL UNIQUE constraint would treat all empty
+	// strings as colliding. Stored normalized (lowercased, trimmed).
+	Email              string     `gorm:"index;size:255" json:"email"`
 	PasswordHash       string     `gorm:"not null" json:"-"`
 	Role               string     `gorm:"not null;default:user" json:"role"`
 	CanCreateInstances bool       `gorm:"not null;default:false" json:"can_create_instances"`
@@ -291,12 +297,12 @@ type BackupSchedule struct {
 // multiple instances at the same path. InstanceIDs is a JSON array of
 // instance IDs this folder is mapped to.
 type SharedFolder struct {
-	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	Name        string    `gorm:"not null" json:"name"`
-	MountPath   string    `gorm:"not null" json:"mount_path"`
-	OwnerID     uint      `gorm:"not null;index" json:"owner_id"`
-	InstanceIDs string    `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint IDs
-	TeamIDs     string    `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint team IDs
+	ID          uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name        string `gorm:"not null" json:"name"`
+	MountPath   string `gorm:"not null" json:"mount_path"`
+	OwnerID     uint   `gorm:"not null;index" json:"owner_id"`
+	InstanceIDs string `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint IDs
+	TeamIDs     string `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint team IDs
 	// HostPath, when non-empty, makes this folder a host bind mount backed by
 	// the given host directory instead of a managed volume/PVC. It is gated by
 	// the CLAWORC_ALLOWED_HOST_MOUNTS allowlist and is immutable after creation.

@@ -7,6 +7,11 @@ import "net/http"
 // than a static API key.
 const APITypeOpenAICodexResponses = "openai-codex-responses"
 
+// APITypeCloudflareAIGateway is the api_type identifier for a provider that
+// routes OpenAI-format requests through a Cloudflare AI Gateway universal
+// (/compat) endpoint. The base URL embeds the account ID and gateway name.
+const APITypeCloudflareAIGateway = "cloudflare-ai-gateway"
+
 // AuthMaterial bundles the credentials needed to set outgoing auth headers on
 // an upstream provider request. Static-key providers populate APIKey;
 // OAuth-based providers (currently openai-codex-responses) populate the OAuth*
@@ -35,6 +40,8 @@ func GetAPIType(apiType string) APIType {
 		return openAIResponses{}
 	case APITypeOpenAICodexResponses:
 		return openAICodexResponses{}
+	case APITypeCloudflareAIGateway:
+		return cloudflareAIGateway{}
 	case "anthropic-messages":
 		return anthropicMessages{}
 	case "google-generative-ai":

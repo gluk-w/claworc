@@ -216,7 +216,7 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 	r.Get("/health", handlers.HealthCheck)
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.RequireAuth(sessionStore))
+			r.Use(middleware.RequireAuth(sessionStore, nil))
 
 			r.Get("/instances/{id}", handlers.GetInstance)
 			r.Get("/instances/{id}/ssh-status", handlers.GetSSHStatus)
@@ -292,7 +292,7 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.RequireAuth(sessionStore))
+		r.Use(middleware.RequireAuth(sessionStore, nil))
 		r.HandleFunc("/openclaw/{id}/*", handlers.ControlProxy)
 	})
 

@@ -3,16 +3,42 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/auth"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 )
 
+// lastLoginThrottle bounds how often the CF auth path writes last_login_at, so
+// a busy client doesn't trigger a DB write on every request.
+const lastLoginThrottle = 5 * time.Minute
+
+// touchLastLogin records the user's last login, throttled to avoid a write per
+// request. Best-effort: errors are ignored (auth already succeeded).
+func touchLastLogin(user *database.User) {
+	if user.LastLoginAt != nil && time.Since(*user.LastLoginAt) < lastLoginThrottle {
+		return
+	}
+	_ = database.TouchUserLastLogin(user.ID)
+}
+
 type contextKey string
 
 const userContextKey contextKey = "user"
+
+// CFAccessHeader is the request header Cloudflare Access injects carrying the
+// signed identity JWT.
+const CFAccessHeader = "Cf-Access-Jwt-Assertion"
+
+// CFVerifier validates a Cloudflare Access JWT and returns the authenticated
+// email. *cfaccess.Verifier satisfies this; the interface keeps RequireAuth
+// testable without a live JWKS endpoint.
+type CFVerifier interface {
+	Verify(ctx context.Context, token string) (string, error)
+}
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -20,7 +46,10 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	json.NewEncoder(w).Encode(v)
 }
 
-func RequireAuth(store *auth.SessionStore) func(http.Handler) http.Handler {
+// RequireAuth authenticates requests. Precedence: the AuthDisabled dev bypass,
+// then Cloudflare Access (when enabled), then the session cookie. cf may be nil
+// when Cloudflare Access is disabled.
+func RequireAuth(store *auth.SessionStore, cf CFVerifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if config.Cfg.AuthDisabled {
@@ -29,6 +58,34 @@ func RequireAuth(store *auth.SessionStore) func(http.Handler) http.Handler {
 					writeJSON(w, http.StatusInternalServerError, map[string]string{"detail": "No admin user found"})
 					return
 				}
+				ctx := context.WithValue(r.Context(), userContextKey, user)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			// Cloudflare Access (Zero Trust). When enabled, identity comes from
+			// the cryptographically verified JWT only — never the plaintext
+			// email header — and is matched to an existing user. Verified per
+			// request (stateless); no Claworc session cookie is involved.
+			if config.Cfg.CFAccessEnabled && cf != nil {
+				token := r.Header.Get(CFAccessHeader)
+				if token == "" {
+					writeJSON(w, http.StatusUnauthorized, map[string]string{"detail": "Authentication required"})
+					return
+				}
+				email, err := cf.Verify(r.Context(), token)
+				if err != nil {
+					log.Printf("Cloudflare Access JWT verification failed: %v", err)
+					writeJSON(w, http.StatusUnauthorized, map[string]string{"detail": "Authentication required"})
+					return
+				}
+				user, err := database.GetUserByEmail(email)
+				if err != nil {
+					log.Printf("Cloudflare Access: no Claworc account for verified email %q", email)
+					writeJSON(w, http.StatusForbidden, map[string]string{"detail": "No Claworc account for this identity"})
+					return
+				}
+				touchLastLogin(user)
 				ctx := context.WithValue(r.Context(), userContextKey, user)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return

@@ -2,7 +2,13 @@ replicaCount: 1
 
 # Extra environment variables passed to the control-plane container.
 # Map of name -> value. Values are quoted in the rendered manifest.
-# Useful for toggling settings like CLAWORC_AUTH_DISABLED in test installs.
+# Useful for toggling settings like CLAWORC_AUTH_DISABLED in test installs,
+# WebAuthn (CLAWORC_RP_ID / CLAWORC_RP_ORIGINS), or Cloudflare Access
+# (Zero Trust) header auth, e.g.:
+#   extraEnv:
+#     CLAWORC_CF_ACCESS_ENABLED: "true"
+#     CLAWORC_CF_ACCESS_TEAM_DOMAIN: "https://myteam.cloudflareaccess.com"
+#     CLAWORC_CF_ACCESS_AUD: "<access-application-aud-tag>"
 extraEnv: {}
 
 config:
