@@ -275,6 +275,6 @@ func permsUint(perms *ssh.Permissions, key string) uint {
 	if perms == nil {
 		return 0
 	}
-	n, _ := strconv.ParseUint(perms.Extensions[key], 10, 64)
+	n, _ := strconv.ParseUint(perms.Extensions[key], 10, 32)
 	return uint(n)
 }

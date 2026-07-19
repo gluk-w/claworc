@@ -170,7 +170,7 @@ func DeleteUserSSHKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	keyID, err := strconv.ParseUint(chi.URLParam(r, "keyId"), 10, 64)
+	keyID, err := strconv.ParseUint(chi.URLParam(r, "keyId"), 10, 32)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid key ID")
 		return
