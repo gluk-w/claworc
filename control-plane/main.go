@@ -28,11 +28,13 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/modwiring"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
+	"github.com/gluk-w/claworc/control-plane/internal/sshgateway"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/sshterminal"
 	"github.com/gluk-w/claworc/control-plane/internal/taskmanager"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"golang.org/x/crypto/ssh"
 )
 
 //go:embed frontend/dist
@@ -177,6 +179,29 @@ func main() {
 	}
 	sshMgr.StartHealthChecker(ctx)
 
+	// Inbound SSH gateway: users `ssh <user>+<instance>@host` and are bridged
+	// onto the existing per-instance SSH connection owned by sshMgr.
+	var sshGw *sshgateway.Gateway
+	if config.Cfg.SSHGatewayEnabled {
+		gwHostKey, err := sshgateway.EnsureHostKey(config.Cfg.DataPath)
+		if err != nil {
+			log.Printf("WARNING: SSH gateway host key: %v", err)
+		} else {
+			sshGw = sshgateway.New(sshgateway.Config{
+				Addr:    fmt.Sprintf(":%d", config.Cfg.SSHGatewayPort),
+				HostKey: gwHostKey,
+				Auditor: auditor,
+				Clients: func(cctx context.Context, inst *database.Instance) (*ssh.Client, error) {
+					return sshMgr.EnsureConnectedWithIPCheck(cctx, inst.ID, orchestrator.Get(), inst.AllowedSourceIPs)
+				},
+			})
+			if err := sshGw.Start(ctx); err != nil {
+				log.Printf("WARNING: SSH gateway failed to start: %v", err)
+				sshGw = nil
+			}
+		}
+	}
+
 	// Build InstanceFactory: resolves an active SSH connection by instance name.
 	instanceFactory := func(fctx context.Context, name string) (sshproxy.Instance, error) {
 		var inst database.Instance
@@ -309,6 +334,11 @@ func main() {
 			r.Post("/auth/webauthn/register/finish", handlers.WebAuthnRegisterFinish)
 			r.Get("/auth/webauthn/credentials", handlers.ListWebAuthnCredentials)
 			r.Delete("/auth/webauthn/credentials/{credId}", handlers.DeleteWebAuthnCredential)
+			r.Post("/auth/ssh-keys/generate", handlers.GenerateUserSSHKey)
+			r.Post("/auth/ssh-keys", handlers.UploadUserSSHKey)
+			r.Get("/auth/ssh-keys", handlers.ListUserSSHKeys)
+			r.Delete("/auth/ssh-keys/{keyId}", handlers.DeleteUserSSHKey)
+			r.Get("/ssh-gateway/info", handlers.GetSSHGatewayInfo)
 		})
 
 		// Protected routes (require auth)
@@ -541,6 +571,9 @@ func main() {
 	log.Println("Shutting down...")
 
 	termMgr.Stop()
+	if sshGw != nil {
+		sshGw.Stop()
+	}
 	tunnelMgr.StopAll()
 
 	if err := sshMgr.CloseAll(); err != nil {

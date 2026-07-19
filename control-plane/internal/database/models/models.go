@@ -433,3 +433,16 @@ type WebAuthnCredential struct {
 	AAGUID          []byte    `json:"-"`
 	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
 }
+
+// UserSSHKey is a public key a user authenticates with against the inbound
+// SSH gateway. The private key is never stored — it is generated on demand
+// and handed to the user exactly once (or the user uploads their own pubkey).
+type UserSSHKey struct {
+	ID          uint       `gorm:"primaryKey;autoIncrement" json:"id"`
+	UserID      uint       `gorm:"not null;index" json:"user_id"`
+	Name        string     `gorm:"not null;default:''" json:"name"`
+	PublicKey   string     `gorm:"type:text;not null" json:"-"` // authorized_keys format
+	Fingerprint string     `gorm:"uniqueIndex;not null;size:64" json:"fingerprint"` // ssh.FingerprintSHA256
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt   time.Time  `gorm:"autoCreateTime" json:"created_at"`
+}

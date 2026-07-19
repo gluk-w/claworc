@@ -33,6 +33,17 @@ service:
   port: 8001
   nodePort: 30000
 
+# Inbound SSH gateway: lets users `ssh <user>+<agent-name>@<host>` and be
+# bridged to that agent. publicHost is display-only (the hostname shown in
+# the UI's usage snippet). Exposing the service port beyond the cluster
+# (LoadBalancer, ingress TCP passthrough) is environment-specific.
+sshGateway:
+  enabled: true
+  port: 2222
+  servicePort: 2222
+  nodePort: ""
+  publicHost: ""
+
 persistence:
   enabled: true
   size: 1Gi

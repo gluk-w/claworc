@@ -28,6 +28,7 @@ for your clients from one place.
 - **Chat with agents** — send instructions and have a conversation with the AI agent in each instance
 - **Watch the browser** — see what the agent is doing in Chrome in real time, or take control yourself
 - **Use the terminal** — open interactive SSH terminal sessions with session persistence and scrollback
+- **SSH from your machine** — connect to any agent with a plain SSH client (`ssh you+agent-name@host`) using a personal key generated on your profile page
 - **Manage files** — browse, upload, download, and edit files in each instance's workspace over SSH
 - **View logs** — stream live logs to monitor what's happening inside an instance
 

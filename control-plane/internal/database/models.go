@@ -32,6 +32,7 @@ type (
 	KanbanArtifact     = models.KanbanArtifact
 	InstanceSoul       = models.InstanceSoul
 	WebAuthnCredential = models.WebAuthnCredential
+	UserSSHKey         = models.UserSSHKey
 	WebhookApiKey      = models.WebhookApiKey
 	WebhookLog         = models.WebhookLog
 )

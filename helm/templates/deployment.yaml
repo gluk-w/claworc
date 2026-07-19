@@ -26,6 +26,11 @@ spec:
             - name: http
               containerPort: 8000
               protocol: TCP
+            {{- if .Values.sshGateway.enabled }}
+            - name: ssh
+              containerPort: {{ .Values.sshGateway.port }}
+              protocol: TCP
+            {{- end }}
           env:
             - name: CLAWORC_DATA_PATH
               value: {{ .Values.config.dataPath | quote }}
@@ -35,6 +40,16 @@ spec:
             {{- end }}
             - name: CLAWORC_K8S_NAMESPACE
               value: {{ .Values.config.k8sNamespace | quote }}
+            - name: CLAWORC_SSH_GATEWAY_ENABLED
+              value: {{ .Values.sshGateway.enabled | quote }}
+            {{- if .Values.sshGateway.enabled }}
+            - name: CLAWORC_SSH_GATEWAY_PORT
+              value: {{ .Values.sshGateway.port | quote }}
+            {{- if .Values.sshGateway.publicHost }}
+            - name: CLAWORC_SSH_GATEWAY_PUBLIC_HOST
+              value: {{ .Values.sshGateway.publicHost | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.database.existingSecret }}
             - name: CLAWORC_DATABASE
               valueFrom:

@@ -1,6 +1,13 @@
 import { useState, type FormEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Trash2, ShieldCheck, Shield, Fingerprint, KeyRound } from "lucide-react";
+import {
+  Trash2,
+  ShieldCheck,
+  Shield,
+  Fingerprint,
+  KeyRound,
+  TerminalSquare,
+} from "lucide-react";
 import { startRegistration } from "@simplewebauthn/browser";
 import { successToast, errorToast, infoToast } from "@common/utils/toast";
 import { useAuth } from "@common/contexts/AuthContext";
@@ -11,6 +18,12 @@ import {
   webAuthnRegisterFinish,
   changePassword,
 } from "@common/api/auth";
+import {
+  listSSHKeys,
+  generateSSHKey,
+  deleteSSHKey,
+  getSSHGatewayInfo,
+} from "@common/api/sshKeys";
 import Page from "@common/components/Page";
 
 export default function AccountPage() {
@@ -68,6 +81,8 @@ export default function AccountPage() {
           </button>
         </div>
       </div>
+
+      <SSHAccessCard username={user?.username || ""} />
 
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
@@ -153,6 +168,203 @@ export default function AccountPage() {
         <ChangePasswordDialog onClose={() => setShowChangePassword(false)} />
       )}
     </Page>
+  );
+}
+
+function SSHAccessCard({ username }: { username: string }) {
+  const queryClient = useQueryClient();
+  const [showKeyDialog, setShowKeyDialog] = useState(false);
+
+  const { data: info } = useQuery({
+    queryKey: ["ssh-gateway-info"],
+    queryFn: getSSHGatewayInfo,
+  });
+  const { data: keys = [], isLoading } = useQuery({
+    queryKey: ["ssh-keys"],
+    queryFn: listSSHKeys,
+  });
+
+  const keyFileName = `claworc_${username || "user"}.pem`;
+
+  const generateMut = useMutation({
+    mutationFn: () => generateSSHKey(),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ["ssh-keys"] });
+      // One-time download of the private key: it is never stored server-side.
+      const blob = new Blob([res.private_key], {
+        type: "application/x-pem-file",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = keyFileName;
+      a.click();
+      URL.revokeObjectURL(url);
+      setShowKeyDialog(true);
+    },
+    onError: (error) => errorToast("Failed to generate SSH key", error),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => deleteSSHKey(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["ssh-keys"] });
+      successToast("SSH key revoked");
+    },
+    onError: (error) => errorToast("Failed to revoke SSH key", error),
+  });
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden mb-6">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+        <h2 className="text-sm font-medium text-gray-500">SSH Access</h2>
+        <button
+          onClick={() => generateMut.mutate()}
+          disabled={generateMut.isPending || info?.enabled === false}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+        >
+          <TerminalSquare size={16} />
+          {generateMut.isPending ? "Generating..." : "Generate SSH Key"}
+        </button>
+      </div>
+
+      {info?.enabled === false ? (
+        <div className="px-4 py-6 text-sm text-gray-500">
+          SSH access is disabled by the administrator.
+        </div>
+      ) : isLoading ? (
+        <div className="px-4 py-6 text-sm text-gray-500">Loading SSH keys...</div>
+      ) : keys.length === 0 ? (
+        <div className="px-4 py-6 text-sm text-gray-500">
+          No SSH keys yet. Generate one to connect to your agents from a
+          terminal. The private key is downloaded once and never stored on the
+          server.
+        </div>
+      ) : (
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th className="text-left px-4 py-3 font-medium text-gray-600">
+                Fingerprint
+              </th>
+              <th className="text-left px-4 py-3 font-medium text-gray-600">
+                Created
+              </th>
+              <th className="text-left px-4 py-3 font-medium text-gray-600">
+                Last Used
+              </th>
+              <th className="text-right px-4 py-3 font-medium text-gray-600">
+                Actions
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {keys.map((key) => (
+              <tr key={key.id} className="border-b border-gray-100 last:border-0">
+                <td className="px-4 py-3 text-gray-500 font-mono text-xs">
+                  {key.fingerprint}
+                </td>
+                <td className="px-4 py-3 text-gray-500">
+                  {key.created_at
+                    ? new Date(key.created_at).toLocaleDateString()
+                    : "—"}
+                </td>
+                <td className="px-4 py-3 text-gray-500">
+                  {key.last_used_at
+                    ? new Date(key.last_used_at).toLocaleString()
+                    : "Never"}
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <button
+                    onClick={() => {
+                      if (confirm("Revoke this SSH key?")) {
+                        deleteMut.mutate(key.id);
+                      }
+                    }}
+                    className="p-1.5 text-gray-400 hover:text-red-600 rounded"
+                    title="Revoke SSH key"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {showKeyDialog && (
+        <SSHKeyGeneratedDialog
+          username={username}
+          keyFileName={keyFileName}
+          gatewayPort={info?.port}
+          gatewayHost={info?.host || window.location.hostname}
+          onClose={() => setShowKeyDialog(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function SSHKeyGeneratedDialog({
+  username,
+  keyFileName,
+  gatewayPort,
+  gatewayHost,
+  onClose,
+}: {
+  username: string;
+  keyFileName: string;
+  gatewayPort?: number;
+  gatewayHost: string;
+  onClose: () => void;
+}) {
+  const portFlag = gatewayPort && gatewayPort !== 22 ? ` -p ${gatewayPort}` : "";
+  const sshCommand = `ssh -i ~/.ssh/${keyFileName}${portFlag} ${username || "<you>"}+<agent-name>@${gatewayHost}`;
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}
+    >
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-lg p-6">
+        <h2 className="text-lg font-semibold mb-2">SSH Key Generated</h2>
+        <p className="text-sm text-gray-600 mb-4">
+          Your private key <span className="font-mono">{keyFileName}</span> is
+          being downloaded. It is not stored on the server, so keep the file
+          safe — if you lose it, generate a new key.
+        </p>
+
+        <div className="space-y-3 text-sm text-gray-700">
+          <div>
+            <div className="font-medium text-gray-900 mb-1">
+              1. Move the key into place and restrict its permissions:
+            </div>
+            <code className="block px-3 py-2 text-xs font-mono bg-gray-900 text-gray-100 rounded-md overflow-x-auto whitespace-nowrap">
+              mv ~/Downloads/{keyFileName} ~/.ssh/ && chmod 600 ~/.ssh/{keyFileName}
+            </code>
+          </div>
+          <div>
+            <div className="font-medium text-gray-900 mb-1">
+              2. Connect to an agent by name:
+            </div>
+            <code className="block px-3 py-2 text-xs font-mono bg-gray-900 text-gray-100 rounded-md overflow-x-auto whitespace-nowrap">
+              {sshCommand}
+            </code>
+          </div>
+        </div>
+
+        <div className="flex justify-end pt-5">
+          <button
+            onClick={onClose}
+            autoFocus
+            className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

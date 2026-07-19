@@ -272,6 +272,46 @@ func GetFirstAdmin() (*User, error) {
 	return &u, nil
 }
 
+// User SSH key helpers
+
+func CreateUserSSHKey(k *UserSSHKey) error {
+	return DB.Create(k).Error
+}
+
+func ListUserSSHKeys(userID uint) ([]UserSSHKey, error) {
+	var keys []UserSSHKey
+	if err := DB.Where("user_id = ?", userID).Order("id").Find(&keys).Error; err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+func GetUserSSHKeyByFingerprint(fingerprint string) (*UserSSHKey, error) {
+	var k UserSSHKey
+	if err := DB.Where("fingerprint = ?", fingerprint).First(&k).Error; err != nil {
+		return nil, err
+	}
+	return &k, nil
+}
+
+// DeleteUserSSHKey removes a key only if it belongs to the given user.
+func DeleteUserSSHKey(userID, keyID uint) error {
+	res := DB.Where("id = ? AND user_id = ?", keyID, userID).Delete(&UserSSHKey{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// TouchUserSSHKeyUsed records the current time as the key's last use. Best effort.
+func TouchUserSSHKeyUsed(keyID uint) {
+	now := time.Now()
+	DB.Model(&UserSSHKey{}).Where("id = ?", keyID).Update("last_used_at", &now)
+}
+
 // Instance assignment helpers
 
 func GetUserInstances(userID uint) ([]uint, error) {

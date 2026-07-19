@@ -80,6 +80,7 @@ Backend settings use `envconfig` with `CLAWORC_` env prefix (see `internal/confi
 - `CLAWORC_TERMINAL_SESSION_TIMEOUT` - Idle detached session timeout (default: `30m`)
 - `CLAWORC_ALLOWED_HOST_MOUNTS` - Comma-separated allowlist of host path prefixes within which shared folders may be backed by a host bind mount. Empty (default) disables host-backed shared folders entirely. See `docs/shared-folders.md`.
 - `CLAWORC_WEBHOOK_IDLE_TIMEOUT` - Idle gap the synchronous webhook bridge tolerates between events from OpenClaw before giving up (default: `120s`). The deadline re-arms on every event, so an actively-streaming agent is never cut off; only a genuine stall trips it.
+- `CLAWORC_SSH_GATEWAY_ENABLED` / `CLAWORC_SSH_GATEWAY_PORT` / `CLAWORC_SSH_GATEWAY_PUBLIC_HOST` - Inbound SSH gateway (`ssh <user>+<instance>@host`, default port `2222`). See `docs/ssh-gateway.md`.
 
 ## Terminology
 
