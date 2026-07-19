@@ -74,6 +74,7 @@ func allMigratedModels() []interface{} {
 		&database.User{},
 		&database.UserInstance{},
 		&database.WebAuthnCredential{},
+		&database.UserSSHKey{},
 		&database.LLMProvider{},
 		&database.LLMGatewayKey{},
 		&database.Skill{},
