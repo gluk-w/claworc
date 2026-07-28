@@ -14,7 +14,7 @@ require (
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/pressly/goose/v3 v3.27.1
 	github.com/robfig/cron/v3 v3.0.1
-	golang.org/x/crypto v0.52.0
+	golang.org/x/crypto v0.51.0 // do not bump to v0.52.0: its ssh mux holds a mutex across SendRequest reply-wait, deadlocking sshproxy keepalive (see manager.go keepalive/IsConnected)
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.0
