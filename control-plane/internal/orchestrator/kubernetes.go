@@ -27,6 +27,12 @@ import (
 	"k8s.io/client-go/util/homedir"
 )
 
+// seLinuxMCSLevel is the fixed SELinux MCS level shared by every claworc pod
+// that mounts an instance PVC. Pinning it keeps the runtime from assigning
+// random per-pod categories and relabeling shared volumes out from under
+// sibling pods (agent <-> browser <-> copy pods). No-op on non-SELinux nodes.
+const seLinuxMCSLevel = "s0:c0,c0"
+
 type KubernetesOrchestrator struct {
 	clientset       kubernetes.Interface
 	restConfig      *rest.Config
@@ -195,6 +201,11 @@ func (k *KubernetesOrchestrator) copyPVC(ctx context.Context, srcPVC, dstPVC str
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,
+			// Pin the MCS level so mounting the PVCs here doesn't relabel
+			// them away from what instance/browser pods expect.
+			SecurityContext: &corev1.PodSecurityContext{
+				SELinuxOptions: &corev1.SELinuxOptions{Level: seLinuxMCSLevel},
+			},
 			Containers: []corev1.Container{{
 				Name:    "copy",
 				Image:   "alpine:latest",
@@ -708,7 +719,7 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 						// SELinux policies deny access to the agent's own
 						// home dir on restart. Ignored on non-SELinux nodes.
 						SELinuxOptions: &corev1.SELinuxOptions{
-							Level: "s0:c0,c0",
+							Level: seLinuxMCSLevel,
 						},
 						FSGroup:             &fsGroup,
 						FSGroupChangePolicy: &fsGroupPolicy,
@@ -770,7 +781,7 @@ func buildInitContainers(sfMounts []SharedFolderMount, privileged bool) []corev1
 		// chcon may fail on non-SELinux nodes — || true keeps the pod startable.
 		// Errors are intentionally left on stderr so they appear in pod logs.
 		Command: []string{"sh", "-c",
-			"chcon -R -l s0:c0,c0 /home/claworc /home/linuxbrew/.linuxbrew || true"},
+			"chcon -R -l " + seLinuxMCSLevel + " /home/claworc /home/linuxbrew/.linuxbrew || true"},
 		SecurityContext: &corev1.SecurityContext{Privileged: &privileged},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "home-data", MountPath: "/home/claworc"},
