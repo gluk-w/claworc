@@ -81,7 +81,7 @@ func TestOpenSSHClientCompat(t *testing.T) {
 	}
 
 	t.Run("exec with exit 0", func(t *testing.T) {
-		out, code := runSSH("stan+my-agent", "hostname")
+		out, code := runSSH("stan.my-agent", "hostname")
 		if code != 0 {
 			t.Errorf("exit code = %d, want 0 (output %q)", code, out)
 		}
@@ -91,7 +91,7 @@ func TestOpenSSHClientCompat(t *testing.T) {
 	})
 
 	t.Run("exit status forwarded", func(t *testing.T) {
-		_, code := runSSH("stan+my-agent", "exit 7")
+		_, code := runSSH("stan.my-agent", "exit 7")
 		if code != 7 {
 			t.Errorf("exit code = %d, want 7", code)
 		}
@@ -115,7 +115,7 @@ func TestOpenSSHClientCompat(t *testing.T) {
 		if err := database.DeleteUserSSHKey(user.ID, key.ID); err != nil && err != gorm.ErrRecordNotFound {
 			t.Fatalf("revoke: %v", err)
 		}
-		out, code := runSSH("stan+my-agent", "hostname")
+		out, code := runSSH("stan.my-agent", "hostname")
 		if code == 0 {
 			t.Errorf("expected failure after key revocation (output %q)", out)
 		}

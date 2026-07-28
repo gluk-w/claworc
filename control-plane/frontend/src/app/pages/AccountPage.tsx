@@ -320,7 +320,7 @@ function SSHKeyGeneratedDialog({
   onClose: () => void;
 }) {
   const portFlag = gatewayPort && gatewayPort !== 22 ? ` -p ${gatewayPort}` : "";
-  const sshCommand = `ssh -i ~/.ssh/${keyFileName}${portFlag} ${username || "<you>"}+<agent-name>@${gatewayHost}`;
+  const sshCommand = `ssh -i ~/.ssh/${keyFileName}${portFlag} ${username || "<you>"}.<agent-name>@${gatewayHost}`;
 
   return (
     <div

@@ -227,7 +227,7 @@ func (e *testEnv) dial(t *testing.T, sshUser string, signer ssh.Signer) *ssh.Cli
 
 func TestGatewayExecBridging(t *testing.T) {
 	env := setupGateway(t)
-	client := env.dial(t, "stan+my-agent", env.signer)
+	client := env.dial(t, "stan.my-agent", env.signer)
 
 	sess, err := client.NewSession()
 	if err != nil {
@@ -246,7 +246,7 @@ func TestGatewayExecBridging(t *testing.T) {
 
 func TestGatewayExitStatusForwarded(t *testing.T) {
 	env := setupGateway(t)
-	client := env.dial(t, "stan+my-agent", env.signer)
+	client := env.dial(t, "stan.my-agent", env.signer)
 
 	sess, err := client.NewSession()
 	if err != nil {
@@ -266,7 +266,7 @@ func TestGatewayExitStatusForwarded(t *testing.T) {
 
 func TestGatewayConnectionReuse(t *testing.T) {
 	env := setupGateway(t)
-	client := env.dial(t, "stan+my-agent", env.signer)
+	client := env.dial(t, "stan.my-agent", env.signer)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 2; i++ {
@@ -287,7 +287,7 @@ func TestGatewayConnectionReuse(t *testing.T) {
 	wg.Wait()
 
 	// A second inbound SSH connection must also reuse the outbound one.
-	client2 := env.dial(t, "stan+my-agent", env.signer)
+	client2 := env.dial(t, "stan.my-agent", env.signer)
 	sess, err := client2.NewSession()
 	if err != nil {
 		t.Fatalf("new session on second connection: %v", err)
@@ -312,7 +312,7 @@ func TestGatewayWrongKeyRejected(t *testing.T) {
 	otherSigner, _ := ssh.ParsePrivateKey(otherPEM)
 
 	_, err := ssh.Dial("tcp", env.gw.Addr().String(), &ssh.ClientConfig{
-		User:            "stan+my-agent",
+		User:            "stan.my-agent",
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(otherSigner)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         5 * time.Second,
@@ -344,8 +344,8 @@ func TestGatewayMissingInstanceMessage(t *testing.T) {
 	if !strings.Contains(text, "no instance specified") {
 		t.Errorf("output %q should mention missing instance", text)
 	}
-	if !strings.Contains(text, "stan+my-agent") {
-		t.Errorf("output %q should list copyable login stan+my-agent", text)
+	if !strings.Contains(text, "stan.my-agent") {
+		t.Errorf("output %q should list copyable login stan.my-agent", text)
 	}
 	if env.sshd.connCount.Load() != 0 {
 		t.Errorf("denied session must not touch the agent")
@@ -354,7 +354,7 @@ func TestGatewayMissingInstanceMessage(t *testing.T) {
 
 func TestGatewayUnknownInstance(t *testing.T) {
 	env := setupGateway(t)
-	client := env.dial(t, "stan+nope", env.signer)
+	client := env.dial(t, "stan.nope", env.signer)
 
 	sess, err := client.NewSession()
 	if err != nil {
@@ -369,14 +369,14 @@ func TestGatewayUnknownInstance(t *testing.T) {
 	if !strings.Contains(string(out), "not found or not authorized") {
 		t.Errorf("output %q should be the generic denial", string(out))
 	}
-	if !strings.Contains(string(out), "stan+my-agent") {
+	if !strings.Contains(string(out), "stan.my-agent") {
 		t.Errorf("output %q should list copyable login names", string(out))
 	}
 }
 
 func TestGatewayRejectsDirectTCPIP(t *testing.T) {
 	env := setupGateway(t)
-	client := env.dial(t, "stan+my-agent", env.signer)
+	client := env.dial(t, "stan.my-agent", env.signer)
 
 	// direct-tcpip open must be rejected (v1 supports sessions only).
 	if _, err := client.Dial("tcp", "127.0.0.1:80"); err == nil {
@@ -391,7 +391,7 @@ func TestGatewayRateLimiterBansAfterFailures(t *testing.T) {
 	otherSigner, _ := ssh.ParsePrivateKey(otherPEM)
 
 	cfg := &ssh.ClientConfig{
-		User:            "stan+my-agent",
+		User:            "stan.my-agent",
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(otherSigner)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         5 * time.Second,
@@ -406,7 +406,7 @@ func TestGatewayRateLimiterBansAfterFailures(t *testing.T) {
 	}
 	// Banned IPs are dropped at accept time even with the right key.
 	if _, err := ssh.Dial("tcp", env.gw.Addr().String(), &ssh.ClientConfig{
-		User:            "stan+my-agent",
+		User:            "stan.my-agent",
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(env.signer)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         2 * time.Second,
