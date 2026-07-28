@@ -96,15 +96,17 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
     expect(result.exitCode).toBe(0);
 
     const config = JSON.parse(result.stdout);
-    // Strip upstream-owned plugin/skill catalogs entirely. They're not
+    // Strip upstream-owned plugin/skill/hook catalogs entirely. They're not
     // schema we depend on, they change weekly as openclaw adds/removes
-    // built-ins, and they're shaped completely differently between
+    // built-ins (e.g. 2026.7.x added `hooks.internal.entries.session-memory`),
+    // and they're shaped completely differently between
     // `openclaw@latest` (uses `skills.entries.*`) and `openclaw@stable`
     // (uses `plugins.entries.*`) — so a single snapshot can't track both.
     // The stable parts of the config (gateway, browser, agents, meta, ...)
     // are what our integration actually cares about.
     delete config.skills;
     delete config.plugins;
+    delete config.hooks;
     expect(structureOf(config)).toMatchSnapshot();
   });
 
