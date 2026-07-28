@@ -200,7 +200,7 @@ func (g *Gateway) denySession(sc *ssh.ServerConn, in ssh.Channel, inReqs <-chan 
 	username := sc.Permissions.Extensions[extUsername]
 	msg := "claworc: instance not found or not authorized\r\n"
 	if reason == denyMissingInstance {
-		msg = fmt.Sprintf("claworc: no instance specified. Connect as %s+<instance-name>@<host>\r\n", username)
+		msg = fmt.Sprintf("claworc: no instance specified. Connect as %s.<instance-name>@<host>\r\n", username)
 	}
 
 	userID := permsUint(sc.Permissions, extUserID)
@@ -208,7 +208,7 @@ func (g *Gateway) denySession(sc *ssh.ServerConn, in ssh.Channel, inReqs <-chan 
 		if names := accessibleInstanceNames(userID, user.Role == "admin"); len(names) > 0 {
 			msg += "\r\nYour agents:\r\n"
 			for _, name := range names {
-				msg += fmt.Sprintf("  %s+%s\r\n", username, name)
+				msg += fmt.Sprintf("  %s.%s\r\n", username, name)
 			}
 		}
 	}

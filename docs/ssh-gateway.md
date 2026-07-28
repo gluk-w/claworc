@@ -4,13 +4,15 @@ The SSH gateway (`control-plane/internal/sshgateway/`) lets users connect to
 their OpenClaw instances with a plain SSH client:
 
 ```
-ssh -i ~/.ssh/claworc_stan.pem -p 2222 stan+my-agent@claworc.example.com
+ssh -i ~/.ssh/claworc_stan.pem -p 2222 stan.my-agent@claworc.example.com
 ```
 
 Because the SSH protocol has no SNI equivalent, the target instance is
-encoded in the SSH login name: `<username>+<instance-name>`. The `bot-`
-prefix of stored instance names may be omitted. `scp` and `sftp` work the
-same way.
+encoded in the SSH login name: `<username>.<instance-name>`. The separator
+is the **last** dot — instance names are K8s-safe (`[a-z0-9-]`) and never
+contain a dot, so a username that itself contains dots (e.g. `first.last`)
+still resolves correctly (`first.last.my-agent`). The `bot-` prefix of
+stored instance names may be omitted. `scp` and `sftp` work the same way.
 
 ## How it works
 
