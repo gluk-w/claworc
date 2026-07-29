@@ -25,11 +25,13 @@ function buildRows(values: Toleration[]): Row[] {
 
 interface Props {
   values: Toleration[];
+  title: string;
+  description: string;
   onSave?: (next: Toleration[]) => Promise<void> | void;
   isSaving?: boolean;
 }
 
-export default function TolerationsEditor({ values, onSave, isSaving }: Props) {
+export default function TolerationsEditor({ values, title, description, onSave, isSaving }: Props) {
   const [editing, setEditing] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -103,9 +105,9 @@ export default function TolerationsEditor({ values, onSave, isSaving }: Props) {
     "w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500";
 
   return (
-    <div>
+    <div className="bg-white rounded-lg border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-medium text-gray-700">Tolerations</span>
+        <h3 className="text-sm font-medium text-gray-900">{title}</h3>
         {!editing && (
           <button
             type="button"
@@ -116,6 +118,7 @@ export default function TolerationsEditor({ values, onSave, isSaving }: Props) {
           </button>
         )}
       </div>
+      <p className="text-xs text-gray-500 mb-4">{description}</p>
 
       {!editing ? (
         values.length === 0 ? (

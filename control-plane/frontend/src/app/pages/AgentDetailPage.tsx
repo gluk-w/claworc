@@ -49,6 +49,7 @@ import ProviderModal from "@common/components/ProviderModal";
 import EnvVarsEditor from "@common/components/EnvVarsEditor";
 import SimpleKVEditor from "@common/components/SimpleKVEditor";
 import TolerationsEditor from "@common/components/TolerationsEditor";
+import AffinityEditor from "@common/components/AffinityEditor";
 import { useHealth } from "@common/hooks/useHealth";
 import WebhookSection from "@common/components/WebhookSection";
 import LegacyBrowserBanner from "@common/components/LegacyBrowserBanner";
@@ -186,10 +187,6 @@ export default function AgentDetailPage() {
   const [instanceProviderModalOpen, setInstanceProviderModalOpen] = useState(false);
   const [editingInstanceProvider, setEditingInstanceProvider] = useState<import("@common/types/instance").LLMProvider | undefined>(undefined);
 
-  // Affinity JSON editing state
-  const [editingAffinity, setEditingAffinity] = useState(false);
-  const [pendingAffinity, setPendingAffinity] = useState("");
-  const [affinityError, setAffinityError] = useState<string | null>(null);
 
 
   // Update tab when hash changes
@@ -401,22 +398,8 @@ export default function AgentDetailPage() {
     await updateMutation.mutateAsync({ id: instanceId, payload: { tolerations: next } });
   };
 
-  const handleSaveAffinity = async () => {
-    if (pendingAffinity.trim() !== "") {
-      try {
-        JSON.parse(pendingAffinity);
-      } catch {
-        setAffinityError("Invalid JSON — check syntax and try again.");
-        return;
-      }
-    }
-    try {
-      await updateMutation.mutateAsync({ id: instanceId, payload: { affinity: pendingAffinity.trim() } });
-      setEditingAffinity(false);
-      setAffinityError(null);
-    } catch (err) {
-      setAffinityError(err instanceof Error ? err.message : "Failed to save.");
-    }
+  const handleSaveAffinity = async (next: string) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { affinity: next } });
   };
 
   const handleUpdateImage = () => {
@@ -993,80 +976,19 @@ export default function AgentDetailPage() {
 
               <TolerationsEditor
                 values={instance.tolerations ?? []}
+                title="Tolerations"
+                description="Tolerations for this pod. Appended after any global default tolerations."
                 onSave={handleSaveTolerations}
                 isSaving={updateMutation.isPending}
               />
 
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-medium text-gray-700">Affinity (JSON)</span>
-                  {!editingAffinity && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPendingAffinity(instance.affinity ?? "");
-                        setAffinityError(null);
-                        setEditingAffinity(true);
-                      }}
-                      className="text-xs text-blue-600 hover:text-blue-800"
-                    >
-                      Edit
-                    </button>
-                  )}
-                </div>
-                <p className="text-xs text-gray-500 mb-2">
-                  Raw K8s affinity spec — nodeAffinity, podAffinity, podAntiAffinity.
-                </p>
-                {!editingAffinity ? (
-                  instance.affinity ? (
-                    <pre className="text-xs font-mono text-gray-700 bg-gray-50 rounded p-3 overflow-x-auto whitespace-pre-wrap break-all">
-                      {(() => {
-                        try {
-                          return JSON.stringify(JSON.parse(instance.affinity), null, 2);
-                        } catch {
-                          return instance.affinity;
-                        }
-                      })()}
-                    </pre>
-                  ) : (
-                    <p className="text-sm text-gray-400 italic">No affinity configured.</p>
-                  )
-                ) : (
-                  <div>
-                    <textarea
-                      value={pendingAffinity}
-                      onChange={(e) => {
-                        setPendingAffinity(e.target.value);
-                        setAffinityError(null);
-                      }}
-                      rows={8}
-                      placeholder={'{\n  "nodeAffinity": {\n    ...\n  }\n}'}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
-                    />
-                    {affinityError && (
-                      <p className="text-xs text-red-600 mt-1">{affinityError}</p>
-                    )}
-                    <div className="flex justify-end gap-3 mt-3">
-                      <button
-                        type="button"
-                        onClick={() => { setEditingAffinity(false); setAffinityError(null); }}
-                        disabled={updateMutation.isPending}
-                        className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleSaveAffinity}
-                        disabled={updateMutation.isPending}
-                        className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {updateMutation.isPending ? "Saving..." : "Save"}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <AffinityEditor
+                value={instance.affinity ?? ""}
+                title="Affinity (JSON)"
+                description="Raw K8s affinity spec — nodeAffinity, podAffinity, podAntiAffinity."
+                onSave={handleSaveAffinity}
+                isSaving={updateMutation.isPending}
+              />
             </div>
           )}
 

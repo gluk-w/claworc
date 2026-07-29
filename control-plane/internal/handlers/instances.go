@@ -682,35 +682,19 @@ func buildCreateParams(inst database.Instance) orchestrator.CreateParams {
 	}
 	envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
 
-	// Per-instance placement
+	// Placement — resolved once at creation time from the then-current global
+	// defaults (see resolvePlacementDefaults) and stored directly on the
+	// instance, same as CPURequest/ContainerImage/etc. Read verbatim here, not
+	// re-merged with whatever the global defaults happen to be *now*: changing
+	// the global defaults in Settings must not silently change already-running
+	// agents out from under them (see "Agent Defaults" precedent). Per-instance
+	// values are only ever changed by an explicit admin edit via UpdateInstance.
 	var podAnnotations map[string]string
 	json.Unmarshal([]byte(inst.PodAnnotations), &podAnnotations)
 	var nodeSelector map[string]string
 	json.Unmarshal([]byte(inst.NodeSelector), &nodeSelector)
 	var tolerations []orchestrator.Toleration
 	json.Unmarshal([]byte(inst.Tolerations), &tolerations)
-
-	// Global placement defaults — per-instance keys take priority for maps;
-	// tolerations are concatenated (global first); affinity falls back to global.
-	globalAnnotationsRaw, _ := database.GetSetting("default_pod_annotations")
-	globalNodeSelectorRaw, _ := database.GetSetting("default_node_selector")
-	globalTolerationsRaw, _ := database.GetSetting("default_tolerations")
-	globalAffinityRaw, _ := database.GetSetting("default_affinity")
-
-	var globalAnnotations map[string]string
-	json.Unmarshal([]byte(globalAnnotationsRaw), &globalAnnotations)
-	var globalNodeSelector map[string]string
-	json.Unmarshal([]byte(globalNodeSelectorRaw), &globalNodeSelector)
-	var globalTolerations []orchestrator.Toleration
-	json.Unmarshal([]byte(globalTolerationsRaw), &globalTolerations)
-
-	mergedAnnotations := mergePlacementMap(globalAnnotations, podAnnotations)
-	mergedNodeSelector := mergePlacementMap(globalNodeSelector, nodeSelector)
-	mergedTolerations := append(globalTolerations, tolerations...)
-	mergedAffinity := inst.Affinity
-	if mergedAffinity == "" {
-		mergedAffinity = globalAffinityRaw
-	}
 
 	return orchestrator.CreateParams{
 		Name:               inst.Name,
@@ -725,27 +709,32 @@ func buildCreateParams(inst database.Instance) orchestrator.CreateParams {
 		Timezone:           getEffectiveTimezone(inst),
 		UserAgent:          getEffectiveUserAgent(inst),
 		EnvVars:            envVars,
-		PodAnnotations:     mergedAnnotations,
-		NodeSelector:       mergedNodeSelector,
-		Tolerations:        mergedTolerations,
-		Affinity:           mergedAffinity,
+		PodAnnotations:     podAnnotations,
+		NodeSelector:       nodeSelector,
+		Tolerations:        tolerations,
+		Affinity:           inst.Affinity,
 		SharedFolderMounts: getSharedFolderMounts(inst.ID),
 	}
 }
 
-// mergePlacementMap merges base and override maps; override keys win on conflict.
-func mergePlacementMap(base, override map[string]string) map[string]string {
-	if len(base) == 0 && len(override) == 0 {
-		return nil
+// resolvePlacementDefaults snapshots the current global placement defaults
+// (Settings → "Pod Placement") into the JSON-encoded strings stored on a
+// newly-created instance. Same "resolve once, at creation" contract as
+// resolveDefault for CPU/memory/storage above — never re-read after this.
+func resolvePlacementDefaults() (podAnnotations, nodeSelector, tolerations, affinity string) {
+	if v, err := database.GetSetting("default_pod_annotations"); err == nil && v != "" && v != "{}" {
+		podAnnotations = v
 	}
-	result := make(map[string]string, len(base)+len(override))
-	for k, v := range base {
-		result[k] = v
+	if v, err := database.GetSetting("default_node_selector"); err == nil && v != "" && v != "{}" {
+		nodeSelector = v
 	}
-	for k, v := range override {
-		result[k] = v
+	if v, err := database.GetSetting("default_tolerations"); err == nil && v != "" && v != "[]" {
+		tolerations = v
 	}
-	return result
+	if v, err := database.GetSetting("default_affinity"); err == nil {
+		affinity = v
+	}
+	return
 }
 
 func getSharedFolderMounts(instanceID uint) []orchestrator.SharedFolderMount {
@@ -982,6 +971,8 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	var maxSortOrder int
 	database.DB.Model(&database.Instance{}).Select("COALESCE(MAX(sort_order), 0)").Scan(&maxSortOrder)
 
+	podAnnotations, nodeSelector, tolerations, affinity := resolvePlacementDefaults()
+
 	inst := database.Instance{
 		Name:               name,
 		DisplayName:        body.DisplayName,
@@ -1008,6 +999,10 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		BrowserIdleMinutes: browserIdleMinutes,
 		BrowserStorage:     browserStorage,
 		TeamID:             teamID,
+		PodAnnotations:     podAnnotations,
+		NodeSelector:       nodeSelector,
+		Tolerations:        tolerations,
+		Affinity:           affinity,
 	}
 
 	if err := database.DB.Create(&inst).Error; err != nil {
