@@ -171,9 +171,13 @@ type instanceResponse struct {
 	BrowserProvider       string            `json:"browser_provider,omitempty"`
 	BrowserImage          string            `json:"browser_image,omitempty"`
 	BrowserIdleMinutes    *int              `json:"browser_idle_minutes,omitempty"`
-	BrowserStorage        string            `json:"browser_storage,omitempty"`
-	BrowserActive         bool              `json:"browser_active"`
-	TeamID                uint              `json:"team_id"`
+	BrowserStorage        string                    `json:"browser_storage,omitempty"`
+	BrowserActive         bool                      `json:"browser_active"`
+	TeamID                uint                      `json:"team_id"`
+	PodAnnotations        map[string]string         `json:"pod_annotations"`
+	NodeSelector          map[string]string         `json:"node_selector"`
+	Tolerations           []orchestrator.Toleration `json:"tolerations"`
+	Affinity              string                    `json:"affinity"`
 }
 
 func generateName(displayName string) string {
@@ -459,6 +463,28 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 
 	envVarsPlain := EnvVarsForResponse(inst.EnvVars)
 
+	var podAnnotations map[string]string
+	if inst.PodAnnotations != "" && inst.PodAnnotations != "{}" {
+		json.Unmarshal([]byte(inst.PodAnnotations), &podAnnotations)
+	}
+	if podAnnotations == nil {
+		podAnnotations = map[string]string{}
+	}
+	var nodeSelector map[string]string
+	if inst.NodeSelector != "" && inst.NodeSelector != "{}" {
+		json.Unmarshal([]byte(inst.NodeSelector), &nodeSelector)
+	}
+	if nodeSelector == nil {
+		nodeSelector = map[string]string{}
+	}
+	var tolerations []orchestrator.Toleration
+	if inst.Tolerations != "" && inst.Tolerations != "[]" {
+		json.Unmarshal([]byte(inst.Tolerations), &tolerations)
+	}
+	if tolerations == nil {
+		tolerations = []orchestrator.Toleration{}
+	}
+
 	return instanceResponse{
 		ID:                    inst.ID,
 		Name:                  inst.Name,
@@ -499,6 +525,10 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		BrowserStorage:        inst.BrowserStorage,
 		BrowserActive:         inst.BrowserActive,
 		TeamID:                inst.TeamID,
+		PodAnnotations:        podAnnotations,
+		NodeSelector:          nodeSelector,
+		Tolerations:           tolerations,
+		Affinity:              inst.Affinity,
 	}
 }
 
@@ -652,6 +682,20 @@ func buildCreateParams(inst database.Instance) orchestrator.CreateParams {
 	}
 	envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
 
+	// Placement — resolved once at creation time from the then-current global
+	// defaults (see resolvePlacementDefaults) and stored directly on the
+	// instance, same as CPURequest/ContainerImage/etc. Read verbatim here, not
+	// re-merged with whatever the global defaults happen to be *now*: changing
+	// the global defaults in Settings must not silently change already-running
+	// agents out from under them (see "Agent Defaults" precedent). Per-instance
+	// values are only ever changed by an explicit admin edit via UpdateInstance.
+	var podAnnotations map[string]string
+	json.Unmarshal([]byte(inst.PodAnnotations), &podAnnotations)
+	var nodeSelector map[string]string
+	json.Unmarshal([]byte(inst.NodeSelector), &nodeSelector)
+	var tolerations []orchestrator.Toleration
+	json.Unmarshal([]byte(inst.Tolerations), &tolerations)
+
 	return orchestrator.CreateParams{
 		Name:               inst.Name,
 		CPURequest:         inst.CPURequest,
@@ -665,8 +709,32 @@ func buildCreateParams(inst database.Instance) orchestrator.CreateParams {
 		Timezone:           getEffectiveTimezone(inst),
 		UserAgent:          getEffectiveUserAgent(inst),
 		EnvVars:            envVars,
+		PodAnnotations:     podAnnotations,
+		NodeSelector:       nodeSelector,
+		Tolerations:        tolerations,
+		Affinity:           inst.Affinity,
 		SharedFolderMounts: getSharedFolderMounts(inst.ID),
 	}
+}
+
+// resolvePlacementDefaults snapshots the current global placement defaults
+// (Settings → "Pod Placement") into the JSON-encoded strings stored on a
+// newly-created instance. Same "resolve once, at creation" contract as
+// resolveDefault for CPU/memory/storage above — never re-read after this.
+func resolvePlacementDefaults() (podAnnotations, nodeSelector, tolerations, affinity string) {
+	if v, err := database.GetSetting("default_pod_annotations"); err == nil && v != "" && v != "{}" {
+		podAnnotations = v
+	}
+	if v, err := database.GetSetting("default_node_selector"); err == nil && v != "" && v != "{}" {
+		nodeSelector = v
+	}
+	if v, err := database.GetSetting("default_tolerations"); err == nil && v != "" && v != "[]" {
+		tolerations = v
+	}
+	if v, err := database.GetSetting("default_affinity"); err == nil {
+		affinity = v
+	}
+	return
 }
 
 func getSharedFolderMounts(instanceID uint) []orchestrator.SharedFolderMount {
@@ -903,6 +971,8 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	var maxSortOrder int
 	database.DB.Model(&database.Instance{}).Select("COALESCE(MAX(sort_order), 0)").Scan(&maxSortOrder)
 
+	podAnnotations, nodeSelector, tolerations, affinity := resolvePlacementDefaults()
+
 	inst := database.Instance{
 		Name:               name,
 		DisplayName:        body.DisplayName,
@@ -929,6 +999,10 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		BrowserIdleMinutes: browserIdleMinutes,
 		BrowserStorage:     browserStorage,
 		TeamID:             teamID,
+		PodAnnotations:     podAnnotations,
+		NodeSelector:       nodeSelector,
+		Tolerations:        tolerations,
+		Affinity:           affinity,
 	}
 
 	if err := database.DB.Create(&inst).Error; err != nil {
@@ -1119,8 +1193,12 @@ type instanceUpdateRequest struct {
 	BrowserProvider    *string           `json:"browser_provider"`     // non-legacy only
 	BrowserImage       *string           `json:"browser_image"`        // non-legacy only
 	BrowserIdleMinutes *int              `json:"browser_idle_minutes"` // non-legacy only; null = global default
-	BrowserStorage     *string           `json:"browser_storage"`      // non-legacy only
-	TeamID             *uint             `json:"team_id"`              // admin or manager of both source+target
+	BrowserStorage     *string                    `json:"browser_storage"`      // non-legacy only
+	TeamID             *uint                      `json:"team_id"`              // admin or manager of both source+target
+	PodAnnotations     *map[string]string         `json:"pod_annotations"`      // admin only
+	NodeSelector       *map[string]string         `json:"node_selector"`        // admin only
+	Tolerations        *[]orchestrator.Toleration `json:"tolerations"`          // admin only
+	Affinity           *string                    `json:"affinity"`             // admin only; raw JSON
 }
 
 func UpdateInstance(w http.ResponseWriter, r *http.Request) {
@@ -1361,6 +1439,42 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Update pod placement config (admin only)
+	placementChanged := false
+	if body.PodAnnotations != nil || body.NodeSelector != nil || body.Tolerations != nil || body.Affinity != nil {
+		user := middleware.GetUser(r)
+		if user == nil || user.Role != "admin" {
+			writeError(w, http.StatusForbidden, "Only admins can change pod placement config")
+			return
+		}
+		if body.PodAnnotations != nil {
+			b, _ := json.Marshal(*body.PodAnnotations)
+			database.DB.Model(&inst).Update("pod_annotations", string(b))
+			placementChanged = true
+		}
+		if body.NodeSelector != nil {
+			b, _ := json.Marshal(*body.NodeSelector)
+			database.DB.Model(&inst).Update("node_selector", string(b))
+			placementChanged = true
+		}
+		if body.Tolerations != nil {
+			b, _ := json.Marshal(*body.Tolerations)
+			database.DB.Model(&inst).Update("tolerations", string(b))
+			placementChanged = true
+		}
+		if body.Affinity != nil {
+			if *body.Affinity != "" {
+				var check interface{}
+				if err := json.Unmarshal([]byte(*body.Affinity), &check); err != nil {
+					writeError(w, http.StatusBadRequest, "Invalid affinity JSON")
+					return
+				}
+			}
+			database.DB.Model(&inst).Update("affinity", *body.Affinity)
+			placementChanged = true
+		}
+	}
+
 	// Re-fetch
 	database.DB.First(&inst, inst.ID)
 
@@ -1382,6 +1496,25 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Failed to update resources for instance %d: %v", inst.ID, err)
 		}
 	}
+
+	// Apply placement changes to running deployment
+	if placementChanged && orch != nil && orchStatus == "running" {
+		var podAnnotations map[string]string
+		json.Unmarshal([]byte(inst.PodAnnotations), &podAnnotations)
+		var nodeSelector map[string]string
+		json.Unmarshal([]byte(inst.NodeSelector), &nodeSelector)
+		var tolerations []orchestrator.Toleration
+		json.Unmarshal([]byte(inst.Tolerations), &tolerations)
+		if err := orch.UpdatePlacementConfig(r.Context(), inst.Name, orchestrator.UpdatePlacementParams{
+			PodAnnotations: podAnnotations,
+			NodeSelector:   nodeSelector,
+			Tolerations:    tolerations,
+			Affinity:       inst.Affinity,
+		}); err != nil {
+			log.Printf("Failed to update placement config for instance %d: %v", inst.ID, err)
+		}
+	}
+
 	if orch != nil && orchStatus == "running" {
 		models := resolveInstanceModels(inst)
 		gatewayProviders := resolveGatewayProviders(inst)

@@ -27,6 +27,9 @@ type ContainerOrchestrator interface {
 
 	// Resources
 	UpdateResources(ctx context.Context, name string, params UpdateResourcesParams) error
+
+	// Pod placement (K8s-only; Docker implementation is a no-op)
+	UpdatePlacementConfig(ctx context.Context, name string, params UpdatePlacementParams) error
 	GetContainerStats(ctx context.Context, name string) (*ContainerStats, error)
 
 	// Image
@@ -72,6 +75,15 @@ type ContainerOrchestrator interface {
 	DeleteSharedVolume(ctx context.Context, folderID uint) error
 }
 
+// Toleration mirrors the K8s toleration spec without importing k8s types in this shared file.
+type Toleration struct {
+	Key               string `json:"key,omitempty"`
+	Operator          string `json:"operator"` // Equal | Exists
+	Value             string `json:"value,omitempty"`
+	Effect            string `json:"effect,omitempty"` // NoSchedule | PreferNoSchedule | NoExecute
+	TolerationSeconds *int64 `json:"tolerationSeconds,omitempty"`
+}
+
 // SharedFolderMount describes a shared volume to mount into a container.
 type SharedFolderMount struct {
 	VolumeID  uint   // SharedFolder.ID, used to derive volume name
@@ -96,6 +108,10 @@ type CreateParams struct {
 	Timezone           string
 	UserAgent          string
 	EnvVars            map[string]string
+	PodAnnotations     map[string]string
+	NodeSelector       map[string]string
+	Tolerations        []Toleration
+	Affinity           string // raw JSON, empty = none
 	OnProgress         func(string)
 	SharedFolderMounts []SharedFolderMount
 }
@@ -105,6 +121,13 @@ type UpdateResourcesParams struct {
 	CPULimit      string
 	MemoryRequest string
 	MemoryLimit   string
+}
+
+type UpdatePlacementParams struct {
+	PodAnnotations map[string]string
+	NodeSelector   map[string]string
+	Tolerations    []Toleration
+	Affinity       string // raw JSON, empty = none
 }
 
 type ContainerStats struct {

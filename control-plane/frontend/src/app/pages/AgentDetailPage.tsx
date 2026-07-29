@@ -47,6 +47,10 @@ import ProviderIcon from "@common/components/ProviderIcon";
 import ProviderModelSelector from "@common/components/ProviderModelSelector";
 import ProviderModal from "@common/components/ProviderModal";
 import EnvVarsEditor from "@common/components/EnvVarsEditor";
+import SimpleKVEditor from "@common/components/SimpleKVEditor";
+import TolerationsEditor from "@common/components/TolerationsEditor";
+import AffinityEditor from "@common/components/AffinityEditor";
+import { useHealth } from "@common/hooks/useHealth";
 import WebhookSection from "@common/components/WebhookSection";
 import LegacyBrowserBanner from "@common/components/LegacyBrowserBanner";
 import AppToast from "@common/components/AppToast";
@@ -75,6 +79,8 @@ export default function AgentDetailPage() {
   const { teams: userTeams, isManager } = useTeam();
   const { data: instance, isLoading } = useInstance(instanceId);
   const { data: settings } = useSettings();
+  const { data: health } = useHealth();
+  const isKubernetes = health?.orchestrator_backend === "kubernetes";
   const { data: allProviders = [] } = useProviders();
 
   // Fetch catalog model lists for all catalog providers (used in edit mode)
@@ -180,6 +186,7 @@ export default function AgentDetailPage() {
   // Instance provider modal state
   const [instanceProviderModalOpen, setInstanceProviderModalOpen] = useState(false);
   const [editingInstanceProvider, setEditingInstanceProvider] = useState<import("@common/types/instance").LLMProvider | undefined>(undefined);
+
 
 
   // Update tab when hash changes
@@ -377,6 +384,22 @@ export default function AgentDetailPage() {
     if (Object.keys(delta.set).length > 0) payload.env_vars_set = delta.set;
     if (delta.unset.length > 0) payload.env_vars_unset = delta.unset;
     await updateMutation.mutateAsync({ id: instanceId, payload });
+  };
+
+  const handleSavePodAnnotations = async (next: Record<string, string>) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { pod_annotations: next } });
+  };
+
+  const handleSaveNodeSelector = async (next: Record<string, string>) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { node_selector: next } });
+  };
+
+  const handleSaveTolerations = async (next: import("@common/types/instance").Toleration[]) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { tolerations: next } });
+  };
+
+  const handleSaveAffinity = async (next: string) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { affinity: next } });
   };
 
   const handleUpdateImage = () => {
@@ -920,6 +943,54 @@ export default function AgentDetailPage() {
             isSaving={updateMutation.isPending}
             emptyMessage="No instance-specific env vars. Globals from Settings apply."
           />
+
+          {/* Pod Annotations (admin + K8s only) */}
+          {isAdmin && isKubernetes && (
+            <SimpleKVEditor
+              values={instance.pod_annotations ?? {}}
+              title="Pod Annotations"
+              description="Metadata annotations applied to the pod template. Useful for tools like Karpenter, Datadog, or custom controllers."
+              onSave={handleSavePodAnnotations}
+              isSaving={updateMutation.isPending}
+              emptyMessage="No pod annotations configured."
+              keyPlaceholder="karpenter.sh/do-not-disrupt"
+              valuePlaceholder="true"
+            />
+          )}
+
+          {/* Node Placement (admin + K8s only) */}
+          {isAdmin && isKubernetes && (
+            <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+              <h3 className="text-sm font-medium text-gray-900">Node Placement</h3>
+
+              <SimpleKVEditor
+                values={instance.node_selector ?? {}}
+                title="Node Selector"
+                description="Schedule this pod only on nodes matching all these labels."
+                onSave={handleSaveNodeSelector}
+                isSaving={updateMutation.isPending}
+                emptyMessage="No node selector configured."
+                keyPlaceholder="kubernetes.io/hostname"
+                valuePlaceholder="worker-1"
+              />
+
+              <TolerationsEditor
+                values={instance.tolerations ?? []}
+                title="Tolerations"
+                description="Tolerations for this pod. Appended after any global default tolerations."
+                onSave={handleSaveTolerations}
+                isSaving={updateMutation.isPending}
+              />
+
+              <AffinityEditor
+                value={instance.affinity ?? ""}
+                title="Affinity (JSON)"
+                description="Raw K8s affinity spec — nodeAffinity, podAffinity, podAntiAffinity."
+                onSave={handleSaveAffinity}
+                isSaving={updateMutation.isPending}
+              />
+            </div>
+          )}
 
           {/* LLM Gateway Providers (admin only) */}
           {isAdmin && (

@@ -73,6 +73,9 @@ func (mockOps) ExecInInstance(_ context.Context, _ string, _ []string) (string, 
 func (mockOps) StreamExecInInstance(_ context.Context, _ string, _ []string, _ io.Writer) (string, int, error) {
 	return "", 0, nil
 }
+func (mockOps) UpdatePlacementConfig(_ context.Context, _ string, _ orchestrator.UpdatePlacementParams) error {
+	return nil
+}
 func (mockOps) DeleteSharedVolume(_ context.Context, _ uint) error               { return nil }
 func (mockOps) CloneVolume(_ context.Context, _, _ string) error                 { return nil }
 func (mockOps) VolumeNameFor(name, suffix string) string                         { return name + "-" + suffix }

@@ -21,6 +21,11 @@ export interface Settings {
   default_user_agent: string;
   /** Global env vars applied to every instance. Values are masked (e.g. "****abcd"). */
   default_env_vars: Record<string, string>;
+  /** Global pod placement defaults (Kubernetes only). */
+  default_pod_annotations: Record<string, string>;
+  default_node_selector: Record<string, string>;
+  default_tolerations: import("./instance").Toleration[];
+  default_affinity: string;
   /** "unset" until the user has answered the consent prompt; then "opt_in" or "opt_out". */
   analytics_consent: "unset" | "opt_in" | "opt_out";
   /** Random 32-char hex ID reported alongside anonymous events. Read-only. */
@@ -50,6 +55,10 @@ export interface SettingsUpdatePayload {
   env_vars_set?: Record<string, string>;
   /** Env var names to remove. */
   env_vars_unset?: string[];
+  default_pod_annotations?: Record<string, string>;
+  default_node_selector?: Record<string, string>;
+  default_tolerations?: import("./instance").Toleration[];
+  default_affinity?: string;
 }
 
 // Keep backward compat alias
