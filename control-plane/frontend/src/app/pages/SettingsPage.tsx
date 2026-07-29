@@ -657,12 +657,17 @@ function EnvironmentTab({
       {/* Node Placement — Kubernetes only */}
       {isKubernetes && (
         <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
-          <h3 className="text-sm font-medium text-gray-900">Node Placement</h3>
+          <div>
+            <h3 className="text-sm font-medium text-gray-900 mb-0.5">Node Placement</h3>
+            <p className="text-xs text-gray-500">
+              Applied only when a new agent is created. Changing these values does not affect existing agents.
+            </p>
+          </div>
 
           <SimpleKVEditor
             values={settings.default_node_selector ?? {}}
             title="Node Selector"
-            description="Applied only when a new agent is created. Changing this does not affect existing agents."
+            description="Schedule new pods only on nodes matching all these labels."
             onSave={handleSaveGlobalNodeSelector}
             isSaving={placementMutation.isPending}
             emptyMessage="No global node selector."
@@ -673,7 +678,7 @@ function EnvironmentTab({
           <TolerationsEditor
             values={settings.default_tolerations ?? []}
             title="Tolerations"
-            description="Applied only when a new agent is created. Changing this does not affect existing agents."
+            description="Tolerations applied to every new pod."
             onSave={handleSaveGlobalTolerations}
             isSaving={placementMutation.isPending}
           />
@@ -681,7 +686,7 @@ function EnvironmentTab({
           <AffinityEditor
             value={settings.default_affinity ?? ""}
             title="Affinity (JSON)"
-            description="Raw K8s affinity spec. Applied only when a new agent is created. Changing this does not affect existing agents."
+            description="Raw K8s affinity spec — nodeAffinity, podAffinity, podAntiAffinity."
             onSave={handleSaveGlobalAffinity}
             isSaving={placementMutation.isPending}
             emptyMessage="No global affinity configured."
