@@ -1,5 +1,5 @@
 provider_key,provider_label,icon_key,api_format,base_url,model_id,model_name,reasoning,vision,context_window,max_tokens,input_cost,output_cost,cached_read_cost,cached_write_cost,tag,description
-openai-codex,OpenAI Codex (ChatGPT subscription),openai,openai-codex-responses,https://chatgpt.com/backend-api,gpt-5.3-codex,GPT-5.3 Codex,TRUE,FALSE,400000,128000,0,0,0,0,coding,Included with ChatGPT subscription
+openai-codex,OpenAI Codex (ChatGPT subscription),openai,openai-codex-responses,https://chatgpt.com/backend-api,gpt-5.6-sol,GPT-5.6 Sol,TRUE,FALSE,400000,128000,0,0,0,0,coding,Included with ChatGPT subscription
 bedrock,Amazon Bedrock,bedrock,bedrock-converse-stream,https://bedrock-runtime.us-east-1.amazonaws.com,us.anthropic.claude-opus-4-6-v1:0,Claude Opus 4.6 (Bedrock),TRUE,TRUE,200000,128000,,,,,,
 anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-opus-4-6,Claude Opus 4.6,TRUE,TRUE,200000,128000,5,25,0.5,6.25,flagship,Most capable — deep reasoning, complex tasks
 anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-sonnet-4-6,Claude Sonnet 4.6,TRUE,TRUE,200000,64000,3,15,0.3,3.75,balanced,Fast & capable — ideal default
