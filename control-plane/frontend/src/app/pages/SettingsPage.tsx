@@ -15,6 +15,7 @@ import EnvVarsEditor from "@common/components/EnvVarsEditor";
 import SimpleKVEditor from "@common/components/SimpleKVEditor";
 import TolerationsEditor from "@common/components/TolerationsEditor";
 import AffinityEditor from "@common/components/AffinityEditor";
+import PortsEditor from "@common/components/PortsEditor";
 import { useHealth } from "@common/hooks/useHealth";
 import StickyActionBar from "@common/components/StickyActionBar";
 import Page from "@common/components/Page";
@@ -502,6 +503,12 @@ function EnvironmentTab({
   const handleSaveGlobalAffinity = async (next: string) => {
     await placementMutation.mutateAsync({ default_affinity: next });
   };
+  const handleSaveGlobalServiceAccountAnnotations = async (next: Record<string, string>) => {
+    await placementMutation.mutateAsync({ default_service_account_annotations: next });
+  };
+  const handleSaveGlobalPorts = async (next: import("@common/types/instance").PortSpec[]) => {
+    await placementMutation.mutateAsync({ default_ports: next });
+  };
 
   const resourceFields: {
     key: string;
@@ -640,18 +647,49 @@ function EnvironmentTab({
         emptyMessage="No global environment variables set."
       />
 
-      {/* Pod Annotations — Kubernetes only, standalone like AgentDetailPage */}
+      {/* Ports — Kubernetes only */}
       {isKubernetes && (
-        <SimpleKVEditor
-          values={settings.default_pod_annotations ?? {}}
-          title="Pod Annotations"
-          description="Applied only when a new agent is created. Changing this does not affect existing agents."
-          onSave={handleSaveGlobalPodAnnotations}
+        <PortsEditor
+          values={settings.default_ports ?? []}
+          title="Ports"
+          description="Additional TCP ports exposed by every new pod and published via a ClusterIP Service of the same name. Applied only when a new agent is created; changing this does not affect existing agents."
+          onSave={handleSaveGlobalPorts}
           isSaving={placementMutation.isPending}
-          emptyMessage="No global pod annotations."
-          keyPlaceholder="karpenter.sh/do-not-disrupt"
-          valuePlaceholder="true"
         />
+      )}
+
+      {/* Annotations — Kubernetes only */}
+      {isKubernetes && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+          <div>
+            <h3 className="text-sm font-medium text-gray-900 mb-0.5">Annotations</h3>
+            <p className="text-xs text-gray-500">
+              Applied only when a new agent is created. Changing these values does not affect existing agents.
+            </p>
+          </div>
+
+          <SimpleKVEditor
+            values={settings.default_pod_annotations ?? {}}
+            title="Pod Annotations"
+            description="Metadata annotations applied to the pod template. Useful for tools like Karpenter, Datadog, or custom controllers."
+            onSave={handleSaveGlobalPodAnnotations}
+            isSaving={placementMutation.isPending}
+            emptyMessage="No global pod annotations."
+            keyPlaceholder="karpenter.sh/do-not-disrupt"
+            valuePlaceholder="true"
+          />
+
+          <SimpleKVEditor
+            values={settings.default_service_account_annotations ?? {}}
+            title="Service Account Annotations"
+            description="Annotations on the dedicated ServiceAccount claworc creates for each new instance (e.g. for external secret-store auth methods keyed off SA identity). Leave empty to run under the namespace's default ServiceAccount."
+            onSave={handleSaveGlobalServiceAccountAnnotations}
+            isSaving={placementMutation.isPending}
+            emptyMessage="No global service account annotations."
+            keyPlaceholder="vault.hashicorp.com/role"
+            valuePlaceholder="my-app"
+          />
+        </div>
       )}
 
       {/* Node Placement — Kubernetes only */}

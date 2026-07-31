@@ -50,6 +50,7 @@ import EnvVarsEditor from "@common/components/EnvVarsEditor";
 import SimpleKVEditor from "@common/components/SimpleKVEditor";
 import TolerationsEditor from "@common/components/TolerationsEditor";
 import AffinityEditor from "@common/components/AffinityEditor";
+import PortsEditor from "@common/components/PortsEditor";
 import { useHealth } from "@common/hooks/useHealth";
 import WebhookSection from "@common/components/WebhookSection";
 import LegacyBrowserBanner from "@common/components/LegacyBrowserBanner";
@@ -400,6 +401,14 @@ export default function AgentDetailPage() {
 
   const handleSaveAffinity = async (next: string) => {
     await updateMutation.mutateAsync({ id: instanceId, payload: { affinity: next } });
+  };
+
+  const handleSaveServiceAccountAnnotations = async (next: Record<string, string>) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { service_account_annotations: next } });
+  };
+
+  const handleSavePorts = async (next: import("@common/types/instance").PortSpec[]) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { ports: next } });
   };
 
   const handleUpdateImage = () => {
@@ -944,18 +953,44 @@ export default function AgentDetailPage() {
             emptyMessage="No instance-specific env vars. Globals from Settings apply."
           />
 
-          {/* Pod Annotations (admin + K8s only) */}
+          {/* Ports (admin + K8s only) */}
           {isAdmin && isKubernetes && (
-            <SimpleKVEditor
-              values={instance.pod_annotations ?? {}}
-              title="Pod Annotations"
-              description="Metadata annotations applied to the pod template. Useful for tools like Karpenter, Datadog, or custom controllers."
-              onSave={handleSavePodAnnotations}
+            <PortsEditor
+              values={instance.ports ?? []}
+              title="Ports"
+              description="Additional TCP ports exposed by the pod and published via a ClusterIP Service of the same name. Leave empty for the common SSH-only case (no Service)."
+              onSave={handleSavePorts}
               isSaving={updateMutation.isPending}
-              emptyMessage="No pod annotations configured."
-              keyPlaceholder="karpenter.sh/do-not-disrupt"
-              valuePlaceholder="true"
             />
+          )}
+
+          {/* Annotations (admin + K8s only) */}
+          {isAdmin && isKubernetes && (
+            <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+              <h3 className="text-sm font-medium text-gray-900">Annotations</h3>
+
+              <SimpleKVEditor
+                values={instance.pod_annotations ?? {}}
+                title="Pod Annotations"
+                description="Metadata annotations applied to the pod template. Useful for tools like Karpenter, Datadog, or custom controllers."
+                onSave={handleSavePodAnnotations}
+                isSaving={updateMutation.isPending}
+                emptyMessage="No pod annotations configured."
+                keyPlaceholder="karpenter.sh/do-not-disrupt"
+                valuePlaceholder="true"
+              />
+
+              <SimpleKVEditor
+                values={instance.service_account_annotations ?? {}}
+                title="Service Account Annotations"
+                description="Annotations on the dedicated ServiceAccount claworc creates for this instance (e.g. for external secret-store auth methods keyed off SA identity). Leave empty to run under the namespace's default ServiceAccount."
+                onSave={handleSaveServiceAccountAnnotations}
+                isSaving={updateMutation.isPending}
+                emptyMessage="No service account annotations configured."
+                keyPlaceholder="vault.hashicorp.com/role"
+                valuePlaceholder="my-app"
+              />
+            </div>
           )}
 
           {/* Node Placement (admin + K8s only) */}

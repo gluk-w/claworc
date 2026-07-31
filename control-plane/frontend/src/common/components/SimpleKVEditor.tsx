@@ -1,15 +1,25 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 
 interface Props {
   values: Record<string, string>;
   title: string;
   description: string;
+  /** Required in managed mode (the default); unused in inline mode. */
   onSave?: (next: Record<string, string>) => Promise<void> | void;
   isSaving?: boolean;
   emptyMessage?: string;
   keyPlaceholder?: string;
   valuePlaceholder?: string;
+  /**
+   * When true, render the edit grid permanently (no display/edit toggle, no
+   * Save/Cancel buttons) and report the current key->value map via onChange.
+   * Used by forms (e.g. instance creation) where the parent owns the submit
+   * action. Mirrors EnvVarsEditor's inline mode.
+   */
+  inline?: boolean;
+  /** Inline-mode change callback; fires whenever the valid map changes. */
+  onChange?: (next: Record<string, string>) => void;
 }
 
 interface Row {
@@ -38,10 +48,30 @@ export default function SimpleKVEditor({
   emptyMessage = "None configured.",
   keyPlaceholder = "key",
   valuePlaceholder = "value",
+  inline = false,
+  onChange,
 }: Props) {
-  const [editing, setEditing] = useState(false);
-  const [rows, setRows] = useState<Row[]>([]);
+  const [editing, setEditing] = useState(inline);
+  const [rows, setRows] = useState<Row[]>(() => (inline ? buildRows(values) : []));
   const [error, setError] = useState<string | null>(null);
+
+  // In inline mode, report the current valid map upward whenever rows change.
+  const lastEmitRef = useRef<string>("");
+  useEffect(() => {
+    if (!inline || !onChange) return;
+    const map: Record<string, string> = {};
+    for (const r of rows) {
+      if (r.key === "" && r.value === "") continue;
+      if (r.key === "") continue; // no key yet; skip rather than error in inline mode
+      if (map[r.key] !== undefined) continue; // duplicate; skip
+      map[r.key] = r.value;
+    }
+    const serialized = JSON.stringify(map);
+    if (serialized !== lastEmitRef.current) {
+      lastEmitRef.current = serialized;
+      onChange(map);
+    }
+  }, [rows, inline, onChange]);
 
   const beginEdit = () => {
     setRows(buildRows(values));
@@ -116,7 +146,7 @@ export default function SimpleKVEditor({
     <div className="bg-white rounded-lg border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-sm font-medium text-gray-900">{title}</h3>
-        {!editing && (
+        {!inline && !editing && (
           <button
             type="button"
             onClick={beginEdit}
@@ -189,24 +219,26 @@ export default function SimpleKVEditor({
 
           {error && <p className="text-xs text-red-600 mt-3">{error}</p>}
 
-          <div className="flex justify-end gap-3 mt-4">
-            <button
-              type="button"
-              onClick={cancel}
-              disabled={isSaving}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={isSaving}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isSaving ? "Saving..." : "Save"}
-            </button>
-          </div>
+          {!inline && (
+            <div className="flex justify-end gap-3 mt-4">
+              <button
+                type="button"
+                onClick={cancel}
+                disabled={isSaving}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={isSaving}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSaving ? "Saving..." : "Save"}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

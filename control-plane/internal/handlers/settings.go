@@ -97,7 +97,7 @@ func settingsToResponse(raw map[string]string) map[string]interface{} {
 	result["default_env_vars"] = EnvVarsForResponse(raw["default_env_vars"])
 
 	// Global pod placement settings
-	for _, k := range []string{"default_pod_annotations", "default_node_selector"} {
+	for _, k := range []string{"default_pod_annotations", "default_node_selector", "default_service_account_annotations"} {
 		var m map[string]string
 		if raw[k] != "" {
 			json.Unmarshal([]byte(raw[k]), &m)
@@ -107,14 +107,16 @@ func settingsToResponse(raw map[string]string) map[string]interface{} {
 		}
 		result[k] = m
 	}
-	var tolerations []interface{}
-	if raw["default_tolerations"] != "" {
-		json.Unmarshal([]byte(raw["default_tolerations"]), &tolerations)
+	for _, k := range []string{"default_tolerations", "default_ports"} {
+		var list []interface{}
+		if raw[k] != "" {
+			json.Unmarshal([]byte(raw[k]), &list)
+		}
+		if list == nil {
+			list = []interface{}{}
+		}
+		result[k] = list
 	}
-	if tolerations == nil {
-		tolerations = []interface{}{}
-	}
-	result["default_tolerations"] = tolerations
 	result["default_affinity"] = raw["default_affinity"]
 
 	return result
@@ -214,8 +216,11 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Handle pod placement settings (stored as JSON strings)
-	for _, key := range []string{"default_pod_annotations", "default_node_selector", "default_tolerations"} {
+	// Handle pod placement + service/port settings (stored as JSON strings)
+	for _, key := range []string{
+		"default_pod_annotations", "default_node_selector", "default_tolerations",
+		"default_service_account_annotations", "default_ports",
+	} {
 		if v, ok := raw[key]; ok {
 			b, err := json.Marshal(v)
 			if err != nil {
@@ -231,7 +236,8 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		if key == "default_models" || key == "brave_api_key" || key == "env_vars_set" || key == "env_vars_unset" {
 			continue
 		}
-		if key == "default_pod_annotations" || key == "default_node_selector" || key == "default_tolerations" {
+		if key == "default_pod_annotations" || key == "default_node_selector" || key == "default_tolerations" ||
+			key == "default_service_account_annotations" || key == "default_ports" {
 			continue // handled above
 		}
 		// installation_id is read-only; never accept it on update.

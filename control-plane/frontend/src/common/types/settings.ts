@@ -26,6 +26,9 @@ export interface Settings {
   default_node_selector: Record<string, string>;
   default_tolerations: import("./instance").Toleration[];
   default_affinity: string;
+  /** Global ServiceAccount annotations + exposed ports defaults (Kubernetes only). */
+  default_service_account_annotations: Record<string, string>;
+  default_ports: import("./instance").PortSpec[];
   /** "unset" until the user has answered the consent prompt; then "opt_in" or "opt_out". */
   analytics_consent: "unset" | "opt_in" | "opt_out";
   /** Random 32-char hex ID reported alongside anonymous events. Read-only. */
@@ -59,6 +62,8 @@ export interface SettingsUpdatePayload {
   default_node_selector?: Record<string, string>;
   default_tolerations?: import("./instance").Toleration[];
   default_affinity?: string;
+  default_service_account_annotations?: Record<string, string>;
+  default_ports?: import("./instance").PortSpec[];
 }
 
 // Keep backward compat alias

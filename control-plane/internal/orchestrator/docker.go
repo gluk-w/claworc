@@ -206,6 +206,10 @@ func (d *DockerOrchestrator) ensureImage(ctx context.Context, img string) error 
 	return nil
 }
 
+// CreateInstance ignores params.Ports and params.ServiceAccountAnnotations:
+// Docker containers already publish their fixed port set below, and there is
+// no ServiceAccount concept outside Kubernetes. Both are K8s-only knobs - see
+// KubernetesOrchestrator.CreateInstance.
 func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreateParams) error {
 	progress := params.OnProgress
 	if progress == nil {
