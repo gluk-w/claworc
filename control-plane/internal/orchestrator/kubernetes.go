@@ -953,7 +953,12 @@ func instanceServiceAccountName(instanceName string, annotations map[string]stri
 
 // containerPorts converts PortSpec entries into K8s container ports. Returns
 // nil (no field on the container) when the instance exposes none, which is
-// the common OpenClaw-agent case - SSH-only, no Service.
+// the common OpenClaw-agent case - SSH-only, no Service. Deliberately does
+// NOT declare the sshd port: the control plane dials the pod IP directly for
+// SSH (see WaitForSSH/ConfigureSSHAccess), never through a container port
+// declaration or a Service, so declaring it here would be decorative only -
+// unlike the browser sidecar's Service, which genuinely is how the control
+// plane reaches that workload's sshd.
 func containerPorts(ports []PortSpec) []corev1.ContainerPort {
 	if len(ports) == 0 {
 		return nil
@@ -984,7 +989,9 @@ func desiredServiceAccount(instanceName, ns string, annotations map[string]strin
 
 // desiredService returns the ClusterIP Service an instance should have, or
 // nil when it should have none (no ports configured). Mirrors applyService
-// in kubernetes_apply.go.
+// in kubernetes_apply.go. Deliberately excludes ssh:22 - the control plane
+// never reaches this workload's sshd through a Service (direct pod-IP dial,
+// see WaitForSSH/ConfigureSSHAccess), so adding it here would be pure noise.
 func desiredService(instanceName, ns string, ports []PortSpec) *corev1.Service {
 	if len(ports) == 0 {
 		return nil

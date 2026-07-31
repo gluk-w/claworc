@@ -1626,8 +1626,23 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Apply placement changes to running deployment
+	// Apply placement changes to running deployment. Any field here (pod
+	// annotations, node selector, tolerations, affinity, service account,
+	// ports) touches .spec.template, so the Deployment controller recreates
+	// the pod automatically (Recreate strategy) - but the control plane's
+	// existing SSH connection/tunnels still point at the old pod and won't
+	// notice on their own. Tear them down first, same as a manual restart
+	// does, so the WaitForSSH below reconnects to the new pod instead of
+	// hanging on the dead one.
 	if placementChanged && orch != nil && orchStatus == "running" {
+		if SSHMgr != nil {
+			SSHMgr.CancelReconnection(inst.ID)
+		}
+		if TunnelMgr != nil {
+			if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
+				log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)
+			}
+		}
 		placement := instancePlacementParams(inst)
 		if err := orch.UpdatePlacementConfig(r.Context(), inst.Name, orchestrator.UpdatePlacementParams{
 			PodAnnotations:            placement.PodAnnotations,

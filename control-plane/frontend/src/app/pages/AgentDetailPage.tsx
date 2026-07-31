@@ -958,7 +958,7 @@ export default function AgentDetailPage() {
             <PortsEditor
               values={instance.ports ?? []}
               title="Ports"
-              description="Additional TCP ports exposed by the pod and published via a ClusterIP Service of the same name. Leave empty for the common SSH-only case (no Service)."
+              description="Additional TCP ports exposed by the pod and published via a ClusterIP Service of the same name. Saving restarts this instance so the change takes effect immediately."
               onSave={handleSavePorts}
               isSaving={updateMutation.isPending}
             />
@@ -967,7 +967,12 @@ export default function AgentDetailPage() {
           {/* Annotations (admin + K8s only) */}
           {isAdmin && isKubernetes && (
             <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
-              <h3 className="text-sm font-medium text-gray-900">Annotations</h3>
+              <div>
+                <h3 className="text-sm font-medium text-gray-900 mb-0.5">Annotations</h3>
+                <p className="text-xs text-gray-500">
+                  Saving restarts this instance so the change takes effect immediately.
+                </p>
+              </div>
 
               <SimpleKVEditor
                 values={instance.pod_annotations ?? {}}
@@ -996,7 +1001,12 @@ export default function AgentDetailPage() {
           {/* Node Placement (admin + K8s only) */}
           {isAdmin && isKubernetes && (
             <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
-              <h3 className="text-sm font-medium text-gray-900">Node Placement</h3>
+              <div>
+                <h3 className="text-sm font-medium text-gray-900 mb-0.5">Node Placement</h3>
+                <p className="text-xs text-gray-500">
+                  Saving restarts this instance so the change takes effect immediately.
+                </p>
+              </div>
 
               <SimpleKVEditor
                 values={instance.node_selector ?? {}}
