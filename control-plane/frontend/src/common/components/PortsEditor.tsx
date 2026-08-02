@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
-import type { Toleration } from "@common/types/instance";
+import type { PortSpec } from "@common/types/instance";
 
-interface Row extends Toleration {
+interface Row extends PortSpec {
   _id: number;
 }
 
@@ -11,54 +11,56 @@ const nextId = () => ++seq;
 
 const emptyRow = (): Row => ({
   _id: nextId(),
-  key: "",
-  operator: "Equal",
-  value: "",
-  effect: "",
+  name: "",
+  container_port: 0,
+  service_port: undefined,
+  protocol: "",
 });
 
-function buildRows(values: Toleration[]): Row[] {
-  const rows: Row[] = values.map((t) => ({ ...t, _id: nextId(), effect: t.effect ?? "" }));
+function isEmptyRow(r: PortSpec): boolean {
+  return !r.name && !r.container_port && !r.service_port && !r.protocol;
+}
+
+function buildRows(values: PortSpec[]): Row[] {
+  const rows: Row[] = values.map((p) => ({ ...p, _id: nextId() }));
   rows.push(emptyRow());
   return rows;
 }
 
-// computeTolerations converts live rows into Toleration[], skipping rows that
-// are incomplete (no key/value validation error - callers that need strict
-// validation, i.e. handleSave below, do their own pass instead).
-function computeTolerations(rows: Row[]): Toleration[] {
-  const live = rows.filter(
-    (r) => r.key !== "" || r.operator !== "Equal" || r.value !== "" || r.effect !== ""
-  );
-  const result: Toleration[] = [];
+// computePorts converts live rows into PortSpec[], skipping rows with no
+// container_port (incomplete - callers that need strict validation, i.e.
+// handleSave below, do their own pass instead).
+function computePorts(rows: Row[]): PortSpec[] {
+  const live = rows.filter((r) => !isEmptyRow(r));
+  const result: PortSpec[] = [];
   for (const row of live) {
-    if (row.operator === "Equal" && row.value === "") continue;
-    const t: Toleration = { operator: row.operator };
-    if (row.key) t.key = row.key;
-    if (row.value && row.operator === "Equal") t.value = row.value;
-    if (row.effect) t.effect = row.effect as Toleration["effect"];
-    result.push(t);
+    if (!row.container_port) continue;
+    const p: PortSpec = { container_port: row.container_port };
+    if (row.name) p.name = row.name;
+    if (row.service_port) p.service_port = row.service_port;
+    if (row.protocol) p.protocol = row.protocol;
+    result.push(p);
   }
   return result;
 }
 
 interface Props {
-  values: Toleration[];
+  values: PortSpec[];
   title: string;
   description: string;
   /** Required in managed mode (the default); unused in inline mode. */
-  onSave?: (next: Toleration[]) => Promise<void> | void;
+  onSave?: (next: PortSpec[]) => Promise<void> | void;
   isSaving?: boolean;
   /**
    * When true, render the edit grid permanently (no display/edit toggle, no
    * Save/Cancel buttons) and report the current list via onChange. Mirrors
-   * EnvVarsEditor/SimpleKVEditor's inline mode.
+   * TolerationsEditor/SimpleKVEditor's inline mode.
    */
   inline?: boolean;
-  onChange?: (next: Toleration[]) => void;
+  onChange?: (next: PortSpec[]) => void;
 }
 
-export default function TolerationsEditor({
+export default function PortsEditor({
   values,
   title,
   description,
@@ -74,7 +76,7 @@ export default function TolerationsEditor({
   const lastEmitRef = useRef<string>("");
   useEffect(() => {
     if (!inline || !onChange) return;
-    const list = computeTolerations(rows);
+    const list = computePorts(rows);
     const serialized = JSON.stringify(list);
     if (serialized !== lastEmitRef.current) {
       lastEmitRef.current = serialized;
@@ -99,7 +101,7 @@ export default function TolerationsEditor({
     setRows((prev) => {
       const next = prev.map((r) => (r._id === id ? { ...r, ...patch } : r));
       const last = next[next.length - 1]!;
-      if (last.key !== "" || last.operator !== "Equal" || last.value !== "" || last.effect !== "") {
+      if (!isEmptyRow(last)) {
         next.push(emptyRow());
       }
       return next;
@@ -111,7 +113,7 @@ export default function TolerationsEditor({
     setRows((prev) => {
       const next = prev.filter((r) => r._id !== id);
       const last = next[next.length - 1];
-      if (!last || last.key !== "" || last.operator !== "Equal" || last.value !== "" || last.effect !== "") {
+      if (!last || !isEmptyRow(last)) {
         next.push(emptyRow());
       }
       return next;
@@ -120,20 +122,24 @@ export default function TolerationsEditor({
 
   const handleSave = async () => {
     if (!onSave) return;
-    const live = rows.filter(
-      (r) => r.key !== "" || r.operator !== "Equal" || r.value !== "" || r.effect !== ""
-    );
-    const result: Toleration[] = [];
+    const live = rows.filter((r) => !isEmptyRow(r));
+    const result: PortSpec[] = [];
+    const seenPorts = new Set<number>();
     for (const row of live) {
-      if (row.operator === "Equal" && row.value === "") {
-        setError(`Enter a value for the toleration with key "${row.key || "(empty)"}" (operator Equal requires a value).`);
+      if (!row.container_port) {
+        setError(`Enter a container port for "${row.name || "(unnamed)"}".`);
         return;
       }
-      const t: Toleration = { operator: row.operator };
-      if (row.key) t.key = row.key;
-      if (row.value && row.operator === "Equal") t.value = row.value;
-      if (row.effect) t.effect = row.effect as Toleration["effect"];
-      result.push(t);
+      if (seenPorts.has(row.container_port)) {
+        setError(`Duplicate container port ${row.container_port}.`);
+        return;
+      }
+      seenPorts.add(row.container_port);
+      const p: PortSpec = { container_port: row.container_port };
+      if (row.name) p.name = row.name;
+      if (row.service_port) p.service_port = row.service_port;
+      if (row.protocol) p.protocol = row.protocol;
+      result.push(p);
     }
     try {
       await onSave(result);
@@ -168,78 +174,71 @@ export default function TolerationsEditor({
 
       {!editing ? (
         values.length === 0 ? (
-          <p className="text-sm text-gray-400 italic">No tolerations configured.</p>
+          <p className="text-sm text-gray-400 italic">No ports exposed.</p>
         ) : (
           <div className="divide-y divide-gray-100">
-            {values.map((t, i) => (
+            {values.map((p, i) => (
               <div key={i} className="py-2 flex flex-wrap gap-x-6 gap-y-1 text-sm font-mono text-gray-700">
-                {t.key && <span><span className="text-gray-400">key=</span>{t.key}</span>}
-                <span><span className="text-gray-400">op=</span>{t.operator}</span>
-                {t.value && <span><span className="text-gray-400">value=</span>{t.value}</span>}
-                {t.effect && <span><span className="text-gray-400">effect=</span>{t.effect}</span>}
+                {p.name && <span><span className="text-gray-400">name=</span>{p.name}</span>}
+                <span><span className="text-gray-400">container=</span>{p.container_port}</span>
+                {p.service_port && <span><span className="text-gray-400">service=</span>{p.service_port}</span>}
+                <span><span className="text-gray-400">proto=</span>{p.protocol || "TCP"}</span>
               </div>
             ))}
           </div>
         )
       ) : (
         <div>
-          <div className="grid grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_10rem_1.75rem] gap-2 items-center mb-1">
-            <span className="text-xs text-gray-500">Key</span>
-            <span className="text-xs text-gray-500">Operator</span>
-            <span className="text-xs text-gray-500">Value</span>
-            <span className="text-xs text-gray-500">Effect</span>
+          <p className="text-xs text-gray-500 mb-2">
+            Container is the port the app listens on. Service is the port it's reached on and
+            defaults to Container when left blank.
+          </p>
+          <div className="grid grid-cols-[minmax(0,1fr)_7rem_7rem_7rem_1.75rem] gap-2 items-center mb-1">
+            <span className="text-xs text-gray-500">Name</span>
+            <span className="text-xs text-gray-500">Container</span>
+            <span className="text-xs text-gray-500">Service</span>
+            <span className="text-xs text-gray-500">Protocol</span>
             <span />
           </div>
           <div className="space-y-2">
             {rows.map((row) => {
-              const isTrailing =
-                row === rows[rows.length - 1] &&
-                row.key === "" &&
-                row.operator === "Equal" &&
-                row.value === "" &&
-                row.effect === "";
+              const isTrailing = row === rows[rows.length - 1] && isEmptyRow(row);
               return (
                 <div
                   key={row._id}
-                  className="grid grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_10rem_1.75rem] gap-2 items-center"
+                  className="grid grid-cols-[minmax(0,1fr)_7rem_7rem_7rem_1.75rem] gap-2 items-center"
                 >
                   <input
                     type="text"
-                    value={row.key ?? ""}
-                    onChange={(e) => updateRow(row._id, { key: e.target.value })}
-                    placeholder="node.kubernetes.io/…"
+                    value={row.name ?? ""}
+                    onChange={(e) => updateRow(row._id, { name: e.target.value })}
+                    placeholder="http"
+                    className={inputClass}
+                  />
+                  <input
+                    type="number"
+                    value={row.container_port || ""}
+                    onChange={(e) => updateRow(row._id, { container_port: Number(e.target.value) || 0 })}
+                    placeholder="8080"
+                    className={inputClass}
+                  />
+                  <input
+                    type="number"
+                    value={row.service_port ?? ""}
+                    onChange={(e) =>
+                      updateRow(row._id, { service_port: e.target.value ? Number(e.target.value) : undefined })
+                    }
+                    placeholder="optional"
+                    title="Defaults to the Container port if left blank."
                     className={inputClass}
                   />
                   <select
-                    value={row.operator}
-                    onChange={(e) =>
-                      updateRow(row._id, {
-                        operator: e.target.value as "Equal" | "Exists",
-                        ...(e.target.value === "Exists" ? { value: "" } : {}),
-                      })
-                    }
+                    value={row.protocol ?? ""}
+                    onChange={(e) => updateRow(row._id, { protocol: e.target.value as PortSpec["protocol"] })}
                     className={selectClass}
                   >
-                    <option value="Equal">Equal</option>
-                    <option value="Exists">Exists</option>
-                  </select>
-                  <input
-                    type="text"
-                    value={row.value ?? ""}
-                    onChange={(e) => updateRow(row._id, { value: e.target.value })}
-                    placeholder="value"
-                    disabled={row.operator === "Exists"}
-                    className={`${inputClass} disabled:bg-gray-50 disabled:text-gray-400`}
-                  />
-                  <select
-                    value={row.effect ?? ""}
-                    onChange={(e) => updateRow(row._id, { effect: e.target.value as Toleration["effect"] })}
-                    className={selectClass}
-                  >
-                    <option value="">Any effect</option>
-                    <option value="NoSchedule">NoSchedule</option>
-                    <option value="PreferNoSchedule">PreferNoSchedule</option>
-                    <option value="NoExecute">NoExecute</option>
+                    <option value="">TCP</option>
+                    <option value="UDP">UDP</option>
                   </select>
                   <button
                     type="button"

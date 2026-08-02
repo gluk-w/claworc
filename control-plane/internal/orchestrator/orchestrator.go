@@ -114,6 +114,17 @@ type CreateParams struct {
 	Affinity           string // raw JSON, empty = none
 	OnProgress         func(string)
 	SharedFolderMounts []SharedFolderMount
+	// Ports are additional TCP ports exposed by the instance's main container
+	// and published via a ClusterIP Service of the same name (K8s only; the
+	// Docker backend ignores this - it has its own fixed port set). Empty for
+	// the common OpenClaw-agent case, which is SSH-only and gets no Service.
+	Ports []PortSpec
+	// ServiceAccountAnnotations, when non-empty, makes the K8s backend create
+	// a dedicated ServiceAccount named after the instance (e.g. for external
+	// secret-store auth methods keyed off SA identity) and mount it into the
+	// pod. Empty means the pod runs under the namespace's default SA, as
+	// today. Docker backend ignores this - no ServiceAccount concept there.
+	ServiceAccountAnnotations map[string]string
 }
 
 type UpdateResourcesParams struct {
@@ -127,7 +138,11 @@ type UpdatePlacementParams struct {
 	PodAnnotations map[string]string
 	NodeSelector   map[string]string
 	Tolerations    []Toleration
-	Affinity       string // raw JSON, empty = none
+	// Ports and ServiceAccountAnnotations mirror CreateParams - see there for
+	// semantics. Reconciled live against the running Deployment/Service/SA.
+	Ports                     []PortSpec
+	ServiceAccountAnnotations map[string]string
+	Affinity                  string // raw JSON, empty = none
 }
 
 type ContainerStats struct {

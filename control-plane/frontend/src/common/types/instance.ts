@@ -56,6 +56,15 @@ export interface Instance {
   node_selector: Record<string, string>;
   tolerations: Toleration[];
   affinity: string;
+  service_account_annotations: Record<string, string>;
+  ports: PortSpec[];
+}
+
+export interface PortSpec {
+  name?: string;
+  container_port: number;
+  service_port?: number;
+  protocol?: "TCP" | "UDP" | "";
 }
 
 // Keep as distinct type for future detail-only fields
@@ -83,6 +92,12 @@ export interface InstanceCreatePayload {
   browser_idle_minutes?: number;
   browser_storage?: string;
   team_id?: number;
+  pod_annotations?: Record<string, string>;
+  node_selector?: Record<string, string>;
+  tolerations?: Toleration[];
+  affinity?: string;
+  service_account_annotations?: Record<string, string>;
+  ports?: PortSpec[];
 }
 
 export interface Toleration {
@@ -118,6 +133,8 @@ export interface InstanceUpdatePayload {
   node_selector?: Record<string, string>;
   tolerations?: Toleration[];
   affinity?: string;
+  service_account_annotations?: Record<string, string>;
+  ports?: PortSpec[];
 }
 
 export interface InstanceStats {
