@@ -7,7 +7,7 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-// 00010_noop_instance_browser_enabled: registry placeholder for the
+// 00012_noop_instance_browser_enabled: registry placeholder for the
 // Instance.BrowserEnabled column added for the per-agent optional browser
 // feature.
 //
@@ -19,8 +19,8 @@ import (
 // registry contiguous.
 func init() {
 	register(&goose.Migration{
-		Version: 10,
-		Source:  "00010_noop_instance_browser_enabled.go",
+		Version: 12,
+		Source:  "00012_noop_instance_browser_enabled.go",
 		UpFnContext: func(ctx context.Context, tx *sql.Tx) error {
 			return nil
 		},
