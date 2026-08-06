@@ -244,6 +244,22 @@ export default function AgentDetailPage() {
     }
   }, [activeTab]);
 
+  const browserEnabledMutation = useMutation({
+    mutationFn: (enabled: boolean) => setInstanceBrowserEnabled(instanceId, enabled),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["instances", instanceId] });
+      qc.invalidateQueries({ queryKey: ["instances"] });
+    },
+    onError: (err: unknown) => {
+      const axiosMsg = (err as any)?.response?.data?.error;
+      const message = axiosMsg ?? (err instanceof Error ? err.message : "Unknown error");
+      toast.custom(
+        createElement(AppToast, { title: "Failed to update browser setting", description: message, status: "error", toastId: "browser-enabled" }),
+        { id: "browser-enabled", duration: 5000 },
+      );
+    },
+  });
+
   if (isLoading) {
     return <div className="text-center py-12 text-gray-500">Loading...</div>;
   }
@@ -391,22 +407,6 @@ export default function AgentDetailPage() {
     if (delta.unset.length > 0) payload.env_vars_unset = delta.unset;
     await updateMutation.mutateAsync({ id: instanceId, payload });
   };
-
-  const browserEnabledMutation = useMutation({
-    mutationFn: (enabled: boolean) => setInstanceBrowserEnabled(instanceId, enabled),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["instances", instanceId] });
-      qc.invalidateQueries({ queryKey: ["instances"] });
-    },
-    onError: (err: unknown) => {
-      const axiosMsg = (err as any)?.response?.data?.error;
-      const message = axiosMsg ?? (err instanceof Error ? err.message : "Unknown error");
-      toast.custom(
-        createElement(AppToast, { title: "Failed to update browser setting", description: message, status: "error", toastId: "browser-enabled" }),
-        { id: "browser-enabled", duration: 5000 },
-      );
-    },
-  });
 
   const handleSavePodAnnotations = async (next: Record<string, string>) => {
     await updateMutation.mutateAsync({ id: instanceId, payload: { pod_annotations: next } });
