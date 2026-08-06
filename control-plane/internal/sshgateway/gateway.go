@@ -1,5 +1,5 @@
 // Package sshgateway implements the inbound SSH gateway: users connect with
-// `ssh <username>+<instance>@<claworc-host>`, authenticate with a per-user
+// `ssh <username>.<instance>@<claworc-host>`, authenticate with a per-user
 // public key registered in Claworc, and their session is bridged onto the
 // control plane's existing multiplexed SSH connection to the target instance.
 // The gateway never dials its own connection to an agent — it only opens new
@@ -130,7 +130,7 @@ func (g *Gateway) serverConfig() *ssh.ServerConfig {
 		PublicKeyCallback: g.authenticate,
 		BannerCallback: func(cm ssh.ConnMetadata) string {
 			if _, instance := ParseSSHUser(cm.User()); instance == "" {
-				return "claworc: connect as <username>+<instance-name>@<host>\r\n"
+				return "claworc: connect as <username>.<instance-name>@<host>\r\n"
 			}
 			return ""
 		},

@@ -132,15 +132,15 @@ func TestAuthenticate(t *testing.T) {
 		wantDeny   string
 		wantInstID bool
 	}{
-		{"admin full access", "admin+my-agent", adminKey, false, "", true},
-		{"admin with bot prefix", "admin+bot-my-agent", adminKey, false, "", true},
-		{"team manager", "manager+my-agent", managerKey, false, "", true},
-		{"granted member", "member+my-agent", memberKey, false, "", true},
-		{"ungranted team user", "stranger+my-agent", strangerKey, false, denyUnknownInstance, false},
-		{"unknown instance", "admin+nope", adminKey, false, denyUnknownInstance, false},
+		{"admin full access", "admin.my-agent", adminKey, false, "", true},
+		{"admin with bot prefix", "admin.bot-my-agent", adminKey, false, "", true},
+		{"team manager", "manager.my-agent", managerKey, false, "", true},
+		{"granted member", "member.my-agent", memberKey, false, "", true},
+		{"ungranted team user", "stranger.my-agent", strangerKey, false, denyUnknownInstance, false},
+		{"unknown instance", "admin.nope", adminKey, false, denyUnknownInstance, false},
 		{"missing instance", "admin", adminKey, false, denyMissingInstance, false},
-		{"unknown user", "ghost+my-agent", adminKey, true, "", false},
-		{"wrong user's key", "admin+my-agent", strangerKey, true, "", false},
+		{"unknown user", "ghost.my-agent", adminKey, true, "", false},
+		{"wrong user's key", "admin.my-agent", strangerKey, true, "", false},
 	}
 
 	for _, tt := range tests {
@@ -176,7 +176,7 @@ func TestAuthenticateUnregisteredKey(t *testing.T) {
 	}
 	signer, _ := ssh.ParsePrivateKey(privKeyPEM)
 
-	if _, err := g.authenticate(fakeConnMetadata{user: "alice+x"}, signer.PublicKey()); err == nil {
+	if _, err := g.authenticate(fakeConnMetadata{user: "alice.x"}, signer.PublicKey()); err == nil {
 		t.Fatal("expected error for unregistered key")
 	}
 }

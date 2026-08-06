@@ -12,6 +12,11 @@ import {
 import ProviderIcon from "@common/components/ProviderIcon";
 import ProviderModal from "@common/components/ProviderModal";
 import EnvVarsEditor from "@common/components/EnvVarsEditor";
+import SimpleKVEditor from "@common/components/SimpleKVEditor";
+import TolerationsEditor from "@common/components/TolerationsEditor";
+import AffinityEditor from "@common/components/AffinityEditor";
+import PortsEditor from "@common/components/PortsEditor";
+import { useHealth } from "@common/hooks/useHealth";
 import StickyActionBar from "@common/components/StickyActionBar";
 import Page from "@common/components/Page";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -482,6 +487,29 @@ function EnvironmentTab({
   handleSaveEnvVars: (delta: { set: Record<string, string>; unset: string[] }) => Promise<void>;
   isSaving: boolean;
 }) {
+  const { data: health } = useHealth();
+  const isKubernetes = health?.orchestrator_backend === "kubernetes";
+  const placementMutation = useUpdateSettings();
+
+  const handleSaveGlobalPodAnnotations = async (next: Record<string, string>) => {
+    await placementMutation.mutateAsync({ default_pod_annotations: next });
+  };
+  const handleSaveGlobalNodeSelector = async (next: Record<string, string>) => {
+    await placementMutation.mutateAsync({ default_node_selector: next });
+  };
+  const handleSaveGlobalTolerations = async (next: import("@common/types/instance").Toleration[]) => {
+    await placementMutation.mutateAsync({ default_tolerations: next });
+  };
+  const handleSaveGlobalAffinity = async (next: string) => {
+    await placementMutation.mutateAsync({ default_affinity: next });
+  };
+  const handleSaveGlobalServiceAccountAnnotations = async (next: Record<string, string>) => {
+    await placementMutation.mutateAsync({ default_service_account_annotations: next });
+  };
+  const handleSaveGlobalPorts = async (next: import("@common/types/instance").PortSpec[]) => {
+    await placementMutation.mutateAsync({ default_ports: next });
+  };
+
   const resourceFields: {
     key: string;
     label: string;
@@ -618,6 +646,91 @@ function EnvironmentTab({
         isSaving={isSaving}
         emptyMessage="No global environment variables set."
       />
+
+      {/* Ports — Kubernetes only */}
+      {isKubernetes && (
+        <PortsEditor
+          values={settings.default_ports ?? []}
+          title="Ports"
+          description="Additional TCP ports exposed by every new pod and published via a ClusterIP Service of the same name. Applied only when a new agent is created; changing this does not affect existing agents."
+          onSave={handleSaveGlobalPorts}
+          isSaving={placementMutation.isPending}
+        />
+      )}
+
+      {/* Annotations — Kubernetes only */}
+      {isKubernetes && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+          <div>
+            <h3 className="text-sm font-medium text-gray-900 mb-0.5">Annotations</h3>
+            <p className="text-xs text-gray-500">
+              Applied only when a new agent is created. Changing these values does not affect existing agents.
+            </p>
+          </div>
+
+          <SimpleKVEditor
+            values={settings.default_pod_annotations ?? {}}
+            title="Pod Annotations"
+            description="Metadata annotations applied to the pod template. Useful for tools like Karpenter, Datadog, or custom controllers."
+            onSave={handleSaveGlobalPodAnnotations}
+            isSaving={placementMutation.isPending}
+            emptyMessage="No global pod annotations."
+            keyPlaceholder="karpenter.sh/do-not-disrupt"
+            valuePlaceholder="true"
+          />
+
+          <SimpleKVEditor
+            values={settings.default_service_account_annotations ?? {}}
+            title="Service Account Annotations"
+            description="Annotations on the dedicated ServiceAccount claworc creates for each new instance (e.g. for external secret-store auth methods keyed off SA identity). Leave empty to run under the namespace's default ServiceAccount."
+            onSave={handleSaveGlobalServiceAccountAnnotations}
+            isSaving={placementMutation.isPending}
+            emptyMessage="No global service account annotations."
+            keyPlaceholder="vault.hashicorp.com/role"
+            valuePlaceholder="my-app"
+          />
+        </div>
+      )}
+
+      {/* Node Placement — Kubernetes only */}
+      {isKubernetes && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+          <div>
+            <h3 className="text-sm font-medium text-gray-900 mb-0.5">Node Placement</h3>
+            <p className="text-xs text-gray-500">
+              Applied only when a new agent is created. Changing these values does not affect existing agents.
+            </p>
+          </div>
+
+          <SimpleKVEditor
+            values={settings.default_node_selector ?? {}}
+            title="Node Selector"
+            description="Schedule new pods only on nodes matching all these labels."
+            onSave={handleSaveGlobalNodeSelector}
+            isSaving={placementMutation.isPending}
+            emptyMessage="No global node selector."
+            keyPlaceholder="topology.kubernetes.io/zone"
+            valuePlaceholder="us-east-1a"
+          />
+
+          <TolerationsEditor
+            values={settings.default_tolerations ?? []}
+            title="Tolerations"
+            description="Tolerations applied to every new pod."
+            onSave={handleSaveGlobalTolerations}
+            isSaving={placementMutation.isPending}
+          />
+
+          <AffinityEditor
+            value={settings.default_affinity ?? ""}
+            title="Affinity (JSON)"
+            description="Raw K8s affinity spec — nodeAffinity, podAffinity, podAntiAffinity."
+            onSave={handleSaveGlobalAffinity}
+            isSaving={placementMutation.isPending}
+            emptyMessage="No global affinity configured."
+          />
+        </div>
+      )}
     </div>
   );
 }

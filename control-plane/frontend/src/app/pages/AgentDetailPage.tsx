@@ -48,6 +48,11 @@ import ProviderIcon from "@common/components/ProviderIcon";
 import ProviderModelSelector from "@common/components/ProviderModelSelector";
 import ProviderModal from "@common/components/ProviderModal";
 import EnvVarsEditor from "@common/components/EnvVarsEditor";
+import SimpleKVEditor from "@common/components/SimpleKVEditor";
+import TolerationsEditor from "@common/components/TolerationsEditor";
+import AffinityEditor from "@common/components/AffinityEditor";
+import PortsEditor from "@common/components/PortsEditor";
+import { useHealth } from "@common/hooks/useHealth";
 import WebhookSection from "@common/components/WebhookSection";
 import LegacyBrowserBanner from "@common/components/LegacyBrowserBanner";
 import AppToast from "@common/components/AppToast";
@@ -76,6 +81,8 @@ export default function AgentDetailPage() {
   const { teams: userTeams, isManager } = useTeam();
   const { data: instance, isLoading } = useInstance(instanceId);
   const { data: settings } = useSettings();
+  const { data: health } = useHealth();
+  const isKubernetes = health?.orchestrator_backend === "kubernetes";
   const { data: allProviders = [] } = useProviders();
 
   // Fetch catalog model lists for all catalog providers (used in edit mode)
@@ -185,6 +192,7 @@ export default function AgentDetailPage() {
   // Instance provider modal state
   const [instanceProviderModalOpen, setInstanceProviderModalOpen] = useState(false);
   const [editingInstanceProvider, setEditingInstanceProvider] = useState<import("@common/types/instance").LLMProvider | undefined>(undefined);
+
 
 
   // Update tab when hash changes
@@ -399,6 +407,30 @@ export default function AgentDetailPage() {
       );
     },
   });
+
+  const handleSavePodAnnotations = async (next: Record<string, string>) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { pod_annotations: next } });
+  };
+
+  const handleSaveNodeSelector = async (next: Record<string, string>) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { node_selector: next } });
+  };
+
+  const handleSaveTolerations = async (next: import("@common/types/instance").Toleration[]) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { tolerations: next } });
+  };
+
+  const handleSaveAffinity = async (next: string) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { affinity: next } });
+  };
+
+  const handleSaveServiceAccountAnnotations = async (next: Record<string, string>) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { service_account_annotations: next } });
+  };
+
+  const handleSavePorts = async (next: import("@common/types/instance").PortSpec[]) => {
+    await updateMutation.mutateAsync({ id: instanceId, payload: { ports: next } });
+  };
 
   const handleUpdateImage = () => {
     const toastId = "image-update";
@@ -968,6 +1000,90 @@ export default function AgentDetailPage() {
             isSaving={updateMutation.isPending}
             emptyMessage="No instance-specific env vars. Globals from Settings apply."
           />
+
+          {/* Ports (admin + K8s only) */}
+          {isAdmin && isKubernetes && (
+            <PortsEditor
+              values={instance.ports ?? []}
+              title="Ports"
+              description="Additional TCP ports exposed by the pod and published via a ClusterIP Service of the same name. Saving restarts this instance so the change takes effect immediately."
+              onSave={handleSavePorts}
+              isSaving={updateMutation.isPending}
+            />
+          )}
+
+          {/* Annotations (admin + K8s only) */}
+          {isAdmin && isKubernetes && (
+            <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+              <div>
+                <h3 className="text-sm font-medium text-gray-900 mb-0.5">Annotations</h3>
+                <p className="text-xs text-gray-500">
+                  Saving restarts this instance so the change takes effect immediately.
+                </p>
+              </div>
+
+              <SimpleKVEditor
+                values={instance.pod_annotations ?? {}}
+                title="Pod Annotations"
+                description="Metadata annotations applied to the pod template. Useful for tools like Karpenter, Datadog, or custom controllers."
+                onSave={handleSavePodAnnotations}
+                isSaving={updateMutation.isPending}
+                emptyMessage="No pod annotations configured."
+                keyPlaceholder="karpenter.sh/do-not-disrupt"
+                valuePlaceholder="true"
+              />
+
+              <SimpleKVEditor
+                values={instance.service_account_annotations ?? {}}
+                title="Service Account Annotations"
+                description="Annotations on the dedicated ServiceAccount claworc creates for this instance (e.g. for external secret-store auth methods keyed off SA identity). Leave empty to run under the namespace's default ServiceAccount."
+                onSave={handleSaveServiceAccountAnnotations}
+                isSaving={updateMutation.isPending}
+                emptyMessage="No service account annotations configured."
+                keyPlaceholder="vault.hashicorp.com/role"
+                valuePlaceholder="my-app"
+              />
+            </div>
+          )}
+
+          {/* Node Placement (admin + K8s only) */}
+          {isAdmin && isKubernetes && (
+            <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+              <div>
+                <h3 className="text-sm font-medium text-gray-900 mb-0.5">Node Placement</h3>
+                <p className="text-xs text-gray-500">
+                  Saving restarts this instance so the change takes effect immediately.
+                </p>
+              </div>
+
+              <SimpleKVEditor
+                values={instance.node_selector ?? {}}
+                title="Node Selector"
+                description="Schedule this pod only on nodes matching all these labels."
+                onSave={handleSaveNodeSelector}
+                isSaving={updateMutation.isPending}
+                emptyMessage="No node selector configured."
+                keyPlaceholder="kubernetes.io/hostname"
+                valuePlaceholder="worker-1"
+              />
+
+              <TolerationsEditor
+                values={instance.tolerations ?? []}
+                title="Tolerations"
+                description="Tolerations for this pod. Appended after any global default tolerations."
+                onSave={handleSaveTolerations}
+                isSaving={updateMutation.isPending}
+              />
+
+              <AffinityEditor
+                value={instance.affinity ?? ""}
+                title="Affinity (JSON)"
+                description="Raw K8s affinity spec — nodeAffinity, podAffinity, podAntiAffinity."
+                onSave={handleSaveAffinity}
+                isSaving={updateMutation.isPending}
+              />
+            </div>
+          )}
 
           {/* LLM Gateway Providers (admin only) */}
           {isAdmin && (

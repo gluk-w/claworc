@@ -81,8 +81,22 @@ type Instance struct {
 	EnabledProviders string `gorm:"type:text;default:'[]'" json:"-"`                // JSON array of LLMProvider IDs enabled for this instance
 	Timezone         string `gorm:"default:''" json:"timezone"`
 	UserAgent        string `gorm:"default:''" json:"user_agent"`
-	EnvVars          string `gorm:"type:text;default:'{}'" json:"-"` // JSON map KEY -> fernet-encrypted value
-	SortOrder        int    `gorm:"not null;default:0" json:"sort_order"`
+	EnvVars          string `gorm:"type:text;default:'{}'" json:"-"`               // JSON map KEY -> fernet-encrypted value
+	PodAnnotations   string `gorm:"type:text;default:'{}'" json:"pod_annotations"` // JSON map[string]string
+	NodeSelector     string `gorm:"type:text;default:'{}'" json:"node_selector"`   // JSON map[string]string
+	Tolerations      string `gorm:"type:text;default:'[]'" json:"tolerations"`     // JSON []Toleration
+	Affinity         string `gorm:"type:text;default:''"   json:"affinity"`        // JSON corev1.Affinity or ""
+	// ServiceAccountAnnotations are applied to the per-instance ServiceAccount
+	// claworc creates and mounts into the pod (e.g. for external secret-store
+	// auth methods keyed off SA identity). The SA name itself is derived from
+	// the instance name, not user-configurable.
+	ServiceAccountAnnotations string `gorm:"type:text;default:'{}'" json:"service_account_annotations"` // JSON map[string]string
+	// Ports are additional TCP ports exposed by the pod and published via a
+	// ClusterIP Service of the same name as the instance. Empty for OpenClaw
+	// agents (SSH-only, no Service); used by non-agent workloads that need
+	// their own ingress-routable port.
+	Ports     string `gorm:"type:text;default:'[]'" json:"ports"` // JSON []orchestrator.PortSpec
+	SortOrder int    `gorm:"not null;default:0" json:"sort_order"`
 	// On-demand browser-pod fields. Only consulted when ContainerImage does
 	// not match IsLegacyEmbedded(). All four are optional and fall back to
 	// admin-level defaults from the settings table.
@@ -299,12 +313,12 @@ type BackupSchedule struct {
 // multiple instances at the same path. InstanceIDs is a JSON array of
 // instance IDs this folder is mapped to.
 type SharedFolder struct {
-	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	Name        string    `gorm:"not null" json:"name"`
-	MountPath   string    `gorm:"not null" json:"mount_path"`
-	OwnerID     uint      `gorm:"not null;index" json:"owner_id"`
-	InstanceIDs string    `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint IDs
-	TeamIDs     string    `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint team IDs
+	ID          uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name        string `gorm:"not null" json:"name"`
+	MountPath   string `gorm:"not null" json:"mount_path"`
+	OwnerID     uint   `gorm:"not null;index" json:"owner_id"`
+	InstanceIDs string `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint IDs
+	TeamIDs     string `gorm:"type:text;default:'[]'" json:"-"` // JSON array of uint team IDs
 	// HostPath, when non-empty, makes this folder a host bind mount backed by
 	// the given host directory instead of a managed volume/PVC. It is gated by
 	// the CLAWORC_ALLOWED_HOST_MOUNTS allowlist and is immutable after creation.
@@ -449,7 +463,7 @@ type UserSSHKey struct {
 	ID          uint       `gorm:"primaryKey;autoIncrement" json:"id"`
 	UserID      uint       `gorm:"not null;index" json:"user_id"`
 	Name        string     `gorm:"not null;default:''" json:"name"`
-	PublicKey   string     `gorm:"type:text;not null" json:"-"` // authorized_keys format
+	PublicKey   string     `gorm:"type:text;not null" json:"-"`                     // authorized_keys format
 	Fingerprint string     `gorm:"uniqueIndex;not null;size:64" json:"fingerprint"` // ssh.FingerprintSHA256
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
 	CreatedAt   time.Time  `gorm:"autoCreateTime" json:"created_at"`

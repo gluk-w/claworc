@@ -1,14 +1,21 @@
 import { useEffect, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { useQueries } from "@tanstack/react-query";
 import { useSettings } from "@common/hooks/useSettings";
 import { useProviders } from "@common/hooks/useProviders";
+import { useAuth } from "@common/contexts/AuthContext";
+import { useHealth } from "@common/hooks/useHealth";
 import { fetchCatalogProviderDetail } from "@common/api/llm";
 import type { CatalogProviderDetail } from "@common/api/llm";
 import ProviderModelSelector from "@common/components/ProviderModelSelector";
 import EnvVarsEditor from "@common/components/EnvVarsEditor";
+import SimpleKVEditor from "@common/components/SimpleKVEditor";
+import TolerationsEditor from "@common/components/TolerationsEditor";
+import AffinityEditor from "@common/components/AffinityEditor";
+import PortsEditor from "@common/components/PortsEditor";
 import StickyActionBar from "@common/components/StickyActionBar";
 import ConfirmDialog from "@common/components/ConfirmDialog";
-import type { InstanceCreatePayload } from "@common/types/instance";
+import type { InstanceCreatePayload, PortSpec, Toleration } from "@common/types/instance";
 import type { UserTeamMembership } from "@common/types/auth";
 
 interface AgentFormProps {
@@ -45,8 +52,22 @@ export default function AgentForm({
   const [vncResolution, setVncResolution] = useState("");
   const [userAgent, setUserAgent] = useState("");
 
+  // Pod placement overrides (admin + Kubernetes only). Left undefined until
+  // touched so the create payload omits them entirely and the backend falls
+  // back to the configured global defaults (see resolvePlacementDefaults).
+  const [podAnnotations, setPodAnnotations] = useState<Record<string, string>>({});
+  const [nodeSelector, setNodeSelector] = useState<Record<string, string>>({});
+  const [tolerations, setTolerations] = useState<Toleration[]>([]);
+  const [affinity, setAffinity] = useState("");
+  const [serviceAccountAnnotations, setServiceAccountAnnotations] = useState<Record<string, string>>({});
+  const [ports, setPorts] = useState<PortSpec[]>([]);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   const { data: settings } = useSettings();
   const { data: allProviders = [] } = useProviders();
+  const { isAdmin } = useAuth();
+  const { data: health } = useHealth();
+  const isKubernetes = health?.orchestrator_backend === "kubernetes";
 
   // Seed resource fields from global defaults once settings have loaded.
   // The user can still override anything before submitting.
@@ -60,6 +81,27 @@ export default function AgentForm({
     setStorageHome(settings.default_storage_home ?? "");
     setResourcesSeeded(true);
   }, [settings, resourcesSeeded]);
+
+  // Seed placement fields from global defaults once settings have loaded, same
+  // "seed once, admin can override before submitting" contract as resources
+  // above. Untouched fields round-trip the same default value the backend
+  // would have applied anyway; an edit becomes an explicit per-instance
+  // override. Gating the editors' render on `settings` below (not just
+  // isAdmin/isKubernetes) avoids them mounting with stale {}/[]/"" before this
+  // effect seeds the real defaults - SimpleKVEditor/TolerationsEditor/
+  // AffinityEditor/PortsEditor only read their `values`/`value` prop once, at
+  // mount.
+  const [placementSeeded, setPlacementSeeded] = useState(false);
+  useEffect(() => {
+    if (placementSeeded || !settings) return;
+    setPodAnnotations(settings.default_pod_annotations ?? {});
+    setNodeSelector(settings.default_node_selector ?? {});
+    setTolerations(settings.default_tolerations ?? []);
+    setAffinity(settings.default_affinity ?? "");
+    setServiceAccountAnnotations(settings.default_service_account_annotations ?? {});
+    setPorts(settings.default_ports ?? []);
+    setPlacementSeeded(true);
+  }, [settings, placementSeeded]);
 
   // Fetch catalog model lists for all catalog providers
   const catalogKeys = [...new Set(allProviders.filter((p) => p.provider).map((p) => p.provider))];
@@ -135,6 +177,19 @@ export default function AgentForm({
     }
     if (Object.keys(envVars).length > 0) {
       payload.env_vars_set = envVars;
+    }
+
+    // Placement overrides: only meaningful (and only accepted by the backend)
+    // for admins on the Kubernetes backend. Omitting them entirely for
+    // everyone else lets the backend's own resolvePlacementDefaults apply,
+    // rather than risking a 403 on the whole create request.
+    if (isAdmin && isKubernetes && placementSeeded) {
+      payload.pod_annotations = podAnnotations;
+      payload.node_selector = nodeSelector;
+      payload.tolerations = tolerations;
+      payload.affinity = affinity;
+      payload.service_account_annotations = serviceAccountAnnotations;
+      payload.ports = ports;
     }
 
     return payload;
@@ -386,6 +441,89 @@ export default function AgentForm({
           </div>
         </div>
       </div>
+
+      {/* Advanced (admin + K8s only): ports, annotations (pod + service
+          account), node placement. Collapsed by default - these are rarely
+          touched at creation time and the agent/global settings pages keep
+          them uncollapsed, this is just the create form. */}
+      {isAdmin && isKubernetes && settings && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-gray-900"
+          >
+            {showAdvanced ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            Advanced
+          </button>
+
+          {showAdvanced && (
+            <div className="mt-4 space-y-8">
+              <PortsEditor
+                values={ports}
+                title="Ports"
+                description="Additional TCP ports exposed by the pod and published via a ClusterIP Service of the same name. Leave empty for the common SSH-only case (no Service)."
+                inline
+                onChange={setPorts}
+              />
+
+              <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+                <h3 className="text-sm font-medium text-gray-900">Annotations</h3>
+
+                <SimpleKVEditor
+                  values={podAnnotations}
+                  title="Pod Annotations"
+                  description="Metadata annotations applied to the pod template. Useful for tools like Karpenter, Datadog, or custom controllers."
+                  inline
+                  onChange={setPodAnnotations}
+                  keyPlaceholder="karpenter.sh/do-not-disrupt"
+                  valuePlaceholder="true"
+                />
+
+                <SimpleKVEditor
+                  values={serviceAccountAnnotations}
+                  title="Service Account Annotations"
+                  description="Annotations on the dedicated ServiceAccount claworc creates for this instance (e.g. for external secret-store auth methods keyed off SA identity). Leave empty to run under the namespace's default ServiceAccount."
+                  inline
+                  onChange={setServiceAccountAnnotations}
+                  keyPlaceholder="vault.hashicorp.com/role"
+                  valuePlaceholder="my-app"
+                />
+              </div>
+
+              <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+                <h3 className="text-sm font-medium text-gray-900">Node Placement</h3>
+
+                <SimpleKVEditor
+                  values={nodeSelector}
+                  title="Node Selector"
+                  description="Schedule this pod only on nodes matching all these labels."
+                  inline
+                  onChange={setNodeSelector}
+                  keyPlaceholder="kubernetes.io/hostname"
+                  valuePlaceholder="worker-1"
+                />
+
+                <TolerationsEditor
+                  values={tolerations}
+                  title="Tolerations"
+                  description="Tolerations for this pod. Appended after any global default tolerations."
+                  inline
+                  onChange={setTolerations}
+                />
+
+                <AffinityEditor
+                  value={affinity}
+                  title="Affinity (JSON)"
+                  description="Raw K8s affinity spec — nodeAffinity, podAffinity, podAntiAffinity."
+                  inline
+                  onChange={setAffinity}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <StickyActionBar visible={!!displayName.trim()}>
         <button

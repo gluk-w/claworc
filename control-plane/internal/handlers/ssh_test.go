@@ -214,6 +214,9 @@ func (m *mockOrchestrator) ExecInInstance(_ context.Context, _ string, _ []strin
 func (m *mockOrchestrator) StreamExecInInstance(_ context.Context, _ string, _ []string, _ io.Writer) (string, int, error) {
 	return "", 0, nil
 }
+func (m *mockOrchestrator) UpdatePlacementConfig(_ context.Context, _ string, _ orchestrator.UpdatePlacementParams) error {
+	return nil
+}
 func (m *mockOrchestrator) DeleteSharedVolume(_ context.Context, _ uint) error { return nil }
 func (m *mockOrchestrator) CloneVolume(_ context.Context, _, _ string) error    { return nil }
 func (m *mockOrchestrator) VolumeNameFor(name, suffix string) string            { return name + "-" + suffix }

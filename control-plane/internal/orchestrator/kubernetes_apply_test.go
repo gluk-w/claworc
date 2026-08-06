@@ -113,6 +113,27 @@ func TestApply_CreatesPVC_DeploymentService_NetworkPolicy(t *testing.T) {
 	}
 }
 
+func TestApply_PinsSELinuxLevel(t *testing.T) {
+	k := newFakeOrchestrator(t)
+	ctx := context.Background()
+
+	if err := k.Apply(ctx, browserSpec()); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	dep, err := k.clientset.AppsV1().Deployments("claworc").Get(ctx, "bot-foo-browser", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	sc := dep.Spec.Template.Spec.SecurityContext
+	if sc == nil || sc.SELinuxOptions == nil {
+		t.Fatalf("pod SecurityContext.SELinuxOptions not set; applied workloads share the agent home PVC and must pin the MCS level")
+	}
+	if got := sc.SELinuxOptions.Level; got != seLinuxMCSLevel {
+		t.Errorf("SELinux level = %q, want %q", got, seLinuxMCSLevel)
+	}
+}
+
 func TestApply_IsIdempotent_OnReapply(t *testing.T) {
 	k := newFakeOrchestrator(t)
 	ctx := context.Background()

@@ -164,7 +164,7 @@ If your namespace enforces `baseline` or `restricted` pod security, you'll need 
 
 ## RBAC
 
-The Helm chart creates a ServiceAccount, Role, and RoleBinding scoped to the `claworc` namespace. The Role grants the control plane permission to manage Deployments, Services, PVCs, ConfigMaps, Secrets, and Pods within the namespace. See the [Architecture docs](../architecture.md#rbac) for the full role definition.
+The Helm chart creates a ServiceAccount, Role, and RoleBinding scoped to the `claworc` namespace. The Role grants the control plane permission to manage Deployments, Services, per-instance ServiceAccounts, PVCs, ConfigMaps, Secrets, and Pods within the namespace. See the [Architecture docs](../architecture.md#rbac) for the full role definition.
 
 ## SSH-Specific Deployment Checklist (Kubernetes)
 

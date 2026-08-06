@@ -401,10 +401,16 @@ func buildDeploymentFromSpec(ns string, spec WorkloadSpec) *appsv1.Deployment {
 	}
 
 	podSpec := corev1.PodSpec{
-		Hostname:         spec.Hostname,
-		Containers:       []corev1.Container{mainContainer},
-		InitContainers:   initContainers,
-		Volumes:          volumes,
+		Hostname:       spec.Hostname,
+		Containers:     []corev1.Container{mainContainer},
+		InitContainers: initContainers,
+		Volumes:        volumes,
+		// Applied workloads (e.g. browser pods) share the agent's home PVC.
+		// Without a pinned MCS level the runtime picks a random category and
+		// relabels the shared volume, breaking the agent pod with EACCES.
+		SecurityContext: &corev1.PodSecurityContext{
+			SELinuxOptions: &corev1.SELinuxOptions{Level: seLinuxMCSLevel},
+		},
 		ImagePullSecrets: []corev1.LocalObjectReference{{Name: "ghcr-secret"}},
 	}
 	if spec.Affinity != nil && len(spec.Affinity.RequiredCoLocation) > 0 {

@@ -11,12 +11,14 @@ func TestParseSSHUser(t *testing.T) {
 		wantUser     string
 		wantInstance string
 	}{
-		{"stan+my-agent", "stan", "my-agent"},
+		{"stan.my-agent", "stan", "my-agent"},
 		{"stan", "stan", ""},
-		{"stan+", "stan", ""},
-		{"+my-agent", "", "my-agent"},
-		{"stan+bot-my-agent", "stan", "bot-my-agent"},
-		{"a+b+c", "a", "b+c"},
+		{"stan.", "stan", ""},
+		{".my-agent", "", "my-agent"},
+		{"stan.bot-my-agent", "stan", "bot-my-agent"},
+		// Split on the LAST dot: dots to its left belong to the username.
+		{"a.b.c", "a.b", "c"},
+		{"stan.smith.my-agent", "stan.smith", "my-agent"},
 		{"", "", ""},
 	}
 	for _, tt := range tests {
