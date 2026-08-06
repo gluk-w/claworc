@@ -65,6 +65,10 @@ func BrowserStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, browserStatusResponse{State: "legacy", IsLegacyEmbedded: true})
 		return
 	}
+	if !inst.BrowserEnabled {
+		writeJSON(w, http.StatusOK, browserStatusResponse{State: "disabled"})
+		return
+	}
 	resp := browserStatusResponse{State: "stopped"}
 	if BrowserBridgeRef == nil {
 		resp.State = "disabled"
@@ -107,6 +111,16 @@ func BrowserStart(w http.ResponseWriter, r *http.Request) {
 	}
 	if BrowserBridgeRef == nil {
 		writeError(w, http.StatusServiceUnavailable, "browser bridge not configured")
+		return
+	}
+	var inst database.Instance
+	if err := database.DB.First(&inst, uint(id)).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+	if !inst.BrowserEnabled {
+		// Deliberate per-agent setting, not a transient failure.
+		writeError(w, http.StatusConflict, "browser is disabled for this agent")
 		return
 	}
 	user := middleware.GetUser(r)

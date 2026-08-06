@@ -236,6 +236,10 @@ func main() {
 			if database.IsLegacyEmbedded(inst.ContainerImage) {
 				return nil, false
 			}
+			// Note: instances with BrowserEnabled=false still get the CDP
+			// tunnel listener — it is the bridge's EnsureSession gate that
+			// blocks pod spawn. Keeping the listener means re-enabling the
+			// browser works live, without an instance restart.
 			return func(callCtx context.Context) (io.ReadWriteCloser, error) {
 				return bridge.DialCDP(callCtx, instanceID)
 			}, true
@@ -413,6 +417,7 @@ func main() {
 			r.Post("/instances/{id}/browser/stop", handlers.BrowserStop)
 			r.Post("/instances/{id}/browser/migrate", handlers.BrowserMigrate)
 			r.Patch("/instances/{id}/browser-active", handlers.SetBrowserActive)
+			r.Patch("/instances/{id}/browser-enabled", handlers.SetBrowserEnabled)
 
 			// Kanban
 			r.Get("/kanban/boards", handlers.ListKanbanBoards)

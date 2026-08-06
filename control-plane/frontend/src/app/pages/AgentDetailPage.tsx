@@ -40,7 +40,8 @@ import {
 } from "@common/hooks/useInstances";
 import { useProviders } from "@common/hooks/useProviders";
 import { useSettings } from "@common/hooks/useSettings";
-import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { setInstanceBrowserEnabled } from "@common/api/instances";
 import { fetchCatalogProviderDetail } from "@common/api/llm";
 import type { CatalogProviderDetail } from "@common/api/llm";
 import ProviderIcon from "@common/components/ProviderIcon";
@@ -138,6 +139,10 @@ export default function AgentDetailPage() {
   const [terminalActivated, setTerminalActivated] = useState(getTabFromHash() === "terminal");
   const [chatActivated, setChatActivated] = useState(getTabFromHash() === "chat");
   const [chatViewMode, setChatViewMode] = useChatViewMode(instanceId, instance?.browser_active);
+  // Hard per-agent browser gate: when the browser is disabled the pane can
+  // never be shown, regardless of the persisted browser_active preference.
+  const browserDisabled = instance?.browser_enabled === false;
+  const effectiveChatViewMode = browserDisabled ? "chat-only" : chatViewMode;
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
   // SSH troubleshoot dialog
@@ -200,7 +205,7 @@ export default function AgentDetailPage() {
 
   const logsHook = useInstanceLogs(instanceId, activeTab === "logs");
   const termHook = useTerminal(instanceId, terminalActivated && instance?.status === "running");
-  const desktopHook = useDesktop(instanceId, chatActivated && chatViewMode === "chat-browser" && instance?.status === "running");
+  const desktopHook = useDesktop(instanceId, chatActivated && effectiveChatViewMode === "chat-browser" && instance?.status === "running");
   const chatHook = useChat(instanceId, chatActivated && instance?.status === "running");
 
   // When the user hides the browser pane, also stop the on-demand browser pod
@@ -378,6 +383,22 @@ export default function AgentDetailPage() {
     if (delta.unset.length > 0) payload.env_vars_unset = delta.unset;
     await updateMutation.mutateAsync({ id: instanceId, payload });
   };
+
+  const browserEnabledMutation = useMutation({
+    mutationFn: (enabled: boolean) => setInstanceBrowserEnabled(instanceId, enabled),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["instances", instanceId] });
+      qc.invalidateQueries({ queryKey: ["instances"] });
+    },
+    onError: (err: unknown) => {
+      const axiosMsg = (err as any)?.response?.data?.error;
+      const message = axiosMsg ?? (err instanceof Error ? err.message : "Unknown error");
+      toast.custom(
+        createElement(AppToast, { title: "Failed to update browser setting", description: message, status: "error", toastId: "browser-enabled" }),
+        { id: "browser-enabled", duration: 5000 },
+      );
+    },
+  });
 
   const handleUpdateImage = () => {
     const toastId = "image-update";
@@ -698,6 +719,33 @@ export default function AgentDetailPage() {
                   )}
                 </dd>
               </div>
+
+              {/* Browser enable/disable — hard gate for the on-demand browser pod */}
+              {!instance.is_legacy_embedded && (
+                <div>
+                  <dt className="text-xs text-gray-500">Browser</dt>
+                  <dd className="text-sm text-gray-900 mt-0.5">
+                    {browserDisabled ? "Disabled" : "Enabled"}
+                    <button
+                      type="button"
+                      onClick={() => browserEnabledMutation.mutate(browserDisabled)}
+                      disabled={browserEnabledMutation.isPending}
+                      className="ml-2 text-xs text-blue-600 hover:text-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {browserEnabledMutation.isPending
+                        ? "Saving..."
+                        : browserDisabled
+                          ? "Enable"
+                          : "Disable"}
+                    </button>
+                    {browserDisabled && (
+                      <span className="block text-xs text-gray-500 mt-0.5">
+                        No browser pod is created for this agent.
+                      </span>
+                    )}
+                  </dd>
+                </div>
+              )}
 
               {/* Created / Updated */}
               <div>
@@ -1131,7 +1179,7 @@ export default function AgentDetailPage() {
                 </button>
               </div>
               <div className="flex flex-1 min-h-0">
-                <div className={chatViewMode === "chat-browser" ? "w-[400px] flex-shrink-0 border-r border-gray-700 relative" : "flex-1 relative"}>
+                <div className={effectiveChatViewMode === "chat-browser" ? "w-[400px] flex-shrink-0 border-r border-gray-700 relative" : "flex-1 relative"}>
                   <ChatPanel
                     messages={chatHook.messages}
                     connectionState={chatHook.connectionState}
@@ -1140,11 +1188,11 @@ export default function AgentDetailPage() {
                     onStop={chatHook.stopResponse}
                     onNewChat={chatHook.newChat}
                     onReconnect={chatHook.reconnect}
-                    viewMode={chatViewMode}
-                    onViewModeChange={setChatViewMode}
+                    viewMode={effectiveChatViewMode}
+                    onViewModeChange={browserDisabled ? undefined : setChatViewMode}
                   />
                 </div>
-                {chatViewMode === "chat-browser" && (
+                {effectiveChatViewMode === "chat-browser" && (
                   <div className="flex-1 min-w-0 relative">
                     <VncPanel
                       instanceId={instanceId}

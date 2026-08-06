@@ -46,6 +46,17 @@ export async function setInstanceBrowserActive(
   return data;
 }
 
+export async function setInstanceBrowserEnabled(
+  id: number,
+  enabled: boolean,
+): Promise<{ browser_enabled: boolean }> {
+  const { data } = await client.patch<{ browser_enabled: boolean }>(
+    `/instances/${id}/browser-enabled`,
+    { browser_enabled: enabled },
+  );
+  return data;
+}
+
 export async function deleteInstance(id: number): Promise<void> {
   await client.delete(`/instances/${id}`);
 }

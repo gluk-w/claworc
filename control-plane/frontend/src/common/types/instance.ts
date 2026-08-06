@@ -51,6 +51,8 @@ export interface Instance {
   browser_idle_minutes?: number | null;
   browser_storage?: string;
   browser_active?: boolean;
+  /** Hard per-agent gate: false means no browser pod may ever be spawned. */
+  browser_enabled?: boolean;
   team_id: number;
 }
 
@@ -78,6 +80,7 @@ export interface InstanceCreatePayload {
   browser_image?: string;
   browser_idle_minutes?: number;
   browser_storage?: string;
+  browser_enabled?: boolean;
   team_id?: number;
 }
 

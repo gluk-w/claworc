@@ -92,7 +92,15 @@ type Instance struct {
 	BrowserStorage     string `gorm:"default:''" json:"browser_storage"`  // PVC size, e.g. "10Gi"
 	// BrowserActive toggles whether the browser pane is shown next to the chat
 	// on this instance's page. Toggling it off also stops the browser pod.
-	BrowserActive bool      `gorm:"not null;default:true" json:"browser_active"`
+	BrowserActive bool `gorm:"not null;default:true" json:"browser_active"`
+	// BrowserEnabled is the hard per-instance gate for the on-demand browser.
+	// When false the control plane refuses to spawn a browser pod for this
+	// instance (CDP dials, VNC tab, and explicit start all short-circuit) and
+	// the agent's OpenClaw config is pushed browser.enabled=false. Unlike
+	// BrowserActive — which is pane visibility and leaves lazy re-spawn
+	// possible — this forbids the pod entirely so no-browser agents consume
+	// no browser resources. Ignored for legacy embedded instances.
+	BrowserEnabled bool      `gorm:"not null;default:true" json:"browser_enabled"`
 	TeamID        uint      `gorm:"not null;default:1;index" json:"team_id"`
 	CreatedAt     time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt     time.Time `gorm:"autoUpdateTime" json:"updated_at"`

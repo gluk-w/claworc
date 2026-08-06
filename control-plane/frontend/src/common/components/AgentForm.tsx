@@ -40,6 +40,7 @@ export default function AgentForm({
   const [containerImage, setContainerImage] = useState("");
   const [timezone, setTimezone] = useState("");
 
+  const [browserEnabled, setBrowserEnabled] = useState(true);
   const [browserImage, setBrowserImage] = useState("");
   const [vncResolution, setVncResolution] = useState("");
   const [userAgent, setUserAgent] = useState("");
@@ -118,6 +119,9 @@ export default function AgentForm({
 
     if (browserImage) {
       payload.browser_image = browserImage;
+    }
+    if (!browserEnabled) {
+      payload.browser_enabled = false;
     }
 
     if (enabledProviders.length > 0) {
@@ -328,6 +332,21 @@ export default function AgentForm({
           Overrides for the on-demand browser launched for this instance.
         </p>
         <div className="space-y-4">
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={browserEnabled}
+              onChange={(e) => setBrowserEnabled(e.target.checked)}
+              className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span>
+              <span className="block text-sm text-gray-900">Enable browser</span>
+              <span className="block text-xs text-gray-500">
+                Uncheck for agents that never need a browser — no browser pod
+                will be created, saving cluster resources. Can be changed later.
+              </span>
+            </span>
+          </label>
           <div>
             <label className="block text-xs text-gray-500 mb-1">
               Browser Image Override
@@ -337,7 +356,8 @@ export default function AgentForm({
               value={browserImage}
               onChange={(e) => setBrowserImage(e.target.value)}
               placeholder={settings?.default_browser_image ?? "claworc/chromium-browser:latest"}
-              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={!browserEnabled}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400"
             />
           </div>
           <div>

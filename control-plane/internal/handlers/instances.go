@@ -122,6 +122,7 @@ type instanceCreateRequest struct {
 	BrowserImage       *string           `json:"browser_image"`
 	BrowserIdleMinutes *int              `json:"browser_idle_minutes"`
 	BrowserStorage     *string           `json:"browser_storage"`
+	BrowserEnabled     *bool             `json:"browser_enabled"` // nil = enabled (default)
 	TeamID             *uint             `json:"team_id"`
 }
 
@@ -173,6 +174,7 @@ type instanceResponse struct {
 	BrowserIdleMinutes    *int              `json:"browser_idle_minutes,omitempty"`
 	BrowserStorage        string            `json:"browser_storage,omitempty"`
 	BrowserActive         bool              `json:"browser_active"`
+	BrowserEnabled        bool              `json:"browser_enabled"`
 	TeamID                uint              `json:"team_id"`
 }
 
@@ -498,6 +500,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		BrowserIdleMinutes:    inst.BrowserIdleMinutes,
 		BrowserStorage:        inst.BrowserStorage,
 		BrowserActive:         inst.BrowserActive,
+		BrowserEnabled:        inst.BrowserEnabled,
 		TeamID:                inst.TeamID,
 	}
 }
@@ -865,6 +868,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	if body.BrowserIdleMinutes != nil {
 		browserIdleMinutes = body.BrowserIdleMinutes
 	}
+	browserEnabled := body.BrowserEnabled == nil || *body.BrowserEnabled
 
 	// Serialize models config
 	var modelsConfigJSON string
@@ -928,12 +932,21 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		BrowserImage:       browserImage,
 		BrowserIdleMinutes: browserIdleMinutes,
 		BrowserStorage:     browserStorage,
+		BrowserEnabled:     browserEnabled,
 		TeamID:             teamID,
 	}
 
 	if err := database.DB.Create(&inst).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to create instance")
 		return
+	}
+	// GORM's `default:true` on BrowserEnabled overrides an explicit `false`
+	// passed in via Create (false is the Go zero value, so the column is
+	// omitted from the INSERT and the DB-level default kicks in). Patch it
+	// after Create — same workaround as BrowserActive in CloneInstance.
+	if !browserEnabled {
+		database.DB.Model(&inst).Update("browser_enabled", false)
+		inst.BrowserEnabled = false
 	}
 
 	// Auto-assign the new instance to the creator if they are a non-admin user.
@@ -1038,6 +1051,12 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), inst.Name, models, gatewayProviders, config.Cfg.LLMGatewayPort)
+			// The agent image bakes browser.enabled=true into the OpenClaw
+			// config; instances created with the browser disabled get false
+			// pushed so OpenClaw never dials the (gated) CDP tunnel.
+			if !inst.BrowserEnabled {
+				applyBrowserEnabledConfig(ctx, sshproxy.NewSSHInstance(sshClient), inst.Name, false)
+			}
 		})
 
 	var totalInstances int64
@@ -1929,6 +1948,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		BrowserIdleMinutes: src.BrowserIdleMinutes,
 		BrowserStorage:     src.BrowserStorage,
 		BrowserActive:      src.BrowserActive,
+		BrowserEnabled:     src.BrowserEnabled,
 	}
 
 	if err := database.DB.Create(&inst).Error; err != nil {
@@ -1942,6 +1962,11 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 	if !src.BrowserActive {
 		database.DB.Model(&inst).Update("browser_active", false)
 		inst.BrowserActive = false
+	}
+	// Same GORM default:true workaround for the browser-enabled gate.
+	if !src.BrowserEnabled {
+		database.DB.Model(&inst).Update("browser_enabled", false)
+		inst.BrowserEnabled = false
 	}
 
 	// Inherit shared folder memberships from the source so the clone mounts
@@ -2140,6 +2165,113 @@ func SetBrowserActive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"browser_active": *body.BrowserActive})
+}
+
+// applyBrowserEnabledConfig sets browser.enabled in the agent's OpenClaw
+// config over an established SSH connection and restarts the gateway so it
+// takes effect. The agent image bakes browser.enabled=true with a remote CDP
+// profile; disabled instances get false pushed so OpenClaw stops dialing the
+// (gated) CDP tunnel and logging connection errors. Best-effort: failures are
+// logged, the control-plane gate is what actually prevents pod spawns.
+func applyBrowserEnabledConfig(ctx context.Context, agent sshproxy.Instance, name string, enabled bool) {
+	val := "false"
+	if enabled {
+		val = "true"
+	}
+	_, stderr, code, err := agent.ExecOpenclaw(ctx, "config", "set", "browser.enabled", val, "--json")
+	if err != nil {
+		log.Printf("Error setting browser.enabled=%s for %s: %v", val, utils.SanitizeForLog(name), err)
+		return
+	}
+	if code != 0 {
+		log.Printf("Failed to set browser.enabled=%s for %s: %s", val, utils.SanitizeForLog(name), utils.SanitizeForLog(stderr))
+		return
+	}
+	// Restart the gateway to pick up the change (s6 restarts it after stop).
+	if _, _, _, err := agent.ExecOpenclaw(ctx, "gateway", "stop"); err != nil {
+		log.Printf("Error restarting gateway for %s after browser.enabled change: %v", utils.SanitizeForLog(name), err)
+	}
+}
+
+// pushBrowserEnabledConfig is the async wrapper around
+// applyBrowserEnabledConfig for a possibly-not-running instance: it waits
+// briefly for SSH and gives up quietly if the agent is unreachable (a stopped
+// instance picks the setting up via the gate; the OpenClaw config is
+// reconciled the next time this toggle changes while it is running).
+func pushBrowserEnabledConfig(instanceID uint, name string, enabled bool) {
+	if SSHMgr == nil {
+		return
+	}
+	go func() {
+		ctx := context.Background()
+		sshClient, err := SSHMgr.WaitForSSH(ctx, instanceID, 30*time.Second)
+		if err != nil {
+			log.Printf("browser-enabled: no SSH connection for instance %d, skipping OpenClaw config push: %v", instanceID, err)
+			return
+		}
+		applyBrowserEnabledConfig(ctx, sshproxy.NewSSHInstance(sshClient), name, enabled)
+	}()
+}
+
+// SetBrowserEnabled flips the hard per-instance browser gate. Unlike
+// SetBrowserActive (pane visibility), disabling here also stops any running
+// browser pod and pushes browser.enabled=false into the agent's OpenClaw
+// config so nothing re-dials the CDP tunnel.
+func SetBrowserEnabled(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+	if !middleware.CanAccessInstance(r, uint(id)) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	var body struct {
+		BrowserEnabled *bool `json:"browser_enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.BrowserEnabled == nil {
+		writeError(w, http.StatusBadRequest, "browser_enabled is required")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, uint(id)).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+	if database.IsLegacyEmbedded(inst.ContainerImage) {
+		writeError(w, http.StatusBadRequest, "browser_enabled does not apply to legacy embedded instances")
+		return
+	}
+
+	enabled := *body.BrowserEnabled
+	if err := database.DB.Model(&inst).Update("browser_enabled", enabled).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to update instance")
+		return
+	}
+
+	if !enabled {
+		// Tear down a running pod right away (mirrors BrowserStop): cancel any
+		// in-flight spawn first so it can't finish and resurrect the session.
+		cancelActiveBrowserSpawn(uint(id))
+		if BrowserStopper != nil {
+			if err := BrowserStopper.StopSession(r.Context(), uint(id)); err != nil {
+				log.Printf("browser-enabled: stop session for instance %d: %v", id, err)
+			} else {
+				_ = database.UpdateBrowserSessionStatus(uint(id), "stopped", "")
+			}
+		}
+		if OnBrowserStateChanged != nil {
+			OnBrowserStateChanged(uint(id))
+		}
+	}
+
+	// Reconcile the agent's OpenClaw config (async, best-effort).
+	pushBrowserEnabledConfig(uint(id), inst.Name, enabled)
+
+	writeJSON(w, http.StatusOK, map[string]bool{"browser_enabled": enabled})
 }
 
 func ReorderInstances(w http.ResponseWriter, r *http.Request) {

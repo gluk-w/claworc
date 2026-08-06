@@ -71,6 +71,12 @@ func DesktopProxy(w http.ResponseWriter, r *http.Request) {
 	// Non-legacy: tunnel HTTP/WebSocket traffic into the browser pod over SSH.
 	// The pod's sshd is the only externally reachable port; noVNC binds
 	// 127.0.0.1:3000 inside the pod and we reach it via ssh.Client.Dial.
+	if !inst.BrowserEnabled {
+		// 409 (not 503): a deliberate per-agent setting, not a transient
+		// failure — the frontend must not retry-loop on it.
+		writeError(w, http.StatusConflict, "browser is disabled for this agent")
+		return
+	}
 	if BrowserBridgeRef == nil {
 		writeError(w, http.StatusServiceUnavailable, "browser bridge not configured")
 		return

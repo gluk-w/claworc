@@ -30,6 +30,12 @@ type settingsAdapter struct{}
 
 func (settingsAdapter) GetSetting(key string) (string, error) { return database.GetSetting(key) }
 
+// ErrBrowserDisabled is returned by EnsureSession (and everything that funnels
+// through it: DialCDP, DialVNC, explicit start) when the instance has
+// BrowserEnabled=false. Handlers match on it to return a distinct
+// "disabled" response instead of a generic spawn failure.
+var ErrBrowserDisabled = errors.New("browser is disabled for this agent")
+
 // BrowserBridge is the single coordinator for non-legacy instances. The CDP
 // agent-listener tunnel and the desktop VNC handler both call DialCDP /
 // DialVNC, which transparently spawn a session through TaskManager when none
@@ -102,6 +108,14 @@ func (b *BrowserBridge) Close() {
 // userID is the initiator for TaskManager attribution. Use 0 for system
 // callers (e.g., the agent-listener loop reacting to an inbound CDP byte).
 func (b *BrowserBridge) EnsureSession(ctx context.Context, instanceID, userID uint) error {
+	// Hard per-instance gate. Checked before the fast path so a pod that is
+	// somehow still running for a freshly-disabled instance can't refresh its
+	// session row and dodge the reaper.
+	var gate database.Instance
+	if err := database.DB.Select("browser_enabled").First(&gate, instanceID).Error; err == nil && !gate.BrowserEnabled {
+		return ErrBrowserDisabled
+	}
+
 	// Fast path: existing running session.
 	if status, err := b.provider.SessionStatus(ctx, instanceID); err == nil && status == StatusRunning {
 		// Refresh DB row so the reaper doesn't miss a recently-created session.

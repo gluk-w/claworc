@@ -40,8 +40,12 @@ function useHistoryFromOpener(instanceId: number): ChatMessage[] | undefined {
 function ChatPopupInner({ instanceId, initialMessages }: { instanceId: number; initialMessages: ChatMessage[] }) {
   const { data: instance, isLoading } = useInstance(instanceId);
   const [chatViewMode, setChatViewMode] = useChatViewMode(instanceId, instance?.browser_active);
+  // Hard per-agent browser gate mirrors AgentDetailPage: disabled agents
+  // never show the browser pane.
+  const browserDisabled = instance?.browser_enabled === false;
+  const effectiveChatViewMode = browserDisabled ? "chat-only" : chatViewMode;
   const chatHook = useChat(instanceId, instance?.status === "running", initialMessages);
-  const desktopHook = useDesktop(instanceId, chatViewMode === "chat-browser" && instance?.status === "running");
+  const desktopHook = useDesktop(instanceId, effectiveChatViewMode === "chat-browser" && instance?.status === "running");
 
   if (isLoading) {
     return <div className="flex items-center justify-center h-screen bg-gray-900 text-gray-400">Loading...</div>;
@@ -57,7 +61,7 @@ function ChatPopupInner({ instanceId, initialMessages }: { instanceId: number; i
 
   return (
     <div className="h-screen flex">
-      <div className={chatViewMode === "chat-browser" ? "w-[400px] flex-shrink-0 border-r border-gray-700 relative" : "flex-1 relative"}>
+      <div className={effectiveChatViewMode === "chat-browser" ? "w-[400px] flex-shrink-0 border-r border-gray-700 relative" : "flex-1 relative"}>
         <ChatPanel
           messages={chatHook.messages}
           connectionState={chatHook.connectionState}
@@ -66,11 +70,11 @@ function ChatPopupInner({ instanceId, initialMessages }: { instanceId: number; i
           onStop={chatHook.stopResponse}
           onNewChat={chatHook.newChat}
           onReconnect={chatHook.reconnect}
-          viewMode={chatViewMode}
-          onViewModeChange={setChatViewMode}
+          viewMode={effectiveChatViewMode}
+          onViewModeChange={browserDisabled ? undefined : setChatViewMode}
         />
       </div>
-      {chatViewMode === "chat-browser" && (
+      {effectiveChatViewMode === "chat-browser" && (
         <div className="flex-1 min-w-0 relative">
           <VncPanel
             instanceId={instanceId}
