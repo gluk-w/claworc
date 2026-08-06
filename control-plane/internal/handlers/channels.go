@@ -125,3 +125,41 @@ func rfc3339OrNil(t *time.Time) *string {
 	s := t.UTC().Format(time.RFC3339)
 	return &s
 }
+
+// GetChannelHealthEvents returns the escalation audit log for an instance
+// (alerts sent, auto-restarts, recoveries), newest first.
+// GET /api/v1/instances/{id}/channels/health/events?limit=50
+func GetChannelHealthEvents(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid instance ID")
+		return
+	}
+
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	if !middleware.CanAccessInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+
+	var events []database.ChannelHealthEvent
+	if err := database.DB.Where("instance_id = ?", inst.ID).
+		Order("created_at DESC").Limit(limit).Find(&events).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to load events")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+}

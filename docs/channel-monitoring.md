@@ -65,8 +65,52 @@ Overall instance status is derived from the per-channel states:
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `CLAWORC_CHANNEL_HEALTH_ENABLED` | `true` | Enable the poller |
+| `CLAWORC_CHANNEL_HEALTH_ENABLED` | `true` | Enable the poller (and with it the escalation pipeline) |
 | `CLAWORC_CHANNEL_HEALTH_INTERVAL` | `60s` | Time between checks |
+| `CLAWORC_CHANNEL_HEALTH_ALERT_THRESHOLD` | `3` | Consecutive failing checks before an alert fires |
+| `CLAWORC_CHANNEL_HEALTH_RESTART_THRESHOLD` | `5` | Consecutive failing checks before an auto-restart fires |
+| `CLAWORC_CHANNEL_HEALTH_RESTART_MAX_PER_HOUR` | `3` | Auto-restart circuit breaker (per instance, rolling hour) |
+| `CLAWORC_CHANNEL_HEALTH_RESTART_COOLDOWN` | `10m` | After a triggered restart, failing checks are ignored for this long |
+
+Runtime behavior (UI-editable, stored in the settings table):
+
+| Setting key | Default | Meaning |
+|---|---|---|
+| `channel_alerts_enabled` | `true` | Deliver webhook alerts (inert without a URL) |
+| `channel_alert_webhook_url` | empty | Where alert JSON is POSTed |
+| `channel_alert_webhook_token` | empty | Optional `Authorization: Bearer` token (encrypted at rest) |
+| `channel_auto_restart_enabled` | `false` | Opt-in automatic instance restarts |
+
+## Escalation
+
+The monitor feeds every snapshot to an escalator (`internal/handlers/channel_escalation.go`)
+that tracks consecutive failing checks per instance. "Failing" means overall
+`unhealthy` or `unreachable`; `degraded`/`unknown` *hold* an open incident
+(neither count nor reset it); `healthy`/`no_channels` close it.
+
+Escalation ladder:
+
+1. **Alert** — at the alert threshold, one `channel_failure` webhook fires
+   per incident.
+2. **Auto-restart** (opt-in) — at the restart threshold the instance is
+   restarted through the same async flow as a manual restart (tunnels
+   stopped, task + toast emitted). Guarded by the per-hour circuit breaker
+   and the post-restart cooldown; when the breaker trips, a single
+   `restart_limit_reached` webhook asks for manual intervention.
+3. **Recovery** — when the incident closes after an alert was sent, one
+   `recovery` webhook reports the outage duration.
+
+Alert payloads are JSON with a human-readable `text` field plus structured
+fields (`event`, `instance`, `overall`, `consecutive_failures`,
+`failing_since`, `channels[]`). Delivery is fire-and-forget with one retry
+on network error or 5xx. Admins can verify delivery with
+`POST /api/v1/settings/channel-alerts/test` (the "Send Test" button in
+Settings → Misc).
+
+Every escalation action is recorded in the `channel_health_events` audit
+table and readable via `GET /api/v1/instances/{id}/channels/health/events`.
+Incident counters are in-memory: a control-plane restart re-counts an
+ongoing outage from zero (worst case, a duplicate alert after ~3 checks).
 
 ## API
 
@@ -118,6 +162,17 @@ pair (one row per channel, overwritten on each check):
 | `Error` | string | Last error reported by the gateway, if any |
 | `CheckedAt` | datetime | When this status was recorded |
 
+`channel_health_events` is the append-only escalation audit log:
+
+| Field | Type | Description |
+|---|---|---|
+| `InstanceID` | uint | Instance the event belongs to |
+| `Type` | string | `failure_detected`, `auto_restart`, `restart_limit_reached`, `recovered`, `webhook_test` |
+| `Overall` | string | Overall status at the time of the event |
+| `Detail` | text | JSON context (failing channels, consecutive count, outage duration) |
+| `WebhookStatus` | string | `sent`, `failed`, or `skipped` |
+| `CreatedAt` | datetime | When the event occurred |
+
 ## UI
 
 - **Channel Health panel** on the Agent detail page (Settings tab):
@@ -134,12 +189,10 @@ pair (one row per channel, overwritten on each check):
 - Staleness is inferred from event silence, so a genuinely quiet channel
   (nobody messaging the agent for 30+ minutes) can be reported `stale`
   even though it is fine.
-- Monitoring only observes — it does not restart channels, restart
-  instances, or deliver alerts.
+- Escalation counters are in-memory only; a control-plane restart resets
+  consecutive-failure counts and the restart circuit-breaker window.
 
 ## Future work
 
-- Auto-restart escalation for unhealthy channels.
-- Alert delivery (notify operators when an agent goes unhealthy).
 - Synthetic canary probes to distinguish quiet channels from stale ones.
 - Consuming the gateway's push `health` broadcast instead of polling.

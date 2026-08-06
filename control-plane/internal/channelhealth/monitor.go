@@ -25,12 +25,19 @@ const (
 	gatewayTunnelLabel = "Gateway"
 )
 
+// Listener receives every stored snapshot, including ones whose overall
+// status did not change — consumers that count consecutive results depend
+// on non-transition snapshots too. Listeners run synchronously on the
+// check goroutine and must not block.
+type Listener func(snap Snapshot)
+
 // Monitor periodically polls the OpenClaw gateway of every running
 // instance for channel health, persists the results, and keeps an
 // in-memory snapshot per instance for cheap reads by handlers.
 type Monitor struct {
 	tunnels  *sshproxy.TunnelManager
 	interval time.Duration
+	listener Listener
 
 	mu        sync.RWMutex
 	snapshots map[uint]Snapshot
@@ -48,6 +55,12 @@ func New(tunnels *sshproxy.TunnelManager, interval time.Duration) *Monitor {
 		interval:  interval,
 		snapshots: make(map[uint]Snapshot),
 	}
+}
+
+// SetListener registers the snapshot listener. Must be called before
+// Start; the field is not synchronized.
+func (m *Monitor) SetListener(fn Listener) {
+	m.listener = fn
 }
 
 // Start launches the background polling loop. It returns immediately; the
@@ -189,6 +202,10 @@ func (m *Monitor) store(snap Snapshot) {
 	prev, had := m.snapshots[snap.InstanceID]
 	m.snapshots[snap.InstanceID] = snap
 	m.mu.Unlock()
+
+	if m.listener != nil {
+		m.listener(snap)
+	}
 
 	prevOverall := OverallUnknown
 	if had {

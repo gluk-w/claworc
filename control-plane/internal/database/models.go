@@ -36,6 +36,7 @@ type (
 	WebhookApiKey       = models.WebhookApiKey
 	WebhookLog          = models.WebhookLog
 	ChannelHealthStatus = models.ChannelHealthStatus
+	ChannelHealthEvent  = models.ChannelHealthEvent
 )
 
 // Helper re-exports keep `database.ParseTeamIDs(...)` etc. working for

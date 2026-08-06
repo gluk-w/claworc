@@ -302,6 +302,15 @@ func main() {
 	if config.Cfg.ChannelHealthEnabled {
 		chMon := channelhealth.New(tunnelMgr, config.Cfg.ChannelHealthInterval)
 		handlers.ChannelHealthMon = chMon
+		// Escalation: webhook alerts + opt-in auto-restart on sustained
+		// channel failure. Must be registered before Start.
+		esc := handlers.NewChannelEscalator(handlers.ChannelEscalatorConfig{
+			AlertThreshold:     config.Cfg.ChannelHealthAlertThreshold,
+			RestartThreshold:   config.Cfg.ChannelHealthRestartThreshold,
+			MaxRestartsPerHour: config.Cfg.ChannelHealthRestartMaxPerHour,
+			RestartCooldown:    config.Cfg.ChannelHealthRestartCooldown,
+		})
+		chMon.SetListener(esc.OnSnapshot)
 		chMon.Start(ctx)
 		log.Printf("Channel health monitor started (interval=%s)", config.Cfg.ChannelHealthInterval)
 	}
@@ -379,6 +388,7 @@ func main() {
 			r.Get("/instances/{id}/ssh-test", handlers.SSHConnectionTest)
 			r.Get("/instances/{id}/ssh-status", handlers.GetSSHStatus)
 			r.Get("/instances/{id}/channels/health", handlers.GetChannelHealth)
+			r.Get("/instances/{id}/channels/health/events", handlers.GetChannelHealthEvents)
 			r.Get("/instances/{id}/ssh-events", handlers.GetSSHEvents)
 			r.Post("/instances/{id}/ssh-reconnect", handlers.SSHReconnect)
 			r.Get("/instances/{id}/tunnels", handlers.GetTunnelStatus)
@@ -492,6 +502,7 @@ func main() {
 				// Settings
 				r.Get("/settings", handlers.GetSettings)
 				r.Put("/settings", handlers.UpdateSettings)
+				r.Post("/settings/channel-alerts/test", handlers.TestChannelAlertWebhook)
 				r.Post("/settings/rotate-ssh-key", handlers.RotateSSHKey)
 				r.Get("/audit-logs", handlers.GetAuditLogs)
 

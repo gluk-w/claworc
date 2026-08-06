@@ -471,6 +471,21 @@ type ChannelHealthStatus struct {
 	UpdatedAt         time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
+// ChannelHealthEvent is a durable audit record of channel-health
+// escalation actions (alerts, auto-restarts, recoveries). It doubles as
+// outage history: a failure_detected/recovered pair brackets an incident.
+type ChannelHealthEvent struct {
+	ID         uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	InstanceID uint   `gorm:"not null;index" json:"instance_id"`
+	Type       string `gorm:"not null" json:"type"` // failure_detected|auto_restart|restart_limit_reached|recovered|webhook_test
+	Overall    string `gorm:"default:''" json:"overall"`
+	// Detail is a JSON blob with incident context (failing channels,
+	// consecutive check count, outage duration).
+	Detail        string    `gorm:"type:text;default:''" json:"detail"`
+	WebhookStatus string    `gorm:"default:''" json:"webhook_status"` // sent|failed|skipped
+	CreatedAt     time.Time `gorm:"autoCreateTime" json:"created_at"`
+}
+
 // UserSSHKey is a public key a user authenticates with against the inbound
 // SSH gateway. The private key is never stored — it is generated on demand
 // and handed to the user exactly once (or the user uploads their own pubkey).

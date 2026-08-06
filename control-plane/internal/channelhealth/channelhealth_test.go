@@ -281,3 +281,25 @@ func TestDeriveOverall(t *testing.T) {
 		})
 	}
 }
+
+func TestListenerFiresOnEveryStore(t *testing.T) {
+	m := New(nil, time.Minute)
+	var got []string
+	m.SetListener(func(snap Snapshot) { got = append(got, snap.Overall) })
+
+	// Same overall twice: the listener must fire both times even though
+	// the transition-logging path early-returns on no-change.
+	m.store(Snapshot{InstanceID: 1, Overall: OverallUnhealthy})
+	m.store(Snapshot{InstanceID: 1, Overall: OverallUnhealthy})
+	m.store(Snapshot{InstanceID: 1, Overall: OverallHealthy})
+
+	want := []string{OverallUnhealthy, OverallUnhealthy, OverallHealthy}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d listener calls, got %d", len(want), len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("call %d: expected %q, got %q", i, want[i], got[i])
+		}
+	}
+}

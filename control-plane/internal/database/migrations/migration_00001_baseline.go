@@ -64,5 +64,6 @@ func AutoMigrateAll(gdb interface {
 		&models.WebhookApiKey{},
 		&models.WebhookLog{},
 		&models.ChannelHealthStatus{},
+		&models.ChannelHealthEvent{},
 	)
 }
