@@ -114,10 +114,18 @@ type Instance struct {
 	// BrowserActive — which is pane visibility and leaves lazy re-spawn
 	// possible — this forbids the pod entirely so no-browser agents consume
 	// no browser resources. Ignored for legacy embedded instances.
-	BrowserEnabled bool      `gorm:"not null;default:true" json:"browser_enabled"`
-	TeamID        uint      `gorm:"not null;default:1;index" json:"team_id"`
-	CreatedAt     time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt     time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	BrowserEnabled bool `gorm:"not null;default:true" json:"browser_enabled"`
+	// SlackConfig holds the structured per-instance Slack connection settings
+	// (enabled flag, channel allowlist, DM policy) as JSON. It is rendered
+	// into the agent's OpenClaw `channels.slack` config block at boot via the
+	// OPENCLAW_INITIAL_SLACK env var and pushed over SSH on edit. Tokens are
+	// NOT stored here — they live in EnvVars as SLACK_BOT_TOKEN /
+	// SLACK_APP_TOKEN so OpenClaw's env fallback picks them up and no
+	// plaintext token ever lands in the config file. Empty = never configured.
+	SlackConfig string    `gorm:"type:text;default:''" json:"-"`
+	TeamID      uint      `gorm:"not null;default:1;index" json:"team_id"`
+	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 // Team groups instances and users together. A "Default Team" is seeded

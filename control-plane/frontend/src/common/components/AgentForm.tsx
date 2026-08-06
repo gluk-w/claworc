@@ -15,7 +15,9 @@ import AffinityEditor from "@common/components/AffinityEditor";
 import PortsEditor from "@common/components/PortsEditor";
 import StickyActionBar from "@common/components/StickyActionBar";
 import ConfirmDialog from "@common/components/ConfirmDialog";
+import SlackChannelsEditor, { SlackDMPolicySelect } from "@common/components/SlackChannelsEditor";
 import type { InstanceCreatePayload, PortSpec, Toleration } from "@common/types/instance";
+import type { SlackChannel } from "@common/types/slack";
 import type { UserTeamMembership } from "@common/types/auth";
 
 interface AgentFormProps {
@@ -128,6 +130,15 @@ export default function AgentForm({
   // Per-instance env var overrides (plaintext, encrypted server-side on save)
   const [envVars, setEnvVars] = useState<Record<string, string>>({});
 
+  // Slack connection (optional): configured at create time so the agent
+  // connects to Slack on first boot. Tokens ride the encrypted env-var path
+  // server-side (SLACK_BOT_TOKEN / SLACK_APP_TOKEN).
+  const [slackEnabled, setSlackEnabled] = useState(false);
+  const [slackBotToken, setSlackBotToken] = useState("");
+  const [slackAppToken, setSlackAppToken] = useState("");
+  const [slackChannels, setSlackChannels] = useState<SlackChannel[]>([]);
+  const [slackDmPolicy, setSlackDmPolicy] = useState("");
+
   const [showNoModelsWarning, setShowNoModelsWarning] = useState(false);
 
   const buildPayload = (): InstanceCreatePayload | null => {
@@ -177,6 +188,15 @@ export default function AgentForm({
     }
     if (Object.keys(envVars).length > 0) {
       payload.env_vars_set = envVars;
+    }
+    if (slackEnabled) {
+      payload.slack = {
+        enabled: true,
+        channels: slackChannels.filter((c) => c.id.trim() !== ""),
+        dm_policy: slackDmPolicy || undefined,
+        bot_token: slackBotToken.trim() || undefined,
+        app_token: slackAppToken.trim() || undefined,
+      };
     }
 
     // Placement overrides: only meaningful (and only accepted by the backend)
@@ -379,6 +399,68 @@ export default function AgentForm({
         description="Applied to both the agent container and the browser pod. Per-agent values override globals with the same name. Values are encrypted at rest."
         onChange={setEnvVars}
       />
+
+      {/* Slack */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="text-sm font-medium text-gray-900 mb-1">Slack</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Optionally connect this agent to a Slack workspace via a Socket Mode app, so it's
+          reachable in Slack from first boot. Tokens are stored encrypted. Can be changed later
+          in the agent's settings.
+        </p>
+        <div className="space-y-4">
+          <label className="flex items-start gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={slackEnabled}
+              onChange={(e) => setSlackEnabled(e.target.checked)}
+              className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span>
+              <span className="block text-sm text-gray-900">Enable Slack</span>
+              <span className="block text-xs text-gray-500">
+                The agent joins Slack at startup and responds in the allowed channels below.
+              </span>
+            </span>
+          </label>
+          {slackEnabled && (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Bot token</label>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={slackBotToken}
+                    onChange={(e) => setSlackBotToken(e.target.value)}
+                    placeholder="xoxb-…"
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">App token</label>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={slackAppToken}
+                    onChange={(e) => setSlackAppToken(e.target.value)}
+                    placeholder="xapp-…"
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+              {(!slackBotToken.trim() || !slackAppToken.trim()) && (
+                <p className="text-xs text-amber-700">
+                  Both tokens are required for the agent to connect — unless they're provided as
+                  SLACK_BOT_TOKEN / SLACK_APP_TOKEN env vars (global or per-agent).
+                </p>
+              )}
+              <SlackChannelsEditor channels={slackChannels} onChange={setSlackChannels} />
+              <SlackDMPolicySelect value={slackDmPolicy} onChange={setSlackDmPolicy} />
+            </>
+          )}
+        </div>
+      </div>
 
       {/* Browser */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">

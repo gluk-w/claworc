@@ -1,3 +1,5 @@
+import type { SlackCreateConfig } from "./slack";
+
 export interface InstanceModels {
   effective: string[];
   disabled_defaults: string[];
@@ -89,6 +91,7 @@ export interface InstanceCreatePayload {
   user_agent?: string | null;
   enabled_providers?: number[];
   env_vars_set?: Record<string, string>;
+  slack?: SlackCreateConfig;
   browser_provider?: string;
   browser_image?: string;
   browser_idle_minutes?: number;

@@ -400,6 +400,10 @@ func main() {
 			r.Delete("/instances/{id}/webhook/keys/{keyId}", handlers.DeleteInstanceWebhookKey)
 			r.Get("/instances/{id}/webhook/logs", handlers.ListInstanceWebhookLogs)
 
+			// Slack connection (per-instance) — same access model as webhooks
+			r.Get("/instances/{id}/slack", handlers.GetInstanceSlack)
+			r.Put("/instances/{id}/slack", handlers.UpdateInstanceSlack)
+
 			// Chat WebSocket
 			r.Get("/instances/{id}/chat", handlers.ChatProxy)
 

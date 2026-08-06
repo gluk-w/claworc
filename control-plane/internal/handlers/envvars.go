@@ -20,6 +20,7 @@ var ReservedEnvVarNames = []string{
 	"CLAWORC_INSTANCE_ID",
 	"OPENCLAW_INITIAL_MODELS",
 	"OPENCLAW_INITIAL_PROVIDERS",
+	"OPENCLAW_INITIAL_SLACK",
 }
 
 var envVarNameRegex = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
@@ -88,7 +89,6 @@ func decryptEnvVars(encrypted map[string]string) map[string]string {
 	}
 	return out
 }
-
 
 // LoadGlobalEnvVars reads default_env_vars from the settings table and returns
 // the decrypted {KEY: value} map. Errors loading the setting are swallowed —
