@@ -9,32 +9,33 @@ import "github.com/gluk-w/claworc/control-plane/internal/database/models"
 // types via the GORM Migrator without an import cycle.
 
 type (
-	Skill              = models.Skill
-	Instance           = models.Instance
-	Team               = models.Team
-	TeamMember         = models.TeamMember
-	TeamProvider       = models.TeamProvider
-	BrowserSession     = models.BrowserSession
-	ProviderModel      = models.ProviderModel
-	ProviderModelCost  = models.ProviderModelCost
-	LLMProvider        = models.LLMProvider
-	LLMGatewayKey      = models.LLMGatewayKey
-	LLMRequestLog      = models.LLMRequestLog
-	Setting            = models.Setting
-	User               = models.User
-	UserInstance       = models.UserInstance
-	Backup             = models.Backup
-	BackupSchedule     = models.BackupSchedule
-	SharedFolder       = models.SharedFolder
-	KanbanBoard        = models.KanbanBoard
-	KanbanTask         = models.KanbanTask
-	KanbanComment      = models.KanbanComment
-	KanbanArtifact     = models.KanbanArtifact
-	InstanceSoul       = models.InstanceSoul
-	WebAuthnCredential = models.WebAuthnCredential
-	UserSSHKey         = models.UserSSHKey
-	WebhookApiKey      = models.WebhookApiKey
-	WebhookLog         = models.WebhookLog
+	Skill               = models.Skill
+	Instance            = models.Instance
+	Team                = models.Team
+	TeamMember          = models.TeamMember
+	TeamProvider        = models.TeamProvider
+	BrowserSession      = models.BrowserSession
+	ProviderModel       = models.ProviderModel
+	ProviderModelCost   = models.ProviderModelCost
+	LLMProvider         = models.LLMProvider
+	LLMGatewayKey       = models.LLMGatewayKey
+	LLMRequestLog       = models.LLMRequestLog
+	Setting             = models.Setting
+	User                = models.User
+	UserInstance        = models.UserInstance
+	Backup              = models.Backup
+	BackupSchedule      = models.BackupSchedule
+	SharedFolder        = models.SharedFolder
+	KanbanBoard         = models.KanbanBoard
+	KanbanTask          = models.KanbanTask
+	KanbanComment       = models.KanbanComment
+	KanbanArtifact      = models.KanbanArtifact
+	InstanceSoul        = models.InstanceSoul
+	WebAuthnCredential  = models.WebAuthnCredential
+	UserSSHKey          = models.UserSSHKey
+	WebhookApiKey       = models.WebhookApiKey
+	WebhookLog          = models.WebhookLog
+	ChannelHealthStatus = models.ChannelHealthStatus
 )
 
 // Helper re-exports keep `database.ParseTeamIDs(...)` etc. working for

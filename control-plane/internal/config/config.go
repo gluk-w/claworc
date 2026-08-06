@@ -47,6 +47,13 @@ type Settings struct {
 	// on every frame received, so an actively-streaming agent is never cut off;
 	// only a genuine stall trips it.
 	WebhookIdleTimeout time.Duration `envconfig:"WEBHOOK_IDLE_TIMEOUT" default:"120s"`
+
+	// Channel health monitor settings. The monitor polls each running
+	// instance's OpenClaw gateway (channels.status) and exposes per-channel
+	// health via the API. Disabling it removes the background polling and
+	// makes the channel health endpoints report "disabled".
+	ChannelHealthEnabled  bool          `envconfig:"CHANNEL_HEALTH_ENABLED" default:"true"`
+	ChannelHealthInterval time.Duration `envconfig:"CHANNEL_HEALTH_INTERVAL" default:"60s"`
 }
 
 var Cfg Settings

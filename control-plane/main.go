@@ -19,6 +19,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/auth"
 	"github.com/gluk-w/claworc/control-plane/internal/backup"
 	"github.com/gluk-w/claworc/control-plane/internal/browserprov"
+	"github.com/gluk-w/claworc/control-plane/internal/channelhealth"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
@@ -295,6 +296,16 @@ func main() {
 		handlers.ModeratorSvc.StartSummarizer(ctx)
 	}
 
+	// Start background channel health monitor. It polls each running
+	// instance's OpenClaw gateway (channels.status) over the Gateway SSH
+	// tunnel and exposes results via /instances/{id}/channels/health.
+	if config.Cfg.ChannelHealthEnabled {
+		chMon := channelhealth.New(tunnelMgr, config.Cfg.ChannelHealthInterval)
+		handlers.ChannelHealthMon = chMon
+		chMon.Start(ctx)
+		log.Printf("Channel health monitor started (interval=%s)", config.Cfg.ChannelHealthInterval)
+	}
+
 	// Start background SSH key rotation job (checks daily)
 	cancelRotation := handlers.StartKeyRotationJob(ctx)
 	_ = cancelRotation // stopped via context cancellation on shutdown
@@ -367,6 +378,7 @@ func main() {
 			r.Get("/instances/{id}/logs", handlers.StreamLogs)
 			r.Get("/instances/{id}/ssh-test", handlers.SSHConnectionTest)
 			r.Get("/instances/{id}/ssh-status", handlers.GetSSHStatus)
+			r.Get("/instances/{id}/channels/health", handlers.GetChannelHealth)
 			r.Get("/instances/{id}/ssh-events", handlers.GetSSHEvents)
 			r.Post("/instances/{id}/ssh-reconnect", handlers.SSHReconnect)
 			r.Get("/instances/{id}/tunnels", handlers.GetTunnelStatus)

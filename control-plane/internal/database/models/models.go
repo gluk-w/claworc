@@ -448,6 +448,29 @@ type WebAuthnCredential struct {
 	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
 }
 
+// ChannelHealthStatus is the latest observed runtime health for one
+// channel account on one instance, refreshed periodically by the
+// channelhealth monitor from the gateway's channels.status RPC.
+type ChannelHealthStatus struct {
+	ID                uint       `gorm:"primaryKey;autoIncrement" json:"id"`
+	InstanceID        uint       `gorm:"not null;index:idx_channel_health_instance_channel_account,unique" json:"instance_id"`
+	Channel           string     `gorm:"not null;index:idx_channel_health_instance_channel_account,unique" json:"channel"`
+	AccountID         string     `gorm:"not null;default:'';index:idx_channel_health_instance_channel_account,unique" json:"account_id"`
+	Status            string     `gorm:"not null;default:''" json:"status"` // healthy|disconnected|not_running|stale|disabled|unknown
+	Enabled           bool       `gorm:"not null;default:false" json:"enabled"`
+	Running           bool       `gorm:"not null;default:false" json:"running"`
+	Connected         bool       `gorm:"not null;default:false" json:"connected"`
+	Mode              string     `gorm:"default:''" json:"mode"`
+	LastEventAt       *time.Time `json:"last_event_at"`
+	LastInboundAt     *time.Time `json:"last_inbound_at"`
+	LastOutboundAt    *time.Time `json:"last_outbound_at"`
+	LastError         string     `gorm:"type:text;default:''" json:"last_error"`
+	ReconnectAttempts int        `gorm:"default:0" json:"reconnect_attempts"`
+	CheckedAt         time.Time  `json:"checked_at"`
+	CreatedAt         time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt         time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
 // UserSSHKey is a public key a user authenticates with against the inbound
 // SSH gateway. The private key is never stored — it is generated on demand
 // and handed to the user exactly once (or the user uploads their own pubkey).

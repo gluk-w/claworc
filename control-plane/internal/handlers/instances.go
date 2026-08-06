@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/analytics"
+	"github.com/gluk-w/claworc/control-plane/internal/channelhealth"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
@@ -191,6 +192,40 @@ type instanceResponse struct {
 	Affinity                  string                    `json:"affinity"`
 	ServiceAccountAnnotations map[string]string         `json:"service_account_annotations"`
 	Ports                     []orchestrator.PortSpec   `json:"ports"`
+	ChannelHealth             *channelHealthSummary     `json:"channel_health"`
+}
+
+// channelHealthSummary is the compact channel-health view embedded in
+// instance responses. nil (JSON null) when the monitor is disabled or has
+// no data for the instance yet.
+type channelHealthSummary struct {
+	Overall        string `json:"overall"`
+	UnhealthyCount int    `json:"unhealthy_count"`
+	CheckedAt      string `json:"checked_at"`
+}
+
+// channelHealthSummaryFor reads the monitor's in-memory snapshot only —
+// never the database — so it stays cheap on the instance list path.
+func channelHealthSummaryFor(instanceID uint) *channelHealthSummary {
+	if ChannelHealthMon == nil {
+		return nil
+	}
+	snap, ok := ChannelHealthMon.Snapshot(instanceID)
+	if !ok {
+		return nil
+	}
+	unhealthy := 0
+	for _, c := range snap.Channels {
+		switch c.Status {
+		case channelhealth.StatusDisconnected, channelhealth.StatusNotRunning, channelhealth.StatusStale:
+			unhealthy++
+		}
+	}
+	return &channelHealthSummary{
+		Overall:        snap.Overall,
+		UnhealthyCount: unhealthy,
+		CheckedAt:      snap.CheckedAt.UTC().Format(time.RFC3339),
+	}
 }
 
 func generateName(displayName string) string {
@@ -558,6 +593,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		Affinity:                  inst.Affinity,
 		ServiceAccountAnnotations: serviceAccountAnnotations,
 		Ports:                     ports,
+		ChannelHealth:             channelHealthSummaryFor(inst.ID),
 	}
 }
 
