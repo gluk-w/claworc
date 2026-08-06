@@ -38,5 +38,16 @@ if [ -n "$OPENCLAW_INITIAL_PROVIDERS" ]; then
     s6-setuidgid claworc openclaw config set models.providers "$OPENCLAW_INITIAL_PROVIDERS" --json
 fi
 
+# Apply the Claworc-managed Slack channel config. When set it is authoritative
+# for channels.slack: clear the path first so channels removed in Claworc don't
+# linger (`config set` deep-merges map values). Tokens are never in this blob —
+# OpenClaw reads SLACK_BOT_TOKEN/SLACK_APP_TOKEN from the environment. When the
+# env var is absent (Slack never configured via Claworc), any manually edited
+# channels.slack block is left untouched.
+if [ -n "$OPENCLAW_INITIAL_SLACK" ]; then
+    s6-setuidgid claworc openclaw config unset channels.slack || true
+    s6-setuidgid claworc openclaw config set channels.slack "$OPENCLAW_INITIAL_SLACK" --json
+fi
+
 echo "Starting OpenClaw Gateway (foreground) as claworc..."
 exec bash -c "tail -f /dev/null | s6-setuidgid claworc /usr/bin/openclaw gateway run >> /var/log/claworc/openclaw.log 2>&1"

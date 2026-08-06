@@ -102,28 +102,29 @@ type modelsConfig struct {
 }
 
 type instanceCreateRequest struct {
-	DisplayName        string            `json:"display_name"`
-	CPURequest         string            `json:"cpu_request"`
-	CPULimit           string            `json:"cpu_limit"`
-	MemoryRequest      string            `json:"memory_request"`
-	MemoryLimit        string            `json:"memory_limit"`
-	StorageHomebrew    string            `json:"storage_homebrew"`
-	StorageHome        string            `json:"storage_home"`
-	BraveAPIKey        *string           `json:"brave_api_key"`
-	Models             *modelsConfig     `json:"models"`
-	DefaultModel       string            `json:"default_model"`
-	ContainerImage     *string           `json:"container_image"`
-	VNCResolution      *string           `json:"vnc_resolution"`
-	Timezone           *string           `json:"timezone"`
-	UserAgent          *string           `json:"user_agent"`
-	EnabledProviders   []uint            `json:"enabled_providers"`
-	EnvVarsSet         map[string]string `json:"env_vars_set"`
-	BrowserProvider    *string           `json:"browser_provider"`
-	BrowserImage       *string           `json:"browser_image"`
-	BrowserIdleMinutes *int              `json:"browser_idle_minutes"`
-	BrowserStorage     *string           `json:"browser_storage"`
-	BrowserEnabled     *bool             `json:"browser_enabled"` // nil = enabled (default)
-	TeamID             *uint             `json:"team_id"`
+	DisplayName        string                      `json:"display_name"`
+	CPURequest         string                      `json:"cpu_request"`
+	CPULimit           string                      `json:"cpu_limit"`
+	MemoryRequest      string                      `json:"memory_request"`
+	MemoryLimit        string                      `json:"memory_limit"`
+	StorageHomebrew    string                      `json:"storage_homebrew"`
+	StorageHome        string                      `json:"storage_home"`
+	BraveAPIKey        *string                     `json:"brave_api_key"`
+	Models             *modelsConfig               `json:"models"`
+	DefaultModel       string                      `json:"default_model"`
+	ContainerImage     *string                     `json:"container_image"`
+	VNCResolution      *string                     `json:"vnc_resolution"`
+	Timezone           *string                     `json:"timezone"`
+	UserAgent          *string                     `json:"user_agent"`
+	EnabledProviders   []uint                      `json:"enabled_providers"`
+	EnvVarsSet         map[string]string           `json:"env_vars_set"`
+	Slack              *instanceSlackCreateRequest `json:"slack"`
+	BrowserProvider    *string                     `json:"browser_provider"`
+	BrowserImage       *string                     `json:"browser_image"`
+	BrowserIdleMinutes *int                        `json:"browser_idle_minutes"`
+	BrowserStorage     *string                     `json:"browser_storage"`
+	BrowserEnabled     *bool                       `json:"browser_enabled"` // nil = enabled (default)
+	TeamID             *uint                       `json:"team_id"`
 	// Pod placement overrides (admin only). nil means "use the configured
 	// global default" (resolvePlacementDefaults); an explicit value, including
 	// an empty map/slice, overrides it for this instance from creation.
@@ -745,6 +746,11 @@ func buildCreateParams(inst database.Instance) orchestrator.CreateParams {
 		}
 	}
 	envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
+	// Slack config rides an env var so every (re)start reconciles the agent's
+	// channels.slack block from the DB via the boot script.
+	if slackEnv := renderInitialSlackEnv(inst); slackEnv != "" {
+		envVars["OPENCLAW_INITIAL_SLACK"] = slackEnv
+	}
 
 	placement := instancePlacementParams(inst)
 
@@ -1038,6 +1044,35 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	enabledProvidersJSON, _ := json.Marshal(enabledProviders)
 
+	// Slack connection: validate the structured config and fold the tokens
+	// into the env-vars set so they ride the existing encrypted storage and
+	// injection path (OpenClaw reads SLACK_BOT_TOKEN/SLACK_APP_TOKEN from the
+	// environment when the config fields are unset).
+	slackConfigJSON := ""
+	if body.Slack != nil {
+		slackCfg := body.Slack.instanceSlackConfig
+		if slackCfg.Channels == nil {
+			slackCfg.Channels = []slackChannelEntry{}
+		}
+		if err := validateSlackConfig(&slackCfg); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		b, _ := json.Marshal(slackCfg)
+		slackConfigJSON = string(b)
+		if body.Slack.BotToken != "" || body.Slack.AppToken != "" {
+			if body.EnvVarsSet == nil {
+				body.EnvVarsSet = map[string]string{}
+			}
+			if body.Slack.BotToken != "" {
+				body.EnvVarsSet[slackBotTokenEnvVar] = body.Slack.BotToken
+			}
+			if body.Slack.AppToken != "" {
+				body.EnvVarsSet[slackAppTokenEnvVar] = body.Slack.AppToken
+			}
+		}
+	}
+
 	// Serialize (and encrypt) user-supplied env vars
 	envVarsJSON := "{}"
 	if len(body.EnvVarsSet) > 0 {
@@ -1097,6 +1132,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		DefaultModel:              body.DefaultModel,
 		EnabledProviders:          string(enabledProvidersJSON),
 		EnvVars:                   envVarsJSON,
+		SlackConfig:               slackConfigJSON,
 		SortOrder:                 maxSortOrder + 1,
 		BrowserProvider:           browserProvider,
 		BrowserImage:              browserImage,
@@ -1189,6 +1225,9 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			}
 			if initialProvidersJSON != "" {
 				envVars["OPENCLAW_INITIAL_PROVIDERS"] = initialProvidersJSON
+			}
+			if slackEnv := renderInitialSlackEnv(inst); slackEnv != "" {
+				envVars["OPENCLAW_INITIAL_SLACK"] = slackEnv
 			}
 
 			// inst was just Create()'d above with PodAnnotations/NodeSelector/
