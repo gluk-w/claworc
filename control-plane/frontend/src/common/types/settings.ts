@@ -33,6 +33,12 @@ export interface Settings {
   analytics_consent: "unset" | "opt_in" | "opt_out";
   /** Random 32-char hex ID reported alongside anonymous events. Read-only. */
   installation_id: string;
+  /** Channel alert delivery. Booleans stored as "true"/"false" ("" = default). */
+  channel_alerts_enabled: string;
+  channel_auto_restart_enabled: string;
+  channel_alert_webhook_url: string;
+  /** Masked (e.g. "****abcd") — write-only via update. */
+  channel_alert_webhook_token: string;
   /**
    * Only populated on the PUT response when env vars changed: the set of
    * running instances the backend kicked a restart on to apply the change.
@@ -64,6 +70,10 @@ export interface SettingsUpdatePayload {
   default_affinity?: string;
   default_service_account_annotations?: Record<string, string>;
   default_ports?: import("./instance").PortSpec[];
+  channel_alerts_enabled?: string;
+  channel_auto_restart_enabled?: string;
+  channel_alert_webhook_url?: string;
+  channel_alert_webhook_token?: string;
 }
 
 // Keep backward compat alias

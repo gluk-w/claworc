@@ -12,7 +12,8 @@ import (
 
 // fixedEncryptedSettings are non-LLM keys stored as fixed setting entries.
 var fixedEncryptedSettings = map[string]bool{
-	"brave_api_key": true,
+	"brave_api_key":               true,
+	"channel_alert_webhook_token": true,
 }
 
 // plainSettings are returned as-is (not encrypted).
@@ -35,6 +36,9 @@ var plainSettings = []string{
 	"default_user_agent",
 	"default_models",
 	"analytics_consent",
+	"channel_alerts_enabled",
+	"channel_auto_restart_enabled",
+	"channel_alert_webhook_url",
 }
 
 func getAllSettings() map[string]string {
@@ -186,6 +190,22 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Handle channel_alert_webhook_token (fixed encrypted)
+	if v, ok := raw["channel_alert_webhook_token"]; ok {
+		if strVal, ok := v.(string); ok {
+			if strVal != "" {
+				encrypted, err := utils.Encrypt(strVal)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "Failed to encrypt webhook token")
+					return
+				}
+				database.SetSetting("channel_alert_webhook_token", encrypted)
+			} else {
+				database.SetSetting("channel_alert_webhook_token", "")
+			}
+		}
+	}
+
 	// Handle env_vars_set / env_vars_unset (PATCH-style for the encrypted map).
 	// envVarsChanged is true only when the resulting plaintext map actually
 	// differs from what was stored — a no-op request (e.g. re-setting the same
@@ -233,7 +253,8 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Handle remaining plain settings
 	for key, val := range raw {
-		if key == "default_models" || key == "brave_api_key" || key == "env_vars_set" || key == "env_vars_unset" {
+		if key == "default_models" || key == "brave_api_key" || key == "channel_alert_webhook_token" ||
+			key == "env_vars_set" || key == "env_vars_unset" {
 			continue
 		}
 		if key == "default_pod_annotations" || key == "default_node_selector" || key == "default_tolerations" ||

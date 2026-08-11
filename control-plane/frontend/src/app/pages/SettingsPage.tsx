@@ -23,6 +23,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSettings, useUpdateSettings } from "@common/hooks/useSettings";
 import { useProviders, useCatalogIconMap } from "@common/hooks/useProviders";
 import { fetchSSHFingerprint, rotateSSHKey } from "@common/api/ssh";
+import { testChannelAlertWebhook } from "@common/api/settings";
 import { syncAllProviders } from "@common/api/llm";
 import { successToast, errorToast } from "@common/utils/toast";
 import { validateResourceQuantities } from "@common/utils/resourceValidation";
@@ -800,6 +801,8 @@ function MiscTab({
         )}
       </div>
 
+      <ChannelAlertsCard settings={settings} />
+
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h3 className="text-sm font-medium text-gray-900 mb-1">Anonymous Analytics</h3>
         <p className="text-xs text-gray-500 mb-4">
@@ -830,6 +833,176 @@ function MiscTab({
             <dt className="text-xs text-gray-500 mb-1">Installation ID</dt>
             <dd className="text-xs font-mono text-gray-700 break-all">{settings.installation_id || "—"}</dd>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChannelAlertsCard({ settings }: { settings: Settings }) {
+  const updateMutation = useUpdateSettings();
+
+  const [url, setUrl] = useState(settings.channel_alert_webhook_url || "");
+  const [alertsEnabled, setAlertsEnabled] = useState(
+    settings.channel_alerts_enabled !== "false",
+  );
+  const [autoRestart, setAutoRestart] = useState(
+    settings.channel_auto_restart_enabled === "true",
+  );
+  const [editingToken, setEditingToken] = useState(false);
+  const [showToken, setShowToken] = useState(false);
+  const [tokenValue, setTokenValue] = useState("");
+  const [pendingToken, setPendingToken] = useState<string | null>(null);
+
+  const dirty =
+    url !== (settings.channel_alert_webhook_url || "") ||
+    alertsEnabled !== (settings.channel_alerts_enabled !== "false") ||
+    autoRestart !== (settings.channel_auto_restart_enabled === "true") ||
+    pendingToken !== null;
+
+  const save = () => {
+    const payload: SettingsUpdatePayload = {
+      channel_alert_webhook_url: url.trim(),
+      channel_alerts_enabled: alertsEnabled ? "true" : "false",
+      channel_auto_restart_enabled: autoRestart ? "true" : "false",
+    };
+    if (pendingToken !== null) payload.channel_alert_webhook_token = pendingToken;
+    updateMutation.mutate(payload, {
+      onSuccess: () => {
+        setEditingToken(false);
+        setTokenValue("");
+        setPendingToken(null);
+      },
+    });
+  };
+
+  const testMutation = useMutation({
+    mutationFn: testChannelAlertWebhook,
+    onSuccess: (res) => {
+      if (res.status === "sent") {
+        successToast("Test alert delivered", `Webhook responded with HTTP ${res.http_status}`);
+      } else {
+        errorToast("Test alert failed", res.error || `HTTP ${res.http_status}`);
+      }
+    },
+    onError: (err) => errorToast("Test alert failed", err),
+  });
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-6">
+      <h3 className="text-sm font-medium text-gray-900 mb-1">Channel Health Alerts</h3>
+      <p className="text-xs text-gray-500 mb-4">
+        Get notified when an Agent's chat channels (Slack, Telegram, ...) stop responding.
+        Alerts are POSTed as JSON to the webhook URL below (Slack incoming webhooks work as-is).
+      </p>
+      <div className="space-y-4">
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Webhook URL</label>
+          <input
+            type="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://hooks.slack.com/services/..."
+            className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Bearer Token (optional)</label>
+          {editingToken ? (
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type={showToken ? "text" : "password"}
+                  value={tokenValue}
+                  onChange={(e) => {
+                    setTokenValue(e.target.value);
+                    setPendingToken(e.target.value);
+                  }}
+                  className="w-full px-3 py-1.5 pr-10 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Sent as Authorization: Bearer <token>"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowToken(!showToken)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingToken(false);
+                  setTokenValue("");
+                  setPendingToken(null);
+                }}
+                className="px-3 py-1.5 text-xs text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500 font-mono">
+                {pendingToken !== null
+                  ? pendingToken
+                    ? "****" + pendingToken.slice(-4)
+                    : "(not set)"
+                  : settings.channel_alert_webhook_token || "(not set)"}
+              </span>
+              <button
+                type="button"
+                onClick={() => setEditingToken(true)}
+                className="text-xs text-blue-600 hover:text-blue-800"
+              >
+                Change
+              </button>
+            </div>
+          )}
+        </div>
+        <label className="inline-flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={alertsEnabled}
+            onChange={(e) => setAlertsEnabled(e.target.checked)}
+            className="h-4 w-4 text-blue-600 rounded border-gray-300"
+          />
+          <span className="text-sm text-gray-700">Send alert notifications</span>
+        </label>
+        <div>
+          <label className="inline-flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoRestart}
+              onChange={(e) => setAutoRestart(e.target.checked)}
+              className="h-4 w-4 text-blue-600 rounded border-gray-300"
+            />
+            <span className="text-sm text-gray-700">Auto-restart Agents with unhealthy channels</span>
+          </label>
+          <p className="text-xs text-gray-500 mt-1 ml-6 flex items-start gap-1">
+            <AlertTriangle size={12} className="mt-0.5 shrink-0 text-amber-500" />
+            Restarts the Agent's container after several consecutive failed checks
+            (max 3 restarts per hour). Thresholds are set via CLAWORC_CHANNEL_HEALTH_* env vars.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            type="button"
+            onClick={save}
+            disabled={!dirty || updateMutation.isPending}
+            className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {updateMutation.isPending ? "Saving..." : "Save"}
+          </button>
+          <button
+            type="button"
+            onClick={() => testMutation.mutate()}
+            disabled={testMutation.isPending || !settings.channel_alert_webhook_url}
+            title={!settings.channel_alert_webhook_url ? "Save a webhook URL first" : undefined}
+            className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {testMutation.isPending ? "Sending..." : "Send Test"}
+          </button>
         </div>
       </div>
     </div>

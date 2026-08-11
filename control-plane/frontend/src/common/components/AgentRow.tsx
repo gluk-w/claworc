@@ -3,6 +3,7 @@ import { formatDistanceToNow } from "date-fns";
 import { GripVertical } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import ActionButtons from "./ActionButtons";
+import { ChannelHealthIndicator } from "./ChannelHealthPanel";
 import { useSSHStatus } from "@common/hooks/useSSHStatus";
 import { buildSSHTooltip } from "@common/utils/sshTooltip";
 import type { Instance } from "@common/types/instance";
@@ -58,14 +59,17 @@ export default function AgentRow({
         </Link>
       </td>
       <td className="px-4 py-3">
-        <StatusBadge
-          status={instance.status}
-          tooltip={
-            instance.status === "creating" && instance.status_message
-              ? instance.status_message
-              : buildSSHTooltip(sshStatus.data)
-          }
-        />
+        <div className="flex items-center gap-1.5">
+          <StatusBadge
+            status={instance.status}
+            tooltip={
+              instance.status === "creating" && instance.status_message
+                ? instance.status_message
+                : buildSSHTooltip(sshStatus.data)
+            }
+          />
+          <ChannelHealthIndicator instance={instance} />
+        </div>
       </td>
       <td className="px-4 py-3 text-sm text-gray-500">{createdAt}</td>
       <td className="px-4 py-3">

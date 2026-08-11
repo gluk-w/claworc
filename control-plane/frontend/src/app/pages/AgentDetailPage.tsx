@@ -53,6 +53,7 @@ import AffinityEditor from "@common/components/AffinityEditor";
 import PortsEditor from "@common/components/PortsEditor";
 import { useHealth } from "@common/hooks/useHealth";
 import WebhookSection from "@common/components/WebhookSection";
+import ChannelHealthPanel from "@common/components/ChannelHealthPanel";
 import LegacyBrowserBanner from "@common/components/LegacyBrowserBanner";
 import AppToast from "@common/components/AppToast";
 import { infoToast } from "@common/utils/toast";
@@ -1152,6 +1153,9 @@ export default function AgentDetailPage() {
 
           {/* Webhook (per-instance) — admins and team managers */}
           <WebhookSection instanceId={instanceId} />
+
+          {/* Chat channel health */}
+          <ChannelHealthPanel instanceId={instanceId} />
 
           {/* SSH Connection Status */}
           <SSHStatus

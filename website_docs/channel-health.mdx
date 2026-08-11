@@ -1,0 +1,75 @@
+---
+title: "Channel health"
+description: "See whether your Agent's chat channels are connected and receiving events"
+---
+
+## Overview
+
+Claworc continuously checks whether each OpenClaw instance's chat channels — Slack, Telegram, Discord,
+WhatsApp, and others — are connected and receiving events. About once a minute, the dashboard asks each
+running OpenClaw instance for the state of its channels and shows the result, so you can spot a dropped
+Slack connection or a misconfigured Telegram bot without opening logs.
+
+Monitoring is read-only: Claworc reports channel problems but does not restart anything on its own.
+
+## Where to find it
+
+Open an Agent and scroll the **Settings** tab to the **Channel Health** panel. For each channel it shows:
+
+- a **status badge** (see the table below)
+- the time the channel **last received an event**
+- the **last error** reported by the channel, if any
+- how many times the channel has **reconnected**
+
+Agents with unhealthy channels also show a **warning indicator** in the Agents list, so you can spot
+problems at a glance without opening each Agent.
+
+## What each status means
+
+| Status | Meaning |
+|---|---|
+| **Healthy** | The channel is connected and receiving events. |
+| **Stale** | The channel's connection is up, but no events have arrived for over 30 minutes. Only applies to channels that hold a persistent connection (for example, Slack Socket Mode); webhook-based channels are never marked stale. |
+| **Disconnected** | The channel is running, but its connection to the provider (Slack, Telegram, …) is down. |
+| **Not running** | The channel is enabled in the OpenClaw instance's configuration but is not running. |
+| **Disabled** | The channel is disabled or not configured on the OpenClaw instance. |
+
+The panel can also show a status for the Agent as a whole:
+
+| Status | Meaning |
+|---|---|
+| **Unreachable** | The OpenClaw instance is not responding — the OpenClaw process may be down. |
+| **No channels** | The OpenClaw instance is reachable but has no chat channels configured. |
+| **Unknown** | The Agent has not been checked yet (for example, it just started). |
+
+An Agent is considered **unhealthy** if any channel is Disconnected or Not running, and **degraded**
+if any channel is Stale.
+
+## Fixing an unhealthy channel
+
+If a channel shows **Disconnected** or **Not running**:
+
+1. Check the channel's configuration on the OpenClaw instance — an expired or revoked token is the most
+   common cause. Update the token or credentials in the instance's OpenClaw config.
+2. Restart the Agent from the dashboard. This restarts the OpenClaw instance and forces every channel to
+   reconnect.
+3. If the problem persists, check the Agent's logs for errors from that channel.
+
+If a channel shows **Stale**, first consider whether it is simply quiet — a channel nobody has messaged
+for half an hour is reported stale even when nothing is wrong. Send the Agent a test message on that
+channel; if the message does not arrive, restart the Agent as above.
+
+<Note>
+  Statuses reset when the OpenClaw instance restarts, so last-event times and
+  reconnect counts start over after a restart.
+</Note>
+
+## Configuration for operators
+
+Channel health monitoring is on by default. Operators can tune it with two environment variables on the
+Claworc dashboard:
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `CLAWORC_CHANNEL_HEALTH_ENABLED` | `true` | Enable or disable channel health monitoring |
+| `CLAWORC_CHANNEL_HEALTH_INTERVAL` | `60s` | How often each Agent's channels are checked |
