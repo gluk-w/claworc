@@ -37,6 +37,12 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 	if logType == "" {
 		logType = sshproxy.LogTypeOpenClaw
 	}
+	// "agent" is an alias for the primary agent log; normalize it to
+	// "openclaw" so per-instance custom log-path overrides keyed "openclaw"
+	// keep applying. Both names resolve to the same file.
+	if logType == sshproxy.LogTypeAgent {
+		logType = sshproxy.LogTypeOpenClaw
+	}
 
 	var inst database.Instance
 	if err := database.DB.First(&inst, id).Error; err != nil {

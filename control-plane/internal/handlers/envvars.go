@@ -20,6 +20,11 @@ var ReservedEnvVarNames = []string{
 	"CLAWORC_INSTANCE_ID",
 	"OPENCLAW_INITIAL_MODELS",
 	"OPENCLAW_INITIAL_PROVIDERS",
+	// Universal agent shim contract variables (docs/shim.md), injected for
+	// every agent type at container create/restart.
+	"CLAWORC_AGENT_TOKEN",
+	"CLAWORC_INITIAL_LLM_CONFIG",
+	"CLAWORC_LLM_PROXY_URL",
 }
 
 var envVarNameRegex = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
@@ -88,7 +93,6 @@ func decryptEnvVars(encrypted map[string]string) map[string]string {
 	}
 	return out
 }
-
 
 // LoadGlobalEnvVars reads default_env_vars from the settings table and returns
 // the decrypted {KEY: value} map. Errors loading the setting are swallowed —

@@ -96,6 +96,19 @@ func settingsToResponse(raw map[string]string) map[string]interface{} {
 	// edit flow needs the live value to diff against.
 	result["default_env_vars"] = EnvVarsForResponse(raw["default_env_vars"])
 
+	// Per-agent-type default images (non-OpenClaw types; OpenClaw keeps the
+	// plain default_agent_image setting above).
+	{
+		var m map[string]string
+		if raw["default_agent_images"] != "" {
+			json.Unmarshal([]byte(raw["default_agent_images"]), &m)
+		}
+		if m == nil {
+			m = map[string]string{}
+		}
+		result["default_agent_images"] = m
+	}
+
 	// Global pod placement settings
 	for _, k := range []string{"default_pod_annotations", "default_node_selector", "default_service_account_annotations"} {
 		var m map[string]string
@@ -216,10 +229,11 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Handle pod placement + service/port settings (stored as JSON strings)
+	// Handle pod placement + service/port settings and the per-agent-type
+	// default image map (stored as JSON strings)
 	for _, key := range []string{
 		"default_pod_annotations", "default_node_selector", "default_tolerations",
-		"default_service_account_annotations", "default_ports",
+		"default_service_account_annotations", "default_ports", "default_agent_images",
 	} {
 		if v, ok := raw[key]; ok {
 			b, err := json.Marshal(v)
@@ -237,7 +251,7 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if key == "default_pod_annotations" || key == "default_node_selector" || key == "default_tolerations" ||
-			key == "default_service_account_annotations" || key == "default_ports" {
+			key == "default_service_account_annotations" || key == "default_ports" || key == "default_agent_images" {
 			continue // handled above
 		}
 		// installation_id is read-only; never accept it on update.

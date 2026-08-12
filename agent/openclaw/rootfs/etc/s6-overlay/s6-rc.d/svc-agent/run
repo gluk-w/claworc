@@ -1,0 +1,76 @@
+#!/command/with-contenv bash
+
+export HOME=/home/claworc
+
+# Heavy work (`openclaw doctor --fix`, `openclaw onboard`, TOOLS.md install)
+# runs at image build time; init-openclaw-seed (a oneshot that runs before
+# this service) copies the baked /opt/openclaw-skeleton/.openclaw onto the
+# PVC on first boot. By the time we get here, /home/claworc/.openclaw is
+# already populated and the only work left is to apply env-driven config
+# overrides and exec the gateway.
+
+# Always reaffirm gateway settings — these are baked into the skeleton too,
+# but writing them here keeps a single source of truth and lets ops change
+# them by editing this file without rebuilding the image.
+s6-setuidgid claworc openclaw config set gateway.mode local
+# Newer openclaw rejects host-alias values (e.g. `localhost`) for gateway.bind
+# and demands a bind-mode keyword (lan/loopback/custom/tailnet/auto) instead.
+s6-setuidgid claworc openclaw config set gateway.bind loopback
+s6-setuidgid claworc openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth true
+
+# Set Control UI base path for reverse proxy
+if [ -n "$CLAWORC_INSTANCE_ID" ]; then
+    s6-setuidgid claworc openclaw config set gateway.controlUi.basePath "/openclaw/${CLAWORC_INSTANCE_ID}/"
+fi
+
+# Set token if provided. The generic CLAWORC_AGENT_TOKEN (shim contract,
+# docs/shim.md) is honored when the OpenClaw-specific legacy variable is
+# unset.
+if [ -z "$OPENCLAW_GATEWAY_TOKEN" ] && [ -n "$CLAWORC_AGENT_TOKEN" ]; then
+    OPENCLAW_GATEWAY_TOKEN="$CLAWORC_AGENT_TOKEN"
+fi
+if [ -n "$OPENCLAW_GATEWAY_TOKEN" ]; then
+    s6-setuidgid claworc openclaw config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN"
+fi
+
+# Apply initial model and provider config passed by Claworc at container
+# creation, so the gateway starts with providers already configured and
+# messages arriving before ConfigureInstance runs via SSH don't hit auth
+# failures. The generic CLAWORC_INITIAL_LLM_CONFIG routing document (piped
+# into the shim's own configure-llm verb, docs/shim.md) is preferred; the
+# legacy OpenClaw-specific variables are only consulted when it is absent.
+if [ -n "$CLAWORC_INITIAL_LLM_CONFIG" ]; then
+    echo "Applying CLAWORC_INITIAL_LLM_CONFIG via /opt/claworc/shim/configure-llm..."
+    if ! printf '%s' "$CLAWORC_INITIAL_LLM_CONFIG" | /opt/claworc/shim/configure-llm; then
+        echo "configure-llm failed; continuing boot without initial LLM routing" >&2
+    fi
+else
+    if [ -n "$OPENCLAW_INITIAL_MODELS" ]; then
+        s6-setuidgid claworc openclaw config set agents.defaults.model "$OPENCLAW_INITIAL_MODELS" --json
+    fi
+    if [ -n "$OPENCLAW_INITIAL_PROVIDERS" ]; then
+        s6-setuidgid claworc openclaw config set models.providers "$OPENCLAW_INITIAL_PROVIDERS" --json
+    fi
+fi
+
+echo "Starting OpenClaw Gateway (foreground) as claworc..."
+# The gateway needs an open-but-silent stdin (it exits on stdin EOF), hence
+# the `tail -f /dev/null |` prefix. Run the pipeline in the background of a
+# small supervising bash that:
+#   - forwards TERM/INT to its whole process group, so `s6-svc -r` (the
+#     shim's restart verb) cleanly kills the gateway instead of orphaning it
+#     with port 18789 held;
+#   - exits when the gateway exits (e.g. `openclaw gateway stop`), letting s6
+#     respawn the service.
+# Output goes to the contract log path /var/log/claworc/agent.log;
+# init-setup.sh symlinks the legacy openclaw.log name to it.
+exec bash -c '
+  tail -f /dev/null | s6-setuidgid claworc /usr/bin/openclaw gateway run >> /var/log/claworc/agent.log 2>&1 &
+  gw=$!
+  trap "kill -TERM 0 2>/dev/null" TERM INT
+  wait "$gw"
+  status=$?
+  # Reap the tail (and anything else in our group) before exiting.
+  kill -TERM 0 2>/dev/null
+  exit "$status"
+'

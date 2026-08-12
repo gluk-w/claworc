@@ -49,13 +49,20 @@ export default function AgentRow({
         </button>
       </td>
       <td className="px-4 py-3">
-        <Link
-          data-testid={`instance-link-${instance.id}`}
-          to={`/instances/${instance.id}`}
-          className="text-sm font-medium text-blue-600 hover:text-blue-800"
-        >
-          {instance.display_name}
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            data-testid={`instance-link-${instance.id}`}
+            to={`/instances/${instance.id}`}
+            className="text-sm font-medium text-blue-600 hover:text-blue-800"
+          >
+            {instance.display_name}
+          </Link>
+          {instance.agent_display_name && (
+            <span className="px-1.5 py-0.5 text-xs font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-full">
+              {instance.agent_display_name}
+            </span>
+          )}
+        </div>
       </td>
       <td className="px-4 py-3">
         <StatusBadge

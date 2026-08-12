@@ -1,0 +1,18 @@
+#!/bin/sh
+# Conformance-harness session-reset verb: records the reset in a log the
+# test asserts on. Idempotent.
+set -eu
+
+SESSION=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --session) SESSION="$2"; shift 2 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+[ -n "$SESSION" ] || { echo "--session is required" >&2; exit 2; }
+
+STATE_DIR="${CLAWORC_SHIM_STATE_DIR:-/tmp}"
+mkdir -p "$STATE_DIR"
+printf '%s\n' "$SESSION" >> "$STATE_DIR/reset.log"
+exit 0

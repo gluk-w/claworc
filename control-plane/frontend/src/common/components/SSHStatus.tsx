@@ -19,7 +19,7 @@ function formatTime(ts: string): string {
 const tunnelLabelMap: Record<string, string> = {
   VNC: "Browser",
   CDP: "Browser CDP",
-  Gateway: "OpenClaw",
+  Gateway: "Agent Gateway",
   LLMProxy: "API Gateway",
 };
 

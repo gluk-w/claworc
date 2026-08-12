@@ -112,6 +112,12 @@ type TunnelManager struct {
 	// spawning a new session. Returning false means the browser pod is not
 	// running — a normal idle state for on-demand CDP, not a failure.
 	cdpHealthProbe CDPHealthProbe
+
+	// gatewayTunnelPredicate, when set, lets the reconciler ask "should this
+	// instance get the OpenClaw gateway reverse tunnel?" — the tunnel is
+	// meaningless for non-OpenClaw agent types. nil means every instance gets
+	// one (backward compatible).
+	gatewayTunnelPredicate GatewayTunnelPredicate
 }
 
 // CDPDialProvider is the hook used by the reconciler to discover non-legacy
@@ -122,6 +128,11 @@ type CDPDialProvider func(ctx context.Context, instanceID uint) (DialFunc, bool)
 // running for instanceID. It MUST NOT spawn or mutate state — it is called
 // from the tunnel health checker.
 type CDPHealthProbe func(ctx context.Context, instanceID uint) bool
+
+// GatewayTunnelPredicate reports whether an instance should get the OpenClaw
+// gateway reverse tunnel (true for the "openclaw" agent type). Keeps this
+// package free of agent knowledge — the caller injects the type lookup.
+type GatewayTunnelPredicate func(instanceID uint) bool
 
 // NewTunnelManager creates a new TunnelManager that uses the given SSHManager
 // for obtaining SSH connections to instances.
@@ -159,6 +170,15 @@ func (tm *TunnelManager) SetCDPDialProvider(p CDPDialProvider) {
 func (tm *TunnelManager) SetCDPHealthProbe(p CDPHealthProbe) {
 	tm.mu.Lock()
 	tm.cdpHealthProbe = p
+	tm.mu.Unlock()
+}
+
+// SetGatewayTunnelPredicate installs the hook used by StartTunnelsForInstance
+// to decide whether an instance gets the OpenClaw gateway reverse tunnel.
+// Pass nil to revert to the default behaviour (every instance gets one).
+func (tm *TunnelManager) SetGatewayTunnelPredicate(p GatewayTunnelPredicate) {
+	tm.mu.Lock()
+	tm.gatewayTunnelPredicate = p
 	tm.mu.Unlock()
 }
 
@@ -414,10 +434,16 @@ func (tm *TunnelManager) StartTunnelsForInstance(ctx context.Context, instanceID
 		}
 	}
 
-	// Create Gateway tunnel
-	_, err = tm.CreateTunnelForGateway(ctx, instanceID, 0)
-	if err != nil {
-		log.Printf("Failed to create Gateway tunnel for instance %d: %v", instanceID, err)
+	// Create Gateway tunnel — only for instances whose agent type actually
+	// serves the OpenClaw gateway (predicate injected by main; nil = all).
+	tm.mu.RLock()
+	gatewayPredicate := tm.gatewayTunnelPredicate
+	tm.mu.RUnlock()
+	if gatewayPredicate == nil || gatewayPredicate(instanceID) {
+		_, err = tm.CreateTunnelForGateway(ctx, instanceID, 0)
+		if err != nil {
+			log.Printf("Failed to create Gateway tunnel for instance %d: %v", instanceID, err)
+		}
 	}
 
 	// Create LLM proxy agent-listener tunnel if gateway is configured

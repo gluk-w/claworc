@@ -1,0 +1,6 @@
+{
+  "provider": "claude",
+  "assistantName": "NanoClaw",
+  "maxMessagesPerPrompt": 10,
+  "mcpServers": {}
+}

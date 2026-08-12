@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""config-set [--id <file-id>] — replace a declared Hermes config file with
+stdin bytes (docs/shim.md).
+
+ids: "config" -> ~/.hermes/config.yaml (default), "env" -> ~/.hermes/.env
+
+Validation (exit 6 + {"error": ...} on stdout when invalid):
+  - config.yaml: must parse as YAML. Validated with the PyYAML inside the
+    Hermes venv (the shim itself is stdlib-only); skipped when the venv is
+    unavailable.
+  - .env: loose dotenv check — every non-blank, non-comment line must look
+    like KEY=VALUE (an optional `export ` prefix is allowed).
+
+Writes atomically (tmp + rename) and keeps the file claworc-owned. Never
+restarts the agent — the control plane owns that (and these files declare
+restart_required: false anyway; each chat turn re-reads them).
+"""
+import json
+import os
+import pwd
+import subprocess
+import sys
+import tempfile
+
+FILES = {
+    "config": "/home/claworc/.hermes/config.yaml",
+    "env": "/home/claworc/.hermes/.env",
+}
+VENV_PY = "/opt/hermes/venv/bin/python"
+
+
+def fail_validation(msg):
+    print(json.dumps({"error": msg}))
+    sys.exit(6)
+
+
+def main():
+    args = sys.argv[1:]
+    file_id = "config"
+    while args:
+        a = args.pop(0)
+        if a == "--id":
+            if not args:
+                print("--id requires a value", file=sys.stderr)
+                sys.exit(2)
+            file_id = args.pop(0)
+        else:
+            print(f"unknown argument: {a}", file=sys.stderr)
+            sys.exit(2)
+
+    path = FILES.get(file_id)
+    if path is None:
+        print(f"unknown config file id: {file_id}", file=sys.stderr)
+        sys.exit(2)
+
+    # Lazily seed ~/.hermes when the s6 boot sequence has not run.
+    if not os.path.isdir("/home/claworc/.hermes"):
+        subprocess.run(["/opt/claworc/shim/lib/ensure-seed.sh"], check=False)
+
+    data = sys.stdin.buffer.read()
+
+    if file_id == "config":
+        if os.access(VENV_PY, os.X_OK):
+            probe = subprocess.run(
+                [VENV_PY, "-c", "import sys,yaml; yaml.safe_load(sys.stdin.buffer.read())"],
+                input=data,
+                capture_output=True,
+            )
+            if probe.returncode != 0:
+                err = probe.stderr.decode("utf-8", "replace").strip().splitlines()
+                fail_validation("invalid YAML: " + (err[-1] if err else "parse error"))
+    else:  # .env — loose dotenv syntax
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError as e:
+            fail_validation(f"invalid UTF-8: {e}")
+        for i, line in enumerate(text.splitlines(), 1):
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            if s.startswith("export "):
+                s = s[len("export "):].lstrip()
+            key, sep, _ = s.partition("=")
+            if not sep or not key.strip() or any(c.isspace() for c in key.strip()):
+                fail_validation(f"line {i} is not KEY=VALUE: {line.strip()[:80]}")
+
+    d = os.path.dirname(path)
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".claworc-config.")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.chmod(tmp, 0o644)
+        if os.geteuid() == 0:
+            try:
+                pw = pwd.getpwnam("claworc")
+                os.chown(tmp, pw.pw_uid, pw.pw_gid)
+            except (KeyError, OSError):
+                pass
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

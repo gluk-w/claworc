@@ -1,0 +1,47 @@
+#!/bin/sh
+# config-set [--id <file-id>] — replace the config file with stdin bytes.
+# Validates JSON (exit 6 + {"error":...} on stdout when invalid), writes
+# atomically (tmp + mv) with claworc ownership, does NOT restart the agent —
+# the control plane calls the restart verb afterwards (docs/shim.md).
+set -eu
+
+CONFIG_FILE=/home/claworc/.openclaw/openclaw.json
+CONFIG_DIR=/home/claworc/.openclaw
+ID=main
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --id) ID="$2"; shift 2 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+if [ "$ID" != "main" ]; then
+    echo "unknown config file id: $ID" >&2
+    exit 2
+fi
+
+mkdir -p "$CONFIG_DIR"
+chown claworc:claworc "$CONFIG_DIR" 2>/dev/null || true
+
+TMP="$CONFIG_DIR/.openclaw.json.shim-tmp.$$"
+trap 'rm -f "$TMP"' EXIT
+
+cat > "$TMP"
+
+# Validate JSON; on failure print {"error": ...} on stdout and exit 6.
+if ! /usr/bin/node -e '
+    const fs = require("fs");
+    try {
+        JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    } catch (e) {
+        console.log(JSON.stringify({ error: "invalid JSON: " + e.message }));
+        process.exit(1);
+    }
+' "$TMP"; then
+    exit 6
+fi
+
+chown claworc:claworc "$TMP"
+chmod 0600 "$TMP"
+mv -f "$TMP" "$CONFIG_FILE"
+trap - EXIT
+exit 0

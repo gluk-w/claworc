@@ -1,0 +1,27 @@
+#!/bin/sh
+# config-get [--id <file-id>] — raw config file bytes on stdout (docs/shim.md).
+# ids: "config" -> ~/.hermes/config.yaml (default), "env" -> ~/.hermes/.env
+set -eu
+
+ID=config
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --id) ID="$2"; shift 2 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+
+case "$ID" in
+    config) FILE=/home/claworc/.hermes/config.yaml ;;
+    env)    FILE=/home/claworc/.hermes/.env ;;
+    *) echo "unknown config file id: $ID" >&2; exit 2 ;;
+esac
+
+# Lazily seed ~/.hermes when the s6 boot sequence has not run.
+[ -d /home/claworc/.hermes ] || /opt/claworc/shim/lib/ensure-seed.sh || true
+
+if [ ! -f "$FILE" ]; then
+    echo "config file not found: $FILE" >&2
+    exit 1
+fi
+exec cat "$FILE"
