@@ -185,8 +185,7 @@ func (m *mockOrchestrator) GetInstanceStatus(_ context.Context, _ string) (strin
 func (m *mockOrchestrator) GetInstanceImageInfo(_ context.Context, _ string) (string, error) {
 	return "", nil
 }
-func (m *mockOrchestrator) UpdateInstanceConfig(_ context.Context, _, _ string) error { return nil }
-func (m *mockOrchestrator) CloneVolumes(_ context.Context, _, _ string) error         { return nil }
+func (m *mockOrchestrator) CloneVolumes(_ context.Context, _, _ string) error { return nil }
 func (m *mockOrchestrator) ConfigureSSHAccess(_ context.Context, _ uint, _ string) error {
 	return m.configureErr
 }
@@ -218,8 +217,8 @@ func (m *mockOrchestrator) UpdatePlacementConfig(_ context.Context, _ string, _ 
 	return nil
 }
 func (m *mockOrchestrator) DeleteSharedVolume(_ context.Context, _ uint) error { return nil }
-func (m *mockOrchestrator) CloneVolume(_ context.Context, _, _ string) error    { return nil }
-func (m *mockOrchestrator) VolumeNameFor(name, suffix string) string            { return name + "-" + suffix }
+func (m *mockOrchestrator) CloneVolume(_ context.Context, _, _ string) error   { return nil }
+func (m *mockOrchestrator) VolumeNameFor(name, suffix string) string           { return name + "-" + suffix }
 func (m *mockOrchestrator) Apply(_ context.Context, _ orchestrator.WorkloadSpec) error {
 	return nil
 }

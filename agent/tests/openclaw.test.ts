@@ -20,7 +20,7 @@ function structureOf(obj: any): any {
 
 describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
   // Wait for openclaw gateway to be ready.
-  // The svc-openclaw run script executes `openclaw doctor --fix` followed by
+  // The svc-agent run script executes `openclaw doctor --fix` followed by
   // several `openclaw config set` commands before starting the gateway — each
   // spawns Node.js under QEMU emulation, which is very slow with concurrent
   // containers. By the time browser.test.ts finishes, the gateway is usually ready.
@@ -168,7 +168,7 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
   // native addon (libvips) used by openclaw's image pipeline (Telegram,
   // screenshots). Upstream openclaw lazy-imports sharp but no longer
   // declares it in package.json, so the Dockerfile installs it explicitly
-  // (see `npm install --no-save sharp` in agent/instance/Dockerfile, plus
+  // (see `npm install --no-save sharp` in agent/openclaw/Dockerfile, plus
   // the libvips42 apt package).
   describe("sharp image dependency (issue #127)", () => {
     const cdOpenclaw = 'cd "$(npm root -g)/openclaw"';

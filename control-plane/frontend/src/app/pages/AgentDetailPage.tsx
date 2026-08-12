@@ -265,7 +265,7 @@ export default function AgentDetailPage() {
         onSuccess: () => {
           setEditedConfig(null);
           toast.custom(
-            createElement(AppToast, { title: "OpenClaw settings saved", status: "success", toastId }),
+            createElement(AppToast, { title: "Agent settings saved", status: "success", toastId }),
             { id: toastId, duration: 3000 },
           );
         },
@@ -557,11 +557,15 @@ export default function AgentDetailPage() {
     );
   };
 
+  // The Config tab is hidden when the agent type declares no config
+  // capability (agent_capabilities is only present on the detail response;
+  // undefined means "unknown" and keeps the tab visible).
+  const hasConfigCapability = instance.agent_capabilities?.config !== false;
   const tabs: { key: Tab; label: string }[] = [
     { key: "chat", label: "Chat" },
     { key: "terminal", label: "Terminal" },
     { key: "files", label: "Files" },
-    { key: "config", label: "Config" },
+    ...(hasConfigCapability ? [{ key: "config", label: "Config" } as { key: Tab; label: string }] : []),
     { key: "logs", label: "Logs" },
     { key: "settings", label: "Settings" },
   ];
@@ -576,6 +580,11 @@ export default function AgentDetailPage() {
           <h1 className="text-xl font-semibold text-gray-900">
             {instance.display_name}
           </h1>
+          {instance.agent_display_name && (
+            <span className="px-2 py-0.5 text-xs font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-full">
+              {instance.agent_display_name}
+            </span>
+          )}
           <StatusBadge status={instance.status} tooltip={buildSSHTooltip(sshStatus.data)} />
         </div>
         <ActionButtons
@@ -1316,7 +1325,7 @@ export default function AgentDetailPage() {
         </div>
       )}
 
-      {activeTab === "config" && (
+      {activeTab === "config" && hasConfigCapability && (
         <div className="flex flex-col gap-4 h-[calc(100vh-142px)] min-h-[400px]">
           {instance.status !== "running" ? (
             <TabPlaceholder message="Agent must be running to edit config." />
@@ -1327,12 +1336,13 @@ export default function AgentDetailPage() {
                   value={currentConfig}
                   onChange={(v) => setEditedConfig(v ?? "{}")}
                   height="100%"
+                  language={configData?.language || "json"}
                 />
               </div>
               <div className="flex items-center shrink-0">
                 <div className="flex items-center gap-2 text-sm text-amber-700">
                   <AlertTriangle size={16} className="shrink-0" />
-                  Saving will restart the openclaw-gateway service.
+                  Saving will restart the agent service.
                 </div>
                 <div className="ml-auto flex gap-3">
                   <button

@@ -37,6 +37,10 @@ type (
 	WebhookLog         = models.WebhookLog
 )
 
+// AgentTypeOpenClaw re-exports the implicit agent type of pre-shim rows
+// (empty Instance.AgentType). See Instance.EffectiveAgentType.
+const AgentTypeOpenClaw = models.AgentTypeOpenClaw
+
 // Helper re-exports keep `database.ParseTeamIDs(...)` etc. working for
 // existing callers. The implementations live in the models package.
 

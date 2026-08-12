@@ -4,6 +4,8 @@ include .env.development
 export
 
 AGENT_IMAGE := claworc/openclaw
+HERMES_IMAGE := claworc/hermes
+NANOCLAW_IMAGE := claworc/nanoclaw
 STABLE_IMAGE := glukw/claworc-stable
 STABLE_MIRROR_IMAGE := claworc/openclaw-stable
 STABLE_VERSION_URL := https://isitstable.com/api/v1/openclaw/latest-stable
@@ -51,7 +53,9 @@ agent-base-china:
 
 agent-build:
 	@echo "Building images locally (agent + browser variants)..."
-	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/instance/Dockerfile --load agent/instance/
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/openclaw/Dockerfile --load agent/openclaw/
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(HERMES_IMAGE):$(TAG) -f agent/hermes/Dockerfile --load agent/hermes/
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(NANOCLAW_IMAGE):$(TAG) -f agent/nanoclaw/Dockerfile --load agent/nanoclaw/
 	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/browser/Dockerfile.chromium --load agent/browser/
 	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/browser/Dockerfile.chrome --load agent/browser/
 	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --load agent/browser/
@@ -62,11 +66,28 @@ agent-test:
 		AGENT_CHROME_TEST_IMAGE=$(BROWSER_CHROME_IMAGE):$(TAG) \
 		AGENT_BRAVE_TEST_IMAGE=$(BROWSER_BRAVE_IMAGE):$(TAG) \
 		npm run test
+	@echo "Running shim conformance selftest against $(HERMES_IMAGE):$(TAG)..."
+	docker run --rm --entrypoint sh $(HERMES_IMAGE):$(TAG) -c 'sh /opt/claworc/shim/shim-selftest /opt/claworc/shim'
+	@echo "Running shim conformance selftest against $(NANOCLAW_IMAGE):$(TAG)..."
+	# NanoClaw's shim needs its s6 services (svc-agent supervisor) running, so
+	# boot the image, wait for health, then exec the selftest. The LLM proxy
+	# URL points at an unreachable port on purpose: the chat check then fails
+	# fast inside the agent (connection refused) instead of hanging on auth,
+	# and the turn still ends cleanly per contract.
+	docker rm -f claworc-nanoclaw-selftest >/dev/null 2>&1 || true
+	docker run -d --name claworc-nanoclaw-selftest \
+		-e CLAWORC_INITIAL_LLM_CONFIG='{"proxy_url":"http://127.0.0.1:40001","style":"anthropic","default_model":"anthropic/claude-sonnet-4-5","providers":[{"key":"anthropic","api_key":"claworc-vk-ci","api_type":"anthropic-messages"}]}' \
+		$(NANOCLAW_IMAGE):$(TAG)
+	sh -c 'for i in $$(seq 1 30); do docker exec claworc-nanoclaw-selftest /opt/claworc/shim/health >/dev/null 2>&1 && exit 0; sleep 2; done; echo "nanoclaw health never became ready" >&2; docker logs claworc-nanoclaw-selftest; docker rm -f claworc-nanoclaw-selftest; exit 1'
+	docker exec claworc-nanoclaw-selftest sh /opt/claworc/shim/shim-selftest /opt/claworc/shim; \
+	rc=$$?; docker rm -f claworc-nanoclaw-selftest >/dev/null 2>&1; exit $$rc
 
 
 agent-push:
 	@echo "Pushing all agent + browser images in parallel..."
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/instance/Dockerfile --push agent/instance/ & \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/openclaw/Dockerfile --push agent/openclaw/ & \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(HERMES_IMAGE):$(TAG) -f agent/hermes/Dockerfile --push agent/hermes/ & \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(NANOCLAW_IMAGE):$(TAG) -f agent/nanoclaw/Dockerfile --push agent/nanoclaw/ & \
 	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/browser/Dockerfile.chromium --push agent/browser/ & \
 	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/browser/Dockerfile.chrome --push agent/browser/ & \
 	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --push agent/browser/ & \
@@ -86,7 +107,7 @@ agent-stable:
 		-t $(STABLE_IMAGE):$(OPENCLAW_VERSION) \
 		-t $(STABLE_MIRROR_IMAGE):$(TAG) \
 		-t $(STABLE_MIRROR_IMAGE):$(OPENCLAW_VERSION) \
-		-f agent/instance/Dockerfile --push agent/instance/
+		-f agent/openclaw/Dockerfile --push agent/openclaw/
 
 # CI variant: build single-arch first and run the OpenClaw test suite against
 # the pinned image, only push multi-arch if tests pass.
@@ -97,7 +118,7 @@ agent-stable-ci:
 	@echo "Building+loading $(STABLE_IMAGE):test (openclaw@$(OPENCLAW_VERSION))..."
 	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) \
 		--build-arg OPENCLAW_VERSION=$(OPENCLAW_VERSION) \
-		-t $(STABLE_IMAGE):test -f agent/instance/Dockerfile --load agent/instance/
+		-t $(STABLE_IMAGE):test -f agent/openclaw/Dockerfile --load agent/openclaw/
 	cd agent/tests && AGENT_INSTANCE_TEST_IMAGE=$(STABLE_IMAGE):test npm run test -- openclaw.test.ts
 	@echo "Pushing multi-arch $(STABLE_IMAGE) + $(STABLE_MIRROR_IMAGE) :$(TAG) and :$(OPENCLAW_VERSION)..."
 	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) \
@@ -106,7 +127,7 @@ agent-stable-ci:
 		-t $(STABLE_IMAGE):$(OPENCLAW_VERSION) \
 		-t $(STABLE_MIRROR_IMAGE):$(TAG) \
 		-t $(STABLE_MIRROR_IMAGE):$(OPENCLAW_VERSION) \
-		-f agent/instance/Dockerfile --push agent/instance/
+		-f agent/openclaw/Dockerfile --push agent/openclaw/
 
 AGENT_CONTAINER := claworc-agent-exec
 AGENT_SSH_PORT := 2222
@@ -180,11 +201,11 @@ dev:
 	CLAWORC_AUTH_DISABLED=true CLAWORC_LLM_RESPONSE_LOG=$(CURDIR)/llm-responses.log CLAWORC_ALLOWED_HOST_MOUNTS=/tmp,~/ goreman -set-ports=false start
 
 ssh-integration-test:
-	docker build -f agent/instance/Dockerfile -t claworc-agent:local agent/instance/
+	docker build -f agent/openclaw/Dockerfile -t claworc-agent:local agent/openclaw/
 	cd control-plane && go test -tags docker_integration -v -timeout 300s ./internal/sshproxy/ -run TestIntegration
 
 ssh-file-integration-test:
-	docker build -f agent/instance/Dockerfile -t claworc-agent:local agent/instance/
+	docker build -f agent/openclaw/Dockerfile -t claworc-agent:local agent/openclaw/
 	cd agent/tests && npm run test:ssh -- --testPathPattern file.test
 
 test-integration-backend:

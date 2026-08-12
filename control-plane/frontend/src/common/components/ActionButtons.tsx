@@ -53,16 +53,18 @@ export default function ActionButtons({
   return (
     <>
       <div className="flex items-center gap-1">
-        <a
-          href={controlUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          title="Control UI"
-          aria-disabled={isUnavailable}
-          className={`p-1.5 text-gray-500 hover:text-teal-600 hover:bg-teal-50 rounded ${isUnavailable ? disabledLinkClass : ""}`}
-        >
-          <img src="/openclaw.svg" alt="Control UI" width={16} height={16} />
-        </a>
+        {instance.has_control_ui !== false && (
+          <a
+            href={controlUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Control UI"
+            aria-disabled={isUnavailable}
+            className={`p-1.5 text-gray-500 hover:text-teal-600 hover:bg-teal-50 rounded ${isUnavailable ? disabledLinkClass : ""}`}
+          >
+            <img src="/openclaw.svg" alt="Control UI" width={16} height={16} />
+          </a>
+        )}
         <a
           href={`/instances/${instance.id}#chrome`}
           title="Browser"

@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""configure-llm — route Hermes' LLM traffic through the Claworc LLM proxy
+(docs/shim.md). Reads the generic routing document on stdin and rewrites the
+fully managed block in ~/.hermes/config.yaml — replace, never append twice —
+so the verb is idempotent.
+
+Hermes fact-check (hermes_cli/runtime_provider.py, hermes_cli/config.py,
+verified against NousResearch/hermes-agent v2026.8.x):
+  - ~/.hermes/config.yaml `model:` section is the single source of truth for
+    a custom OpenAI-compatible endpoint:
+        model.provider: "custom"   -> plain OpenAI-compatible endpoint
+        model.base_url             -> trusted for bare "custom" (loopback or
+                                      when provider is already "custom")
+        model.api_key              -> read via `for k in ("api_key", "api")`
+        model.default              -> default model id, passed through as-is
+  - OPENAI_API_KEY / OPENAI_BASE_URL env vars are host-gated or ignored for
+    custom endpoints, so the config file is the correct (and only reliable)
+    place to put the proxy routing.
+
+The managed block is a complete top-level `model:` mapping between the
+`# BEGIN claworc-managed` / `# END claworc-managed` markers. The image-baked
+skeleton config.yaml contains exactly one such block, so replacing it keeps
+the YAML free of duplicate keys. Values are emitted with json.dumps (JSON
+strings are valid YAML double-quoted scalars).
+
+Exit 6 when the routing cannot be expressed (e.g. style "anthropic": Hermes
+would need api_mode plumbing this shim does not manage; meta declares
+llm.styles ["openai"] accordingly).
+"""
+import json
+import os
+import pwd
+import subprocess
+import sys
+import tempfile
+
+CONFIG = "/home/claworc/.hermes/config.yaml"
+BEGIN = "# BEGIN claworc-managed"
+END = "# END claworc-managed"
+
+
+def fail_validation(msg):
+    print(json.dumps({"error": msg}))
+    sys.exit(6)
+
+
+def main():
+    if len(sys.argv) > 1:
+        print(f"unknown argument: {sys.argv[1]}", file=sys.stderr)
+        sys.exit(2)
+
+    try:
+        doc = json.load(sys.stdin)
+    except Exception as e:
+        fail_validation(f"invalid JSON routing document: {e}")
+    if not isinstance(doc, dict):
+        fail_validation("routing document must be a JSON object")
+
+    style = doc.get("style") or "openai"
+    if style != "openai":
+        fail_validation(f"unsupported llm style {style!r}: this image routes Hermes "
+                        "through an OpenAI-compatible endpoint only")
+
+    proxy_url = doc.get("proxy_url") or ""
+    providers = doc.get("providers") or []
+    if not isinstance(providers, list):
+        fail_validation("providers must be an array")
+    if providers and not proxy_url:
+        fail_validation("proxy_url is required when providers are present")
+
+    default_model = doc.get("default_model") or ""
+    api_key = ""
+    if providers:
+        first = providers[0]
+        if not isinstance(first, dict):
+            fail_validation("providers entries must be objects")
+        api_key = first.get("api_key") or ""
+
+    block = [
+        BEGIN,
+        "# Managed by the Claworc shim configure-llm verb - do not edit inside this block.",
+        "# Routes all Hermes LLM traffic to the Claworc LLM proxy with a virtual key.",
+        "model:",
+        "  provider: \"custom\"",
+        f"  base_url: {json.dumps(proxy_url)}",
+        f"  api_key: {json.dumps(api_key)}",
+        f"  default: {json.dumps(default_model)}",
+        END,
+    ]
+
+    # Lazily seed ~/.hermes when the s6 boot sequence has not run.
+    if not os.path.isdir(os.path.dirname(CONFIG)):
+        subprocess.run(["/opt/claworc/shim/lib/ensure-seed.sh"], check=False)
+        os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
+
+    try:
+        with open(CONFIG, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        lines = []
+
+    # Replace the existing managed block in place; append the block when absent.
+    out, i, replaced = [], 0, False
+    while i < len(lines):
+        if lines[i].strip() == BEGIN:
+            j = i + 1
+            while j < len(lines) and lines[j].strip() != END:
+                j += 1
+            out.extend(block)
+            replaced = True
+            i = j + 1  # skip END (or run off the end for an unterminated block)
+        else:
+            out.append(lines[i])
+            i += 1
+    if not replaced:
+        if out and out[-1].strip():
+            out.append("")
+        out.extend(block)
+
+    content = "\n".join(out) + "\n"
+    d = os.path.dirname(os.path.abspath(CONFIG))
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".config.yaml.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.chmod(tmp, 0o644)
+        if os.geteuid() == 0:
+            try:
+                pw = pwd.getpwnam("claworc")
+                os.chown(tmp, pw.pw_uid, pw.pw_gid)
+            except (KeyError, OSError):
+                pass
+        os.replace(tmp, CONFIG)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

@@ -57,7 +57,7 @@ Clean image lineup; legacy combined-image source is deleted from `agent/`.
 
 New images, all under the `glukw/claworc-*` namespace:
 
-- `claworc/openclaw:latest` — slim agent. s6 services: `init-setup`, `svc-sshd`, `svc-openclaw`, `svc-cron`. No Xvfb/VNC/openbox/browser.
+- `claworc/openclaw:latest` — slim agent. s6 services: `init-setup`, `svc-sshd`, `svc-agent`, `svc-cron`. No Xvfb/VNC/openbox/browser.
 - `claworc/base-browser:latest` — Xvfb, TigerVNC, noVNC, openbox, stealth-extension. **No sshd.** s6 services: `init-setup`, `svc-xvnc`, `svc-novnc`, `svc-desktop`. Container port `9222` (CDP) bound to `0.0.0.0` (cluster-reachable, NetworkPolicy-restricted); container ports `3000` (noVNC) and `5900` (raw VNC) similarly.
 - `claworc/chromium-browser:latest` / `claworc/chrome-browser:latest` / `claworc/brave-browser:latest` — derive from `base-browser` and install the respective browser. The `svc-desktop` script keeps today's flags except `--remote-debugging-address` is removed (Chromium binds to `0.0.0.0:9222` so the cluster Service can reach it; access control is at the Service + NetworkPolicy layer).
 
@@ -83,7 +83,7 @@ Legacy instances continue using a single `<name>-home` PVC where chrome-data liv
 
 Reuse the existing `TunnelTypeAgentListener` pattern.
 
-**Agent change** — `agent/instance/rootfs/etc/ssh/sshd_config.d/claworc.conf`:
+**Agent change** — `agent/openclaw/rootfs/etc/ssh/sshd_config.d/claworc.conf`:
 ```
 PermitListen 127.0.0.1:9222 127.0.0.1:40001
 ```
@@ -94,7 +94,7 @@ PermitListen 127.0.0.1:9222 127.0.0.1:40001
 - `cdpUrl: "http://127.0.0.1:9222"` (unchanged)
 - `attachOnly: true` (unchanged)
 
-This is the existing browser section of OpenClaw's config that `svc-openclaw` already initialises at startup; no new file.
+This is the existing browser section of OpenClaw's config that `svc-agent` already initialises at startup; no new file.
 
 **Control-plane changes** — `control-plane/internal/sshproxy/tunnel.go`:
 - Generalise `agentListenerLoop` to accept a `dial DialFunc` (`func(context.Context) (io.ReadWriteCloser, error)`). LLM-proxy callsites untouched.
@@ -255,14 +255,14 @@ Delete (legacy combined-image sources; published images stay in registry):
 - The combined s6 service set under `rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/` that listed all services together.
 
 Add:
-- `agent/instance/Dockerfile` — slim agent (sshd, OpenClaw, cron). Uses the `agent.bundle` s6 set.
+- `agent/openclaw/Dockerfile` — slim agent (sshd, OpenClaw, cron). Uses the `agent.bundle` s6 set.
 - `agent/browser/Dockerfile.base` — Xvfb/TigerVNC/noVNC/openbox/stealth-extension base. Uses the `browser.bundle` s6 set.
 - `agent/browser/Dockerfile.chromium`, `agent/browser/Dockerfile.chrome`, `agent/browser/Dockerfile.brave`.
 - New s6 bundles `agent.bundle` and `browser.bundle`.
 
 Edit:
 - `rootfs/etc/ssh/sshd_config.d/claworc.conf` — add `127.0.0.1:9222` to `PermitListen` (this stays in the agent image only; the browser image has no sshd).
-- The OpenClaw `browser` config seed delivered by `svc-openclaw` — bump `remoteCdpTimeoutMs` and `remoteCdpHandshakeTimeoutMs` to `65000`. Same mechanism that exists today; no new file.
+- The OpenClaw `browser` config seed delivered by `svc-agent` — bump `remoteCdpTimeoutMs` and `remoteCdpHandshakeTimeoutMs` to `65000`. Same mechanism that exists today; no new file.
 - Browser variant `svc-desktop` script — drop `--remote-debugging-address=127.0.0.1` so Chromium binds to all interfaces (cluster-internal only via Service + NetworkPolicy).
 
 **Control plane (`/Users/stan/claworc/control-plane/`):**
@@ -346,5 +346,5 @@ CDP is not authenticated by Chromium itself — relying on cluster networking is
 - `/Users/stan/claworc/control-plane/internal/handlers/desktop.go`
 - `/Users/stan/claworc/control-plane/internal/handlers/instances.go`
 - `/Users/stan/claworc/control-plane/internal/taskmanager/taskmanager.go`
-- `/Users/stan/claworc/agent/instance/rootfs/etc/ssh/sshd_config.d/claworc.conf`
+- `/Users/stan/claworc/agent/openclaw/rootfs/etc/ssh/sshd_config.d/claworc.conf`
 - `/Users/stan/claworc/helm/templates/networkpolicy.yaml`

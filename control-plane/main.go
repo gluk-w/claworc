@@ -84,6 +84,16 @@ func main() {
 	handlers.SSHMgr = sshMgr
 	tunnelMgr := sshproxy.NewTunnelManager(sshMgr)
 	handlers.TunnelMgr = tunnelMgr
+	// The OpenClaw gateway WS tunnel only makes sense for the "openclaw"
+	// agent type; other agents don't run the gateway. The LLM gateway
+	// agent-listener tunnel stays for ALL types (not gated here).
+	tunnelMgr.SetGatewayTunnelPredicate(func(instanceID uint) bool {
+		var inst database.Instance
+		if err := database.DB.First(&inst, instanceID).Error; err != nil {
+			return true // fail open — behave as before when the row is unreadable
+		}
+		return inst.EffectiveAgentType() == database.AgentTypeOpenClaw
+	})
 	log.Printf("SSH manager initialized (public key: %d bytes)", len(sshPublicKey))
 
 	// Init SSH audit logger
@@ -353,6 +363,9 @@ func main() {
 
 			// Teams: list available to the caller (admin: all, others: own).
 			r.Get("/teams", handlers.ListTeams)
+
+			// Agent types (static registry + resolved default images)
+			r.Get("/agent-types", handlers.ListAgentTypes)
 
 			// Instances (ListInstances filters by role internally)
 			r.Get("/instances", handlers.ListInstances)

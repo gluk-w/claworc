@@ -1,0 +1,196 @@
+#!/usr/bin/env node
+// configure-llm — routes all OpenClaw LLM traffic through the Claworc LLM
+// proxy using virtual keys (docs/shim.md). Reads the generic routing document
+// from stdin and applies it via `openclaw config set/unset ... --json` as the
+// claworc user.
+//
+// The translation replicates what the control plane's native OpenClaw adapter
+// does in control-plane/internal/handlers/instances.go
+// (buildOpenClawProvidersJSON + ConfigureInstance):
+//   - providers          -> models.providers map keyed by provider key with
+//                           {baseUrl: proxy_url, api, apiKey: virtual key,
+//                            models: [...]} — model ids stored WITHOUT the
+//                           "<provider>/" prefix (OpenClaw derives the full
+//                           name as <providerKey>/<model.id>).
+//   - api_type default   -> "openai-completions".
+//   - codex special case -> providers with api_type "openai-codex-responses"
+//                           declare "openai-responses" to OpenClaw so pi-ai
+//                           skips its client-side JWT decode of apiKey; the
+//                           Claworc gateway translates path/auth/SSE upstream.
+//   - default_model/fallback_models -> agents.defaults.model {primary,fallbacks}.
+//   - agents.defaults.models allowlist rebuilt from the full prefixed model
+//     set; both map paths are `config unset` first because `openclaw config
+//     set` deep-merges into existing map values (de-selected entries would
+//     linger otherwise). That unset-then-set cycle is what makes this verb
+//     idempotent.
+//
+// Does NOT restart the agent. Exit codes per docs/shim.md (6 = validation).
+
+"use strict";
+
+// CommonJS on purpose: this file has no extension, so explicit ESM syntax
+// would depend on node's module-syntax detection heuristics.
+const { execFileSync } = require("node:child_process");
+const { createHash } = require("node:crypto");
+const { chownSync, mkdirSync, readFileSync, renameSync, writeFileSync } = require("node:fs");
+
+const CONFIG_FILE = "/home/claworc/.openclaw/openclaw.json";
+// Post-apply state cache making repeat runs true no-ops: `openclaw config
+// set` bumps a lastTouchedAt timestamp on every invocation, so skipping the
+// CLI when nothing changed is the only way re-running the same routing
+// document leaves the config byte-identical (the shim-selftest idempotency
+// check relies on this). The cached config hash guards against drift: any
+// out-of-band config edit invalidates the cache and forces a re-apply.
+const STATE_DIR = "/home/claworc/.claworc/shim";
+const STATE_FILE = `${STATE_DIR}/llm-state.json`;
+
+function configHash() {
+  try {
+    return createHash("sha256").update(readFileSync(CONFIG_FILE)).digest("hex");
+  } catch {
+    return "";
+  }
+}
+
+const EXIT_INTERNAL = 1;
+const EXIT_VALIDATION = 6;
+
+function validationFail(msg) {
+  process.stdout.write(`${JSON.stringify({ error: msg })}\n`);
+  process.exit(EXIT_VALIDATION);
+}
+
+function openclaw(args, { ignoreFailure = false } = {}) {
+  try {
+    execFileSync("/command/s6-setuidgid", ["claworc", "/usr/bin/openclaw", ...args], {
+      env: { ...process.env, HOME: "/home/claworc" },
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 60_000,
+    });
+  } catch (err) {
+    if (ignoreFailure) return;
+    const stderr = err.stderr ? err.stderr.toString().trim() : "";
+    process.stderr.write(`openclaw ${args.slice(0, 3).join(" ")} failed: ${stderr || err.message}\n`);
+    process.exit(EXIT_INTERNAL);
+  }
+}
+
+let raw;
+try {
+  raw = readFileSync(0, "utf8");
+} catch (err) {
+  process.stderr.write(`read stdin: ${err.message}\n`);
+  process.exit(EXIT_INTERNAL);
+}
+
+let doc;
+try {
+  doc = JSON.parse(raw);
+} catch (err) {
+  validationFail(`invalid JSON routing document: ${err.message}`);
+}
+if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+  validationFail("routing document must be a JSON object");
+}
+
+const style = typeof doc.style === "string" && doc.style !== "" ? doc.style : "openai";
+if (style !== "openai") {
+  validationFail(`unsupported llm style ${JSON.stringify(style)}: openclaw speaks the openai dialect only`);
+}
+
+const providers = Array.isArray(doc.providers) ? doc.providers : [];
+const defaultModel = typeof doc.default_model === "string" ? doc.default_model : "";
+const fallbackModels = Array.isArray(doc.fallback_models)
+  ? doc.fallback_models.filter((m) => typeof m === "string" && m !== "")
+  : [];
+
+if (providers.length > 0 && (typeof doc.proxy_url !== "string" || doc.proxy_url === "")) {
+  validationFail("proxy_url is required when providers are present");
+}
+
+// --- providers -> models.providers -------------------------------------
+const providersMap = {};
+const prefixedProviderModels = [];
+for (const p of providers) {
+  if (!p || typeof p !== "object" || typeof p.key !== "string" || p.key === "") {
+    validationFail("each provider needs a non-empty string key");
+  }
+  let api = typeof p.api_type === "string" && p.api_type !== "" ? p.api_type : "openai-completions";
+  // Codex declares openai-responses to OpenClaw (see instances.go).
+  if (api === "openai-codex-responses") api = "openai-responses";
+
+  const models = [];
+  for (const m of Array.isArray(p.models) ? p.models : []) {
+    if (!m || typeof m !== "object" || typeof m.id !== "string" || m.id === "") continue;
+    const prefix = `${p.key}/`;
+    const id = m.id.startsWith(prefix) ? m.id.slice(prefix.length) : m.id;
+    const entry = { ...m, id };
+    // OpenClaw's provider-model schema requires `name`; routing documents
+    // (docs/shim.md) may carry id-only entries.
+    if (typeof entry.name !== "string" || entry.name === "") entry.name = id;
+    models.push(entry);
+    prefixedProviderModels.push(`${p.key}/${id}`);
+  }
+
+  providersMap[p.key] = {
+    baseUrl: doc.proxy_url,
+    api,
+    apiKey: typeof p.api_key === "string" ? p.api_key : "",
+    models,
+  };
+}
+
+// --- desired-state short-circuit -----------------------------------------
+const allowlist = {};
+if (defaultModel !== "") {
+  for (const name of [defaultModel, ...fallbackModels, ...prefixedProviderModels]) {
+    allowlist[name] = {};
+  }
+}
+const desired = JSON.stringify({ defaultModel, fallbackModels, allowlist, providersMap });
+try {
+  const state = JSON.parse(readFileSync(STATE_FILE, "utf8"));
+  if (state.desired === desired && state.configHash !== "" && state.configHash === configHash()) {
+    process.stderr.write("routing document already applied and config unchanged; nothing to do\n");
+    process.exit(0);
+  }
+} catch {
+  /* no valid state cache — apply below */
+}
+
+// --- default_model/fallback_models -> agents.defaults.model + allowlist ---
+if (defaultModel !== "") {
+  const modelConfig = { primary: defaultModel, fallbacks: fallbackModels };
+  openclaw(["config", "set", "agents.defaults.model", JSON.stringify(modelConfig), "--json"]);
+
+  // Allowlist restricting the UI dropdown to configured models. Rebuilt from
+  // scratch: unset first (deep-merge guard, `openclaw config set` merges into
+  // existing map values), then set the full prefixed set.
+  openclaw(["config", "unset", "agents.defaults.models"], { ignoreFailure: true });
+  openclaw(["config", "set", "agents.defaults.models", JSON.stringify(allowlist), "--json"]);
+}
+
+if (Object.keys(providersMap).length > 0) {
+  // Clear the providers map first so de-selected providers are removed
+  // instead of being deep-merged with the previous config.
+  openclaw(["config", "unset", "models.providers"], { ignoreFailure: true });
+  openclaw(["config", "set", "models.providers", JSON.stringify(providersMap), "--json"]);
+}
+
+// Record what was applied (and the resulting config fingerprint) so the next
+// identical run is a no-op.
+try {
+  mkdirSync(STATE_DIR, { recursive: true });
+  const tmp = `${STATE_FILE}.tmp.${process.pid}`;
+  writeFileSync(tmp, JSON.stringify({ desired, configHash: configHash() }));
+  try {
+    chownSync(tmp, 1000, 1000); // claworc:claworc
+  } catch {
+    /* not root — ownership already correct */
+  }
+  renameSync(tmp, STATE_FILE);
+} catch (err) {
+  process.stderr.write(`warning: could not persist llm-state cache: ${err.message}\n`);
+}
+
+process.exit(0);
