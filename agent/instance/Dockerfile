@@ -30,7 +30,7 @@ RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       tzdata locales \
       openssh-server git python3 python3-pip python3-venv python3-numpy python-is-python3 \
-      build-essential procps cron nodejs \
+      build-essential procps cron nodejs unzip \
       libvips42 \
       sudo && \
     echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen && \
