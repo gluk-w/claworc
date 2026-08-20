@@ -49,5 +49,12 @@ if [ -n "$OPENCLAW_INITIAL_SLACK" ]; then
     s6-setuidgid claworc openclaw config set channels.slack "$OPENCLAW_INITIAL_SLACK" --json
 fi
 
+# Same contract for the Claworc-managed Discord config (token comes from the
+# DISCORD_BOT_TOKEN env var, never from this blob).
+if [ -n "$OPENCLAW_INITIAL_DISCORD" ]; then
+    s6-setuidgid claworc openclaw config unset channels.discord || true
+    s6-setuidgid claworc openclaw config set channels.discord "$OPENCLAW_INITIAL_DISCORD" --json
+fi
+
 echo "Starting OpenClaw Gateway (foreground) as claworc..."
 exec bash -c "tail -f /dev/null | s6-setuidgid claworc /usr/bin/openclaw gateway run >> /var/log/claworc/openclaw.log 2>&1"

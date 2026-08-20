@@ -21,6 +21,7 @@ var ReservedEnvVarNames = []string{
 	"OPENCLAW_INITIAL_MODELS",
 	"OPENCLAW_INITIAL_PROVIDERS",
 	"OPENCLAW_INITIAL_SLACK",
+	"OPENCLAW_INITIAL_DISCORD",
 }
 
 var envVarNameRegex = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)

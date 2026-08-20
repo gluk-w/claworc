@@ -102,29 +102,30 @@ type modelsConfig struct {
 }
 
 type instanceCreateRequest struct {
-	DisplayName        string                      `json:"display_name"`
-	CPURequest         string                      `json:"cpu_request"`
-	CPULimit           string                      `json:"cpu_limit"`
-	MemoryRequest      string                      `json:"memory_request"`
-	MemoryLimit        string                      `json:"memory_limit"`
-	StorageHomebrew    string                      `json:"storage_homebrew"`
-	StorageHome        string                      `json:"storage_home"`
-	BraveAPIKey        *string                     `json:"brave_api_key"`
-	Models             *modelsConfig               `json:"models"`
-	DefaultModel       string                      `json:"default_model"`
-	ContainerImage     *string                     `json:"container_image"`
-	VNCResolution      *string                     `json:"vnc_resolution"`
-	Timezone           *string                     `json:"timezone"`
-	UserAgent          *string                     `json:"user_agent"`
-	EnabledProviders   []uint                      `json:"enabled_providers"`
-	EnvVarsSet         map[string]string           `json:"env_vars_set"`
-	Slack              *instanceSlackCreateRequest `json:"slack"`
-	BrowserProvider    *string                     `json:"browser_provider"`
-	BrowserImage       *string                     `json:"browser_image"`
-	BrowserIdleMinutes *int                        `json:"browser_idle_minutes"`
-	BrowserStorage     *string                     `json:"browser_storage"`
-	BrowserEnabled     *bool                       `json:"browser_enabled"` // nil = enabled (default)
-	TeamID             *uint                       `json:"team_id"`
+	DisplayName        string                        `json:"display_name"`
+	CPURequest         string                        `json:"cpu_request"`
+	CPULimit           string                        `json:"cpu_limit"`
+	MemoryRequest      string                        `json:"memory_request"`
+	MemoryLimit        string                        `json:"memory_limit"`
+	StorageHomebrew    string                        `json:"storage_homebrew"`
+	StorageHome        string                        `json:"storage_home"`
+	BraveAPIKey        *string                       `json:"brave_api_key"`
+	Models             *modelsConfig                 `json:"models"`
+	DefaultModel       string                        `json:"default_model"`
+	ContainerImage     *string                       `json:"container_image"`
+	VNCResolution      *string                       `json:"vnc_resolution"`
+	Timezone           *string                       `json:"timezone"`
+	UserAgent          *string                       `json:"user_agent"`
+	EnabledProviders   []uint                        `json:"enabled_providers"`
+	EnvVarsSet         map[string]string             `json:"env_vars_set"`
+	Slack              *instanceSlackCreateRequest   `json:"slack"`
+	Discord            *instanceDiscordCreateRequest `json:"discord"`
+	BrowserProvider    *string                       `json:"browser_provider"`
+	BrowserImage       *string                       `json:"browser_image"`
+	BrowserIdleMinutes *int                          `json:"browser_idle_minutes"`
+	BrowserStorage     *string                       `json:"browser_storage"`
+	BrowserEnabled     *bool                         `json:"browser_enabled"` // nil = enabled (default)
+	TeamID             *uint                         `json:"team_id"`
 	// Pod placement overrides (admin only). nil means "use the configured
 	// global default" (resolvePlacementDefaults); an explicit value, including
 	// an empty map/slice, overrides it for this instance from creation.
@@ -746,10 +747,13 @@ func buildCreateParams(inst database.Instance) orchestrator.CreateParams {
 		}
 	}
 	envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
-	// Slack config rides an env var so every (re)start reconciles the agent's
-	// channels.slack block from the DB via the boot script.
+	// Slack/Discord config ride env vars so every (re)start reconciles the
+	// agent's channels.* blocks from the DB via the boot script.
 	if slackEnv := renderInitialSlackEnv(inst); slackEnv != "" {
 		envVars["OPENCLAW_INITIAL_SLACK"] = slackEnv
+	}
+	if discordEnv := renderInitialDiscordEnv(inst); discordEnv != "" {
+		envVars["OPENCLAW_INITIAL_DISCORD"] = discordEnv
 	}
 
 	placement := instancePlacementParams(inst)
@@ -1073,6 +1077,28 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Discord connection: same pattern as Slack above, with a single bot
+	// token riding the encrypted env-vars path as DISCORD_BOT_TOKEN.
+	discordConfigJSON := ""
+	if body.Discord != nil {
+		discordCfg := body.Discord.instanceDiscordConfig
+		if discordCfg.Channels == nil {
+			discordCfg.Channels = []discordChannelRule{}
+		}
+		if err := validateDiscordConfig(&discordCfg); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		b, _ := json.Marshal(discordCfg)
+		discordConfigJSON = string(b)
+		if body.Discord.BotToken != "" {
+			if body.EnvVarsSet == nil {
+				body.EnvVarsSet = map[string]string{}
+			}
+			body.EnvVarsSet[discordBotTokenEnvVar] = body.Discord.BotToken
+		}
+	}
+
 	// Serialize (and encrypt) user-supplied env vars
 	envVarsJSON := "{}"
 	if len(body.EnvVarsSet) > 0 {
@@ -1133,6 +1159,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		EnabledProviders:          string(enabledProvidersJSON),
 		EnvVars:                   envVarsJSON,
 		SlackConfig:               slackConfigJSON,
+		DiscordConfig:             discordConfigJSON,
 		SortOrder:                 maxSortOrder + 1,
 		BrowserProvider:           browserProvider,
 		BrowserImage:              browserImage,
@@ -1228,6 +1255,9 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			}
 			if slackEnv := renderInitialSlackEnv(inst); slackEnv != "" {
 				envVars["OPENCLAW_INITIAL_SLACK"] = slackEnv
+			}
+			if discordEnv := renderInitialDiscordEnv(inst); discordEnv != "" {
+				envVars["OPENCLAW_INITIAL_DISCORD"] = discordEnv
 			}
 
 			// inst was just Create()'d above with PodAnnotations/NodeSelector/

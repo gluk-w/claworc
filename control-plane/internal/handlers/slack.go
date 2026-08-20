@@ -227,9 +227,10 @@ func slackResponseFor(inst database.Instance) instanceSlackResponse {
 	return resp
 }
 
-// resolveInstanceForSlack loads the instance from the URL id parameter and
+// resolveInstanceForChannelSettings loads the instance from the URL id
+// parameter for the chat-channel settings endpoints (Slack, Discord) and
 // enforces per-instance access (same model as the webhook admin endpoints).
-func resolveInstanceForSlack(w http.ResponseWriter, r *http.Request) (*database.Instance, bool) {
+func resolveInstanceForChannelSettings(w http.ResponseWriter, r *http.Request) (*database.Instance, bool) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid instance ID")
@@ -249,7 +250,7 @@ func resolveInstanceForSlack(w http.ResponseWriter, r *http.Request) (*database.
 
 // GET /api/v1/instances/{id}/slack
 func GetInstanceSlack(w http.ResponseWriter, r *http.Request) {
-	inst, ok := resolveInstanceForSlack(w, r)
+	inst, ok := resolveInstanceForChannelSettings(w, r)
 	if !ok {
 		return
 	}
@@ -273,7 +274,7 @@ type instanceSlackUpdateRequest struct {
 // while a config-only change is pushed live over SSH with just a gateway
 // restart.
 func UpdateInstanceSlack(w http.ResponseWriter, r *http.Request) {
-	inst, ok := resolveInstanceForSlack(w, r)
+	inst, ok := resolveInstanceForChannelSettings(w, r)
 	if !ok {
 		return
 	}

@@ -1,4 +1,5 @@
 import type { SlackCreateConfig } from "./slack";
+import type { DiscordCreateConfig } from "./discord";
 
 export interface InstanceModels {
   effective: string[];
@@ -92,6 +93,7 @@ export interface InstanceCreatePayload {
   enabled_providers?: number[];
   env_vars_set?: Record<string, string>;
   slack?: SlackCreateConfig;
+  discord?: DiscordCreateConfig;
   browser_provider?: string;
   browser_image?: string;
   browser_idle_minutes?: number;

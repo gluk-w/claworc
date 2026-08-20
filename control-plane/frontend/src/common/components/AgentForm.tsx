@@ -16,8 +16,10 @@ import PortsEditor from "@common/components/PortsEditor";
 import StickyActionBar from "@common/components/StickyActionBar";
 import ConfirmDialog from "@common/components/ConfirmDialog";
 import SlackChannelsEditor, { SlackDMPolicySelect } from "@common/components/SlackChannelsEditor";
+import DiscordChannelsEditor, { DiscordDMPolicySelect } from "@common/components/DiscordChannelsEditor";
 import type { InstanceCreatePayload, PortSpec, Toleration } from "@common/types/instance";
 import type { SlackChannel } from "@common/types/slack";
+import type { DiscordChannelRule } from "@common/types/discord";
 import type { UserTeamMembership } from "@common/types/auth";
 
 interface AgentFormProps {
@@ -139,6 +141,13 @@ export default function AgentForm({
   const [slackChannels, setSlackChannels] = useState<SlackChannel[]>([]);
   const [slackDmPolicy, setSlackDmPolicy] = useState("");
 
+  // Discord connection (optional): same contract as Slack, single bot token
+  // riding the encrypted env-var path server-side (DISCORD_BOT_TOKEN).
+  const [discordEnabled, setDiscordEnabled] = useState(false);
+  const [discordBotToken, setDiscordBotToken] = useState("");
+  const [discordChannels, setDiscordChannels] = useState<DiscordChannelRule[]>([]);
+  const [discordDmPolicy, setDiscordDmPolicy] = useState("");
+
   const [showNoModelsWarning, setShowNoModelsWarning] = useState(false);
 
   const buildPayload = (): InstanceCreatePayload | null => {
@@ -196,6 +205,14 @@ export default function AgentForm({
         dm_policy: slackDmPolicy || undefined,
         bot_token: slackBotToken.trim() || undefined,
         app_token: slackAppToken.trim() || undefined,
+      };
+    }
+    if (discordEnabled) {
+      payload.discord = {
+        enabled: true,
+        channels: discordChannels.filter((c) => c.guild_id.trim() !== ""),
+        dm_policy: discordDmPolicy || undefined,
+        bot_token: discordBotToken.trim() || undefined,
       };
     }
 
@@ -457,6 +474,56 @@ export default function AgentForm({
               )}
               <SlackChannelsEditor channels={slackChannels} onChange={setSlackChannels} />
               <SlackDMPolicySelect value={slackDmPolicy} onChange={setSlackDmPolicy} />
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Discord */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="text-sm font-medium text-gray-900 mb-1">Discord</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Optionally connect this agent to Discord with a bot token, so it's reachable on Discord
+          from first boot. The token is stored encrypted. Can be changed later in the agent's
+          settings.
+        </p>
+        <div className="space-y-4">
+          <label className="flex items-start gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={discordEnabled}
+              onChange={(e) => setDiscordEnabled(e.target.checked)}
+              className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span>
+              <span className="block text-sm text-gray-900">Enable Discord</span>
+              <span className="block text-xs text-gray-500">
+                The agent joins Discord at startup and responds in the allowed servers below.
+              </span>
+            </span>
+          </label>
+          {discordEnabled && (
+            <>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Bot token</label>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={discordBotToken}
+                  onChange={(e) => setDiscordBotToken(e.target.value)}
+                  placeholder="Bot token from the Developer Portal"
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              {!discordBotToken.trim() && (
+                <p className="text-xs text-amber-700">
+                  A bot token is required for the agent to connect — unless it's provided as a
+                  DISCORD_BOT_TOKEN env var (global or per-agent). The bot's Message Content
+                  Intent must be enabled in the Discord Developer Portal.
+                </p>
+              )}
+              <DiscordChannelsEditor channels={discordChannels} onChange={setDiscordChannels} />
+              <DiscordDMPolicySelect value={discordDmPolicy} onChange={setDiscordDmPolicy} />
             </>
           )}
         </div>

@@ -404,6 +404,10 @@ func main() {
 			r.Get("/instances/{id}/slack", handlers.GetInstanceSlack)
 			r.Put("/instances/{id}/slack", handlers.UpdateInstanceSlack)
 
+			// Discord connection (per-instance) — same access model as webhooks
+			r.Get("/instances/{id}/discord", handlers.GetInstanceDiscord)
+			r.Put("/instances/{id}/discord", handlers.UpdateInstanceDiscord)
+
 			// Chat WebSocket
 			r.Get("/instances/{id}/chat", handlers.ChatProxy)
 
