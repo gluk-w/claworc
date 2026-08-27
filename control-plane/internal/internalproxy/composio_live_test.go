@@ -268,6 +268,12 @@ func TestComposioContract_WritePaths(t *testing.T) {
 		name string
 		path string
 		body any
+		// routedSlug, when set, is a Composio error slug that only this path's
+		// own handler can produce. The execute probe deliberately names a user
+		// with no connected account, and Composio reports that as a *404* —
+		// indistinguishable by status alone from the endpoint having moved. The
+		// slug is what tells the two apart.
+		routedSlug string
 	}{
 		{
 			name: "auth config create",
@@ -282,18 +288,24 @@ func TestComposioContract_WritePaths(t *testing.T) {
 		{
 			// A real tool slug, but a user_id with no connected account, so the
 			// request is rejected before anything runs.
-			name: "tool execute",
-			path: "/tools/execute/" + anyToolSlug(t, c),
-			body: map[string]any{"arguments": map[string]any{}, "user_id": contractUserID},
+			name:       "tool execute",
+			path:       "/tools/execute/" + anyToolSlug(t, c),
+			body:       map[string]any{"arguments": map[string]any{}, "user_id": contractUserID},
+			routedSlug: "ActionExecute_ConnectedAccountNotFound",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			status, body, _ := c.do(liveContext(t), http.MethodPost, tc.path, tc.body)
+			status, body, err := c.do(liveContext(t), http.MethodPost, tc.path, tc.body)
+			slug := ComposioErrorSlug(err)
 			switch {
+			case status == http.StatusNotFound && tc.routedSlug != "" && slug == tc.routedSlug:
+				// Reached this path's handler and was rejected for the reason
+				// the probe engineered — the endpoint is where we expect.
 			case status == http.StatusNotFound:
-				t.Errorf("POST %s → 404: the endpoint moved. Body: %s", tc.path, truncate(string(body), 300))
+				t.Errorf("POST %s → 404 (slug %q): the endpoint moved. Body: %s",
+					tc.path, slug, truncate(string(body), 300))
 			case status == http.StatusUnauthorized || status == http.StatusForbidden:
 				t.Errorf("POST %s → %d: the API key lacks this permission area (see docs/connections.md)",
 					tc.path, status)
