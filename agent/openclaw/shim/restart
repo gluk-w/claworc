@@ -1,0 +1,15 @@
+#!/bin/sh
+# restart — restart the agent service (docs/shim.md). Exit 0 when the restart
+# was accepted.
+#
+# svc-agent's run script supervises the gateway pipeline in a bash that traps
+# TERM and forwards it to its whole process group, so a plain `s6-svc -r`
+# cleanly kills the gateway (releasing port 18789) and s6 respawns it.
+set -eu
+
+SVC_DIR=/run/service/svc-agent
+if [ ! -d "$SVC_DIR" ]; then
+    echo "svc-agent service directory missing: $SVC_DIR" >&2
+    exit 1
+fi
+exec /command/s6-svc -r "$SVC_DIR"

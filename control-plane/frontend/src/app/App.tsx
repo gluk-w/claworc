@@ -17,7 +17,6 @@ import ChatPopupPage from "./pages/ChatPopupPage";
 import SkillsPage from "./pages/SkillsPage";
 import BackupsPage from "./pages/BackupsPage";
 import SharedFoldersPage from "./pages/SharedFoldersPage";
-import KanbanPage from "./pages/KanbanPage";
 import { useAuth } from "@common/contexts/AuthContext";
 import { checkSetupRequired } from "@common/api/auth";
 
@@ -112,7 +111,6 @@ export default function App() {
         />
         <Route path="/instances/:id" element={<AgentDetailPage />} />
         <Route path="/shared-folders" element={<SharedFoldersPage />} />
-        <Route path="/kanban" element={<KanbanPage />} />
         <Route path="/profile" element={<AccountPage />} />
         <Route
           path="/settings"

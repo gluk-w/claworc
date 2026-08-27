@@ -1,0 +1,20 @@
+#!/bin/sh
+# Conformance-harness meta verb: prints a static, valid contract-v1 document.
+set -eu
+cat <<'EOF'
+{
+  "contract": 1,
+  "shim_version": "0.0.1-test",
+  "agent": {"name": "fakeagent", "version": "1.2.3"},
+  "capabilities": ["chat", "chat.abort", "session.reset", "config", "configure-llm", "restart"],
+  "config_files": [
+    {"id": "main", "path": "/tmp/fake-agent.conf", "language": "ini", "label": "agent.conf", "restart_required": true}
+  ],
+  "workspace_dir": "/home/claworc/workspace",
+  "skills_dir": "/home/claworc/skills",
+  "log_files": [{"path": "/var/log/claworc/agent.log", "label": "Agent"}],
+  "llm": {"styles": ["openai"]},
+  "session_persistence": "emulated",
+  "some_future_field": {"ignored": true}
+}
+EOF

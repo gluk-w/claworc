@@ -73,6 +73,8 @@ export default function SettingsPage() {
   // Deferred-save state shared across tabs.
   const [pendingBraveKey, setPendingBraveKey] = useState<string | null>(null);
   const [resources, setResources] = useState<Record<string, string>>({});
+  // Per-agent-type default images (non-OpenClaw). null = untouched.
+  const [pendingAgentImages, setPendingAgentImages] = useState<Record<string, string> | null>(null);
   const [pendingAnalyticsConsent, setPendingAnalyticsConsent] = useState<
     "opt_in" | "opt_out" | null
   >(null);
@@ -100,6 +102,7 @@ export default function SettingsPage() {
   const hasChanges =
     pendingBraveKey !== null ||
     Object.keys(resources).length > 0 ||
+    pendingAgentImages !== null ||
     pendingAnalyticsConsent !== null;
   const stickyVisible =
     (activeTab === "api-keys" ||
@@ -111,6 +114,8 @@ export default function SettingsPage() {
     if (!resourcesValid) return;
     const payload: SettingsUpdatePayload = { ...resources };
     if (pendingBraveKey !== null) payload.brave_api_key = pendingBraveKey;
+    if (pendingAgentImages !== null)
+      payload.default_agent_images = { ...(settings.default_agent_images ?? {}), ...pendingAgentImages };
     if (pendingAnalyticsConsent !== null)
       payload.analytics_consent = pendingAnalyticsConsent;
 
@@ -118,6 +123,7 @@ export default function SettingsPage() {
       onSuccess: () => {
         setPendingBraveKey(null);
         setResources({});
+        setPendingAgentImages(null);
         setPendingAnalyticsConsent(null);
       },
     });
@@ -126,6 +132,7 @@ export default function SettingsPage() {
   const handleReset = () => {
     setPendingBraveKey(null);
     setResources({});
+    setPendingAgentImages(null);
     setPendingAnalyticsConsent(null);
     setResetKey((k) => k + 1);
   };
@@ -171,6 +178,7 @@ export default function SettingsPage() {
             resetKey={resetKey}
             resources={resources}
             setResources={setResources}
+            setPendingAgentImages={setPendingAgentImages}
             resourceErrors={resourceErrors}
             handleSaveEnvVars={handleSaveEnvVars}
             isSaving={updateMutation.isPending}
@@ -475,6 +483,7 @@ function EnvironmentTab({
   resetKey,
   resources,
   setResources,
+  setPendingAgentImages,
   resourceErrors,
   handleSaveEnvVars,
   isSaving,
@@ -483,6 +492,7 @@ function EnvironmentTab({
   resetKey: number;
   resources: Record<string, string>;
   setResources: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setPendingAgentImages: React.Dispatch<React.SetStateAction<Record<string, string> | null>>;
   resourceErrors: ReturnType<typeof validateResourceQuantities>;
   handleSaveEnvVars: (delta: { set: Record<string, string>; unset: string[] }) => Promise<void>;
   isSaving: boolean;
@@ -534,7 +544,7 @@ function EnvironmentTab({
         </p>
         <div key={resetKey} className="space-y-4">
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Image</label>
+            <label className="block text-xs text-gray-500 mb-1">OpenClaw Image</label>
             <input
               type="text"
               defaultValue={settings.default_agent_image ?? ""}
@@ -543,6 +553,24 @@ function EnvironmentTab({
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
+          {[
+            { type: "hermes", label: "Hermes Image", placeholder: "claworc/hermes:latest" },
+            { type: "nanoclaw", label: "NanoClaw Image", placeholder: "claworc/nanoclaw:latest" },
+            { type: "custom", label: "Custom Agent Image", placeholder: "Set per agent when empty" },
+          ].map((f) => (
+            <div key={f.type}>
+              <label className="block text-xs text-gray-500 mb-1">{f.label}</label>
+              <input
+                type="text"
+                defaultValue={settings.default_agent_images?.[f.type] ?? ""}
+                onChange={(e) =>
+                  setPendingAgentImages((m) => ({ ...(m ?? {}), [f.type]: e.target.value }))
+                }
+                placeholder={f.placeholder}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          ))}
           <div>
             <label className="block text-xs text-gray-500 mb-1">Timezone</label>
             <input
@@ -641,7 +669,7 @@ function EnvironmentTab({
       <EnvVarsEditor
         values={settings.default_env_vars ?? {}}
         title="Environment Variables"
-        description="Passed to every OpenClaw instance at container start. Per-instance values override these when the name matches. Values are encrypted at rest. Saving restarts every running instance so the change takes effect immediately."
+        description="Passed to every agent container at start. Per-agent values override these when the name matches. Values are encrypted at rest. Saving restarts every running agent so the change takes effect immediately."
         onSave={handleSaveEnvVars}
         isSaving={isSaving}
         emptyMessage="No global environment variables set."

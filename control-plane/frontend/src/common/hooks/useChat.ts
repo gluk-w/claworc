@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatMessage, ConnectionState, GatewayFrame } from "@common/types/chat";
+import type { ChatFrame, ChatMessage, ConnectionState } from "@common/types/chat";
 
 let msgCounter = 0;
 function nextId(): string {
@@ -9,22 +9,6 @@ function nextId(): string {
 const BACKOFF_INITIAL = 1000;
 const BACKOFF_MAX = 30000;
 const MAX_RETRIES = 5;
-
-/** Extract text from a gateway chat message content field (array of blocks or string). */
-function extractText(content: unknown): string | undefined {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    const parts: string[] = [];
-    for (const block of content) {
-      if (typeof block === "string") parts.push(block);
-      else if (block && typeof block === "object" && typeof (block as any).text === "string") {
-        parts.push((block as any).text);
-      }
-    }
-    return parts.length > 0 ? parts.join("") : undefined;
-  }
-  return undefined;
-}
 
 export function useChat(instanceId: number, enabled: boolean, initialMessages?: ChatMessage[]) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages ?? []);
@@ -37,10 +21,10 @@ export function useChat(instanceId: number, enabled: boolean, initialMessages?: 
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stableTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const enabledRef = useRef(enabled);
-  // Track the current streaming run so we can update the message in-place
-  const streamingRunRef = useRef<{ runId: string; msgId: string } | null>(null);
-  // Track completed run IDs so chat snapshots arriving after lifecycle end don't create duplicates
-  const completedRunsRef = useRef<Set<string>>(new Set());
+  // Track the current streaming assistant message so we can update it in-place
+  const streamingRef = useRef<{ messageId: string; msgId: string } | null>(null);
+  // Track completed message IDs so stray snapshots arriving after `end` don't create duplicates
+  const completedMessagesRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     enabledRef.current = enabled;
@@ -93,156 +77,93 @@ export function useChat(instanceId: number, enabled: boolean, initialMessages?: 
     };
 
     ws.onmessage = (event) => {
-      let frame: GatewayFrame;
+      let frame: ChatFrame;
       try {
         frame = JSON.parse(event.data);
       } catch {
         return;
       }
+      if (!frame || typeof frame !== "object") return;
 
-      switch (frame.type) {
-        case "connected":
-          setConnectionState("connected");
-          // Only reset retries after connection is stable for 5s
-          // This prevents infinite reconnect loops when connections drop immediately
-          if (stableTimerRef.current) clearTimeout(stableTimerRef.current);
-          stableTimerRef.current = setTimeout(() => {
-            retriesRef.current = 0;
-            backoffRef.current = BACKOFF_INITIAL;
-          }, 5000);
-          // Only add message if last message isn't already "Connected to Gateway"
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (last?.role === "system" && last.content === "Connected to Gateway") {
-              return prev;
-            }
-            return [...prev, { id: nextId(), role: "system", content: "Connected to Gateway", timestamp: Date.now() }];
-          });
+      // Backend handshake frame
+      if ("type" in frame && frame.type === "connected") {
+        setConnectionState("connected");
+        // Only reset retries after connection is stable for 5s
+        // This prevents infinite reconnect loops when connections drop immediately
+        if (stableTimerRef.current) clearTimeout(stableTimerRef.current);
+        stableTimerRef.current = setTimeout(() => {
+          retriesRef.current = 0;
+          backoffRef.current = BACKOFF_INITIAL;
+        }, 5000);
+        // Only add message if last message isn't already "Connected to Agent"
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "system" && last.content === "Connected to Agent") {
+            return prev;
+          }
+          return [...prev, { id: nextId(), role: "system", content: "Connected to Agent", timestamp: Date.now() }];
+        });
+        return;
+      }
+
+      // Normalized shim events (forwarded verbatim by the backend)
+      if (!("event" in frame)) return;
+
+      switch (frame.event) {
+        case "start":
+          setThinkingLabel("Thinking...");
           break;
 
-        case "chat":
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: nextId(),
-              role: frame.role,
-              content: frame.content,
-              timestamp: Date.now(),
-            },
-          ]);
-          break;
+        case "assistant": {
+          const messageId = frame.message_id;
+          const text = frame.text;
+          if (!messageId || typeof text !== "string") break;
 
-        case "agent": {
-          const eventName = frame.event;
-          if (eventName === "thinking") {
-            setThinkingLabel("Thinking...");
-          } else if (eventName === "tool_use") {
-            setThinkingLabel("Working...");
+          setThinkingLabel(null);
+
+          // Skip stray snapshots for messages already finalized by `end`
+          if (completedMessagesRef.current.has(messageId)) break;
+
+          const current = streamingRef.current;
+          if (current && current.messageId === messageId) {
+            // Cumulative snapshot — replace the streaming message's content in-place
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === current.msgId ? { ...m, content: text } : m,
+              ),
+            );
+          } else {
+            // New message_id — finalize any previous streaming message and create a new one
+            if (current) completedMessagesRef.current.add(current.messageId);
+            const msgId = nextId();
+            streamingRef.current = { messageId, msgId };
+            setMessages((prev) => [
+              ...prev,
+              { id: msgId, role: "agent", content: text, timestamp: Date.now() },
+            ]);
           }
           break;
         }
+
+        case "tool":
+          setThinkingLabel("Working...");
+          break;
 
         case "error":
-          addSystemMessage(`Error: ${frame.message}`);
+          addSystemMessage(`Error: ${frame.text ?? frame.code ?? "unknown"}`);
           break;
 
-        // Raw gateway event frames (forwarded as-is from the gateway)
-        case "event": {
-          const ev = frame.event;
-          const payload = frame.payload as Record<string, unknown> | undefined;
-          if (!payload) break;
-
-          // Skip heartbeat ticks, presence, and health events
-          if (ev === "tick" || ev === "presence" || ev === "health") break;
-
-          if (ev === "agent") {
-            const stream = payload.stream as string | undefined;
-            const data = payload.data as Record<string, unknown> | undefined;
-            const runId = payload.runId as string | undefined;
-
-            if (stream === "assistant" && data && runId) {
-              const text = data.text as string | undefined;
-              if (!text) break;
-
-              setThinkingLabel(null);
-
-              const current = streamingRunRef.current;
-              if (current && current.runId === runId) {
-                // Update existing streaming message in-place
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === current.msgId ? { ...m, content: text } : m,
-                  ),
-                );
-              } else {
-                // New run — create a new agent message
-                const msgId = nextId();
-                streamingRunRef.current = { runId, msgId };
-                setMessages((prev) => [
-                  ...prev,
-                  { id: msgId, role: "agent", content: text, timestamp: Date.now() },
-                ]);
-              }
-            } else if (stream === "lifecycle") {
-              const phase = (data as any)?.phase as string | undefined;
-              if (phase === "start") {
-                setThinkingLabel("Thinking...");
-              } else if (phase === "end") {
-                setThinkingLabel(null);
-                const cur = streamingRunRef.current;
-                if (cur) completedRunsRef.current.add(cur.runId);
-                streamingRunRef.current = null;
-              }
-            }
-            break;
-          }
-
-          if (ev === "chat") {
-            // Chat events are periodic snapshots — use them as fallback
-            // if we missed the agent stream events
-            const msg = payload.message as Record<string, unknown> | undefined;
-            if (!msg) break;
-            const runId = payload.runId as string | undefined;
-            const text = extractText(msg.content);
-            if (!text) break;
-            const role = msg.role === "user" ? "user" as const : "agent" as const;
-
-            // Skip if this run was already completed via agent stream events
-            if (runId && completedRunsRef.current.has(runId)) break;
-
-            const current = streamingRunRef.current;
-            if (current && runId && current.runId === runId) {
-              // Already tracking this run via agent events — update with snapshot
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === current.msgId ? { ...m, content: text } : m,
-                ),
-              );
-            } else if (!current || (runId && current.runId !== runId)) {
-              // Not tracking — create a new message
-              setThinkingLabel(null);
-              const msgId = nextId();
-              if (runId) {
-                streamingRunRef.current = { runId, msgId };
-              }
-              setMessages((prev) => [
-                ...prev,
-                { id: msgId, role, content: text, timestamp: Date.now() },
-              ]);
-            }
-            break;
-          }
-
+        case "end": {
+          setThinkingLabel(null);
+          const current = streamingRef.current;
+          if (current) completedMessagesRef.current.add(current.messageId);
+          streamingRef.current = null;
           break;
         }
 
-        // Raw gateway response frames (ack for chat.send etc.)
-        case "res": {
-          if (!frame.ok && frame.error) {
-            addSystemMessage(`Error: ${frame.error.message ?? frame.error.code ?? "unknown"}`);
-          }
+        // Unknown event types MUST be ignored (forward compatibility)
+        default:
           break;
-        }
       }
     };
 
@@ -320,7 +241,7 @@ export function useChat(instanceId: number, enabled: boolean, initialMessages?: 
   const stopResponse = useCallback(() => {
     sendCommand("/stop");
     setThinkingLabel(null);
-    streamingRunRef.current = null;
+    streamingRef.current = null;
   }, [sendCommand]);
 
   /** Abort current run, reset session, and clear local history */
@@ -328,8 +249,8 @@ export function useChat(instanceId: number, enabled: boolean, initialMessages?: 
     sendCommand("/stop");
     sendCommand("/new");
     setThinkingLabel(null);
-    streamingRunRef.current = null;
-    completedRunsRef.current.clear();
+    streamingRef.current = null;
+    completedMessagesRef.current.clear();
     setMessages([]);
   }, [sendCommand]);
 

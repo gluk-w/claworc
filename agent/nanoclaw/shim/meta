@@ -1,0 +1,43 @@
+#!/bin/sh
+# meta — Claworc agent shim capability probe (docs/shim.md, contract v1).
+# Static heredoc; the NanoClaw version is baked into the image at build time
+# (agent/nanoclaw/Dockerfile writes /opt/claworc/shim/nanoclaw.version from
+# ARG NANOCLAW_VERSION). Must stay fast and must not require the agent to be
+# running.
+set -eu
+
+SHIM_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+VERSION=""
+[ -s "$SHIM_DIR/nanoclaw.version" ] && VERSION=$(head -n1 "$SHIM_DIR/nanoclaw.version" | tr -cd '0-9A-Za-z.-')
+
+if [ -n "$VERSION" ]; then
+    AGENT_JSON=$(printf '{"name":"nanoclaw","version":"%s"}' "$VERSION")
+else
+    AGENT_JSON='{"name":"nanoclaw"}'
+fi
+
+# Notes:
+# - config: container.json is NanoClaw's real per-agent-group config file
+#   (provider, model, assistantName, mcpServers, maxMessagesPerPrompt); the
+#   agent-runner reads it at startup, hence restart_required.
+# - chat_end_detection "exact": end-of-turn is the runner's own terminal
+#   processing_ack row, not a quiet-period heuristic.
+# - session_persistence "native": each Claworc session key maps to its own
+#   NanoClaw session-DB pair; the Claude Agent SDK continuation id stored in
+#   its session_state survives runner and instance restarts.
+cat <<EOF
+{
+  "contract": 1,
+  "shim_version": "0.1.0",
+  "agent": $AGENT_JSON,
+  "capabilities": ["chat", "chat.abort", "session.reset", "config", "configure-llm", "restart"],
+  "config_files": [
+    {"id": "main", "path": "/home/claworc/workspace/container.json", "language": "json", "label": "container.json", "restart_required": true}
+  ],
+  "workspace_dir": "/home/claworc/workspace",
+  "log_files": [{"path": "/var/log/claworc/agent.log", "label": "Agent"}],
+  "llm": {"styles": ["anthropic"]},
+  "session_persistence": "native",
+  "chat_end_detection": "exact"
+}
+EOF

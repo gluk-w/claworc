@@ -112,14 +112,14 @@ into user-visible places inside the container:
 
 - **S6 services** — every `run` script uses `#!/command/with-contenv
   bash`, which re-exports vars captured by s6-overlay's `/init` into
-  `/run/s6/container_environment/`. Services like `svc-openclaw` and
+  `/run/s6/container_environment/`. Services like `svc-agent` and
   `svc-desktop` therefore see the vars directly.
 - **`docker exec` / `kubectl exec`** — inherit PID 1's environ from
   the container runtime.
 - **SSH sessions** — do **not** inherit sshd's environ. sshd runs the
   user through PAM and `login.defs`, which build a fresh env. To cover
   this path, the init-setup oneshot
-  (`agent/instance/rootfs/etc/s6-overlay/scripts/init-setup.sh`) snapshots PID
+  (`agent/openclaw/rootfs/etc/s6-overlay/scripts/init-setup.sh`) snapshots PID
   1's env into two files at boot:
   - `/etc/environment` — read by `pam_env.so`, present in
     `/etc/pam.d/sshd`, `cron`, `login`, and `su`.

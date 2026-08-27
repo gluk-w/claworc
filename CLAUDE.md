@@ -2,18 +2,19 @@
 
 ## Project Overview
 
-OpenClaw Orchestrator (Claworc) manages multiple OpenClaw instances in Kubernetes or Docker.
+OpenClaw Orchestrator (Claworc) manages multiple AI agent instances in Kubernetes or Docker — OpenClaw by
+default, plus Hermes, NanoClaw, or any custom image implementing the agent shim contract (`docs/shim.md`).
 Each instance runs in its own container/pod and allows users easy access to a Chromium browser & terminal 
 for collaboration with the agent.
 
 The project consists of the following components:
 * Control Plane (Golang backend and React frontend) with dashboard, VNC client for Chromium, Terminal, Logs and other useful stuff.
-* Agent image with OpenClaw installed. It is compatible with both ARM64 and AMD64 architectures.
+* Agent images (`claworc/openclaw`, `claworc/hermes`, `claworc/nanoclaw`, plus a copy-me template). Compatible with both ARM64 and AMD64 architectures.
 * Helm chart for deployment to Kubernetes.
 
 ## Repository Structure
 
-- `agent/` - Base docker image with OpenClaw instance (`claworc/openclaw`) and images with various browsers `claworc/<browser>-browser`
+- `agent/` - Agent docker images (`agent/openclaw`, `agent/hermes`, `agent/nanoclaw`, `agent/template`) and browser images `claworc/<browser>-browser`
 - `control-plane/` - Main application (Go backend + React frontend)
     - `main.go` - Entry point, Chi router, embedded SPA serving
     - `internal/` - Go packages (config, database, handlers, middleware, orchestrator, sshproxy, sshterminal)
@@ -21,7 +22,6 @@ The project consists of the following components:
     - `Dockerfile` - Multi-stage build (Node frontend + Go backend)
 - `helm/` - Helm chart for deploying the dashboard to Kubernetes
 - `website/` - Landing page for claworc.com
-- `website_docs/` - End-user documentation powered by Mintlify. It is automatically deployed to claworc.com/docs
 - `docs/` - Detailed internal specs (architecture, API, data model, UI, features)
 
 ## Architecture
@@ -35,6 +35,16 @@ health at `/health`. Logs are streamed via SSE. WebSocket proxying for chat and 
 
 **LLM Gateway**: Proxy for LLM requests that replaces virtual keys with real, globally configured API tokens. It
 records statistics in a separate SQLite database. See`docs/virtual-keys.md`.
+
+**Agent Shim** (`internal/agentshim/`): The universal interface between the control plane and the AI agent
+running inside an instance container (OpenClaw, Hermes, NanoClaw, custom). All agent-specific knowledge —
+chat protocol, config paths, LLM provider config, restart — lives behind the `Client`/`Session` interfaces.
+Two adapters: `shimexec/` speaks the exec-based shim contract (`docs/shim.md`, scripts at `/opt/claworc/shim/`
+inside the image, invoked over SSH), and `openclawnative/` drives pre-shim OpenClaw images via their gateway
+WebSocket + CLI. The factory prefers the shim when the image ships it and falls back to native for legacy
+OpenClaw images. Chat, webhooks, config editing, and virtual-key routing all go through this layer. The
+agent-type registry (`registry.go`) drives per-type defaults and UI capability gating. Layering is strict:
+handlers → agentshim → sshproxy (transport) → orchestrator (containers).
 
 **Orchestrator** (`internal/orchestrator/`): Thin abstraction over the underlying container runtime
 (Kubernetes or Docker). Its job is generic container primitives only — instance lifecycle, exec, file

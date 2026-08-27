@@ -2,45 +2,47 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/coder/websocket"
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
-	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
 
 const webhookSessionPrefix = "claworc-webhook-"
 
-// webhookGetTunnelPort is the getTunnelPort call used by RunWebhookBridge.
-// Replaced in tests to inject a local fake-gateway port.
-var webhookGetTunnelPort = getTunnelPort
+// webhookOpenSession opens the agent chat session RunWebhookBridge streams
+// from. Replaced in tests to inject a fake session.
+var webhookOpenSession = func(ctx context.Context, instanceID uint, sessionKey string) (agentshim.Session, error) {
+	client, err := agentshim.DefaultFactory().ForInstance(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	return client.OpenSession(ctx, sessionKey)
+}
 
 // WebhookAttachment is a single file delivered alongside a webhook
 // request. The bridge writes Content into the instance at
-// /tmp/webhooks/<session>/<Filename> before sending chat.send.
+// /tmp/webhooks/<session>/<Filename> before sending the chat message.
 type WebhookAttachment struct {
 	Filename string
 	Content  []byte
 }
 
-// RunWebhookBridge dials the OpenClaw gateway for the given instance,
-// uploads any attachments into /tmp/webhooks/<sessionName>/, sends a
-// single chat.send frame using the claworc-webhook-<sessionName> key
-// (so webhook sessions are identifiable in OpenClaw's session list),
-// and reads gateway events until the lifecycle/end frame arrives.
-// Returns the final cumulative assistant text.
+// RunWebhookBridge opens an agent chat session for the given instance,
+// uploads any attachments into /tmp/webhooks/<sessionName>/, sends a single
+// message using the claworc-webhook-<sessionName> key (so webhook sessions
+// are identifiable in the agent's session list), and reads normalized chat
+// events until the "end" event arrives. Returns the final cumulative
+// assistant text.
 //
-// This mirrors the moderator runner's gateway loop (see
-// internal/moderator/runner.go) but synchronously blocks the HTTP caller
-// instead of streaming into Kanban comments. The supplied ctx is the
-// HTTP request context — its cancellation (client disconnect) or deadline
+// This synchronously blocks the HTTP caller. The supplied ctx is the HTTP
+// request context — its cancellation (client disconnect) or deadline
 // (client HTTP timeout) terminates the call.
 func RunWebhookBridge(ctx context.Context, instanceID uint, sessionName, message string, attachments []WebhookAttachment) (reply string, err error) {
 	if sessionName == "" {
@@ -81,48 +83,20 @@ func RunWebhookBridge(ctx context.Context, instanceID uint, sessionName, message
 		finalMessage = b.String()
 	}
 
-	port, err := webhookGetTunnelPort(instanceID, "gateway")
-	if err != nil {
-		return "", fmt.Errorf("no gateway tunnel: %w", err)
-	}
-
-	var gatewayToken string
-	if inst.GatewayToken != "" {
-		if tok, derr := utils.Decrypt(inst.GatewayToken); derr == nil && tok != "" {
-			gatewayToken = tok
-		}
-	}
-
 	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	gwConn, err := sshproxy.DialGateway(dialCtx, port, gatewayToken)
+	sess, err := webhookOpenSession(dialCtx, instanceID, webhookSessionPrefix+sessionName)
 	cancel()
 	if err != nil {
 		return "", fmt.Errorf("dial gateway: %w", err)
 	}
-	defer gwConn.CloseNow()
+	defer sess.Close()
 
-	ocSessionKey := webhookSessionPrefix + sessionName
-	requestID := fmt.Sprintf("webhook-%d", time.Now().UnixNano())
-	sendFrame := map[string]any{
-		"type":   "req",
-		"id":     requestID,
-		"method": "chat.send",
-		"params": map[string]any{
-			"sessionKey":     ocSessionKey,
-			"message":        finalMessage,
-			"idempotencyKey": ocSessionKey + "-" + requestID,
-		},
-	}
-	sendJSON, err := json.Marshal(sendFrame)
-	if err != nil {
-		return "", fmt.Errorf("marshal chat.send: %w", err)
-	}
-	if err := gwConn.Write(ctx, websocket.MessageText, sendJSON); err != nil {
-		return "", fmt.Errorf("send chat.send: %w", err)
+	if err := sess.Send(ctx, finalMessage); err != nil {
+		return "", fmt.Errorf("send chat message: %w", err)
 	}
 
 	// Idle (activity-based) deadline: each read is bounded by idle, and the
-	// timer re-arms on every frame received. An agent that keeps streaming
+	// timer re-arms on every event received. An agent that keeps streaming
 	// events is never cut off; only a genuine stall (no events for idle) trips.
 	idle := config.Cfg.WebhookIdleTimeout
 	if idle <= 0 {
@@ -132,49 +106,32 @@ func RunWebhookBridge(ctx context.Context, instanceID uint, sessionName, message
 	var assistantText string
 	for {
 		readCtx, cancel := context.WithTimeout(ctx, idle)
-		_, data, err := gwConn.Read(readCtx)
+		ev, err := sess.Recv(readCtx)
 		cancel()
 		if err != nil {
 			// Parent ctx cancelled => client disconnected or its own deadline.
 			if ctx.Err() != nil {
 				return "", ctx.Err()
 			}
-			// Per-read deadline fired => OpenClaw produced no events for idle.
+			// Per-read deadline fired => the agent produced no events for idle.
 			if readCtx.Err() == context.DeadlineExceeded {
-				return "", fmt.Errorf("openclaw idle timeout: no events for %s", idle)
+				return "", fmt.Errorf("agent idle timeout: no events for %s", idle)
 			}
 			return "", fmt.Errorf("gateway read: %w", err)
 		}
-		var msg map[string]any
-		if err := json.Unmarshal(data, &msg); err != nil {
-			continue
-		}
-		if msg["type"] != "event" {
-			continue
-		}
-		payload, _ := msg["payload"].(map[string]any)
-		if payload == nil {
-			continue
-		}
-		stream, _ := payload["stream"].(string)
-		eventData, _ := payload["data"].(map[string]any)
-		switch stream {
-		case "assistant":
-			// OpenClaw assistant events carry the cumulative snapshot in
-			// data.text. The latest snapshot is the final reply.
-			if eventData != nil {
-				if text, _ := eventData["text"].(string); text != "" {
-					assistantText = text
-				}
+		switch ev.Kind {
+		case agentshim.EventAssistant:
+			// Assistant events carry a cumulative snapshot; the latest
+			// snapshot is the final reply.
+			if ev.Text != "" {
+				assistantText = ev.Text
 			}
-		case "lifecycle":
-			if eventData != nil {
-				phase, _ := eventData["phase"].(string)
-				if phase == "end" {
-					log.Printf("[webhook-bridge] instance=%d session=%s done bytes=%d", instanceID, utils.SanitizeForLog(sessionName), len(assistantText))
-					return assistantText, nil
-				}
+		case agentshim.EventEnd:
+			if ev.Text != "" {
+				assistantText = ev.Text
 			}
+			log.Printf("[webhook-bridge] instance=%d session=%s done bytes=%d", instanceID, utils.SanitizeForLog(sessionName), len(assistantText))
+			return assistantText, nil
 		}
 	}
 }
