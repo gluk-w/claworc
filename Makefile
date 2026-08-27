@@ -18,6 +18,8 @@ DASHBOARD_IMAGE := claworc/claworc
 TAG := latest
 PLATFORMS := linux/amd64,linux/arm64
 NATIVE_ARCH := $(shell uname -m | sed 's/x86_64/amd64/')
+# Go-installed dev tools (goreman, air) land here; not always on the user's PATH.
+GOBIN_DIR := $(shell go env GOPATH)/bin
 
 CACHE_ARGS ?=
 
@@ -177,7 +179,7 @@ dev:
 	@echo "Control plane: http://localhost:8000"
 	@echo "Frontend:      http://localhost:5173"
 	@echo ""
-	CLAWORC_AUTH_DISABLED=true CLAWORC_LLM_RESPONSE_LOG=$(CURDIR)/llm-responses.log CLAWORC_ALLOWED_HOST_MOUNTS=/tmp,~/ goreman -set-ports=false start
+	PATH="$(GOBIN_DIR):$$PATH" CLAWORC_AUTH_DISABLED=true CLAWORC_LLM_RESPONSE_LOG=$(CURDIR)/llm-responses.log CLAWORC_ALLOWED_HOST_MOUNTS=/tmp,~/ goreman -set-ports=false start
 
 ssh-integration-test:
 	docker build -f agent/instance/Dockerfile -t claworc-agent:local agent/instance/

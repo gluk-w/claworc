@@ -1,3 +1,5 @@
+import type { ChannelHealthSummary } from "./channel";
+
 export interface InstanceModels {
   effective: string[];
   disabled_defaults: string[];
@@ -58,6 +60,8 @@ export interface Instance {
   affinity: string;
   service_account_annotations: Record<string, string>;
   ports: PortSpec[];
+  /** Compact chat-channel health summary (absent when monitoring hasn't run or is disabled). */
+  channel_health?: ChannelHealthSummary | null;
 }
 
 export interface PortSpec {

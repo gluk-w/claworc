@@ -27,5 +27,6 @@ Claworc replaces this manual approach by:
 | [UI](ui.md) | Frontend pages, components, and interaction patterns |
 | [Environment Variables](environment-variables.md) | Global and per-instance env vars, reserved names, and skill `required_env_vars` |
 | [SSH Connectivity](ssh-connectivity.md) | SSH architecture, tunnels, health monitoring, and key rotation |
+| [Channel Health Monitoring](channel-monitoring.md) | Per-channel liveness monitoring of each instance's chat channels (Slack, Telegram, Discord, …) |
 | [Kubernetes Deployment](deployment/kubernetes.md) | Kubernetes deployment guide with SSH network policies and security contexts |
 | [Docker Deployment](deployment/docker.md) | Docker deployment guide with SSH network configuration |

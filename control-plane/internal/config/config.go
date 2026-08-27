@@ -47,6 +47,24 @@ type Settings struct {
 	// on every frame received, so an actively-streaming agent is never cut off;
 	// only a genuine stall trips it.
 	WebhookIdleTimeout time.Duration `envconfig:"WEBHOOK_IDLE_TIMEOUT" default:"120s"`
+
+	// Channel health monitor settings. The monitor polls each running
+	// instance's OpenClaw gateway (channels.status) and exposes per-channel
+	// health via the API. Disabling it removes the background polling and
+	// makes the channel health endpoints report "disabled".
+	ChannelHealthEnabled  bool          `envconfig:"CHANNEL_HEALTH_ENABLED" default:"true"`
+	ChannelHealthInterval time.Duration `envconfig:"CHANNEL_HEALTH_INTERVAL" default:"60s"`
+
+	// Channel health escalation thresholds, counted in consecutive failing
+	// checks (overall unhealthy/unreachable). Alerts fire once per incident
+	// at the alert threshold; auto-restart (opt-in via the
+	// channel_auto_restart_enabled setting) fires at the restart threshold,
+	// capped per rolling hour and followed by a cooldown that covers the
+	// container rebuild and channel reconnect window.
+	ChannelHealthAlertThreshold    int           `envconfig:"CHANNEL_HEALTH_ALERT_THRESHOLD" default:"3"`
+	ChannelHealthRestartThreshold  int           `envconfig:"CHANNEL_HEALTH_RESTART_THRESHOLD" default:"5"`
+	ChannelHealthRestartMaxPerHour int           `envconfig:"CHANNEL_HEALTH_RESTART_MAX_PER_HOUR" default:"3"`
+	ChannelHealthRestartCooldown   time.Duration `envconfig:"CHANNEL_HEALTH_RESTART_COOLDOWN" default:"10m"`
 }
 
 var Cfg Settings

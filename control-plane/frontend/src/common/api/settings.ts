@@ -12,3 +12,16 @@ export async function updateSettings(
   const { data } = await client.put<Settings>("/settings", payload);
   return data;
 }
+
+export interface ChannelAlertTestResult {
+  status: "sent" | "failed";
+  http_status?: number;
+  error?: string;
+}
+
+export async function testChannelAlertWebhook(): Promise<ChannelAlertTestResult> {
+  const { data } = await client.post<ChannelAlertTestResult>(
+    "/settings/channel-alerts/test",
+  );
+  return data;
+}

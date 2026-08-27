@@ -3,6 +3,7 @@ import { formatDistanceToNow } from "date-fns";
 import { GripVertical } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import ActionButtons from "./ActionButtons";
+import { ChannelHealthIndicator } from "./ChannelHealthPanel";
 import { useSSHStatus } from "@common/hooks/useSSHStatus";
 import { buildSSHTooltip } from "@common/utils/sshTooltip";
 import type { Instance } from "@common/types/instance";
@@ -61,7 +62,10 @@ export default function AgentCard({
             {instance.display_name}
           </Link>
         </div>
-        <StatusBadge status={instance.status} tooltip={tooltip} />
+        <div className="flex items-center gap-1.5 shrink-0">
+          <StatusBadge status={instance.status} tooltip={tooltip} />
+          <ChannelHealthIndicator instance={instance} />
+        </div>
       </div>
       <div className="text-xs text-gray-500">{createdAt}</div>
       <div className="flex justify-end">
