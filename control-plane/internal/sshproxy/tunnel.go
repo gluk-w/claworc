@@ -16,6 +16,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -491,13 +492,75 @@ func (tm *TunnelManager) StopTunnelsForInstance(instanceID uint) error {
 
 	for _, t := range tunnels {
 		t.cancel()
-		if t.listener != nil {
-			t.listener.Close()
-		}
+	}
+	if stuck := closeTunnelListeners(tunnels, closeListenersTimeout); stuck > 0 {
+		log.Printf("Instance %d: %d/%d tunnel listeners did not close within %s; "+
+			"the SSH connection is unresponsive, they are freed when it closes",
+			instanceID, stuck, len(tunnels), closeListenersTimeout)
 	}
 
 	log.Printf("Stopped %d tunnels for instance %d", len(tunnels), instanceID)
 	return nil
+}
+
+// closeListenersTimeout bounds how long tunnel teardown waits on listener
+// closes before giving up on them.
+const closeListenersTimeout = 5 * time.Second
+
+// closeTunnelListeners closes each tunnel's listener and returns how many were
+// still not closed when timeout elapsed.
+//
+// ssh.tcpListener.Close is not a local operation: it sends a
+// cancel-tcpip-forward global request with wantReply=true, which takes the
+// mux's globalSentMu and blocks waiting for the reply (x/crypto/ssh
+// tcpip.go:360 → mux.go:143). Against a half-open connection that reply never
+// arrives, so the close parks forever *holding* the mutex and every later
+// global request on that client queues behind it.
+//
+// Closing serially therefore wedges the caller on the first dead listener.
+// StopTunnelsForInstance sits on the instance-delete path, so that hang
+// propagates all the way out to the HTTP handler, which never returns.
+//
+// Each close runs on its own goroutine so one dead listener cannot block the
+// rest, and we wait only in aggregate. Goroutines still parked when we give up
+// are released once the connection itself is closed — which the bounded
+// keepalive probe does on the next tick (see probeAlive).
+func closeTunnelListeners(tunnels []*ActiveTunnel, timeout time.Duration) int {
+	var wg sync.WaitGroup
+	var closed atomic.Int32
+	total := 0
+
+	for _, t := range tunnels {
+		if t.listener == nil {
+			continue
+		}
+		total++
+		wg.Add(1)
+		go func(l net.Listener) {
+			defer wg.Done()
+			l.Close()
+			closed.Add(1)
+		}(t.listener)
+	}
+	if total == 0 {
+		return 0
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case <-done:
+		return 0
+	case <-timer.C:
+		return total - int(closed.Load())
+	}
 }
 
 // StopAll closes all tunnels for all instances. Used during shutdown.
@@ -513,14 +576,19 @@ func (tm *TunnelManager) StopAll() {
 	tm.mu.Unlock()
 
 	count := 0
+	var all []*ActiveTunnel
 	for _, tunnels := range allTunnels {
 		for _, t := range tunnels {
 			t.cancel()
-			if t.listener != nil {
-				t.listener.Close()
-			}
+			all = append(all, t)
 			count++
 		}
+	}
+	// Same bound as the per-instance path: shutdown must not block on a dead
+	// connection's listener close.
+	if stuck := closeTunnelListeners(all, closeListenersTimeout); stuck > 0 {
+		log.Printf("Shutdown: %d/%d tunnel listeners did not close within %s",
+			stuck, count, closeListenersTimeout)
 	}
 
 	log.Printf("Stopped all SSH tunnels (%d total)", count)
