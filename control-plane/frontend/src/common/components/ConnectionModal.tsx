@@ -128,7 +128,13 @@ export default function ConnectionModal({
           );
           setPhase("waiting");
         },
-        onError: () => setPhase("select"),
+        onError: (err) => {
+          // Without this the modal just snaps back to the picker with no clue
+          // why — the common causes (no Composio key configured, Composio
+          // unreachable) are both actionable.
+          errorToast("Failed to start the connection", err);
+          setPhase("select");
+        },
       },
     );
   };

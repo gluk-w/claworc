@@ -285,7 +285,7 @@ func DeleteConnection(w http.ResponseWriter, r *http.Request) {
 	if client, ok := composioClient(); ok && conn.ComposioConnectedAccountID != "" {
 		if err := client.DeleteConnectedAccount(r.Context(), conn.ComposioConnectedAccountID); err != nil {
 			// Best-effort: still remove locally so the UI isn't stuck.
-			log.Printf("Failed to delete Composio connected account %s: %v", conn.ComposioConnectedAccountID, err)
+			log.Printf("Failed to delete Composio connected account %s: %v", logSafe(conn.ComposioConnectedAccountID), err)
 		}
 	}
 	database.DB.Delete(&database.ComposioConnection{}, conn.ID)
@@ -310,11 +310,11 @@ func deployConnectionSkill(inst database.Instance, toolkitSlug, toolkitName stri
 	}
 	skillName, files, err := internalproxy.GenerateConnectionSkill(context.Background(), client, toolkitSlug, toolkitName, secret)
 	if err != nil {
-		log.Printf("connection skill: generate for toolkit %s: %v", toolkitSlug, err)
+		log.Printf("connection skill: generate for toolkit %s: %v", logSafe(toolkitSlug), err)
 		return
 	}
 	if result := deployToInstance(inst.ID, skillName, files); result.Status != "ok" {
-		log.Printf("connection skill: deploy %s to instance %d: %s", skillName, inst.ID, result.Error)
+		log.Printf("connection skill: deploy %s to instance %d: %s", logSafe(skillName), inst.ID, logSafe(result.Error))
 	}
 }
 
@@ -335,7 +335,7 @@ func removeConnectionSkill(instanceID uint, toolkitSlug string) {
 	}
 	skillDir := "/home/claworc/.openclaw/skills/" + internalproxy.ConnectionSkillName(toolkitSlug)
 	if err := sshproxy.DeletePath(client, skillDir); err != nil {
-		log.Printf("connection skill: remove %s from instance %d: %v", skillDir, instanceID, err)
+		log.Printf("connection skill: remove %s from instance %d: %v", logSafe(skillDir), instanceID, err)
 	}
 }
 
