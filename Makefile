@@ -235,7 +235,11 @@ worker-deploy: worker-build-models
 	cd website/worker && npx wrangler deploy
 
 worker-test:
-	cd website/worker && npm install && npx vitest run
+	# npm ci, not npm install: install re-resolves and can silently pick up a
+	# floating peer that the lockfile never sanctioned. That is how this target
+	# broke — wrangler's peerOptional @cloudflare/workers-types drifted ahead of
+	# the pinned major and every run started failing with ERESOLVE.
+	cd website/worker && npm ci && npx vitest run
 
 # Astro marketing site (claworc.com). Deployed as a Cloudflare Worker via
 # website/wrangler.toml — independent of website/worker/ (the providers API).
