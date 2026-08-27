@@ -60,32 +60,39 @@ type Instance struct {
 	// UUID is a stable, non-enumerable identifier used in webhook URLs and
 	// any other surface that should not leak the sequential ID. Auto-filled
 	// by BeforeCreate; backfilled for pre-existing rows by migration 00007.
-	UUID             string `gorm:"uniqueIndex" json:"uuid"`
-	Name             string `gorm:"uniqueIndex;not null" json:"name"`
-	DisplayName      string `gorm:"not null" json:"display_name"`
-	Status           string `gorm:"not null;default:creating" json:"status"`
-	CPURequest       string `gorm:"default:500m" json:"cpu_request"`
-	CPULimit         string `gorm:"default:2000m" json:"cpu_limit"`
-	MemoryRequest    string `gorm:"default:1Gi" json:"memory_request"`
-	MemoryLimit      string `gorm:"default:4Gi" json:"memory_limit"`
-	StorageHomebrew  string `gorm:"default:10Gi" json:"storage_homebrew"`
-	StorageHome      string `gorm:"default:10Gi" json:"storage_home"`
-	BraveAPIKey      string `json:"-"`
-	ContainerImage   string `json:"container_image"`
-	VNCResolution    string `json:"vnc_resolution"`
-	GatewayToken     string `json:"-"`
-	ModelsConfig     string `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
-	DefaultModel     string `gorm:"default:''" json:"-"`
-	LogPaths         string `gorm:"type:text;default:''" json:"log_paths"`          // JSON: {"openclaw":"/custom/path.log",...}
-	AllowedSourceIPs string `gorm:"type:text;default:''" json:"allowed_source_ips"` // Comma-separated IPs/CIDRs for SSH connection restrictions
-	EnabledProviders string `gorm:"type:text;default:'[]'" json:"-"`                // JSON array of LLMProvider IDs enabled for this instance
-	Timezone         string `gorm:"default:''" json:"timezone"`
-	UserAgent        string `gorm:"default:''" json:"user_agent"`
-	EnvVars          string `gorm:"type:text;default:'{}'" json:"-"`               // JSON map KEY -> fernet-encrypted value
-	PodAnnotations   string `gorm:"type:text;default:'{}'" json:"pod_annotations"` // JSON map[string]string
-	NodeSelector     string `gorm:"type:text;default:'{}'" json:"node_selector"`   // JSON map[string]string
-	Tolerations      string `gorm:"type:text;default:'[]'" json:"tolerations"`     // JSON []Toleration
-	Affinity         string `gorm:"type:text;default:''"   json:"affinity"`        // JSON corev1.Affinity or ""
+	UUID            string `gorm:"uniqueIndex" json:"uuid"`
+	Name            string `gorm:"uniqueIndex;not null" json:"name"`
+	DisplayName     string `gorm:"not null" json:"display_name"`
+	Status          string `gorm:"not null;default:creating" json:"status"`
+	CPURequest      string `gorm:"default:500m" json:"cpu_request"`
+	CPULimit        string `gorm:"default:2000m" json:"cpu_limit"`
+	MemoryRequest   string `gorm:"default:1Gi" json:"memory_request"`
+	MemoryLimit     string `gorm:"default:4Gi" json:"memory_limit"`
+	StorageHomebrew string `gorm:"default:10Gi" json:"storage_homebrew"`
+	StorageHome     string `gorm:"default:10Gi" json:"storage_home"`
+	BraveAPIKey     string `json:"-"`
+	ContainerImage  string `json:"container_image"`
+	VNCResolution   string `json:"vnc_resolution"`
+	GatewayToken    string `json:"-"`
+	// ConnectionSecret authenticates this instance to the internal proxy's
+	// /connections/ Composio broker. Fernet-encrypted at rest; lazily generated
+	// and re-ensured on every (re)create so the CLAWORC_CONNECTION_SECRET env var
+	// is always present. ConnectionSecretHash is a SHA-256 of the plaintext, kept
+	// indexed so the proxy can resolve the instance without decrypting every row.
+	ConnectionSecret     string `json:"-"`
+	ConnectionSecretHash string `gorm:"index" json:"-"`
+	ModelsConfig         string `gorm:"type:text;default:'{}'" json:"-"` // JSON: {"disabled":["model"],"extra":["model"]}
+	DefaultModel         string `gorm:"default:''" json:"-"`
+	LogPaths             string `gorm:"type:text;default:''" json:"log_paths"`          // JSON: {"openclaw":"/custom/path.log",...}
+	AllowedSourceIPs     string `gorm:"type:text;default:''" json:"allowed_source_ips"` // Comma-separated IPs/CIDRs for SSH connection restrictions
+	EnabledProviders     string `gorm:"type:text;default:'[]'" json:"-"`                // JSON array of LLMProvider IDs enabled for this instance
+	Timezone             string `gorm:"default:''" json:"timezone"`
+	UserAgent            string `gorm:"default:''" json:"user_agent"`
+	EnvVars              string `gorm:"type:text;default:'{}'" json:"-"`               // JSON map KEY -> fernet-encrypted value
+	PodAnnotations       string `gorm:"type:text;default:'{}'" json:"pod_annotations"` // JSON map[string]string
+	NodeSelector         string `gorm:"type:text;default:'{}'" json:"node_selector"`   // JSON map[string]string
+	Tolerations          string `gorm:"type:text;default:'[]'" json:"tolerations"`     // JSON []Toleration
+	Affinity             string `gorm:"type:text;default:''"   json:"affinity"`        // JSON corev1.Affinity or ""
 	// ServiceAccountAnnotations are applied to the per-instance ServiceAccount
 	// claworc creates and mounts into the pod (e.g. for external secret-store
 	// auth methods keyed off SA identity). The SA name itself is derived from
@@ -181,7 +188,7 @@ type ProviderModelCost struct {
 // LLMProvider stores admin-defined LLM provider configuration. Each provider
 // represents an upstream LLM service (e.g. Anthropic, OpenAI, a self-hosted
 // Ollama instance) accessed via an OpenAI-compatible base URL through the
-// internal LLM gateway.
+// internal proxy's LLM route.
 //
 // Global providers (InstanceID == nil) are shared across all instances.
 // Instance-specific providers (InstanceID != nil) belong to a single instance.
@@ -226,13 +233,14 @@ func ParseProviderModels(raw string) []ProviderModel {
 	return models
 }
 
-// LLMGatewayKey is a per-instance per-provider auth key issued to OpenClaw instances.
-// OpenClaw uses this as the gateway auth token when calling the internal LLM gateway.
-type LLMGatewayKey struct {
+// LLMProxyKey is a per-instance per-provider virtual key issued to OpenClaw
+// instances. OpenClaw presents it as the auth token when calling the internal
+// proxy's LLM route ("/"); the proxy resolves it to the real provider credential.
+type LLMProxyKey struct {
 	ID         uint        `gorm:"primaryKey;autoIncrement"`
-	InstanceID uint        `gorm:"not null;uniqueIndex:idx_lgk_inst_prov"`
-	ProviderID uint        `gorm:"not null;uniqueIndex:idx_lgk_inst_prov"` // FK → LLMProvider.ID
-	GatewayKey string      `gorm:"not null;uniqueIndex"`                   // "claworc-vk-<random>"
+	InstanceID uint        `gorm:"not null;uniqueIndex:idx_lpk_inst_prov"`
+	ProviderID uint        `gorm:"not null;uniqueIndex:idx_lpk_inst_prov"` // FK → LLMProvider.ID
+	VirtualKey string      `gorm:"not null;uniqueIndex"`                   // "claworc-vk-<random>"
 	Provider   LLMProvider `gorm:"foreignKey:ProviderID"`
 }
 
@@ -250,6 +258,32 @@ type LLMRequestLog struct {
 	LatencyMs         int64     `gorm:"not null"`
 	ErrorMessage      string    `gorm:"type:text"`
 	RequestedAt       time.Time `gorm:"not null;index"`
+}
+
+// ComposioConnection is a third-party OAuth connection (Gmail, Google Analytics,
+// …) linked to an instance via Composio. Credentials never touch the control
+// plane — Composio holds the OAuth tokens, keyed by the per-instance user_id.
+// The fields below are opaque Composio identifiers, not secrets.
+type ComposioConnection struct {
+	ID                         uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	InstanceID                 uint      `gorm:"not null;index" json:"instance_id"`
+	ToolkitSlug                string    `gorm:"not null" json:"toolkit_slug"`
+	Name                       string    `gorm:"not null" json:"name"`
+	ComposioConnectedAccountID string    `gorm:"index" json:"-"`
+	AuthConfigID               string    `json:"-"`
+	Status                     string    `gorm:"not null;default:INITIATED" json:"status"` // INITIATED|ACTIVE|FAILED|EXPIRED
+	AccountLabel               string    `gorm:"default:''" json:"account_label"`
+	CreatedAt                  time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt                  time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// ComposioAuthConfig caches the Composio-managed auth_config id created per
+// toolkit, so we reuse one auth config across all instances/connections of that
+// toolkit instead of creating a new one each time.
+type ComposioAuthConfig struct {
+	ToolkitSlug  string    `gorm:"primaryKey" json:"toolkit_slug"`
+	AuthConfigID string    `gorm:"not null" json:"-"`
+	CreatedAt    time.Time `gorm:"autoCreateTime" json:"created_at"`
 }
 
 type Setting struct {

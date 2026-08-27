@@ -22,7 +22,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
-	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
+	"github.com/gluk-w/claworc/control-plane/internal/internalproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/moderator"
 	"github.com/gluk-w/claworc/control-plane/internal/modwiring"
@@ -31,6 +31,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/sshgateway"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/sshterminal"
+	"github.com/gluk-w/claworc/control-plane/internal/startup"
 	"github.com/gluk-w/claworc/control-plane/internal/taskmanager"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -159,19 +160,24 @@ func main() {
 	taskMgr := taskmanager.New(taskmanager.Config{})
 	handlers.TaskMgr = taskMgr
 	backup.TaskMgr = taskMgr
-	reconcileStuckTasks()
+	startup.ReconcileStuckTasks()
 
-	// Register the private webhook trigger on the gateway mux before it
-	// binds. The gateway is reachable only from inside instances, so this
+	// Register the private webhook trigger on the internal proxy mux before it
+	// binds. The internal proxy is reachable only from inside instances, so this
 	// route is the inter-agent webhook surface authenticated by
 	// IsPrivate=true keys.
-	llmgateway.RegisterRoute("/webhooks/", handlers.PrivateWebhookTrigger)
+	internalproxy.RegisterRoute("/webhooks/", handlers.PrivateWebhookTrigger)
 
-	// Start LLM gateway (internal only, reachable via SSH agent-listener tunnel)
-	if err := llmgateway.Start(ctx, "127.0.0.1", config.Cfg.LLMGatewayPort); err != nil {
-		log.Printf("WARNING: LLM gateway failed to start: %v", err)
+	// Composio connections broker: lets instances reach Composio's REST API
+	// (authenticated by their CLAWORC_CONNECTION_SECRET) without holding the
+	// Composio API key. Same internal-only server / SSH tunnel as the LLM proxy.
+	internalproxy.RegisterRoute(internalproxy.ConnectionsPrefix, internalproxy.HandleConnections)
+
+	// Start internal proxy (internal only, reachable via SSH agent-listener tunnel)
+	if err := internalproxy.Start(ctx, "127.0.0.1", config.Cfg.InternalProxyPort); err != nil {
+		log.Printf("WARNING: internal proxy failed to start: %v", err)
 	}
-	tunnelMgr.SetLLMGatewayAddr(fmt.Sprintf("127.0.0.1:%d", config.Cfg.LLMGatewayPort))
+	tunnelMgr.SetInternalProxyAddr(fmt.Sprintf("127.0.0.1:%d", config.Cfg.InternalProxyPort))
 
 	// Configure SSH manager with orchestrator for automatic reconnection
 	if orch := orchestrator.Get(); orch != nil {
@@ -375,6 +381,13 @@ func main() {
 			r.Post("/instances/{id}/update-image", handlers.UpdateInstanceImage)
 			r.Get("/ssh-fingerprint", handlers.GetSSHFingerprint)
 
+			// Composio connections
+			r.Get("/connections/toolkits", handlers.ListComposioToolkits)
+			r.Get("/instances/{id}/connections", handlers.ListConnections)
+			r.Post("/instances/{id}/connections", handlers.InitiateConnection)
+			r.Post("/instances/{id}/connections/confirm", handlers.ConfirmConnection)
+			r.Delete("/instances/{id}/connections/{connID}", handlers.DeleteConnection)
+
 			// Files
 			r.Get("/instances/{id}/files/browse", handlers.BrowseFiles)
 			r.Get("/instances/{id}/files/read", handlers.ReadFileContent)
@@ -481,13 +494,14 @@ func main() {
 				r.Get("/settings", handlers.GetSettings)
 				r.Put("/settings", handlers.UpdateSettings)
 				r.Post("/settings/rotate-ssh-key", handlers.RotateSSHKey)
+				r.Post("/settings/composio/test", handlers.TestComposioKey)
 				r.Get("/audit-logs", handlers.GetAuditLogs)
 
 				// Container backend (Docker/Kubernetes) diagnostics + recovery
 				r.Get("/orchestrator/status", handlers.GetOrchestratorStatus)
 				r.Post("/orchestrator/reinitialize", handlers.ReinitializeOrchestrator)
 
-				// LLM gateway providers and usage
+				// LLM proxy providers and usage
 				r.Post("/llm/providers/test", handlers.TestProviderKey)
 				r.Post("/llm/providers/sync", handlers.SyncAllProviderModels)
 				r.Get("/llm/providers", handlers.ListProviders)
@@ -552,8 +566,9 @@ func main() {
 	r.NotFound(spa.ServeHTTP)
 
 	// Graceful shutdown
+	addr := fmt.Sprintf(":%d", config.Cfg.Port)
 	srv := &http.Server{
-		Addr:    ":8000",
+		Addr:    addr,
 		Handler: r,
 	}
 
@@ -561,7 +576,7 @@ func main() {
 	defer stop()
 
 	go func() {
-		log.Printf("Server starting on :8000")
+		log.Printf("Server starting on %s", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
 		}

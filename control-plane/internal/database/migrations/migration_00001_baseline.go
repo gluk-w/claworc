@@ -47,7 +47,7 @@ func AutoMigrateAll(gdb interface {
 		&models.WebAuthnCredential{},
 		&models.UserSSHKey{},
 		&models.LLMProvider{},
-		&models.LLMGatewayKey{},
+		&models.LLMProxyKey{},
 		&models.Skill{},
 		&models.Backup{},
 		&models.BackupSchedule{},
@@ -63,5 +63,7 @@ func AutoMigrateAll(gdb interface {
 		&models.TeamProvider{},
 		&models.WebhookApiKey{},
 		&models.WebhookLog{},
+		&models.ComposioConnection{},
+		&models.ComposioAuthConfig{},
 	)
 }

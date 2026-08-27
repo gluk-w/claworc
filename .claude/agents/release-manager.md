@@ -91,18 +91,6 @@ merge after CI passes, and verify main branch CI stays green after merge.
   7. Repeat the entire release workflow (Steps 2-6) for the hotfix branch.
   8. If you cannot determine the fix, immediately alert the user with full details of the failure.
 
-### Step 7: Docs Sync
-- After main branch CI passes successfully, trigger the docs-sync-agent to update documentation.
-- Create a new branch from main with a `-docs` suffix based on the original branch name:
-  1. `git checkout main && git pull origin main`.
-  2. `git checkout -b <original-branch-name>-docs`.
-- Launch the `docs-sync-agent` agent to analyze the diff against main and update `website_docs/` accordingly.
-- If the docs-sync-agent produces changes:
-  1. Commit and push: `git add -A && git commit -m "docs: sync documentation for <original-branch-name>" && git push origin HEAD`.
-  2. Create a PR for the docs branch: `gh pr create --title "docs: update documentation for <original-branch-name>" --body "Automated documentation sync after merging <original-branch-name>." --base main`.
-  3. Report the docs PR URL to the user.
-- If no documentation changes are needed, skip PR creation and note this in the final report.
-
 ## Quality Principles
 - **Never force-push to main**. Only force-push to feature branches with `--force-with-lease`.
 - **Preserve all changes**: When resolving conflicts, never silently discard code. If uncertain, ask the user.

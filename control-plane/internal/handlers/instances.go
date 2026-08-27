@@ -17,7 +17,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
-	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
+	"github.com/gluk-w/claworc/control-plane/internal/internalproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
@@ -258,8 +258,8 @@ func computeEffectiveModels(mc modelsConfig) []string {
 	return effective
 }
 
-// GatewayProvider holds the virtual auth key, API type, and models for a gateway provider.
-type GatewayProvider struct {
+// LLMProxyProvider holds the virtual key, API type, and models for an LLM proxy provider.
+type LLMProxyProvider struct {
 	Key        string
 	APIType    string
 	Models     []database.ProviderModel
@@ -276,7 +276,7 @@ type openclawProviderCfg struct {
 
 // buildOpenClawProvidersJSON builds the models.providers JSON for OpenClaw config.
 // It filters catalog providers to only the selected models.
-func buildOpenClawProvidersJSON(models []string, gatewayProviders map[string]GatewayProvider, gatewayPort int) (string, error) {
+func buildOpenClawProvidersJSON(models []string, gatewayProviders map[string]LLMProxyProvider, gatewayPort int) (string, error) {
 	if len(gatewayProviders) == 0 || gatewayPort <= 0 {
 		return "", nil
 	}
@@ -312,10 +312,10 @@ func buildOpenClawProvidersJSON(models []string, gatewayProviders map[string]Gat
 			gpModels = []database.ProviderModel{}
 		}
 		// Codex declares openai-responses to OpenClaw so pi-ai skips its
-		// client-side JWT decode of apiKey. The gateway translates path/auth/SSE
-		// upstream. The DB record keeps the codex apiType for gateway routing.
+		// client-side JWT decode of apiKey. The LLM proxy translates path/auth/SSE
+		// upstream. The DB record keeps the codex apiType for proxy routing.
 		declaredAPI := apiType
-		if declaredAPI == llmgateway.APITypeOpenAICodexResponses {
+		if declaredAPI == internalproxy.APITypeOpenAICodexResponses {
 			declaredAPI = "openai-responses"
 		}
 		providers[providerKey] = openclawProviderCfg{
@@ -333,12 +333,12 @@ func buildOpenClawProvidersJSON(models []string, gatewayProviders map[string]Gat
 	return string(b), nil
 }
 
-// resolveGatewayProviders builds the providerKey→GatewayProvider map for an instance's enabled
-// providers (both global and instance-specific). Each entry includes the virtual auth key,
+// resolveLLMProviders builds the providerKey→LLMProxyProvider map for an instance's enabled
+// providers (both global and instance-specific). Each entry includes the virtual key,
 // API type, and stored model list.
-func resolveGatewayProviders(inst database.Instance) map[string]GatewayProvider {
+func resolveLLMProviders(inst database.Instance) map[string]LLMProxyProvider {
 	enabledIDs := parseEnabledProviders(inst.EnabledProviders)
-	gatewayKeys := llmgateway.GetInstanceGatewayKeys(inst.ID)
+	gatewayKeys := internalproxy.GetInstanceVirtualKeys(inst.ID)
 
 	var providers []database.LLMProvider
 	if len(enabledIDs) > 0 {
@@ -354,13 +354,13 @@ func resolveGatewayProviders(inst database.Instance) map[string]GatewayProvider 
 		return nil
 	}
 
-	result := make(map[string]GatewayProvider, len(providers))
+	result := make(map[string]LLMProxyProvider, len(providers))
 	for _, p := range providers {
 		gk, ok := gatewayKeys[p.ID]
 		if !ok {
 			continue
 		}
-		result[p.Key] = GatewayProvider{
+		result[p.Key] = LLMProxyProvider{
 			Key:        gk,
 			APIType:    p.APIType,
 			Models:     database.ParseProviderModels(p.Models),
@@ -696,6 +696,22 @@ func restartInstanceAsyncWithToast(inst database.Instance, userID uint, title, m
 		})
 }
 
+// injectConnectionSecret ensures the instance has a connection secret (lazily
+// generating + persisting one on first use) and injects it as the reserved
+// CLAWORC_CONNECTION_SECRET env var. Called on every (re)create so the secret is
+// always present in the running container. Best-effort: a failure here only
+// means the instance can't reach the Composio broker until the next start.
+func injectConnectionSecret(envVars map[string]string, instanceID uint) {
+	secret, _, err := internalproxy.EnsureConnectionSecret(instanceID)
+	if err != nil {
+		log.Printf("Failed to ensure connection secret for instance %d: %v", instanceID, err)
+		return
+	}
+	if secret != "" {
+		envVars["CLAWORC_CONNECTION_SECRET"] = secret
+	}
+}
+
 // instancePlacementFields groups the JSON-encoded placement/service columns
 // decoded off an Instance row, shared by buildCreateParams and the initial
 // CreateInstance provisioning call (which historically duplicated the
@@ -742,6 +758,7 @@ func buildCreateParams(inst database.Instance) orchestrator.CreateParams {
 		}
 	}
 	envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
+	injectConnectionSecret(envVars, inst.ID)
 
 	placement := instancePlacementParams(inst)
 
@@ -1128,11 +1145,11 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	// Pre-create virtual keys so we can pass initial config to the container.
 	// This eliminates the race where messages arrive before providers are configured.
 	allIDs := allProviderIDsForInstance(inst.ID, enabledProviders)
-	if err := llmgateway.EnsureKeysForInstance(inst.ID, allIDs); err != nil {
+	if err := internalproxy.EnsureKeysForInstance(inst.ID, allIDs); err != nil {
 		log.Printf("Failed to ensure LLM gateway keys for instance %d: %s", inst.ID, utils.SanitizeForLog(err.Error()))
 	}
 	models := resolveInstanceModels(inst)
-	gatewayProviders := resolveGatewayProviders(inst)
+	gatewayProviders := resolveLLMProviders(inst)
 
 	// Build initial OpenClaw config env vars so the gateway starts with providers already configured
 	initialModelsJSON := ""
@@ -1147,7 +1164,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			initialModelsJSON = string(b)
 		}
 	}
-	initialProvidersJSON, _ := buildOpenClawProvidersJSON(models, gatewayProviders, config.Cfg.LLMGatewayPort)
+	initialProvidersJSON, _ := buildOpenClawProvidersJSON(models, gatewayProviders, config.Cfg.InternalProxyPort)
 
 	// Launch container creation asynchronously (image pull can take minutes)
 	startInstanceTask(taskmanager.TaskInstanceCreate, inst.ID, callerID(r), inst.DisplayName,
@@ -1171,6 +1188,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 				envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
 			}
 			envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
+			injectConnectionSecret(envVars, inst.ID)
 			if initialModelsJSON != "" {
 				envVars["OPENCLAW_INITIAL_MODELS"] = initialModelsJSON
 			}
@@ -1227,7 +1245,8 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Failed to get SSH connection for instance %d during configure: %v", inst.ID, err)
 				return
 			}
-			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), inst.Name, models, gatewayProviders, config.Cfg.LLMGatewayPort)
+			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), inst.Name, models, gatewayProviders, config.Cfg.InternalProxyPort)
+			deployActiveConnectionSkills(inst.ID)
 		})
 
 	var totalInstances int64
@@ -1451,7 +1470,7 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(*body.EnabledProviders)
 		database.DB.Model(&inst).Update("enabled_providers", string(b))
 		allIDs := allProviderIDsForInstance(inst.ID, *body.EnabledProviders)
-		if err := llmgateway.EnsureKeysForInstance(inst.ID, allIDs); err != nil {
+		if err := internalproxy.EnsureKeysForInstance(inst.ID, allIDs); err != nil {
 			log.Printf("Failed to ensure LLM gateway keys for instance %d: %s", inst.ID, utils.SanitizeForLog(err.Error()))
 		}
 	}
@@ -1658,7 +1677,7 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 
 	if orch != nil && orchStatus == "running" {
 		models := resolveInstanceModels(inst)
-		gatewayProviders := resolveGatewayProviders(inst)
+		gatewayProviders := resolveLLMProviders(inst)
 		instID := inst.ID
 		instName := inst.Name
 		go func() {
@@ -1668,7 +1687,8 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Failed to get SSH connection for instance %d during configure: %v", instID, err)
 				return
 			}
-			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort)
+			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.InternalProxyPort)
+			deployActiveConnectionSkills(instID)
 		}()
 	}
 
@@ -1803,6 +1823,7 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
+	injectConnectionSecret(envVars, inst.ID)
 
 	instID := inst.ID
 	instName := inst.Name
@@ -1903,7 +1924,23 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.LLMProvider{})
 
 	// Delete associated gateway keys
-	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.LLMGatewayKey{})
+	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.LLMProxyKey{})
+
+	// Best-effort: remove the instance's Composio connected accounts upstream,
+	// then drop the local connection rows.
+	if client, ok := composioClient(); ok {
+		var conns []database.ComposioConnection
+		database.DB.Where("instance_id = ?", inst.ID).Find(&conns)
+		for _, c := range conns {
+			if c.ComposioConnectedAccountID != "" {
+				if err := client.DeleteConnectedAccount(r.Context(), c.ComposioConnectedAccountID); err != nil {
+					log.Printf("Failed to delete Composio connected account %s for instance %d: %v", c.ComposioConnectedAccountID, inst.ID, err)
+				}
+			}
+		}
+	}
+	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.ComposioConnection{})
+
 	database.DB.Delete(&inst)
 	var remaining int64
 	database.DB.Model(&database.Instance{}).Count(&remaining)
@@ -2279,6 +2316,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 				envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
 			}
 			envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
+			injectConnectionSecret(envVars, inst.ID)
 
 			placement := instancePlacementParams(inst)
 
@@ -2343,7 +2381,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Failed to get SSH connection for clone %d during configure: %v", inst.ID, err)
 				return
 			}
-			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.LLMGatewayPort)
+			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.InternalProxyPort)
 		})
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -2387,7 +2425,7 @@ func cloneOnCancel(instanceID uint, cloneName string) taskmanager.OnCancel {
 		// Drop instance providers / gateway keys / instance row. Mirrors the
 		// teardown in DeleteInstance so a canceled clone leaves no rows behind.
 		database.DB.Where("instance_id = ?", instanceID).Delete(&database.LLMProvider{})
-		database.DB.Where("instance_id = ?", instanceID).Delete(&database.LLMGatewayKey{})
+		database.DB.Where("instance_id = ?", instanceID).Delete(&database.LLMProxyKey{})
 		// Detach the cancelled clone from any shared folders it inherited so
 		// no dangling reference is left behind after the row is deleted.
 		if folders, ferr := database.GetSharedFoldersForInstance(instanceID); ferr == nil {
@@ -2471,9 +2509,9 @@ func ReorderInstances(w http.ResponseWriter, r *http.Request) {
 // via openclaw CLI over SSH through inst.
 //
 // gatewayProviders (optional) maps provider key → gateway auth key for configuring
-// models.providers in OpenClaw to route through the internal LLM gateway.
-// gatewayPort is the port the LLM gateway listens on (typically 40001).
-func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, inst sshproxy.Instance, name string, models []string, gatewayProviders map[string]GatewayProvider, gatewayPort int) {
+// models.providers in OpenClaw to route through the internal proxy's LLM route.
+// gatewayPort is the port the internal proxy listens on (typically 40001).
+func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, inst sshproxy.Instance, name string, models []string, gatewayProviders map[string]LLMProxyProvider, gatewayPort int) {
 	if len(models) == 0 && len(gatewayProviders) == 0 {
 		return
 	}

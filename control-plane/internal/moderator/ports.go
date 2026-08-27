@@ -2,7 +2,7 @@
 // Kanban-style tasks targeting OpenClaw instances. It is intentionally
 // dependency-inverted: it imports only stdlib and defines narrow interfaces
 // (ports) for everything it needs from the rest of claworc. Adapters wiring
-// these ports to sshproxy / database / llmgateway live OUTSIDE this package
+// these ports to sshproxy / database / internalproxy live OUTSIDE this package
 // and are passed in via moderator.New.
 //
 // This isolation makes the moderator independently testable with fakes and

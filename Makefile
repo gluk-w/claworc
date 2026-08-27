@@ -26,7 +26,7 @@ HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
 
 .PHONY: agent agent-ci agent-base agent-base-china agent-build agent-test agent-push agent-exec agent-stable agent-stable-ci dashboard docker-prune release \
-	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-docs \
+	helm-install helm-upgrade helm-uninstall helm-template install-dev dev \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
 	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models scrape-models test \
 	worker-deploy worker-test worker-build-models site-dev site-build site-deploy \
@@ -174,10 +174,10 @@ dev:
 	@echo "=== Development Config ==="
 	@echo "  DATA_PATH: $(CLAWORC_DATA_PATH)"
 	@echo ""
-	@echo "Control plane: http://localhost:8000"
+	@echo "Control plane: http://localhost:8173"
 	@echo "Frontend:      http://localhost:5173"
 	@echo ""
-	CLAWORC_AUTH_DISABLED=true CLAWORC_LLM_RESPONSE_LOG=$(CURDIR)/llm-responses.log CLAWORC_ALLOWED_HOST_MOUNTS=/tmp,~/ goreman -set-ports=false start
+	CLAWORC_PORT=8173 CLAWORC_AUTH_DISABLED=true CLAWORC_LLM_RESPONSE_LOG=$(CURDIR)/llm-responses.log CLAWORC_ALLOWED_HOST_MOUNTS=/tmp,~/ goreman -set-ports=false start
 
 ssh-integration-test:
 	docker build -f agent/instance/Dockerfile -t claworc-agent:local agent/instance/
@@ -188,7 +188,7 @@ ssh-file-integration-test:
 	cd agent/tests && npm run test:ssh -- --testPathPattern file.test
 
 test-integration-backend:
-	cd control-plane && CLAWORC_LLM_GATEWAY_PORT=40001 go test -tags docker_integration -v -timeout 600s -count=1 \
+	cd control-plane && CLAWORC_INTERNAL_PROXY_PORT=40001 go test -tags docker_integration -v -timeout 600s -count=1 \
 		./internal/handlers/ -run TestIntegration
 
 e2e-install:
@@ -224,9 +224,6 @@ extract-models:
 
 scrape-models:
 	python3 scripts/scrape_provider_docs.py
-
-dev-docs:
-	cd website_docs && npx mint dev
 
 worker-build-models:
 	cd website/worker && node build-models.mjs

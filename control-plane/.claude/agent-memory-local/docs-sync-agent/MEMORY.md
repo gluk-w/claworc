@@ -1,1 +1,0 @@
-- [Doc conventions](doc_conventions.md) — website_docs/ structure, terminology, style rules for Mintlify docs

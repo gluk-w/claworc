@@ -23,7 +23,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
-	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
+	"github.com/gluk-w/claworc/control-plane/internal/internalproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshaudit"
@@ -35,8 +35,8 @@ import (
 )
 
 var (
-	sessionURL         string // base URL shared by all tests
-	sessionGatewayPort int
+	sessionURL               string // base URL shared by all tests
+	sessionInternalProxyPort int
 )
 
 // launchEmbeddedServer spins up the full Claworc server in-process using httptest.NewServer.
@@ -86,11 +86,12 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 		log.Fatalf("create admin user: %v", err)
 	}
 
-	// If CLAWORC_LLM_GATEWAY_PORT is explicitly set (e.g. 40001 from Makefile), use it as-is.
+	// If the internal proxy port is explicitly set (e.g. 40001 from Makefile), use it as-is.
 	// Otherwise pick a random free port so tests don't conflict with the local dev server.
+	// CLAWORC_LLM_GATEWAY_PORT is the deprecated alias, still honored via config fallback.
 	var gatewayPort int
-	if os.Getenv("CLAWORC_LLM_GATEWAY_PORT") != "" {
-		gatewayPort = config.Cfg.LLMGatewayPort
+	if os.Getenv("CLAWORC_INTERNAL_PROXY_PORT") != "" || os.Getenv("CLAWORC_LLM_GATEWAY_PORT") != "" {
+		gatewayPort = config.Cfg.InternalProxyPort
 	} else {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
@@ -98,7 +99,7 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 		}
 		gatewayPort = ln.Addr().(*net.TCPAddr).Port
 		ln.Close()
-		config.Cfg.LLMGatewayPort = gatewayPort
+		config.Cfg.InternalProxyPort = gatewayPort
 	}
 
 	sshSigner, sshPublicKey, err := sshproxy.EnsureKeyPair(dataDir)
@@ -144,10 +145,10 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 		log.Fatalf("orchestrator init: %v", err)
 	}
 
-	if err := llmgateway.Start(ctx, "127.0.0.1", gatewayPort); err != nil {
-		log.Fatalf("LLM gateway start: %v", err)
+	if err := internalproxy.Start(ctx, "127.0.0.1", gatewayPort); err != nil {
+		log.Fatalf("internal proxy start: %v", err)
 	}
-	tunnelMgr.SetLLMGatewayAddr(fmt.Sprintf("127.0.0.1:%d", gatewayPort))
+	tunnelMgr.SetInternalProxyAddr(fmt.Sprintf("127.0.0.1:%d", gatewayPort))
 
 	if orch := orchestrator.Get(); orch != nil {
 		sshMgr.SetOrchestrator(orch)
@@ -312,7 +313,7 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 func TestMain(m *testing.M) {
 	url, cancel, cleanup := launchEmbeddedServer()
 	sessionURL = url
-	sessionGatewayPort = config.Cfg.LLMGatewayPort
+	sessionInternalProxyPort = config.Cfg.InternalProxyPort
 	code := m.Run()
 	cancel()
 	cleanup()
@@ -495,7 +496,7 @@ func TestIntegration_InstanceLifecycle_ConfiguresOpenclaw(t *testing.T) {
 	if !ok {
 		t.Errorf("models.providers[\"test-openai\"] not found; got keys: %v", providerKeys(finalCfg.Models.Providers))
 	} else {
-		expectedBaseURL := fmt.Sprintf("http://127.0.0.1:%d", sessionGatewayPort)
+		expectedBaseURL := fmt.Sprintf("http://127.0.0.1:%d", sessionInternalProxyPort)
 		if prov.BaseURL != expectedBaseURL {
 			t.Errorf("models.providers[test-openai].baseUrl = %q, want %q", prov.BaseURL, expectedBaseURL)
 		} else {

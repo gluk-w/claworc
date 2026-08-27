@@ -18,7 +18,7 @@ type (
 	ProviderModel      = models.ProviderModel
 	ProviderModelCost  = models.ProviderModelCost
 	LLMProvider        = models.LLMProvider
-	LLMGatewayKey      = models.LLMGatewayKey
+	LLMProxyKey        = models.LLMProxyKey
 	LLMRequestLog      = models.LLMRequestLog
 	Setting            = models.Setting
 	User               = models.User
@@ -35,6 +35,8 @@ type (
 	UserSSHKey         = models.UserSSHKey
 	WebhookApiKey      = models.WebhookApiKey
 	WebhookLog         = models.WebhookLog
+	ComposioConnection = models.ComposioConnection
+	ComposioAuthConfig = models.ComposioAuthConfig
 )
 
 // Helper re-exports keep `database.ParseTeamIDs(...)` etc. working for

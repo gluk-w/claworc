@@ -10,6 +10,15 @@ import (
 	"github.com/coder/websocket"
 )
 
+// Range of OpenClaw gateway protocol versions this control plane can speak. The
+// gateway accepts the handshake only when its own PROTOCOL_VERSION falls inside
+// [GatewayMinProtocol, GatewayMaxProtocol], so advertising a range keeps us
+// compatible with both older and current agent images.
+const (
+	GatewayMinProtocol = 3 // OpenClaw <= 2026.5.x
+	GatewayMaxProtocol = 4 // OpenClaw 2026.6.x
+)
+
 // DialGateway opens a WebSocket connection to an OpenClaw gateway via the
 // already-established local SSH tunnel listening on 127.0.0.1:localPort and
 // completes the connect handshake. The returned conn is ready for chat.send /
@@ -52,8 +61,8 @@ func DialGateway(ctx context.Context, localPort int, gatewayToken string) (*webs
 		"id":     fmt.Sprintf("connect-%d", time.Now().UnixNano()),
 		"method": "connect",
 		"params": map[string]any{
-			"minProtocol": 3,
-			"maxProtocol": 4,
+			"minProtocol": GatewayMinProtocol,
+			"maxProtocol": GatewayMaxProtocol,
 			"client": map[string]any{
 				"id":       "openclaw-control-ui",
 				"version":  "1.0.0",
@@ -88,15 +97,30 @@ func DialGateway(ctx context.Context, localPort int, gatewayToken string) (*webs
 		if resp["type"] == "res" {
 			if ok, _ := resp["ok"].(bool); !ok {
 				conn.CloseNow()
-				msg := "gateway auth failed"
-				if errObj, _ := resp["error"].(map[string]any); errObj != nil {
-					if m, _ := errObj["message"].(string); m != "" {
-						msg = m
-					}
-				}
-				return nil, fmt.Errorf("%s", msg)
+				errObj, _ := resp["error"].(map[string]any)
+				return nil, handshakeError(errObj)
 			}
 			return conn, nil
 		}
 	}
+}
+
+// handshakeError turns a rejected connect response into an error. A protocol
+// mismatch is reported as a bare "protocol mismatch" by the gateway, which says
+// nothing about which side is out of date, so we name both versions using the
+// expectedProtocol the gateway reports in error.details.
+func handshakeError(errObj map[string]any) error {
+	msg := "gateway auth failed"
+	if errObj != nil {
+		if m, _ := errObj["message"].(string); m != "" {
+			msg = m
+		}
+		if details, _ := errObj["details"].(map[string]any); details != nil {
+			if expected, ok := details["expectedProtocol"].(float64); ok {
+				return fmt.Errorf("gateway protocol mismatch: agent speaks protocol %d, claworc supports %d-%d",
+					int(expected), GatewayMinProtocol, GatewayMaxProtocol)
+			}
+		}
+	}
+	return fmt.Errorf("%s", msg)
 }

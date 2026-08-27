@@ -19,7 +19,7 @@ func setupTestDB(t *testing.T) {
 	}
 	if err := db.AutoMigrate(
 		&Instance{}, &Setting{}, &User{}, &UserInstance{},
-		&WebAuthnCredential{}, &LLMProvider{}, &LLMGatewayKey{},
+		&WebAuthnCredential{}, &LLMProvider{}, &LLMProxyKey{},
 		&Skill{}, &Backup{}, &BackupSchedule{}, &SharedFolder{},
 		&Team{}, &TeamMember{}, &TeamProvider{},
 	); err != nil {

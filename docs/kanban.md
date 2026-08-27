@@ -101,7 +101,7 @@ type InstanceSoul struct {
 
 ## Backend: Moderator Package
 
-Package: `control-plane/internal/moderator/`. **Fully isolated** — imports only Go stdlib. No imports from `internal/sshproxy`, `internal/handlers`, `internal/orchestrator`, `internal/database`, or `internal/llmgateway`. Verified with `go list -deps ./internal/moderator`.
+Package: `control-plane/internal/moderator/`. **Fully isolated** — imports only Go stdlib. No imports from `internal/sshproxy`, `internal/handlers`, `internal/orchestrator`, `internal/database`, or `internal/internalproxy`. Verified with `go list -deps ./internal/moderator`.
 
 All external dependencies are expressed as narrow interfaces (ports). Adapters wiring these ports to claworc internals live in `internal/modwiring/adapters.go` and are passed in via `moderator.New()` in `main.go`.
 

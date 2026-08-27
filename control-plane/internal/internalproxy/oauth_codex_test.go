@@ -1,4 +1,4 @@
-package llmgateway
+package internalproxy
 
 import (
 	"bytes"
@@ -230,11 +230,11 @@ func TestCodexResponses_SetAuthHeader(t *testing.T) {
 	}
 }
 
-// TestGateway_ProxiesCodexWithOAuthHeaders is an integration test that runs
+// TestLLMProxy_ProxiesCodexWithOAuthHeaders is an integration test that runs
 // the full proxy pipeline: claworc-vk-* token in → OAuth refresh → upstream
 // hit with the right headers. It verifies the original `Authorization: Bearer
 // claworc-vk-*` is stripped and replaced with `Bearer <oauth-access>`.
-func TestGateway_ProxiesCodexWithOAuthHeaders(t *testing.T) {
+func TestLLMProxy_ProxiesCodexWithOAuthHeaders(t *testing.T) {
 	setupDB(t)
 
 	// Stub auth.openai.com
@@ -271,7 +271,7 @@ func TestGateway_ProxiesCodexWithOAuthHeaders(t *testing.T) {
 	p := mustOAuthProvider(t, "old-refresh", "old-access",
 		time.Now().Add(-1*time.Minute).UnixMilli(), "acct-old")
 	database.DB.Model(&p).Update("base_url", upstream.URL)
-	token := mustGatewayKey(t, 7, p.ID)
+	token := mustVirtualKey(t, 7, p.ID)
 
 	// Spin up the gateway handler in-process.
 	ts := httptest.NewServer(http.HandlerFunc(handleProxy))

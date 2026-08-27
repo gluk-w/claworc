@@ -14,6 +14,7 @@ import UsagePage from "./pages/UsagePage";
 import AccountPage from "./pages/AccountPage";
 import VncPopupPage from "./pages/VncPopupPage";
 import ChatPopupPage from "./pages/ChatPopupPage";
+import ConnectionCallbackPage from "./pages/ConnectionCallbackPage";
 import SkillsPage from "./pages/SkillsPage";
 import BackupsPage from "./pages/BackupsPage";
 import SharedFoldersPage from "./pages/SharedFoldersPage";
@@ -78,6 +79,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginRoute />} />
+      <Route path="/connections/callback" element={<ConnectionCallbackPage />} />
       <Route
         path="/instances/:id/vnc"
         element={

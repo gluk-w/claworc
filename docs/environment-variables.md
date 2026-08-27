@@ -36,7 +36,7 @@ Only these four exact names are reserved for internal use and rejected on input:
 
 | Name | Purpose |
 |------|---------|
-| `OPENCLAW_GATEWAY_TOKEN` | Auth token used by OpenClaw to call the LLM gateway. |
+| `OPENCLAW_GATEWAY_TOKEN` | Auth token securing the OpenClaw gateway WebSocket; the control plane presents it when proxying chat/control connections. |
 | `CLAWORC_INSTANCE_ID` | Numeric DB id of this instance, surfaced to OpenClaw. |
 | `OPENCLAW_INITIAL_MODELS` | JSON seed of primary/fallback models, applied before first run. |
 | `OPENCLAW_INITIAL_PROVIDERS` | JSON seed of providers (base URL, api_type, virtual key, models). |

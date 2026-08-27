@@ -97,7 +97,7 @@ jobs:
           moduleDirectory: control-plane
           testarguments: -tags docker_integration -timeout 1200s -count=1 -parallel 4 ./internal/handlers/ -run TestIntegration
         env:
-          CLAWORC_LLM_GATEWAY_PORT: 40001
+          CLAWORC_INTERNAL_PROXY_PORT: 40001
 
   build-amd64:
     name: Build amd64

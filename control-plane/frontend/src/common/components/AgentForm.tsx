@@ -116,7 +116,7 @@ export default function AgentForm({
     if (catalogDetailResults[i]?.data) catalogDetailMap[key] = catalogDetailResults[i].data!;
   });
 
-  // Gateway providers + model selection
+  // LLM proxy providers + model selection
   const [enabledProviders, setEnabledProviders] = useState<number[]>([]);
   const [providerModels, setProviderModels] = useState<Record<number, string[]>>({});
   const [defaultModel, setDefaultModel] = useState<string>("");

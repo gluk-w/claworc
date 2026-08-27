@@ -1,12 +1,12 @@
-// gateway.go implements the internal LLM proxy gateway.
+// gateway.go implements the internal proxy's LLM route (the catch-all "/").
 //
-// The gateway listens on 127.0.0.1:40001 (internal only — reachable from containers
-// only via SSH agent-listener tunnel). It accepts requests with a claworc-vk-* token (passed
-// via Authorization: Bearer, x-api-key, x-goog-api-key, or ?key= depending on the SDK),
-// looks up the real provider URL and API key, and proxies the request to the actual LLM
-// provider using the correct auth header for the provider's API type.
+// The internal proxy listens on 127.0.0.1:40001 (internal only — reachable from containers
+// only via SSH agent-listener tunnel). The LLM route accepts requests with a claworc-vk-*
+// virtual key (passed via Authorization: Bearer, x-api-key, x-goog-api-key, or ?key= depending
+// on the SDK), looks up the real provider URL and API key, and proxies the request to the actual
+// LLM provider using the correct auth header for the provider's API type.
 
-package llmgateway
+package internalproxy
 
 import (
 	"bytes"
@@ -46,12 +46,12 @@ func (fw *flushingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-var gatewayServer *http.Server
+var proxyServer *http.Server
 
 // extraRoutes lets callers (main.go) register additional routes on the
-// gateway mux before Start binds. Used for the private webhook trigger
+// internal proxy mux before Start binds. Used for the private webhook trigger
 // route, whose handler lives in the handlers package (which already
-// imports llmgateway, so we can't go the other direction). Each entry
+// imports internalproxy, so we can't go the other direction). Each entry
 // installs a path prefix → handler on the mux.
 type extraRoute struct {
 	pattern string
@@ -60,15 +60,15 @@ type extraRoute struct {
 
 var registeredRoutes []extraRoute
 
-// RegisterRoute installs an additional pattern → handler on the gateway
+// RegisterRoute installs an additional pattern → handler on the internal proxy
 // mux. Must be called before Start. Patterns follow net/http.ServeMux
 // semantics — a trailing slash subtree match wins over the catch-all "/".
 func RegisterRoute(pattern string, handler http.HandlerFunc) {
 	registeredRoutes = append(registeredRoutes, extraRoute{pattern: pattern, handler: handler})
 }
 
-// Start creates the LLM gateway HTTP server and starts it in a goroutine.
-// host should be "127.0.0.1" — the gateway is internal only and reachable from
+// Start creates the internal proxy HTTP server and starts it in a goroutine.
+// host should be "127.0.0.1" — the proxy is internal only and reachable from
 // containers via the SSH agent-listener tunnel.
 func Start(ctx context.Context, host string, port int) error {
 	mux := http.NewServeMux()
@@ -78,15 +78,15 @@ func Start(ctx context.Context, host string, port int) error {
 	mux.HandleFunc("/", handleProxy)
 
 	addr := fmt.Sprintf("%s:%d", host, port)
-	gatewayServer = &http.Server{
+	proxyServer = &http.Server{
 		Addr:    addr,
 		Handler: mux,
 	}
 
 	go func() {
-		log.Printf("LLM gateway listening on %s", addr)
-		if err := gatewayServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("LLM gateway stopped: %v", err)
+		log.Printf("internal proxy listening on %s", addr)
+		if err := proxyServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("internal proxy stopped: %v", err)
 		}
 	}()
 
@@ -94,17 +94,17 @@ func Start(ctx context.Context, host string, port int) error {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := gatewayServer.Shutdown(shutdownCtx); err != nil {
-			log.Printf("LLM gateway shutdown error: %v", err)
+		if err := proxyServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("internal proxy shutdown error: %v", err)
 		}
 	}()
 
 	return nil
 }
 
-// extractGatewayToken returns the first claworc-vk-* token found across all supported auth locations:
+// extractVirtualKey returns the first claworc-vk-* token found across all supported auth locations:
 // Authorization: Bearer, x-api-key (Anthropic SDK), x-goog-api-key (Google SDK), ?key= query param (Google fallback).
-func extractGatewayToken(r *http.Request) string {
+func extractVirtualKey(r *http.Request) string {
 	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer claworc-vk-") {
 		return strings.TrimPrefix(auth, "Bearer ")
 	}
@@ -120,19 +120,19 @@ func extractGatewayToken(r *http.Request) string {
 	return ""
 }
 
-// authAndResolve validates the gateway token and returns provider info, an
+// authAndResolve validates the virtual key and returns provider info, an
 // AuthMaterial containing the credentials to forward upstream, the api type,
 // and provider models.
 func authAndResolve(r *http.Request) (instanceID, providerID uint, providerKey, baseURL string, mat AuthMaterial, apiType string, providerModels []database.ProviderModel, err error) {
-	token := extractGatewayToken(r)
+	token := extractVirtualKey(r)
 	if token == "" {
-		err = fmt.Errorf("missing or invalid gateway auth token")
+		err = fmt.Errorf("missing or invalid virtual key")
 		return
 	}
 
-	var key database.LLMGatewayKey
-	if dbErr := database.DB.Preload("Provider").Where("gateway_key = ?", token).First(&key).Error; dbErr != nil {
-		err = fmt.Errorf("invalid gateway key")
+	var key database.LLMProxyKey
+	if dbErr := database.DB.Preload("Provider").Where("virtual_key = ?", token).First(&key).Error; dbErr != nil {
+		err = fmt.Errorf("invalid virtual key")
 		return
 	}
 
@@ -242,7 +242,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	instanceID, providerID, providerKey, baseURL, mat, apiType, providerModels, err := authAndResolve(r)
 	if err != nil {
-		log.Printf("[gateway] auth failed: %s path=%s", err, safeLog(r.URL.Path))
+		log.Printf("[llm-proxy] auth failed: %s path=%s", err, safeLog(r.URL.Path))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		// Use a fixed error message to avoid reflecting any user-supplied data in the response.
@@ -349,13 +349,13 @@ func logResponseBody(model, apiType string, statusCode int, body []byte) {
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Printf("[gateway] response log open error: %v", err)
+		log.Printf("[llm-proxy] response log open error: %v", err)
 		return
 	}
 	fmt.Fprintf(f, "--- %s model=%s api_type=%s status=%d\n%s\n",
 		time.Now().UTC().Format(time.RFC3339), model, apiType, statusCode, body)
 	if closeErr := f.Close(); closeErr != nil {
-		log.Printf("[gateway] response log close error: %v", closeErr)
+		log.Printf("[llm-proxy] response log close error: %v", closeErr)
 	}
 }
 
@@ -405,10 +405,10 @@ func processResponse(w http.ResponseWriter, body io.Reader, isStreaming bool, at
 func logLine(instanceID uint, providerKey, model, path string, statusCode int, latencyMs int64, inputTokens, outputTokens, cachedInputTokens int, costUSD float64, errMsg string) {
 	_ = path // excluded from log to prevent log injection
 	if errMsg != "" {
-		log.Printf("[gateway] instance=%d provider=%s model=%s status=%d latency=%dms tokens_in=%d tokens_out=%d tokens_cached=%d cost=$%.6f error=true",
+		log.Printf("[llm-proxy] instance=%d provider=%s model=%s status=%d latency=%dms tokens_in=%d tokens_out=%d tokens_cached=%d cost=$%.6f error=true",
 			instanceID, safeLog(providerKey), safeLog(model), statusCode, latencyMs, inputTokens, outputTokens, cachedInputTokens, costUSD)
 	} else {
-		log.Printf("[gateway] instance=%d provider=%s model=%s status=%d latency=%dms tokens_in=%d tokens_out=%d tokens_cached=%d cost=$%.6f",
+		log.Printf("[llm-proxy] instance=%d provider=%s model=%s status=%d latency=%dms tokens_in=%d tokens_out=%d tokens_cached=%d cost=$%.6f",
 			instanceID, safeLog(providerKey), safeLog(model), statusCode, latencyMs, inputTokens, outputTokens, cachedInputTokens, costUSD)
 	}
 }
@@ -431,6 +431,6 @@ func logRequest(instanceID, providerID uint, model string, inputTokens, outputTo
 		ErrorMessage:      errMsg,
 		RequestedAt:       time.Now().UTC(),
 	}).Error; err != nil {
-		log.Printf("[gateway] failed to write usage log: %v", err)
+		log.Printf("[llm-proxy] failed to write usage log: %v", err)
 	}
 }

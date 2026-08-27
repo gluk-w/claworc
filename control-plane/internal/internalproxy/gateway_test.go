@@ -1,4 +1,4 @@
-package llmgateway
+package internalproxy
 
 import (
 	"context"
@@ -31,7 +31,7 @@ func setupDB(t *testing.T) {
 	if err := database.DB.AutoMigrate(
 		&database.Setting{},
 		&database.LLMProvider{},
-		&database.LLMGatewayKey{},
+		&database.LLMProxyKey{},
 	); err != nil {
 		t.Fatalf("auto-migrate: %v", err)
 	}
@@ -57,11 +57,11 @@ func mustProvider(t *testing.T, key, apiType, baseURL string) database.LLMProvid
 	return p
 }
 
-// mustGatewayKey creates an LLMGatewayKey and returns the gateway token.
-func mustGatewayKey(t *testing.T, instanceID, providerID uint) string {
+// mustVirtualKey creates an LLMProxyKey and returns the gateway token.
+func mustVirtualKey(t *testing.T, instanceID, providerID uint) string {
 	t.Helper()
 	token := fmt.Sprintf("claworc-vk-test-%d-%d", instanceID, providerID)
-	row := database.LLMGatewayKey{InstanceID: instanceID, ProviderID: providerID, GatewayKey: token}
+	row := database.LLMProxyKey{InstanceID: instanceID, ProviderID: providerID, VirtualKey: token}
 	if err := database.DB.Create(&row).Error; err != nil {
 		t.Fatalf("create gateway key: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestAuthExtraction_AllFormats(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			setupDB(t)
 			p := mustProvider(t, "test-provider", "openai-completions", upstream.URL)
-			token := mustGatewayKey(t, 1, p.ID)
+			token := mustVirtualKey(t, 1, p.ID)
 			mustProviderAPIKey(t, p.ID, "real-key")
 			upstreamCalled = false
 
@@ -214,7 +214,7 @@ func TestOutgoingAuthHeader_ByAPIType(t *testing.T) {
 				// store empty string to test default fallback
 			}
 			p := mustProvider(t, "prov", apiType, upstream.URL)
-			token := mustGatewayKey(t, 1, p.ID)
+			token := mustVirtualKey(t, 1, p.ID)
 			mustProviderAPIKey(t, p.ID, "real-key")
 
 			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
@@ -250,7 +250,7 @@ func TestIncomingAuthHeaders_Stripped(t *testing.T) {
 
 	setupDB(t)
 	p := mustProvider(t, "prov", "openai-completions", upstream.URL)
-	token := mustGatewayKey(t, 1, p.ID)
+	token := mustVirtualKey(t, 1, p.ID)
 	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
@@ -265,7 +265,7 @@ func TestIncomingAuthHeaders_Stripped(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
-	// Gateway token must NOT be forwarded
+	// Virtual key must NOT be forwarded
 	if capturedReq.Header.Get("Authorization") == "Bearer "+token {
 		t.Error("gateway token was forwarded upstream")
 	}
@@ -298,7 +298,7 @@ func TestURL_V1Deduplication(t *testing.T) {
 
 		setupDB(t)
 		p := mustProvider(t, "prov", "openai-completions", upstream.URL+"/v1")
-		token := mustGatewayKey(t, 1, p.ID)
+		token := mustVirtualKey(t, 1, p.ID)
 		mustProviderAPIKey(t, p.ID, "real-key")
 
 		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
@@ -331,7 +331,7 @@ func TestURL_V1Deduplication(t *testing.T) {
 
 		setupDB(t)
 		p := mustProvider(t, "prov", "openai-completions", upstream.URL)
-		token := mustGatewayKey(t, 1, p.ID)
+		token := mustVirtualKey(t, 1, p.ID)
 		mustProviderAPIKey(t, p.ID, "real-key")
 
 		req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{}`))
@@ -366,7 +366,7 @@ func TestOpenAIResponses_PathPrefixed(t *testing.T) {
 
 		setupDB(t)
 		p := mustProvider(t, "openai", "openai-responses", upstream.URL)
-		token := mustGatewayKey(t, 1, p.ID)
+		token := mustVirtualKey(t, 1, p.ID)
 		mustProviderAPIKey(t, p.ID, "real-key")
 
 		req := httptest.NewRequest("POST", "/responses", strings.NewReader(`{"model":"gpt-5"}`))
@@ -394,7 +394,7 @@ func TestOpenAIResponses_PathPrefixed(t *testing.T) {
 
 		setupDB(t)
 		p := mustProvider(t, "openai", "openai-responses", upstream.URL+"/v1")
-		token := mustGatewayKey(t, 1, p.ID)
+		token := mustVirtualKey(t, 1, p.ID)
 		mustProviderAPIKey(t, p.ID, "real-key")
 
 		req := httptest.NewRequest("POST", "/responses", strings.NewReader(`{"model":"gpt-5"}`))
@@ -428,7 +428,7 @@ func TestQueryString_KeyStripped(t *testing.T) {
 
 	setupDB(t)
 	p := mustProvider(t, "prov", "openai-completions", upstream.URL)
-	token := mustGatewayKey(t, 1, p.ID)
+	token := mustVirtualKey(t, 1, p.ID)
 	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions?key="+token+"&model=gpt-4", strings.NewReader(`{}`))
@@ -488,7 +488,7 @@ func TestTokenCount_AllFormats(t *testing.T) {
 
 			setupDB(t)
 			p := mustProvider(t, "prov", tc.apiType, upstream.URL)
-			token := mustGatewayKey(t, 1, p.ID)
+			token := mustVirtualKey(t, 1, p.ID)
 			mustProviderAPIKey(t, p.ID, "real-key")
 
 			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
@@ -527,7 +527,7 @@ func TestStreaming_NoTokenCount(t *testing.T) {
 
 	setupDB(t)
 	p := mustProvider(t, "prov", "openai-completions", upstream.URL)
-	token := mustGatewayKey(t, 1, p.ID)
+	token := mustVirtualKey(t, 1, p.ID)
 	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
@@ -570,7 +570,7 @@ func TestStreaming_Flushed(t *testing.T) {
 
 	setupDB(t)
 	p := mustProvider(t, "prov", "openai-completions", upstream.URL)
-	token := mustGatewayKey(t, 1, p.ID)
+	token := mustVirtualKey(t, 1, p.ID)
 	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
@@ -605,7 +605,7 @@ func TestStreaming_XAccelBuffering(t *testing.T) {
 
 		setupDB(t)
 		p := mustProvider(t, "prov", "openai-completions", upstream.URL)
-		token := mustGatewayKey(t, 1, p.ID)
+		token := mustVirtualKey(t, 1, p.ID)
 		mustProviderAPIKey(t, p.ID, "real-key")
 
 		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
@@ -625,7 +625,7 @@ func TestStreaming_XAccelBuffering(t *testing.T) {
 
 		setupDB(t)
 		p := mustProvider(t, "prov", "openai-completions", upstream.URL)
-		token := mustGatewayKey(t, 1, p.ID)
+		token := mustVirtualKey(t, 1, p.ID)
 		mustProviderAPIKey(t, p.ID, "real-key")
 
 		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
@@ -657,7 +657,7 @@ func TestUpstreamError_502(t *testing.T) {
 
 	setupDB(t)
 	p := mustProvider(t, "prov", "openai-completions", upstream.URL)
-	token := mustGatewayKey(t, 1, p.ID)
+	token := mustVirtualKey(t, 1, p.ID)
 	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
@@ -695,7 +695,7 @@ func TestUpstream4xx_ErrorBodyTruncated(t *testing.T) {
 
 	setupDB(t)
 	p := mustProvider(t, "prov", "openai-completions", upstream.URL)
-	token := mustGatewayKey(t, 1, p.ID)
+	token := mustVirtualKey(t, 1, p.ID)
 	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
@@ -713,9 +713,9 @@ func TestUpstream4xx_ErrorBodyTruncated(t *testing.T) {
 	}
 }
 
-// --- 11. extractGatewayToken — unit tests (no DB needed) ---
+// --- 11. extractVirtualKey — unit tests (no DB needed) ---
 
-func TestExtractGatewayToken(t *testing.T) {
+func TestExtractVirtualKey(t *testing.T) {
 	cases := []struct {
 		name     string
 		setup    func(r *http.Request)
@@ -766,7 +766,7 @@ func TestExtractGatewayToken(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/", nil)
 			tc.setup(req)
-			got := extractGatewayToken(req)
+			got := extractVirtualKey(req)
 			if got != tc.expected {
 				t.Errorf("got %q, want %q", got, tc.expected)
 			}
@@ -787,7 +787,7 @@ func TestResolveAPIKey_GlobalFallback(t *testing.T) {
 
 	setupDB(t)
 	p := mustProvider(t, "my-provider", "openai-completions", upstream.URL)
-	token := mustGatewayKey(t, 1, p.ID)
+	token := mustVirtualKey(t, 1, p.ID)
 	mustProviderAPIKey(t, p.ID, "global-real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{}`))
@@ -852,7 +852,7 @@ func TestCachedTokenExtraction(t *testing.T) {
 
 			setupDB(t)
 			p := mustProvider(t, "prov", tc.apiType, upstream.URL)
-			token := mustGatewayKey(t, 1, p.ID)
+			token := mustVirtualKey(t, 1, p.ID)
 			mustProviderAPIKey(t, p.ID, "real-key")
 
 			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4"}`))
@@ -947,7 +947,7 @@ func TestCostCalculation(t *testing.T) {
 				},
 			}
 			p := mustProviderWithModels(t, "prov", "openai-completions", upstream.URL, models)
-			token := mustGatewayKey(t, 1, p.ID)
+			token := mustVirtualKey(t, 1, p.ID)
 			mustProviderAPIKey(t, p.ID, "real-key")
 
 			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test-model"}`))
@@ -1309,7 +1309,7 @@ func TestStreamingDB_OpenAICompletions(t *testing.T) {
 		},
 	}
 	p := mustProviderWithModels(t, "prov", "openai-completions", upstream.URL, models)
-	token := mustGatewayKey(t, 1, p.ID)
+	token := mustVirtualKey(t, 1, p.ID)
 	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test-model"}`))
@@ -1363,7 +1363,7 @@ func TestStreamingDB_AnthropicMessages(t *testing.T) {
 
 	setupDB(t)
 	p := mustProvider(t, "prov", "anthropic-messages", upstream.URL)
-	token := mustGatewayKey(t, 1, p.ID)
+	token := mustVirtualKey(t, 1, p.ID)
 	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"claude-3-5-sonnet"}`))
@@ -1409,7 +1409,7 @@ func TestStreamingDB_OpenAIResponses(t *testing.T) {
 
 	setupDB(t)
 	p := mustProvider(t, "prov", "openai-responses", upstream.URL)
-	token := mustGatewayKey(t, 1, p.ID)
+	token := mustVirtualKey(t, 1, p.ID)
 	mustProviderAPIKey(t, p.ID, "real-key")
 
 	req := httptest.NewRequest("POST", "/responses", strings.NewReader(`{"model":"gpt-5"}`))
