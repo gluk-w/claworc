@@ -19,12 +19,26 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // ComposioBaseURL is the Composio REST API base. Overridable in tests.
 var ComposioBaseURL = "https://backend.composio.dev/api/v3"
+
+// composioMaxResponseBytes caps how much of an upstream response body is read.
+// Tool listings carry a full JSON Schema per tool, so a single page of a large
+// toolkit is comfortably over a megabyte; matching the broker's relay cap keeps
+// those from being silently truncated into an unparseable body.
+const composioMaxResponseBytes = 8 << 20
+
+// composioToolsPageSize is the page size requested from GET /tools;
+// composioMaxToolPages bounds the pagination loop.
+const (
+	composioToolsPageSize = 100
+	composioMaxToolPages  = 20
+)
 
 // ComposioClient is a thin REST client for the Composio API.
 type ComposioClient struct {
@@ -76,7 +90,7 @@ func (c *ComposioClient) do(ctx context.Context, method, path string, body any) 
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, composioMaxResponseBytes))
 	if err != nil {
 		return resp.StatusCode, nil, err
 	}
@@ -127,6 +141,61 @@ func parseComposioError(method, path string, status int, body []byte) error {
 		Message: env.Error.Message,
 		Raw:     string(body),
 	}
+}
+
+// listToolsRaw pages through GET /tools with the given filters and returns the
+// raw item objects. Callers supply the filters they care about (toolkit_slug,
+// important, user_id); limit is defaulted here. Composio paginates with an
+// opaque cursor, so the loop follows next_cursor until it runs out, bounded by
+// composioMaxToolPages and a repeated-cursor guard.
+func (c *ComposioClient) listToolsRaw(ctx context.Context, q url.Values) ([]json.RawMessage, error) {
+	query := url.Values{}
+	for k, v := range q {
+		query[k] = v
+	}
+	if query.Get("limit") == "" {
+		query.Set("limit", strconv.Itoa(composioToolsPageSize))
+	}
+
+	var out []json.RawMessage
+	seenCursors := map[string]bool{}
+	for page := 0; page < composioMaxToolPages; page++ {
+		_, body, err := c.do(ctx, http.MethodGet, "/tools?"+query.Encode(), nil)
+		if err != nil {
+			return nil, err
+		}
+		items, next := parseToolsPage(body)
+		out = append(out, items...)
+		if next == "" || seenCursors[next] {
+			break
+		}
+		seenCursors[next] = true
+		query.Set("cursor", next)
+	}
+	return out, nil
+}
+
+// parseToolsPage pulls the item list and next cursor out of a /tools response,
+// tolerating {items:[...]}, {data:[...]} or a bare array.
+func parseToolsPage(body []byte) ([]json.RawMessage, string) {
+	var env struct {
+		Items      []json.RawMessage `json:"items"`
+		Data       []json.RawMessage `json:"data"`
+		NextCursor *string           `json:"next_cursor"`
+	}
+	_ = json.Unmarshal(body, &env)
+	raws := env.Items
+	if len(raws) == 0 {
+		raws = env.Data
+	}
+	if len(raws) == 0 {
+		_ = json.Unmarshal(body, &raws)
+	}
+	next := ""
+	if env.NextCursor != nil {
+		next = *env.NextCursor
+	}
+	return raws, next
 }
 
 // ListOAuthToolkits returns Composio-managed (OAuth) toolkits available to the project.

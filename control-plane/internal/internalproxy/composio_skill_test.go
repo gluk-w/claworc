@@ -53,12 +53,18 @@ func TestGetToolkit_MetaDescriptionFallback(t *testing.T) {
 
 func TestListToolkitTools_Parses(t *testing.T) {
 	c := fakeComposio(t, func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("toolkit_slugs"); got != "gmail" {
-			t.Errorf("toolkit_slugs = %q", got)
+		// Composio's filter is `toolkit_slug` (singular); the plural form is
+		// silently ignored upstream and returns the whole catalog.
+		if got := r.URL.Query().Get("toolkit_slug"); got != "gmail" {
+			t.Errorf("toolkit_slug = %q", got)
+		}
+		if got := r.URL.Query().Get("important"); got != "" {
+			t.Errorf("important = %q, want unset", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"items":[
 			{"slug":"GMAIL_SEND_EMAIL","name":"Send Email","description":"Send an email.",
+				"toolkit":{"slug":"gmail"},
 				"input_parameters":{"type":"object","properties":{
 					"recipient_email":{"type":"string","description":"Recipient address."},
 					"subject":{"type":["string","null"],"description":"Subject."}
@@ -67,10 +73,12 @@ func TestListToolkitTools_Parses(t *testing.T) {
 					"message_id":{"type":"string","description":"Sent message id."}
 				}}},
 			{"slug":"GMAIL_FETCH_EMAILS","description":"Fetch emails."},
-			{"description":"missing slug, skipped"}
+			{"description":"missing slug, skipped"},
+			{"slug":"0CODEKIT_CALCULATE_BMI","description":"foreign toolkit, skipped",
+				"toolkit":{"slug":"0codekit"}}
 		]}`))
 	})
-	tools, err := c.ListToolkitTools(context.Background(), "gmail")
+	tools, err := c.ListToolkitTools(context.Background(), "gmail", false)
 	if err != nil {
 		t.Fatalf("ListToolkitTools: %v", err)
 	}
@@ -103,15 +111,64 @@ func TestListToolkitTools_Parses(t *testing.T) {
 	}
 }
 
+func TestListToolkitTools_ImportantOnly(t *testing.T) {
+	c := fakeComposio(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("important"); got != "true" {
+			t.Errorf("important = %q, want true", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[{"slug":"GMAIL_SEND_EMAIL","toolkit":{"slug":"gmail"}}]}`))
+	})
+	tools, err := c.ListToolkitTools(context.Background(), "gmail", true)
+	if err != nil {
+		t.Fatalf("ListToolkitTools: %v", err)
+	}
+	if len(tools) != 1 || tools[0].Slug != "GMAIL_SEND_EMAIL" {
+		t.Errorf("got %+v", tools)
+	}
+}
+
+// TestListToolkitTools_Paginates verifies the next_cursor loop: without it only
+// Composio's first page ends up in the generated skill.
+func TestListToolkitTools_Paginates(t *testing.T) {
+	var cursors []string
+	c := fakeComposio(t, func(w http.ResponseWriter, r *http.Request) {
+		cursors = append(cursors, r.URL.Query().Get("cursor"))
+		if got := r.URL.Query().Get("limit"); got == "" {
+			t.Error("limit not set on tools request")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("cursor") {
+		case "":
+			_, _ = w.Write([]byte(`{"items":[{"slug":"GMAIL_A","toolkit":{"slug":"gmail"}}],"next_cursor":"pg2"}`))
+		case "pg2":
+			_, _ = w.Write([]byte(`{"items":[{"slug":"GMAIL_B","toolkit":{"slug":"gmail"}}],"next_cursor":null}`))
+		default:
+			t.Errorf("unexpected cursor %q", r.URL.Query().Get("cursor"))
+		}
+	})
+	tools, err := c.ListToolkitTools(context.Background(), "gmail", false)
+	if err != nil {
+		t.Fatalf("ListToolkitTools: %v", err)
+	}
+	if len(tools) != 2 || tools[0].Slug != "GMAIL_A" || tools[1].Slug != "GMAIL_B" {
+		t.Fatalf("got %+v", tools)
+	}
+	if len(cursors) != 2 || cursors[0] != "" || cursors[1] != "pg2" {
+		t.Errorf("cursors = %+v", cursors)
+	}
+}
+
 func TestBuildConnectionSkill(t *testing.T) {
 	detail := &ToolkitDetail{Slug: "Gmail", Name: "Gmail", Description: "Send and\nread email."}
 	tools := []ToolInfo{
 		{Slug: "GMAIL_SEND_EMAIL", Description: "Send an email."},
 		{Slug: "GMAIL_FETCH_EMAILS", Description: "Fetch emails."},
 	}
+	index := []ToolInfo{{Slug: "GMAIL_MOVE_TO_TRASH", Description: "Trash a message."}}
 	secret := "claworc-cs-deadbeef"
 
-	name, files := BuildConnectionSkill(detail, tools, secret)
+	name, files := BuildConnectionSkill(detail, tools, index, secret)
 	if name != "claworc-gmail" {
 		t.Errorf("name = %q, want claworc-gmail", name)
 	}
@@ -144,10 +201,21 @@ func TestBuildConnectionSkill(t *testing.T) {
 			t.Errorf("tool %q missing from skill body", tl.Slug)
 		}
 	}
+
+	// Index tools are listed compactly, without an example request of their own.
+	if !strings.Contains(content, "## Other tools") {
+		t.Error("missing Other tools section")
+	}
+	if !strings.Contains(content, "- `GMAIL_MOVE_TO_TRASH` — Trash a message.\n") {
+		t.Error("index tool not listed")
+	}
+	if strings.Contains(content, "execute/GMAIL_MOVE_TO_TRASH") {
+		t.Error("index tool should not get a full example request")
+	}
 }
 
 func TestBuildConnectionSkill_NoDescriptionOrTools(t *testing.T) {
-	name, files := BuildConnectionSkill(&ToolkitDetail{Slug: "slack", Name: "Slack"}, nil, "secret")
+	name, files := BuildConnectionSkill(&ToolkitDetail{Slug: "slack", Name: "Slack"}, nil, nil, "secret")
 	if name != "claworc-slack" {
 		t.Errorf("name = %q", name)
 	}
@@ -220,8 +288,34 @@ func TestGenerateConnectionSkill_FullContent(t *testing.T) {
 				"meta": {"logo": "https://example.com/gmail.png"}
 			}`))
 		case r.URL.Path == "/tools":
-			if got := r.URL.Query().Get("toolkit_slugs"); got != "gmail" {
-				t.Errorf("toolkit_slugs = %q, want gmail", got)
+			if got := r.URL.Query().Get("toolkit_slug"); got != "gmail" {
+				t.Errorf("toolkit_slug = %q, want gmail", got)
+			}
+			if r.URL.Query().Get("important") == "true" {
+				// Curated subset → rendered in full.
+				_, _ = w.Write([]byte(`{"items": [{
+					"slug": "GMAIL_SEND_EMAIL",
+					"name": "Send Email",
+					"description": "Send an email to one or more recipients.",
+					"toolkit": {"slug": "gmail"},
+					"input_parameters": {
+						"type": "object",
+						"properties": {
+							"recipient_email": {"type": "string", "description": "The recipient's email address."},
+							"subject": {"type": "string", "description": "The email subject line."},
+							"body": {"type": "string", "description": "The plain-text email body."}
+						},
+						"required": ["recipient_email", "subject"]
+					},
+					"output_parameters": {
+						"type": "object",
+						"properties": {
+							"message_id": {"type": "string", "description": "The ID of the sent message."},
+							"thread_id": {"type": "string", "description": "The thread the message belongs to."}
+						}
+					}
+				}]}`))
+				return
 			}
 			_, _ = w.Write([]byte(`{"items": [
 				{
@@ -262,6 +356,12 @@ func TestGenerateConnectionSkill_FullContent(t *testing.T) {
 							"messages": {"type": "array", "description": "The matching email messages."}
 						}
 					}
+				},
+				{
+					"slug": "0CODEKIT_CALCULATE_BMI",
+					"name": "Calculate BMI",
+					"description": "Belongs to another toolkit; must never reach the skill.",
+					"toolkit": {"slug": "0codekit"}
 				}
 			]}`))
 		default:
@@ -322,27 +422,11 @@ func TestGenerateConnectionSkill_FullContent(t *testing.T) {
 		"  -d '{\"arguments\":{\"recipient_email\":\"...\",\"subject\":\"...\",\"body\":\"...\"}}'\n" +
 		"```\n" +
 		"\n" +
-		"### GMAIL_FETCH_EMAILS\n" +
+		"## Other tools\n" +
 		"\n" +
-		"Fetch a list of emails from the mailbox.\n" +
+		"These are also available on this connection and are called the same way. Use the discovery endpoint above for their parameters.\n" +
 		"\n" +
-		"**Input parameters:**\n" +
-		"\n" +
-		"- `max_results` (integer) — Maximum number of emails to return.\n" +
-		"- `query` (string) — Gmail search query.\n" +
-		"\n" +
-		"**Output parameters:**\n" +
-		"\n" +
-		"- `messages` (array) — The matching email messages.\n" +
-		"\n" +
-		"**Example request:**\n" +
-		"\n" +
-		"```bash\n" +
-		"curl -s -X POST http://127.0.0.1:40001/connections/tools/execute/GMAIL_FETCH_EMAILS \\\n" +
-		"  -H 'Authorization: Bearer claworc-cs-abc123' \\\n" +
-		"  -H 'Content-Type: application/json' \\\n" +
-		"  -d '{\"arguments\":{\"max_results\":0,\"query\":\"...\"}}'\n" +
-		"```\n"
+		"- `GMAIL_FETCH_EMAILS` — Fetch a list of emails from the mailbox.\n"
 
 	got := string(files["SKILL.md"])
 	if got != want {

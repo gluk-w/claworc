@@ -15,10 +15,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
 )
+
+// maxDetailedTools bounds how many tools get a full section when Composio has no
+// curated "important" subset for a toolkit; the rest go into the compact index.
+const maxDetailedTools = 10
 
 // ToolkitDetail is a Composio toolkit's display metadata.
 type ToolkitDetail struct {
@@ -75,32 +80,32 @@ func (c *ComposioClient) GetToolkit(ctx context.Context, slug string) (*ToolkitD
 	return detail, nil
 }
 
-// ListToolkitTools returns the tools available for a toolkit.
-func (c *ComposioClient) ListToolkitTools(ctx context.Context, slug string) ([]ToolInfo, error) {
-	q := url.Values{"toolkit_slugs": {slug}}
-	_, body, err := c.do(ctx, http.MethodGet, "/tools?"+q.Encode(), nil)
+// ListToolkitTools returns the tools available for a toolkit. With importantOnly
+// set, only Composio's curated "important" subset is requested.
+//
+// NOTE: the filter parameter is `toolkit_slug` (singular) — Composio silently
+// ignores unknown query params, so a wrong name here returns the entire catalog
+// instead of an error. Items are re-checked against the requested slug below so
+// a future rename degrades to an empty list rather than a foreign toolkit's tools.
+func (c *ComposioClient) ListToolkitTools(ctx context.Context, slug string, importantOnly bool) ([]ToolInfo, error) {
+	q := url.Values{"toolkit_slug": {slug}}
+	if importantOnly {
+		q.Set("important", "true")
+	}
+	raws, err := c.listToolsRaw(ctx, q)
 	if err != nil {
 		return nil, err
 	}
-	// Tolerate {items:[...]} or {data:[...]} or a bare array.
-	var env struct {
-		Items []json.RawMessage `json:"items"`
-		Data  []json.RawMessage `json:"data"`
-	}
-	_ = json.Unmarshal(body, &env)
-	raws := env.Items
-	if len(raws) == 0 {
-		raws = env.Data
-	}
-	if len(raws) == 0 {
-		_ = json.Unmarshal(body, &raws)
-	}
+	want := strings.ToLower(strings.TrimSpace(slug))
 	out := make([]ToolInfo, 0, len(raws))
 	for _, r := range raws {
 		var t struct {
 			Slug        string `json:"slug"`
 			Name        string `json:"name"`
 			Description string `json:"description"`
+			Toolkit     struct {
+				Slug string `json:"slug"`
+			} `json:"toolkit"`
 			// Composio is inconsistent about casing; accept both.
 			InputParameters    json.RawMessage `json:"input_parameters"`
 			InputParametersCC  json.RawMessage `json:"inputParameters"`
@@ -111,6 +116,9 @@ func (c *ComposioClient) ListToolkitTools(ctx context.Context, slug string) ([]T
 			continue
 		}
 		if t.Slug == "" {
+			continue
+		}
+		if own := strings.ToLower(strings.TrimSpace(t.Toolkit.Slug)); own != "" && own != want {
 			continue
 		}
 		out = append(out, ToolInfo{
@@ -207,20 +215,57 @@ func GenerateConnectionSkill(ctx context.Context, client *ComposioClient, toolki
 	if detail.Name == "" {
 		detail.Name = firstNonEmpty(fallbackName, toolkitSlug)
 	}
-	tools, err := client.ListToolkitTools(ctx, toolkitSlug)
-	if err != nil {
-		// A missing tool list shouldn't block skill creation.
-		tools = nil
-	}
-	name, files := BuildConnectionSkill(detail, tools, connectionSecret)
+	detailed, index := splitToolkitTools(ctx, client, toolkitSlug)
+	name, files := BuildConnectionSkill(detail, detailed, index, connectionSecret)
 	return name, files, nil
+}
+
+// splitToolkitTools fetches the toolkit's tools twice — once for Composio's
+// curated "important" subset, once for everything — and returns the important
+// ones (rendered in full) plus the remainder (rendered as a compact index).
+// A tool-list failure never blocks skill creation, but it is logged: silently
+// swallowing it is what let a broken toolkit filter go unnoticed.
+func splitToolkitTools(ctx context.Context, client *ComposioClient, toolkitSlug string) (detailed, index []ToolInfo) {
+	important, err := client.ListToolkitTools(ctx, toolkitSlug, true)
+	if err != nil {
+		log.Printf("[connections] listing important tools for %s failed: %v", toolkitSlug, err)
+	}
+	all, err := client.ListToolkitTools(ctx, toolkitSlug, false)
+	if err != nil {
+		log.Printf("[connections] listing tools for %s failed: %v", toolkitSlug, err)
+	}
+
+	detailed = important
+	if len(detailed) == 0 {
+		// No curated subset (or that call failed): fall back to the first
+		// maxDetailedTools of the full list so the skill still carries schemas.
+		if len(all) > maxDetailedTools {
+			return all[:maxDetailedTools], all[maxDetailedTools:]
+		}
+		return all, nil
+	}
+
+	inDetail := make(map[string]bool, len(detailed))
+	for _, t := range detailed {
+		inDetail[t.Slug] = true
+	}
+	for _, t := range all {
+		if !inDetail[t.Slug] {
+			index = append(index, t)
+		}
+	}
+	return detailed, index
 }
 
 // BuildConnectionSkill renders the SKILL.md for a connection. It is pure (no
 // network/SSH) so it can be unit-tested directly. The connection secret's value
 // is embedded into the Authorization header of every example request — the skill
 // never references the CLAWORC_CONNECTION_SECRET env var.
-func BuildConnectionSkill(detail *ToolkitDetail, tools []ToolInfo, connectionSecret string) (string, map[string][]byte) {
+//
+// detailed tools get a full section (description, parameters, example request);
+// index tools are listed by slug only, since their schemas are one discovery
+// call away and a large toolkit would otherwise bloat the file.
+func BuildConnectionSkill(detail *ToolkitDetail, detailed, index []ToolInfo, connectionSecret string) (string, map[string][]byte) {
 	skillName := ConnectionSkillName(detail.Slug)
 	desc := fmt.Sprintf("Integration with %s.", detail.Name)
 	if d := sanitizeInline(detail.Description); d != "" {
@@ -244,14 +289,27 @@ func BuildConnectionSkill(detail *ToolkitDetail, tools []ToolInfo, connectionSec
 	b.WriteString("```\n\n")
 
 	b.WriteString("## Tools\n\n")
-	if len(tools) == 0 {
+	if len(detailed) == 0 {
 		b.WriteString("Call the discovery endpoint above to list the tools available for this connection.\n")
 	} else {
-		for i, t := range tools {
+		for i, t := range detailed {
 			if i > 0 {
 				b.WriteString("\n")
 			}
 			writeToolSection(&b, t, connectionSecret)
+		}
+	}
+
+	if len(index) > 0 {
+		b.WriteString("\n## Other tools\n\n")
+		b.WriteString("These are also available on this connection and are called the same way. " +
+			"Use the discovery endpoint above for their parameters.\n\n")
+		for _, t := range index {
+			line := "- `" + t.Slug + "`"
+			if d := sanitizeInline(t.Description); d != "" {
+				line += " — " + d
+			}
+			b.WriteString(line + "\n")
 		}
 	}
 

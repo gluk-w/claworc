@@ -113,22 +113,64 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleListTools forwards GET /tools to Composio, scoped to the instance's
-// ACTIVE connected toolkits and user_id.
+// handleListTools lists Composio tools scoped to the instance's ACTIVE connected
+// toolkits and user_id. Composio's own filter is applied server-side, but the
+// returned items are re-checked against the ACTIVE slugs before being relayed:
+// an ignored or renamed filter param must never turn this into a dump of the
+// whole catalog.
 func handleListTools(w http.ResponseWriter, r *http.Request, instanceID uint, userID, apiKey string) {
 	slugs := activeToolkitSlugs(instanceID)
 	if len(slugs) == 0 {
 		// No connections → no tools. Avoid leaking the whole catalog.
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		_, _ = w.Write([]byte(`{"items":[]}`))
+		writeToolItems(w, nil)
 		return
 	}
 	q := url.Values{
-		"user_id":       {userID},
-		"toolkit_slugs": {strings.Join(slugs, ",")},
+		"user_id":      {userID},
+		"toolkit_slug": {strings.Join(slugs, ",")},
 	}
-	forwardToComposio(w, r.Context(), http.MethodGet, "/tools?"+q.Encode(), nil, apiKey)
+	raws, err := NewComposioClient(apiKey).listToolsRaw(r.Context(), q)
+	if err != nil {
+		log.Printf("[connections] tool listing failed for instance %d: %v", instanceID, err)
+		connectionsError(w, http.StatusBadGateway, "upstream request failed")
+		return
+	}
+	writeToolItems(w, filterToolItems(raws, slugs))
+}
+
+// filterToolItems drops items whose owning toolkit isn't one of allowed.
+func filterToolItems(raws []json.RawMessage, allowed []string) []json.RawMessage {
+	allow := make(map[string]bool, len(allowed))
+	for _, s := range allowed {
+		allow[strings.ToLower(strings.TrimSpace(s))] = true
+	}
+	out := make([]json.RawMessage, 0, len(raws))
+	for _, r := range raws {
+		var item struct {
+			Toolkit struct {
+				Slug string `json:"slug"`
+			} `json:"toolkit"`
+		}
+		if err := json.Unmarshal(r, &item); err != nil {
+			continue
+		}
+		if !allow[strings.ToLower(strings.TrimSpace(item.Toolkit.Slug))] {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// writeToolItems emits the tool listing envelope. Pagination is resolved
+// server-side, so next_cursor is always null.
+func writeToolItems(w http.ResponseWriter, items []json.RawMessage) {
+	if items == nil {
+		items = []json.RawMessage{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "next_cursor": nil})
 }
 
 // handleExecuteTool forwards POST /tools/execute/{slug}, injecting user_id into

@@ -3,9 +3,11 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -52,6 +54,42 @@ func instanceForRequest(w http.ResponseWriter, r *http.Request, mutate bool) (da
 		return inst, false
 	}
 	return inst, true
+}
+
+// TestComposioKey probes the Composio API with a candidate (or the stored) key
+// and reports whether it grants every permission Claworc needs. Following the
+// TestProviderKey convention it always replies 200 — the verdict lives in the
+// body, not the HTTP status.
+func TestComposioKey(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		APIKey string `json:"api_key"`
+	}
+	// An empty body is valid: it means "test the key we already have stored".
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+			writeError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+	}
+
+	var client *internalproxy.ComposioClient
+	// GET /settings only ever returns the key masked, so a "****abcd" value is
+	// the UI echoing back what it was shown — not a key to test.
+	if key := strings.TrimSpace(body.APIKey); key != "" && !strings.HasPrefix(key, "****") {
+		client = internalproxy.NewComposioClient(key)
+	} else {
+		stored, ok := composioClient()
+		if !ok {
+			writeJSON(w, http.StatusOK, internalproxy.PermissionReport{
+				Error:  "Composio API key is not configured",
+				Checks: []internalproxy.PermissionCheck{},
+			})
+			return
+		}
+		client = stored
+	}
+
+	writeJSON(w, http.StatusOK, client.CheckPermissions(r.Context()))
 }
 
 // ListComposioToolkits returns the OAuth toolkits available to connect. The

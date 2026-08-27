@@ -19,6 +19,7 @@ import { useSettings, useUpdateSettings } from "@common/hooks/useSettings";
 import { useProviders, useCatalogIconMap } from "@common/hooks/useProviders";
 import { fetchSSHFingerprint, rotateSSHKey } from "@common/api/ssh";
 import { syncAllProviders } from "@common/api/llm";
+import { testComposioKey } from "@common/api/settings";
 import { successToast, errorToast } from "@common/utils/toast";
 import { validateResourceQuantities } from "@common/utils/resourceValidation";
 import type { LLMProvider } from "@common/types/instance";
@@ -296,6 +297,34 @@ function ApiKeysTab({
     onError: (err) => errorToast("Sync failed", err),
   });
 
+  // Probes every Composio permission Claworc needs. The endpoint always answers
+  // 200 — the verdict is in the body — so the branching lives in onSuccess.
+  const composioTestMutation = useMutation({
+    mutationFn: testComposioKey,
+    onSuccess: (result) => {
+      if (result.ok) {
+        successToast("Composio API key is valid", "All required permissions granted");
+        return;
+      }
+      if (result.invalid_key) {
+        errorToast("Composio API key is invalid", result.error || "Composio rejected the key");
+        return;
+      }
+      const missing = result.checks.filter((c) => !c.ok).map((c) => c.label);
+      if (missing.length > 0) {
+        errorToast(
+          missing.length === 1
+            ? "Missing Composio permission"
+            : `Missing ${missing.length} Composio permissions`,
+          missing.join(", "),
+        );
+        return;
+      }
+      errorToast("Composio key test failed", result.error);
+    },
+    onError: (err) => errorToast("Composio key test failed", err),
+  });
+
   const openCreateModal = () => {
     setModalMode("create");
     setModalProvider(null);
@@ -514,6 +543,15 @@ function ApiKeysTab({
                 {showComposio ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() => composioTestMutation.mutate({ api_key: composioValue.trim() })}
+              disabled={!composioValue.trim() || composioTestMutation.isPending}
+              className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Check the key against Composio and verify it grants every permission Claworc needs"
+            >
+              {composioTestMutation.isPending ? "Testing..." : "Test"}
+            </button>
             <button
               type="button"
               onClick={() => {

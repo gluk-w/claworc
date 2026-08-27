@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -128,6 +129,58 @@ func TestHandleConnections_AuthAndAllowlist(t *testing.T) {
 	HandleConnections(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"items":[]`) {
 		t.Errorf("empty tools: got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleConnections_ListToolsScopedToToolkits covers the broker's tool
+// listing: the upstream filter must be `toolkit_slug` (the plural form is
+// ignored by Composio and yields the whole catalog), and any item that slips
+// through belonging to another toolkit must be dropped before relaying.
+func TestHandleConnections_ListToolsScopedToToolkits(t *testing.T) {
+	setupComposioDB(t)
+	inst := mustInstance(t, "u5")
+	secret, _, _ := EnsureConnectionSecret(inst.ID)
+	if err := database.DB.Create(&database.ComposioConnection{
+		InstanceID: inst.ID, ToolkitSlug: "gmail", Name: "Gmail", Status: "ACTIVE",
+	}).Error; err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+
+	var gotQuery url.Values
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[
+			{"slug":"GMAIL_SEND_EMAIL","toolkit":{"slug":"gmail"}},
+			{"slug":"0CODEKIT_CALCULATE_BMI","toolkit":{"slug":"0codekit"}}
+		],"next_cursor":null}`))
+	}))
+	defer upstream.Close()
+	orig := ComposioBaseURL
+	ComposioBaseURL = upstream.URL
+	defer func() { ComposioBaseURL = orig }()
+	setComposioKey(t, "real-composio-key")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, ConnectionsPrefix+"tools", nil)
+	req.Header.Set("Authorization", "Bearer "+secret)
+	HandleConnections(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list tools: got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := gotQuery.Get("toolkit_slug"); got != "gmail" {
+		t.Errorf("upstream toolkit_slug = %q, want gmail", got)
+	}
+	if got := gotQuery.Get("user_id"); got != "claworc-inst-u5" {
+		t.Errorf("upstream user_id = %q", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "GMAIL_SEND_EMAIL") {
+		t.Errorf("gmail tool missing from response: %s", body)
+	}
+	if strings.Contains(body, "0CODEKIT") {
+		t.Errorf("foreign toolkit tool relayed: %s", body)
 	}
 }
 

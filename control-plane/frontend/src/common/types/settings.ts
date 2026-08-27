@@ -57,3 +57,20 @@ export interface SettingsUpdatePayload {
 
 // Keep backward compat alias
 export type SettingsUpdate = SettingsUpdatePayload;
+
+/** One Composio permission area probed by the "Test" button. */
+export interface ComposioPermissionCheck {
+  id: string;
+  label: string;
+  ok: boolean;
+  status?: number;
+  detail?: string;
+}
+
+/** Result of POST /settings/composio/test. Always HTTP 200 — branch on `ok`. */
+export interface ComposioKeyTestResult {
+  ok: boolean;
+  invalid_key: boolean;
+  error?: string;
+  checks: ComposioPermissionCheck[];
+}

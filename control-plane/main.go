@@ -464,6 +464,7 @@ func main() {
 				r.Get("/settings", handlers.GetSettings)
 				r.Put("/settings", handlers.UpdateSettings)
 				r.Post("/settings/rotate-ssh-key", handlers.RotateSSHKey)
+				r.Post("/settings/composio/test", handlers.TestComposioKey)
 				r.Get("/audit-logs", handlers.GetAuditLogs)
 
 				// Container backend (Docker/Kubernetes) diagnostics + recovery
