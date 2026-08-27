@@ -77,12 +77,27 @@ A ring-buffer scrollback captures recent output for replay on reconnect.
 (5s polling on instance list), React Router for SPA routing, Monaco Editor for JSON config editing, 
 Axios for API calls. The `@` import alias maps to `src/`.
 
-Backend settings use `envconfig` with `CLAWORC_` env prefix (see `internal/config/config.go`). 
-`CLAWORC_DATA_PATH` - Data directory for SQLite database and SSH keys.
+
+## Configuration
+
+Backend settings use `envconfig` with `CLAWORC_` env prefix (see `internal/config/config.go`):
+- `CLAWORC_DATA_PATH` - Data directory for SQLite database and SSH keys (default: `/app/data`)
+- `CLAWORC_BACKUPS_PATH` - Directory for backup archives (default: empty, falls back to `<DATA_PATH>/backups`)
+- `CLAWORC_K8S_NAMESPACE` - Target namespace (default: `claworc`)
+- `CLAWORC_INTERNAL_PROXY_PORT` - Listen port for the internal proxy (default: `40001`). The former `CLAWORC_LLM_GATEWAY_PORT` still works as a deprecated fallback. See `docs/internal-proxy.md`.
+- `CLAWORC_TERMINAL_HISTORY_LINES` - Scrollback buffer size in lines (default: `1000`, `0` to disable)
+- `CLAWORC_TERMINAL_RECORDING_DIR` - Directory for audit recordings (default: empty, disabled)
+- `CLAWORC_TERMINAL_SESSION_TIMEOUT` - Idle detached session timeout (default: `30m`)
+- `CLAWORC_ALLOWED_HOST_MOUNTS` - Comma-separated allowlist of host path prefixes within which shared folders may be backed by a host bind mount. Empty (default) disables host-backed shared folders entirely. See `docs/shared-folders.md`.
+- `CLAWORC_WEBHOOK_IDLE_TIMEOUT` - Idle gap the synchronous webhook bridge tolerates between events from OpenClaw before giving up (default: `120s`). The deadline re-arms on every event, so an actively-streaming agent is never cut off; only a genuine stall trips it.
+- `CLAWORC_SSH_GATEWAY_ENABLED` / `CLAWORC_SSH_GATEWAY_PORT` / `CLAWORC_SSH_GATEWAY_PUBLIC_HOST` - Inbound SSH gateway (`ssh <user>+<instance>@host`, default port `2222`). See `docs/ssh-gateway.md`.
+
+## Terminology
+
+- **"Agent" (user-facing) = "Instance" (code)**: The UI calls them "Agents" but the backend, database, API paths (`/api/v1/instances`), routes (`/instances/...`), TypeScript types (`Instance`), and Go types all use `Instance`. When editing user-visible strings use "Agent"; when editing code identifiers, types, routes, or API paths keep `Instance`.
 
 ## Key Conventions
 
-- **"Agent" (user-facing) = "Instance" (code)**: The UI calls them "Agents" but the backend, database, API paths (`/api/v1/instances`), routes (`/instances/...`), TypeScript types (`Instance`), and Go types all use `Instance`. When editing user-visible strings use "Agent"; when editing code identifiers, types, routes, or API paths keep `Instance`.
 - K8S-safe instance names are derived from display names: lowercase, hyphens, prefixed with `bot-`, max 63 chars
 - API keys are never returned in full by the API -- only masked (`****` + last 4 chars)
 - Instance status in API responses is enriched with live K8s/Docker status, not just the DB value

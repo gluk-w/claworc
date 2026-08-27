@@ -53,9 +53,10 @@ export function LibrarySkillCard({ skill, onDeploy, onEdit, onDelete }: LibraryC
 interface DiscoverCardProps {
   result: ClawhubResult;
   onDeploy: (slug: string, displayName: string, version: string) => void;
+  onEdit?: (result: ClawhubResult) => void;
 }
 
-export function DiscoverSkillCard({ result, onDeploy }: DiscoverCardProps) {
+export function DiscoverSkillCard({ result, onDeploy, onEdit }: DiscoverCardProps) {
   return (
     <div
       className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col gap-2 hover:shadow-sm hover:border-blue-300 hover:bg-blue-50 transition-all cursor-pointer"
@@ -76,6 +77,15 @@ export function DiscoverSkillCard({ result, onDeploy }: DiscoverCardProps) {
             <span className="text-xs text-gray-400">
               {new Date(result.updatedAt).toLocaleDateString()}
             </span>
+          )}
+          {onEdit && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onEdit(result); }}
+              className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+              title="Download & edit"
+            >
+              <Pencil size={14} />
+            </button>
           )}
         </div>
       </div>

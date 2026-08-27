@@ -65,10 +65,15 @@ its `lifecycle/end` frame, then writes the assistant's final reply as
 `text/plain` (no JSON envelope). The body is the agent's response and
 nothing else — callers can pipe it directly into another tool.
 
-There is no internal timeout — the request is bounded by the caller's
-own HTTP client timeout (or by `r.Context()` cancellation when the
-client disconnects). Callers should size their timeout to the longest
-reply they expect from the agent.
+The only server-side limit is an **idle (activity-based) timeout**: the
+bridge re-arms a deadline on every event the agent streams back, so a
+reply that takes minutes is never cut off as long as the agent keeps
+making progress. If the agent goes silent for longer than
+`CLAWORC_WEBHOOK_IDLE_TIMEOUT` (default `120s`) the request fails with
+`502 Bad Gateway` (`openclaw idle timeout`). The request is otherwise
+bounded only by the caller's own HTTP client timeout (or by
+`r.Context()` cancellation when the client disconnects); callers should
+size their timeout to the longest reply they expect from the agent.
 
 ## Attachment delivery
 

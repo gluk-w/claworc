@@ -123,6 +123,17 @@ type instanceCreateRequest struct {
 	BrowserIdleMinutes *int              `json:"browser_idle_minutes"`
 	BrowserStorage     *string           `json:"browser_storage"`
 	TeamID             *uint             `json:"team_id"`
+	// Pod placement overrides (admin only). nil means "use the configured
+	// global default" (resolvePlacementDefaults); an explicit value, including
+	// an empty map/slice, overrides it for this instance from creation.
+	PodAnnotations *map[string]string         `json:"pod_annotations"`
+	NodeSelector   *map[string]string         `json:"node_selector"`
+	Tolerations    *[]orchestrator.Toleration `json:"tolerations"`
+	Affinity       *string                    `json:"affinity"`
+	// ServiceAccountAnnotations and Ports (admin only). Same nil-means-default
+	// semantics as the placement fields above.
+	ServiceAccountAnnotations *map[string]string       `json:"service_account_annotations"`
+	Ports                     *[]orchestrator.PortSpec `json:"ports"`
 }
 
 type modelsResponse struct {
@@ -132,48 +143,54 @@ type modelsResponse struct {
 }
 
 type instanceResponse struct {
-	ID                    uint              `json:"id"`
-	Name                  string            `json:"name"`
-	DisplayName           string            `json:"display_name"`
-	Status                string            `json:"status"`
-	CPURequest            string            `json:"cpu_request"`
-	CPULimit              string            `json:"cpu_limit"`
-	MemoryRequest         string            `json:"memory_request"`
-	MemoryLimit           string            `json:"memory_limit"`
-	StorageHomebrew       string            `json:"storage_homebrew"`
-	StorageHome           string            `json:"storage_home"`
-	HasBraveOverride      bool              `json:"has_brave_override"`
-	Models                *modelsResponse   `json:"models"`
-	DefaultModel          string            `json:"default_model"`
-	ContainerImage        *string           `json:"container_image"`
-	HasImageOverride      bool              `json:"has_image_override"`
-	VNCResolution         *string           `json:"vnc_resolution"`
-	HasResolutionOverride bool              `json:"has_resolution_override"`
-	Timezone              *string           `json:"timezone"`
-	HasTimezoneOverride   bool              `json:"has_timezone_override"`
-	UserAgent             *string           `json:"user_agent"`
-	HasUserAgentOverride  bool              `json:"has_user_agent_override"`
-	EnvVars               map[string]string `json:"env_vars"`
-	HasEnvOverride        bool              `json:"has_env_override"`
-	RequiresRestart       bool              `json:"requires_restart,omitempty"`
-	Restarting            bool              `json:"restarting,omitempty"`
-	LiveImageInfo         *string           `json:"live_image_info,omitempty"`
-	StatusMessage         string            `json:"status_message,omitempty"`
-	AllowedSourceIPs      string            `json:"allowed_source_ips"`
-	EnabledProviders      []uint            `json:"enabled_providers"`
-	InstanceProviders     []providerResp    `json:"instance_providers"`
-	ControlURL            string            `json:"control_url"`
-	GatewayToken          string            `json:"gateway_token"`
-	SortOrder             int               `json:"sort_order"`
-	CreatedAt             string            `json:"created_at"`
-	UpdatedAt             string            `json:"updated_at"`
-	IsLegacyEmbedded      bool              `json:"is_legacy_embedded"`
-	BrowserProvider       string            `json:"browser_provider,omitempty"`
-	BrowserImage          string            `json:"browser_image,omitempty"`
-	BrowserIdleMinutes    *int              `json:"browser_idle_minutes,omitempty"`
-	BrowserStorage        string            `json:"browser_storage,omitempty"`
-	BrowserActive         bool              `json:"browser_active"`
-	TeamID                uint              `json:"team_id"`
+	ID                        uint                      `json:"id"`
+	Name                      string                    `json:"name"`
+	DisplayName               string                    `json:"display_name"`
+	Status                    string                    `json:"status"`
+	CPURequest                string                    `json:"cpu_request"`
+	CPULimit                  string                    `json:"cpu_limit"`
+	MemoryRequest             string                    `json:"memory_request"`
+	MemoryLimit               string                    `json:"memory_limit"`
+	StorageHomebrew           string                    `json:"storage_homebrew"`
+	StorageHome               string                    `json:"storage_home"`
+	HasBraveOverride          bool                      `json:"has_brave_override"`
+	Models                    *modelsResponse           `json:"models"`
+	DefaultModel              string                    `json:"default_model"`
+	ContainerImage            *string                   `json:"container_image"`
+	HasImageOverride          bool                      `json:"has_image_override"`
+	VNCResolution             *string                   `json:"vnc_resolution"`
+	HasResolutionOverride     bool                      `json:"has_resolution_override"`
+	Timezone                  *string                   `json:"timezone"`
+	HasTimezoneOverride       bool                      `json:"has_timezone_override"`
+	UserAgent                 *string                   `json:"user_agent"`
+	HasUserAgentOverride      bool                      `json:"has_user_agent_override"`
+	EnvVars                   map[string]string         `json:"env_vars"`
+	HasEnvOverride            bool                      `json:"has_env_override"`
+	RequiresRestart           bool                      `json:"requires_restart,omitempty"`
+	Restarting                bool                      `json:"restarting,omitempty"`
+	LiveImageInfo             *string                   `json:"live_image_info,omitempty"`
+	StatusMessage             string                    `json:"status_message,omitempty"`
+	AllowedSourceIPs          string                    `json:"allowed_source_ips"`
+	EnabledProviders          []uint                    `json:"enabled_providers"`
+	InstanceProviders         []providerResp            `json:"instance_providers"`
+	ControlURL                string                    `json:"control_url"`
+	GatewayToken              string                    `json:"gateway_token"`
+	SortOrder                 int                       `json:"sort_order"`
+	CreatedAt                 string                    `json:"created_at"`
+	UpdatedAt                 string                    `json:"updated_at"`
+	IsLegacyEmbedded          bool                      `json:"is_legacy_embedded"`
+	BrowserProvider           string                    `json:"browser_provider,omitempty"`
+	BrowserImage              string                    `json:"browser_image,omitempty"`
+	BrowserIdleMinutes        *int                      `json:"browser_idle_minutes,omitempty"`
+	BrowserStorage            string                    `json:"browser_storage,omitempty"`
+	BrowserActive             bool                      `json:"browser_active"`
+	TeamID                    uint                      `json:"team_id"`
+	PodAnnotations            map[string]string         `json:"pod_annotations"`
+	NodeSelector              map[string]string         `json:"node_selector"`
+	Tolerations               []orchestrator.Toleration `json:"tolerations"`
+	Affinity                  string                    `json:"affinity"`
+	ServiceAccountAnnotations map[string]string         `json:"service_account_annotations"`
+	Ports                     []orchestrator.PortSpec   `json:"ports"`
 }
 
 func generateName(displayName string) string {
@@ -459,46 +476,88 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 
 	envVarsPlain := EnvVarsForResponse(inst.EnvVars)
 
+	var podAnnotations map[string]string
+	if inst.PodAnnotations != "" && inst.PodAnnotations != "{}" {
+		json.Unmarshal([]byte(inst.PodAnnotations), &podAnnotations)
+	}
+	if podAnnotations == nil {
+		podAnnotations = map[string]string{}
+	}
+	var nodeSelector map[string]string
+	if inst.NodeSelector != "" && inst.NodeSelector != "{}" {
+		json.Unmarshal([]byte(inst.NodeSelector), &nodeSelector)
+	}
+	if nodeSelector == nil {
+		nodeSelector = map[string]string{}
+	}
+	var tolerations []orchestrator.Toleration
+	if inst.Tolerations != "" && inst.Tolerations != "[]" {
+		json.Unmarshal([]byte(inst.Tolerations), &tolerations)
+	}
+	if tolerations == nil {
+		tolerations = []orchestrator.Toleration{}
+	}
+	var serviceAccountAnnotations map[string]string
+	if inst.ServiceAccountAnnotations != "" && inst.ServiceAccountAnnotations != "{}" {
+		json.Unmarshal([]byte(inst.ServiceAccountAnnotations), &serviceAccountAnnotations)
+	}
+	if serviceAccountAnnotations == nil {
+		serviceAccountAnnotations = map[string]string{}
+	}
+	var ports []orchestrator.PortSpec
+	if inst.Ports != "" && inst.Ports != "[]" {
+		json.Unmarshal([]byte(inst.Ports), &ports)
+	}
+	if ports == nil {
+		ports = []orchestrator.PortSpec{}
+	}
+
 	return instanceResponse{
-		ID:                    inst.ID,
-		Name:                  inst.Name,
-		DisplayName:           inst.DisplayName,
-		Status:                status,
-		StatusMessage:         getStatusMessage(inst.ID),
-		CPURequest:            inst.CPURequest,
-		CPULimit:              inst.CPULimit,
-		MemoryRequest:         inst.MemoryRequest,
-		MemoryLimit:           inst.MemoryLimit,
-		StorageHomebrew:       inst.StorageHomebrew,
-		StorageHome:           inst.StorageHome,
-		HasBraveOverride:      inst.BraveAPIKey != "",
-		Models:                &modelsResponse{Effective: effective, DisabledDefaults: mc.Disabled, Extra: mc.Extra},
-		DefaultModel:          inst.DefaultModel,
-		ContainerImage:        containerImage,
-		HasImageOverride:      inst.ContainerImage != "",
-		VNCResolution:         vncResolution,
-		HasResolutionOverride: inst.VNCResolution != "",
-		Timezone:              timezone,
-		HasTimezoneOverride:   inst.Timezone != "",
-		UserAgent:             userAgent,
-		HasUserAgentOverride:  inst.UserAgent != "",
-		EnvVars:               envVarsPlain,
-		HasEnvOverride:        len(envVarsPlain) > 0,
-		AllowedSourceIPs:      inst.AllowedSourceIPs,
-		EnabledProviders:      enabledProviders,
-		InstanceProviders:     instProviderResps,
-		ControlURL:            fmt.Sprintf("/openclaw/%d/", inst.ID),
-		GatewayToken:          gatewayToken,
-		SortOrder:             inst.SortOrder,
-		CreatedAt:             formatTimestamp(inst.CreatedAt),
-		UpdatedAt:             formatTimestamp(inst.UpdatedAt),
-		IsLegacyEmbedded:      database.IsLegacyEmbedded(getEffectiveImage(inst)),
-		BrowserProvider:       inst.BrowserProvider,
-		BrowserImage:          inst.BrowserImage,
-		BrowserIdleMinutes:    inst.BrowserIdleMinutes,
-		BrowserStorage:        inst.BrowserStorage,
-		BrowserActive:         inst.BrowserActive,
-		TeamID:                inst.TeamID,
+		ID:                        inst.ID,
+		Name:                      inst.Name,
+		DisplayName:               inst.DisplayName,
+		Status:                    status,
+		StatusMessage:             getStatusMessage(inst.ID),
+		CPURequest:                inst.CPURequest,
+		CPULimit:                  inst.CPULimit,
+		MemoryRequest:             inst.MemoryRequest,
+		MemoryLimit:               inst.MemoryLimit,
+		StorageHomebrew:           inst.StorageHomebrew,
+		StorageHome:               inst.StorageHome,
+		HasBraveOverride:          inst.BraveAPIKey != "",
+		Models:                    &modelsResponse{Effective: effective, DisabledDefaults: mc.Disabled, Extra: mc.Extra},
+		DefaultModel:              inst.DefaultModel,
+		ContainerImage:            containerImage,
+		HasImageOverride:          inst.ContainerImage != "",
+		VNCResolution:             vncResolution,
+		HasResolutionOverride:     inst.VNCResolution != "",
+		Timezone:                  timezone,
+		HasTimezoneOverride:       inst.Timezone != "",
+		UserAgent:                 userAgent,
+		HasUserAgentOverride:      inst.UserAgent != "",
+		EnvVars:                   envVarsPlain,
+		HasEnvOverride:            len(envVarsPlain) > 0,
+		AllowedSourceIPs:          inst.AllowedSourceIPs,
+		EnabledProviders:          enabledProviders,
+		InstanceProviders:         instProviderResps,
+		ControlURL:                fmt.Sprintf("/openclaw/%d/", inst.ID),
+		GatewayToken:              gatewayToken,
+		SortOrder:                 inst.SortOrder,
+		CreatedAt:                 formatTimestamp(inst.CreatedAt),
+		UpdatedAt:                 formatTimestamp(inst.UpdatedAt),
+		IsLegacyEmbedded:          database.IsLegacyEmbedded(getEffectiveImage(inst)),
+		BrowserProvider:           inst.BrowserProvider,
+		BrowserImage:              inst.BrowserImage,
+		BrowserIdleMinutes:        inst.BrowserIdleMinutes,
+		BrowserStorage:            inst.BrowserStorage,
+		BrowserActive:             inst.BrowserActive,
+		TeamID:                    inst.TeamID,
+		PodAnnotations:            podAnnotations,
+		NodeSelector:              nodeSelector,
+		Tolerations:               tolerations,
+		Affinity:                  inst.Affinity,
+		ServiceAccountAnnotations: serviceAccountAnnotations,
+		Ports:                     ports,
 	}
 }
 
@@ -653,6 +712,38 @@ func injectConnectionSecret(envVars map[string]string, instanceID uint) {
 	}
 }
 
+// instancePlacementFields groups the JSON-encoded placement/service columns
+// decoded off an Instance row, shared by buildCreateParams and the initial
+// CreateInstance provisioning call (which historically duplicated the
+// CreateParams literal instead of calling buildCreateParams - see the
+// "single source of truth" comment on the manual-restart handler above - and
+// dropped every field only buildCreateParams set as a result).
+type instancePlacementFields struct {
+	PodAnnotations            map[string]string
+	NodeSelector              map[string]string
+	Tolerations               []orchestrator.Toleration
+	ServiceAccountAnnotations map[string]string
+	Ports                     []orchestrator.PortSpec
+}
+
+// instancePlacementParams decodes the placement/service columns off inst.
+// Resolved once at creation time from the then-current global defaults (see
+// resolvePlacementDefaults/resolveServiceDefaults) and stored directly on the
+// instance, same as CPURequest/ContainerImage/etc. Read verbatim here, not
+// re-merged with whatever the global defaults happen to be *now*: changing
+// the global defaults in Settings must not silently change already-running
+// agents out from under them (see "Agent Defaults" precedent). Per-instance
+// values are only ever changed by an explicit admin edit via UpdateInstance.
+func instancePlacementParams(inst database.Instance) instancePlacementFields {
+	var f instancePlacementFields
+	json.Unmarshal([]byte(inst.PodAnnotations), &f.PodAnnotations)
+	json.Unmarshal([]byte(inst.NodeSelector), &f.NodeSelector)
+	json.Unmarshal([]byte(inst.Tolerations), &f.Tolerations)
+	json.Unmarshal([]byte(inst.ServiceAccountAnnotations), &f.ServiceAccountAnnotations)
+	json.Unmarshal([]byte(inst.Ports), &f.Ports)
+	return f
+}
+
 // buildCreateParams constructs orchestrator.CreateParams from a database Instance.
 func buildCreateParams(inst database.Instance) orchestrator.CreateParams {
 	envVars := map[string]string{}
@@ -669,21 +760,76 @@ func buildCreateParams(inst database.Instance) orchestrator.CreateParams {
 	envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
 	injectConnectionSecret(envVars, inst.ID)
 
+	placement := instancePlacementParams(inst)
+
 	return orchestrator.CreateParams{
-		Name:               inst.Name,
-		CPURequest:         inst.CPURequest,
-		CPULimit:           inst.CPULimit,
-		MemoryRequest:      inst.MemoryRequest,
-		MemoryLimit:        inst.MemoryLimit,
-		StorageHomebrew:    inst.StorageHomebrew,
-		StorageHome:        inst.StorageHome,
-		ContainerImage:     getEffectiveImage(inst),
-		VNCResolution:      getEffectiveResolution(inst),
-		Timezone:           getEffectiveTimezone(inst),
-		UserAgent:          getEffectiveUserAgent(inst),
-		EnvVars:            envVars,
-		SharedFolderMounts: getSharedFolderMounts(inst.ID),
+		Name:                      inst.Name,
+		CPURequest:                inst.CPURequest,
+		CPULimit:                  inst.CPULimit,
+		MemoryRequest:             inst.MemoryRequest,
+		MemoryLimit:               inst.MemoryLimit,
+		StorageHomebrew:           inst.StorageHomebrew,
+		StorageHome:               inst.StorageHome,
+		ContainerImage:            getEffectiveImage(inst),
+		VNCResolution:             getEffectiveResolution(inst),
+		Timezone:                  getEffectiveTimezone(inst),
+		UserAgent:                 getEffectiveUserAgent(inst),
+		EnvVars:                   envVars,
+		PodAnnotations:            placement.PodAnnotations,
+		NodeSelector:              placement.NodeSelector,
+		Tolerations:               placement.Tolerations,
+		Affinity:                  inst.Affinity,
+		ServiceAccountAnnotations: placement.ServiceAccountAnnotations,
+		Ports:                     placement.Ports,
+		SharedFolderMounts:        getSharedFolderMounts(inst.ID),
 	}
+}
+
+// resolvePlacementDefaults snapshots the current global placement defaults
+// (Settings → "Pod Placement") into the JSON-encoded strings stored on a
+// newly-created instance. Same "resolve once, at creation" contract as
+// resolveDefault for CPU/memory/storage above — never re-read after this.
+func resolvePlacementDefaults() (podAnnotations, nodeSelector, tolerations, affinity string) {
+	if v, err := database.GetSetting("default_pod_annotations"); err == nil && v != "" && v != "{}" {
+		podAnnotations = v
+	}
+	if v, err := database.GetSetting("default_node_selector"); err == nil && v != "" && v != "{}" {
+		nodeSelector = v
+	}
+	if v, err := database.GetSetting("default_tolerations"); err == nil && v != "" && v != "[]" {
+		tolerations = v
+	}
+	if v, err := database.GetSetting("default_affinity"); err == nil {
+		affinity = v
+	}
+	return
+}
+
+// resolveServiceDefaults is resolvePlacementDefaults' counterpart for the
+// per-instance ServiceAccount annotations and exposed ports. Split out
+// because these are new and unrelated to "placement" - kept as a separate
+// function rather than growing resolvePlacementDefaults' already-long
+// return list.
+func resolveServiceDefaults() (serviceAccountAnnotations, ports string) {
+	if v, err := database.GetSetting("default_service_account_annotations"); err == nil && v != "" && v != "{}" {
+		serviceAccountAnnotations = v
+	}
+	if v, err := database.GetSetting("default_ports"); err == nil && v != "" && v != "[]" {
+		ports = v
+	}
+	return
+}
+
+// overrideJSON returns the caller-supplied override JSON-encoded, or
+// fallback (already JSON, from resolvePlacementDefaults/resolveServiceDefaults)
+// when override is nil. Centralizes the "nil means use the resolved default"
+// contract shared by all six placement/service fields on create.
+func overrideJSON[T any](override *T, fallback string) string {
+	if override == nil {
+		return fallback
+	}
+	b, _ := json.Marshal(*override)
+	return string(b)
 }
 
 func getSharedFolderMounts(instanceID uint) []orchestrator.SharedFolderMount {
@@ -920,32 +1066,62 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	var maxSortOrder int
 	database.DB.Model(&database.Instance{}).Select("COALESCE(MAX(sort_order), 0)").Scan(&maxSortOrder)
 
+	// Pod placement / ServiceAccount / port overrides (admin only). A
+	// non-admin manager creating an instance falls through to the resolved
+	// global defaults for all six fields, same as if they'd sent nothing.
+	if body.PodAnnotations != nil || body.NodeSelector != nil || body.Tolerations != nil || body.Affinity != nil ||
+		body.ServiceAccountAnnotations != nil || body.Ports != nil {
+		if caller == nil || caller.Role != "admin" {
+			writeError(w, http.StatusForbidden, "Only admins can set pod placement, service account, or port overrides")
+			return
+		}
+	}
+
+	defaultPodAnnotations, defaultNodeSelector, defaultTolerations, defaultAffinity := resolvePlacementDefaults()
+	defaultServiceAccountAnnotations, defaultPorts := resolveServiceDefaults()
+
+	podAnnotations := overrideJSON(body.PodAnnotations, defaultPodAnnotations)
+	nodeSelector := overrideJSON(body.NodeSelector, defaultNodeSelector)
+	tolerations := overrideJSON(body.Tolerations, defaultTolerations)
+	affinity := defaultAffinity
+	if body.Affinity != nil {
+		affinity = *body.Affinity
+	}
+	serviceAccountAnnotations := overrideJSON(body.ServiceAccountAnnotations, defaultServiceAccountAnnotations)
+	ports := overrideJSON(body.Ports, defaultPorts)
+
 	inst := database.Instance{
-		Name:               name,
-		DisplayName:        body.DisplayName,
-		Status:             "creating",
-		CPURequest:         body.CPURequest,
-		CPULimit:           body.CPULimit,
-		MemoryRequest:      body.MemoryRequest,
-		MemoryLimit:        body.MemoryLimit,
-		StorageHomebrew:    body.StorageHomebrew,
-		StorageHome:        body.StorageHome,
-		BraveAPIKey:        encBraveKey,
-		ContainerImage:     containerImage,
-		VNCResolution:      vncResolution,
-		Timezone:           timezone,
-		UserAgent:          userAgent,
-		GatewayToken:       encGatewayToken,
-		ModelsConfig:       modelsConfigJSON,
-		DefaultModel:       body.DefaultModel,
-		EnabledProviders:   string(enabledProvidersJSON),
-		EnvVars:            envVarsJSON,
-		SortOrder:          maxSortOrder + 1,
-		BrowserProvider:    browserProvider,
-		BrowserImage:       browserImage,
-		BrowserIdleMinutes: browserIdleMinutes,
-		BrowserStorage:     browserStorage,
-		TeamID:             teamID,
+		Name:                      name,
+		DisplayName:               body.DisplayName,
+		Status:                    "creating",
+		CPURequest:                body.CPURequest,
+		CPULimit:                  body.CPULimit,
+		MemoryRequest:             body.MemoryRequest,
+		MemoryLimit:               body.MemoryLimit,
+		StorageHomebrew:           body.StorageHomebrew,
+		StorageHome:               body.StorageHome,
+		BraveAPIKey:               encBraveKey,
+		ContainerImage:            containerImage,
+		VNCResolution:             vncResolution,
+		Timezone:                  timezone,
+		UserAgent:                 userAgent,
+		GatewayToken:              encGatewayToken,
+		ModelsConfig:              modelsConfigJSON,
+		DefaultModel:              body.DefaultModel,
+		EnabledProviders:          string(enabledProvidersJSON),
+		EnvVars:                   envVarsJSON,
+		SortOrder:                 maxSortOrder + 1,
+		BrowserProvider:           browserProvider,
+		BrowserImage:              browserImage,
+		BrowserIdleMinutes:        browserIdleMinutes,
+		BrowserStorage:            browserStorage,
+		TeamID:                    teamID,
+		PodAnnotations:            podAnnotations,
+		NodeSelector:              nodeSelector,
+		Tolerations:               tolerations,
+		Affinity:                  affinity,
+		ServiceAccountAnnotations: serviceAccountAnnotations,
+		Ports:                     ports,
 	}
 
 	if err := database.DB.Create(&inst).Error; err != nil {
@@ -1020,20 +1196,34 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 				envVars["OPENCLAW_INITIAL_PROVIDERS"] = initialProvidersJSON
 			}
 
+			// inst was just Create()'d above with PodAnnotations/NodeSelector/
+			// Tolerations/Affinity/ServiceAccountAnnotations/Ports already
+			// resolved (see resolvePlacementDefaults/resolveServiceDefaults in
+			// CreateInstance) - decode them so this, the pod's actual first
+			// creation, honors them instead of silently starting with none
+			// and only picking them up on a later UpdateInstance/restart.
+			placement := instancePlacementParams(inst)
+
 			err := orch.CreateInstance(ctx, orchestrator.CreateParams{
-				Name:            name,
-				CPURequest:      body.CPURequest,
-				CPULimit:        body.CPULimit,
-				MemoryRequest:   body.MemoryRequest,
-				MemoryLimit:     body.MemoryLimit,
-				StorageHomebrew: body.StorageHomebrew,
-				StorageHome:     body.StorageHome,
-				ContainerImage:  effectiveImage,
-				VNCResolution:   effectiveResolution,
-				Timezone:        effectiveTimezone,
-				UserAgent:       effectiveUserAgent,
-				EnvVars:         envVars,
-				OnProgress:      func(msg string) { setStatusMessage(inst.ID, msg) },
+				Name:                      name,
+				CPURequest:                body.CPURequest,
+				CPULimit:                  body.CPULimit,
+				MemoryRequest:             body.MemoryRequest,
+				MemoryLimit:               body.MemoryLimit,
+				StorageHomebrew:           body.StorageHomebrew,
+				StorageHome:               body.StorageHome,
+				ContainerImage:            effectiveImage,
+				VNCResolution:             effectiveResolution,
+				Timezone:                  effectiveTimezone,
+				UserAgent:                 effectiveUserAgent,
+				EnvVars:                   envVars,
+				PodAnnotations:            placement.PodAnnotations,
+				NodeSelector:              placement.NodeSelector,
+				Tolerations:               placement.Tolerations,
+				Affinity:                  inst.Affinity,
+				ServiceAccountAnnotations: placement.ServiceAccountAnnotations,
+				Ports:                     placement.Ports,
+				OnProgress:                func(msg string) { setStatusMessage(inst.ID, msg) },
 			})
 			if err != nil {
 				log.Printf("Failed to create container resources for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(err.Error()))
@@ -1120,26 +1310,32 @@ func GetInstance(w http.ResponseWriter, r *http.Request) {
 }
 
 type instanceUpdateRequest struct {
-	BraveAPIKey        *string           `json:"brave_api_key"`
-	Models             *modelsConfig     `json:"models"`
-	DefaultModel       *string           `json:"default_model"`
-	Timezone           *string           `json:"timezone"`
-	UserAgent          *string           `json:"user_agent"`
-	AllowedSourceIPs   *string           `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
-	EnabledProviders   *[]uint           `json:"enabled_providers"`  // admin only: LLM gateway provider IDs
-	DisplayName        *string           `json:"display_name"`       // admin only
-	CPURequest         *string           `json:"cpu_request"`        // admin only
-	CPULimit           *string           `json:"cpu_limit"`          // admin only
-	MemoryRequest      *string           `json:"memory_request"`     // admin only
-	MemoryLimit        *string           `json:"memory_limit"`       // admin only
-	VNCResolution      *string           `json:"vnc_resolution"`     // admin only
-	EnvVarsSet         map[string]string `json:"env_vars_set"`
-	EnvVarsUnset       []string          `json:"env_vars_unset"`
-	BrowserProvider    *string           `json:"browser_provider"`     // non-legacy only
-	BrowserImage       *string           `json:"browser_image"`        // non-legacy only
-	BrowserIdleMinutes *int              `json:"browser_idle_minutes"` // non-legacy only; null = global default
-	BrowserStorage     *string           `json:"browser_storage"`      // non-legacy only
-	TeamID             *uint             `json:"team_id"`              // admin or manager of both source+target
+	BraveAPIKey               *string                    `json:"brave_api_key"`
+	Models                    *modelsConfig              `json:"models"`
+	DefaultModel              *string                    `json:"default_model"`
+	Timezone                  *string                    `json:"timezone"`
+	UserAgent                 *string                    `json:"user_agent"`
+	AllowedSourceIPs          *string                    `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
+	EnabledProviders          *[]uint                    `json:"enabled_providers"`  // admin only: LLM gateway provider IDs
+	DisplayName               *string                    `json:"display_name"`       // admin only
+	CPURequest                *string                    `json:"cpu_request"`        // admin only
+	CPULimit                  *string                    `json:"cpu_limit"`          // admin only
+	MemoryRequest             *string                    `json:"memory_request"`     // admin only
+	MemoryLimit               *string                    `json:"memory_limit"`       // admin only
+	VNCResolution             *string                    `json:"vnc_resolution"`     // admin only
+	EnvVarsSet                map[string]string          `json:"env_vars_set"`
+	EnvVarsUnset              []string                   `json:"env_vars_unset"`
+	BrowserProvider           *string                    `json:"browser_provider"`            // non-legacy only
+	BrowserImage              *string                    `json:"browser_image"`               // non-legacy only
+	BrowserIdleMinutes        *int                       `json:"browser_idle_minutes"`        // non-legacy only; null = global default
+	BrowserStorage            *string                    `json:"browser_storage"`             // non-legacy only
+	TeamID                    *uint                      `json:"team_id"`                     // admin or manager of both source+target
+	PodAnnotations            *map[string]string         `json:"pod_annotations"`             // admin only
+	NodeSelector              *map[string]string         `json:"node_selector"`               // admin only
+	Tolerations               *[]orchestrator.Toleration `json:"tolerations"`                 // admin only
+	Affinity                  *string                    `json:"affinity"`                    // admin only; raw JSON
+	ServiceAccountAnnotations *map[string]string         `json:"service_account_annotations"` // admin only
+	Ports                     *[]orchestrator.PortSpec   `json:"ports"`                       // admin only
 }
 
 func UpdateInstance(w http.ResponseWriter, r *http.Request) {
@@ -1380,6 +1576,53 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Update pod placement / service account / port config (admin only)
+	placementChanged := false
+	if body.PodAnnotations != nil || body.NodeSelector != nil || body.Tolerations != nil || body.Affinity != nil ||
+		body.ServiceAccountAnnotations != nil || body.Ports != nil {
+		user := middleware.GetUser(r)
+		if user == nil || user.Role != "admin" {
+			writeError(w, http.StatusForbidden, "Only admins can change pod placement, service account, or port config")
+			return
+		}
+		if body.PodAnnotations != nil {
+			b, _ := json.Marshal(*body.PodAnnotations)
+			database.DB.Model(&inst).Update("pod_annotations", string(b))
+			placementChanged = true
+		}
+		if body.NodeSelector != nil {
+			b, _ := json.Marshal(*body.NodeSelector)
+			database.DB.Model(&inst).Update("node_selector", string(b))
+			placementChanged = true
+		}
+		if body.Tolerations != nil {
+			b, _ := json.Marshal(*body.Tolerations)
+			database.DB.Model(&inst).Update("tolerations", string(b))
+			placementChanged = true
+		}
+		if body.Affinity != nil {
+			if *body.Affinity != "" {
+				var check interface{}
+				if err := json.Unmarshal([]byte(*body.Affinity), &check); err != nil {
+					writeError(w, http.StatusBadRequest, "Invalid affinity JSON")
+					return
+				}
+			}
+			database.DB.Model(&inst).Update("affinity", *body.Affinity)
+			placementChanged = true
+		}
+		if body.ServiceAccountAnnotations != nil {
+			b, _ := json.Marshal(*body.ServiceAccountAnnotations)
+			database.DB.Model(&inst).Update("service_account_annotations", string(b))
+			placementChanged = true
+		}
+		if body.Ports != nil {
+			b, _ := json.Marshal(*body.Ports)
+			database.DB.Model(&inst).Update("ports", string(b))
+			placementChanged = true
+		}
+	}
+
 	// Re-fetch
 	database.DB.First(&inst, inst.ID)
 
@@ -1401,6 +1644,37 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Failed to update resources for instance %d: %v", inst.ID, err)
 		}
 	}
+
+	// Apply placement changes to running deployment. Any field here (pod
+	// annotations, node selector, tolerations, affinity, service account,
+	// ports) touches .spec.template, so the Deployment controller recreates
+	// the pod automatically (Recreate strategy) - but the control plane's
+	// existing SSH connection/tunnels still point at the old pod and won't
+	// notice on their own. Tear them down first, same as a manual restart
+	// does, so the WaitForSSH below reconnects to the new pod instead of
+	// hanging on the dead one.
+	if placementChanged && orch != nil && orchStatus == "running" {
+		if SSHMgr != nil {
+			SSHMgr.CancelReconnection(inst.ID)
+		}
+		if TunnelMgr != nil {
+			if err := TunnelMgr.StopTunnelsForInstance(inst.ID); err != nil {
+				log.Printf("Failed to stop tunnels for instance %d: %v", inst.ID, err)
+			}
+		}
+		placement := instancePlacementParams(inst)
+		if err := orch.UpdatePlacementConfig(r.Context(), inst.Name, orchestrator.UpdatePlacementParams{
+			PodAnnotations:            placement.PodAnnotations,
+			NodeSelector:              placement.NodeSelector,
+			Tolerations:               placement.Tolerations,
+			Affinity:                  inst.Affinity,
+			ServiceAccountAnnotations: placement.ServiceAccountAnnotations,
+			Ports:                     placement.Ports,
+		}); err != nil {
+			log.Printf("Failed to update placement config for instance %d: %v", inst.ID, err)
+		}
+	}
+
 	if orch != nil && orchStatus == "running" {
 		models := resolveInstanceModels(inst)
 		gatewayProviders := resolveLLMProviders(inst)
@@ -1556,18 +1830,28 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 	startInstanceTask(taskmanager.TaskInstanceImageUpdate, inst.ID, callerID(r), inst.DisplayName,
 		fmt.Sprintf("Updating image for %s", inst.DisplayName),
 		func(ctx context.Context) {
+			// UpdateImage replaces the whole pod spec (see RestartInstance),
+			// so placement/SA/ports must be threaded through here too -
+			// otherwise a plain image update would silently strip them.
+			placement := instancePlacementParams(inst)
 			err := orch.UpdateImage(ctx, instName, orchestrator.CreateParams{
-				Name:               instName,
-				CPURequest:         inst.CPURequest,
-				CPULimit:           inst.CPULimit,
-				MemoryRequest:      inst.MemoryRequest,
-				MemoryLimit:        inst.MemoryLimit,
-				ContainerImage:     effectiveImage,
-				VNCResolution:      effectiveResolution,
-				Timezone:           effectiveTimezone,
-				UserAgent:          effectiveUserAgent,
-				EnvVars:            envVars,
-				SharedFolderMounts: getSharedFolderMounts(instID),
+				Name:                      instName,
+				CPURequest:                inst.CPURequest,
+				CPULimit:                  inst.CPULimit,
+				MemoryRequest:             inst.MemoryRequest,
+				MemoryLimit:               inst.MemoryLimit,
+				ContainerImage:            effectiveImage,
+				VNCResolution:             effectiveResolution,
+				Timezone:                  effectiveTimezone,
+				UserAgent:                 effectiveUserAgent,
+				EnvVars:                   envVars,
+				PodAnnotations:            placement.PodAnnotations,
+				NodeSelector:              placement.NodeSelector,
+				Tolerations:               placement.Tolerations,
+				Affinity:                  inst.Affinity,
+				ServiceAccountAnnotations: placement.ServiceAccountAnnotations,
+				Ports:                     placement.Ports,
+				SharedFolderMounts:        getSharedFolderMounts(instID),
 			})
 			if err != nil {
 				log.Printf("Failed to update image for instance %d: %v", instID, err)
@@ -1966,6 +2250,14 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		BrowserIdleMinutes: src.BrowserIdleMinutes,
 		BrowserStorage:     src.BrowserStorage,
 		BrowserActive:      src.BrowserActive,
+		// Carry over placement/service config so the clone schedules and is
+		// reachable the same way the original is.
+		PodAnnotations:            src.PodAnnotations,
+		NodeSelector:              src.NodeSelector,
+		Tolerations:               src.Tolerations,
+		Affinity:                  src.Affinity,
+		ServiceAccountAnnotations: src.ServiceAccountAnnotations,
+		Ports:                     src.Ports,
 	}
 
 	if err := database.DB.Create(&inst).Error; err != nil {
@@ -2026,22 +2318,30 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
 			injectConnectionSecret(envVars, inst.ID)
 
+			placement := instancePlacementParams(inst)
+
 			// Create container/deployment with empty volumes
 			err := orch.CreateInstance(ctx, orchestrator.CreateParams{
-				Name:               cloneName,
-				CPURequest:         inst.CPURequest,
-				CPULimit:           inst.CPULimit,
-				MemoryRequest:      inst.MemoryRequest,
-				MemoryLimit:        inst.MemoryLimit,
-				StorageHomebrew:    inst.StorageHomebrew,
-				StorageHome:        inst.StorageHome,
-				ContainerImage:     effectiveImage,
-				VNCResolution:      effectiveResolution,
-				Timezone:           effectiveTimezone,
-				UserAgent:          effectiveUserAgent,
-				EnvVars:            envVars,
-				OnProgress:         func(msg string) { setStatusMessage(inst.ID, msg) },
-				SharedFolderMounts: getSharedFolderMounts(inst.ID),
+				Name:                      cloneName,
+				CPURequest:                inst.CPURequest,
+				CPULimit:                  inst.CPULimit,
+				MemoryRequest:             inst.MemoryRequest,
+				MemoryLimit:               inst.MemoryLimit,
+				StorageHomebrew:           inst.StorageHomebrew,
+				StorageHome:               inst.StorageHome,
+				ContainerImage:            effectiveImage,
+				VNCResolution:             effectiveResolution,
+				Timezone:                  effectiveTimezone,
+				UserAgent:                 effectiveUserAgent,
+				EnvVars:                   envVars,
+				PodAnnotations:            placement.PodAnnotations,
+				NodeSelector:              placement.NodeSelector,
+				Tolerations:               placement.Tolerations,
+				Affinity:                  inst.Affinity,
+				ServiceAccountAnnotations: placement.ServiceAccountAnnotations,
+				Ports:                     placement.Ports,
+				OnProgress:                func(msg string) { setStatusMessage(inst.ID, msg) },
+				SharedFolderMounts:        getSharedFolderMounts(inst.ID),
 			})
 			if err != nil {
 				log.Printf("Failed to create container for clone %s: %v", cloneName, err)

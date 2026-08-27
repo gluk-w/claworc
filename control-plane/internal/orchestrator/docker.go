@@ -206,6 +206,10 @@ func (d *DockerOrchestrator) ensureImage(ctx context.Context, img string) error 
 	return nil
 }
 
+// CreateInstance ignores params.Ports and params.ServiceAccountAnnotations:
+// Docker containers already publish their fixed port set below, and there is
+// no ServiceAccount concept outside Kubernetes. Both are K8s-only knobs - see
+// KubernetesOrchestrator.CreateInstance.
 func (d *DockerOrchestrator) CreateInstance(ctx context.Context, params CreateParams) error {
 	progress := params.OnProgress
 	if progress == nil {
@@ -607,6 +611,11 @@ func (d *DockerOrchestrator) GetSSHAddress(ctx context.Context, instanceID uint)
 	}
 
 	return "", 0, fmt.Errorf("cannot determine SSH address for instance %d", instanceID)
+}
+
+func (d *DockerOrchestrator) UpdatePlacementConfig(_ context.Context, name string, _ UpdatePlacementParams) error {
+	log.Printf("UpdatePlacementConfig: Docker orchestrator does not support pod placement for %s; ignoring", name)
+	return nil
 }
 
 func (d *DockerOrchestrator) UpdateResources(ctx context.Context, name string, params UpdateResourcesParams) error {

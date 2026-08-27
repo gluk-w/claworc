@@ -15,5 +15,14 @@ spec:
       {{- if and (eq .Values.service.type "NodePort") .Values.service.nodePort }}
       nodePort: {{ .Values.service.nodePort }}
       {{- end }}
+    {{- if .Values.sshGateway.enabled }}
+    - name: ssh
+      port: {{ .Values.sshGateway.servicePort }}
+      targetPort: ssh
+      protocol: TCP
+      {{- if and (eq .Values.service.type "NodePort") .Values.sshGateway.nodePort }}
+      nodePort: {{ .Values.sshGateway.nodePort }}
+      {{- end }}
+    {{- end }}
   selector:
     {{- include "claworc.selectorLabels" . | nindent 4 }}

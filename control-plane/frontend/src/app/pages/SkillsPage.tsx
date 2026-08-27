@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { Search, Loader2 } from "lucide-react";
-import { useSkills, useDeleteSkill, useClawhubSearch } from "@common/hooks/useSkills";
+import { useSkills, useDeleteSkill, useClawhubSearch, useImportSkill } from "@common/hooks/useSkills";
 import { LibrarySkillCard, DiscoverSkillCard } from "@common/components/skills/SkillCard";
 import DeployModal from "@common/components/skills/DeployModal";
 import UploadSkillModal from "@common/components/skills/UploadSkillModal";
 import SkillEditorModal from "@common/components/skills/SkillEditorModal";
+import SkillExistsModal from "@common/components/skills/SkillExistsModal";
 import { useAuth } from "@common/contexts/AuthContext";
+import type { ClawhubResult } from "@common/types/skills";
 import Page from "@common/components/Page";
 
 type Tab = "library" | "discover";
@@ -25,6 +27,7 @@ export default function SkillsPage() {
   const [showUpload, setShowUpload] = useState(false);
   const [deployTarget, setDeployTarget] = useState<DeployTarget | null>(null);
   const [editSlug, setEditSlug] = useState<string | null>(null);
+  const [existingChoice, setExistingChoice] = useState<ClawhubResult | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
@@ -32,6 +35,7 @@ export default function SkillsPage() {
 
   const { data: skills, isLoading: skillsLoading } = useSkills();
   const { mutate: deleteSkill } = useDeleteSkill();
+  const { mutateAsync: importSkill, isPending: importPending } = useImportSkill();
 
   const {
     data: clawhubData,
@@ -76,6 +80,27 @@ export default function SkillsPage() {
 
   const handleEdit = (slug: string) => {
     setEditSlug(slug);
+  };
+
+  const downloadAndEdit = async (result: ClawhubResult, createNew: boolean) => {
+    try {
+      const skill = await importSkill({
+        slug: result.slug,
+        version: result.version,
+        createNew,
+      });
+      setEditSlug(skill.slug);
+    } catch {
+      // useImportSkill surfaces the error via toast
+    }
+  };
+
+  const handleDiscoverEdit = (result: ClawhubResult) => {
+    if (skills?.some((s) => s.slug === result.slug)) {
+      setExistingChoice(result);
+    } else {
+      void downloadAndEdit(result, false);
+    }
   };
 
   const handleDelete = (slug: string) => {
@@ -180,6 +205,7 @@ export default function SkillsPage() {
                   key={result.slug}
                   result={result}
                   onDeploy={handleDeployClawhub}
+                  onEdit={handleDiscoverEdit}
                 />
               ))}
             </div>
@@ -204,6 +230,22 @@ export default function SkillsPage() {
           />
         );
       })()}
+      {existingChoice && (
+        <SkillExistsModal
+          slug={existingChoice.slug}
+          pending={importPending}
+          onUseExisting={() => {
+            setEditSlug(existingChoice.slug);
+            setExistingChoice(null);
+          }}
+          onCreateNew={async () => {
+            const result = existingChoice;
+            setExistingChoice(null);
+            await downloadAndEdit(result, true);
+          }}
+          onClose={() => setExistingChoice(null)}
+        />
+      )}
       {deployTarget && (
         <DeployModal
           slug={deployTarget.slug}

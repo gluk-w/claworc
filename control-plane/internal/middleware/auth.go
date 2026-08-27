@@ -134,26 +134,5 @@ func WithUser(ctx context.Context, user *database.User) context.Context {
 }
 
 func CanAccessInstance(r *http.Request, instanceID uint) bool {
-	user := GetUser(r)
-	if user == nil {
-		return false
-	}
-	if user.Role == "admin" {
-		return true
-	}
-	// Look up the instance's team. Managers of that team have access to
-	// all team instances. Regular team members still need an explicit
-	// UserInstance grant.
-	inst, err := database.GetInstance(instanceID)
-	if err == nil {
-		role := database.GetTeamRole(user.ID, inst.TeamID)
-		if role == database.TeamRoleManager {
-			return true
-		}
-		if role == database.TeamRoleUser && database.IsUserAssignedToInstance(user.ID, instanceID) {
-			return true
-		}
-		return false
-	}
-	return database.IsUserAssignedToInstance(user.ID, instanceID)
+	return database.CanUserAccessInstance(GetUser(r), instanceID)
 }

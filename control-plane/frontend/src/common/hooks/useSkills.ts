@@ -3,6 +3,7 @@ import {
   deleteSkill,
   deploySkill,
   getSkillFile,
+  importClawhubSkill,
   listSkillFiles,
   listSkills,
   saveSkillFile,
@@ -33,6 +34,26 @@ export function useUploadSkill() {
       if ((error as any)?.response?.status === 409) return;
       errorToast("Failed to upload skill", error);
     },
+  });
+}
+
+export function useImportSkill() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      slug,
+      version,
+      createNew = false,
+    }: {
+      slug: string;
+      version?: string;
+      createNew?: boolean;
+    }) => importClawhubSkill(slug, version, createNew),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["skills"] });
+      successToast("Skill added to library");
+    },
+    onError: (error) => errorToast("Failed to import skill", error),
   });
 }
 

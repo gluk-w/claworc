@@ -16,3 +16,15 @@ spec:
               {{- include "claworc.selectorLabels" . | nindent 14 }}
       ports:
         - port: 22
+    {{- if .Values.instanceIngress.enabled }}
+    # Instances that expose ports (CreateParams.Ports / a per-instance Service)
+    # are reached by an Ingress living outside this namespace - e.g. a
+    # create-app-provisioned Ingress routing <app>.dev.clutch.co to the
+    # instance's Service. Not port-scoped: ports are per-instance and dynamic,
+    # so this trusts the whole namespace named here rather than enumerating
+    # every possible instance port.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.instanceIngress.fromNamespaceLabels | nindent 14 }}
+    {{- end }}

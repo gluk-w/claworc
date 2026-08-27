@@ -23,6 +23,19 @@ export async function deleteSkill(slug: string): Promise<void> {
   await client.delete(`/skills/${slug}`);
 }
 
+export async function importClawhubSkill(
+  slug: string,
+  version?: string,
+  createNew = false,
+): Promise<Skill> {
+  const res = await client.post<Skill>("/skills/clawhub/import", {
+    slug,
+    version,
+    create_new: createNew,
+  });
+  return res.data;
+}
+
 export async function searchClawhub(
   q: string,
   limit = 20,

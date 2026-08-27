@@ -52,6 +52,19 @@ export interface Instance {
   browser_storage?: string;
   browser_active?: boolean;
   team_id: number;
+  pod_annotations: Record<string, string>;
+  node_selector: Record<string, string>;
+  tolerations: Toleration[];
+  affinity: string;
+  service_account_annotations: Record<string, string>;
+  ports: PortSpec[];
+}
+
+export interface PortSpec {
+  name?: string;
+  container_port: number;
+  service_port?: number;
+  protocol?: "TCP" | "UDP" | "";
 }
 
 // Keep as distinct type for future detail-only fields
@@ -79,6 +92,20 @@ export interface InstanceCreatePayload {
   browser_idle_minutes?: number;
   browser_storage?: string;
   team_id?: number;
+  pod_annotations?: Record<string, string>;
+  node_selector?: Record<string, string>;
+  tolerations?: Toleration[];
+  affinity?: string;
+  service_account_annotations?: Record<string, string>;
+  ports?: PortSpec[];
+}
+
+export interface Toleration {
+  key?: string;
+  operator: "Equal" | "Exists";
+  value?: string;
+  effect?: "NoSchedule" | "PreferNoSchedule" | "NoExecute" | "";
+  tolerationSeconds?: number;
 }
 
 export interface InstanceUpdatePayload {
@@ -102,6 +129,12 @@ export interface InstanceUpdatePayload {
   browser_idle_minutes?: number | null;
   browser_storage?: string;
   team_id?: number;
+  pod_annotations?: Record<string, string>;
+  node_selector?: Record<string, string>;
+  tolerations?: Toleration[];
+  affinity?: string;
+  service_account_annotations?: Record<string, string>;
+  ports?: PortSpec[];
 }
 
 export interface InstanceStats {

@@ -27,6 +27,12 @@ import (
 	"k8s.io/client-go/util/homedir"
 )
 
+// seLinuxMCSLevel is the fixed SELinux MCS level shared by every claworc pod
+// that mounts an instance PVC. Pinning it keeps the runtime from assigning
+// random per-pod categories and relabeling shared volumes out from under
+// sibling pods (agent <-> browser <-> copy pods). No-op on non-SELinux nodes.
+const seLinuxMCSLevel = "s0:c0,c0"
+
 type KubernetesOrchestrator struct {
 	clientset       kubernetes.Interface
 	restConfig      *rest.Config
@@ -129,6 +135,20 @@ func (k *KubernetesOrchestrator) CreateInstance(ctx context.Context, params Crea
 		}
 	}
 
+	if sa := desiredServiceAccount(params.Name, ns, params.ServiceAccountAnnotations); sa != nil {
+		progress("Creating service account...")
+		if _, err := k.clientset.CoreV1().ServiceAccounts(ns).Create(ctx, sa, metav1.CreateOptions{}); err != nil {
+			return fmt.Errorf("create serviceaccount: %w", err)
+		}
+	}
+
+	if svc := desiredService(params.Name, ns, params.Ports); svc != nil {
+		progress("Creating service...")
+		if _, err := k.clientset.CoreV1().Services(ns).Create(ctx, svc, metav1.CreateOptions{}); err != nil {
+			return fmt.Errorf("create service: %w", err)
+		}
+	}
+
 	progress("Creating deployment...")
 	dep := buildDeployment(params, ns)
 	if _, err := k.clientset.AppsV1().Deployments(ns).Create(ctx, dep, metav1.CreateOptions{}); err != nil {
@@ -195,6 +215,11 @@ func (k *KubernetesOrchestrator) copyPVC(ctx context.Context, srcPVC, dstPVC str
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,
+			// Pin the MCS level so mounting the PVCs here doesn't relabel
+			// them away from what instance/browser pods expect.
+			SecurityContext: &corev1.PodSecurityContext{
+				SELinuxOptions: &corev1.SELinuxOptions{Level: seLinuxMCSLevel},
+			},
 			Containers: []corev1.Container{{
 				Name:    "copy",
 				Image:   "alpine:latest",
@@ -244,6 +269,14 @@ func (k *KubernetesOrchestrator) DeleteInstance(ctx context.Context, name string
 	if err := k.clientset.AppsV1().Deployments(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("delete deployment: %w", err)
 	}
+	// Best-effort: a pre-existing instance may have neither. NotFound is
+	// swallowed inside these two deletes already.
+	if err := k.clientset.CoreV1().Services(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("delete service: %w", err)
+	}
+	if err := k.clientset.CoreV1().ServiceAccounts(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("delete serviceaccount: %w", err)
+	}
 	for _, suffix := range []string{"homebrew", "home"} {
 		pvcName := fmt.Sprintf("%s-%s", name, suffix)
 		if err := k.clientset.CoreV1().PersistentVolumeClaims(ns).Delete(ctx, pvcName, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
@@ -289,6 +322,17 @@ func (k *KubernetesOrchestrator) RestartInstance(ctx context.Context, name strin
 		}
 	}
 
+	// buildDeployment replaces the whole pod spec below (not a narrow image
+	// patch), including ServiceAccountName and container ports - keep the
+	// actual ServiceAccount/Service objects in sync with what the rebuilt
+	// spec will reference, same as UpdatePlacementConfig does.
+	if err := k.reconcileServiceAccount(ctx, ns, name, params.ServiceAccountAnnotations); err != nil {
+		return err
+	}
+	if err := k.reconcileInstanceService(ctx, ns, name, params.Ports); err != nil {
+		return err
+	}
+
 	// Fetch existing deployment so Update carries a valid resourceVersion;
 	// without it the K8s API rejects the write and the pod template is never rolled out.
 	existing, err := k.clientset.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
@@ -303,11 +347,82 @@ func (k *KubernetesOrchestrator) RestartInstance(ctx context.Context, name strin
 		return fmt.Errorf("get deployment: %w", err)
 	}
 
+	params.NodeSelector = k.withPVCZoneConstraint(ctx, name, ns, params.NodeSelector)
+
 	desired := buildDeployment(params, ns)
 	existing.Spec = desired.Spec
 	existing.Labels = desired.Labels
 	_, err = k.clientset.AppsV1().Deployments(ns).Update(ctx, existing, metav1.UpdateOptions{})
 	return err
+}
+
+// zoneTopologyKeys are checked in order when reading a bound PV's zone
+// constraint — clusters on older in-tree provisioners may only populate the
+// beta label, current ones use the stable topology key.
+var zoneTopologyKeys = []string{"topology.kubernetes.io/zone", "failure-domain.beta.kubernetes.io/zone"}
+
+// withPVCZoneConstraint returns nodeSelector with an added (or corrected)
+// zone constraint matching the instance's already-bound data volume, if any.
+//
+// EBS volumes are zone-locked: once a PVC is Bound, its pod can only ever be
+// scheduled in that volume's AZ, regardless of what nodeSelector/affinity an
+// admin configures (globally or per-instance). Without this, a nodeSelector
+// that conflicts with the bound PV's zone silently leaves the pod Pending
+// forever with a generic "volume node affinity conflict" event — nothing
+// surfaces that the real cause is a zone mismatch. Deriving the zone from
+// the live PV instead of trusting manually-entered config makes the two
+// impossible to disagree.
+//
+// New instances (PVC not yet bound — still WaitForFirstConsumer) are
+// intentionally left alone: the zone doesn't exist yet, so the scheduler
+// should still pick it based on nodeSelector/taints as normal.
+func (k *KubernetesOrchestrator) withPVCZoneConstraint(ctx context.Context, name, ns string, nodeSelector map[string]string) map[string]string {
+	zone := k.boundPVCZone(ctx, fmt.Sprintf("%s-home", name), ns)
+	if zone == "" {
+		return nodeSelector
+	}
+
+	merged := make(map[string]string, len(nodeSelector)+1)
+	for k, v := range nodeSelector {
+		merged[k] = v
+	}
+	merged["topology.kubernetes.io/zone"] = zone
+	return merged
+}
+
+// boundPVCZone returns the AZ a bound PVC's underlying PV is locked to, or ""
+// if the PVC doesn't exist yet, isn't bound yet, or carries no zone
+// constraint (e.g. EFS-backed).
+func (k *KubernetesOrchestrator) boundPVCZone(ctx context.Context, pvcName, ns string) string {
+	pvc, err := k.clientset.CoreV1().PersistentVolumeClaims(ns).Get(ctx, pvcName, metav1.GetOptions{})
+	if err != nil || pvc.Status.Phase != corev1.ClaimBound || pvc.Spec.VolumeName == "" {
+		return ""
+	}
+
+	pv, err := k.clientset.CoreV1().PersistentVolumes().Get(ctx, pvc.Spec.VolumeName, metav1.GetOptions{})
+	if err != nil {
+		return ""
+	}
+
+	for _, key := range zoneTopologyKeys {
+		if zone, ok := pv.Labels[key]; ok && zone != "" {
+			return zone
+		}
+	}
+
+	if pv.Spec.NodeAffinity == nil || pv.Spec.NodeAffinity.Required == nil {
+		return ""
+	}
+	for _, term := range pv.Spec.NodeAffinity.Required.NodeSelectorTerms {
+		for _, expr := range term.MatchExpressions {
+			for _, key := range zoneTopologyKeys {
+				if expr.Key == key && len(expr.Values) > 0 {
+					return expr.Values[0]
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func (k *KubernetesOrchestrator) UpdateImage(ctx context.Context, name string, params CreateParams) error {
@@ -394,14 +509,19 @@ func (k *KubernetesOrchestrator) GetSSHAddress(ctx context.Context, instanceID u
 	if err != nil {
 		return "", 0, fmt.Errorf("list pods for instance %d: %w", instanceID, err)
 	}
-	if len(pods.Items) == 0 {
-		return "", 0, fmt.Errorf("no pods found for instance %d", instanceID)
+	// Skip terminating pods: during a rolling update both the old (Terminating)
+	// and new pod exist simultaneously. Connecting to the old pod stores its SSH
+	// host key, which then mismatches the new pod's key when the reconnect retries.
+	for _, pod := range pods.Items {
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
+		if pod.Status.PodIP == "" {
+			continue
+		}
+		return pod.Status.PodIP, 22, nil
 	}
-	pod := pods.Items[0]
-	if pod.Status.PodIP == "" {
-		return "", 0, fmt.Errorf("pod %s has no IP assigned (instance %d)", pod.Name, instanceID)
-	}
-	return pod.Status.PodIP, 22, nil
+	return "", 0, fmt.Errorf("no running pod found for instance %d (name: %s)", instanceID, inst.Name)
 }
 
 func (k *KubernetesOrchestrator) UpdateResources(ctx context.Context, name string, params UpdateResourcesParams) error {
@@ -428,6 +548,64 @@ func (k *KubernetesOrchestrator) UpdateResources(ctx context.Context, name strin
 
 	_, err = k.clientset.AppsV1().Deployments(k.ns()).Update(ctx, dep, metav1.UpdateOptions{})
 	return err
+}
+
+func (k *KubernetesOrchestrator) UpdatePlacementConfig(ctx context.Context, name string, params UpdatePlacementParams) error {
+	ns := k.ns()
+
+	if err := k.reconcileServiceAccount(ctx, ns, name, params.ServiceAccountAnnotations); err != nil {
+		return err
+	}
+	if err := k.reconcileInstanceService(ctx, ns, name, params.Ports); err != nil {
+		return err
+	}
+
+	dep, err := k.clientset.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get deployment: %w", err)
+	}
+
+	dep.Spec.Template.Annotations = params.PodAnnotations
+	dep.Spec.Template.Spec.NodeSelector = k.withPVCZoneConstraint(ctx, name, ns, params.NodeSelector)
+	dep.Spec.Template.Spec.Tolerations = convertTolerations(params.Tolerations)
+	dep.Spec.Template.Spec.Affinity = parseAffinity(params.Affinity)
+	dep.Spec.Template.Spec.ServiceAccountName = instanceServiceAccountName(name, params.ServiceAccountAnnotations)
+	if len(dep.Spec.Template.Spec.Containers) > 0 {
+		dep.Spec.Template.Spec.Containers[0].Ports = containerPorts(params.Ports)
+	}
+
+	_, err = k.clientset.AppsV1().Deployments(ns).Update(ctx, dep, metav1.UpdateOptions{})
+	return err
+}
+
+func convertTolerations(ts []Toleration) []corev1.Toleration {
+	if len(ts) == 0 {
+		return nil
+	}
+	out := make([]corev1.Toleration, len(ts))
+	for i, t := range ts {
+		out[i] = corev1.Toleration{
+			Key:      t.Key,
+			Operator: corev1.TolerationOperator(t.Operator),
+			Value:    t.Value,
+			Effect:   corev1.TaintEffect(t.Effect),
+		}
+		if t.TolerationSeconds != nil {
+			out[i].TolerationSeconds = t.TolerationSeconds
+		}
+	}
+	return out
+}
+
+func parseAffinity(raw string) *corev1.Affinity {
+	if raw == "" {
+		return nil
+	}
+	var aff corev1.Affinity
+	if err := json.Unmarshal([]byte(raw), &aff); err != nil {
+		return nil
+	}
+	return &aff
 }
 
 func (k *KubernetesOrchestrator) GetContainerStats(ctx context.Context, name string) (*ContainerStats, error) {
@@ -669,8 +847,8 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 			corev1.EnvVar{Name: "DISPLAY_HEIGHT", Value: parts[1]},
 		)
 	}
-	if token, ok := params.EnvVars["OPENCLAW_GATEWAY_TOKEN"]; ok && token != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "OPENCLAW_GATEWAY_TOKEN", Value: token})
+	for k, v := range params.EnvVars {
+		envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
 	}
 	if params.Timezone != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "TZ", Value: params.Timezone})
@@ -692,9 +870,16 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": params.Name}},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": params.Name, "managed-by": "claworc"}},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      map[string]string{"app": params.Name, "managed-by": "claworc"},
+					Annotations: params.PodAnnotations,
+				},
 				Spec: corev1.PodSpec{
-					Hostname: strings.TrimPrefix(params.Name, "bot-"),
+					Hostname:           strings.TrimPrefix(params.Name, "bot-"),
+					NodeSelector:       params.NodeSelector,
+					Tolerations:        convertTolerations(params.Tolerations),
+					Affinity:           parseAffinity(params.Affinity),
+					ServiceAccountName: instanceServiceAccountName(params.Name, params.ServiceAccountAnnotations),
 					SecurityContext: &corev1.PodSecurityContext{
 						// Pin the SELinux MCS level so every pod incarnation
 						// can read what its predecessors wrote to the home
@@ -703,7 +888,7 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 						// SELinux policies deny access to the agent's own
 						// home dir on restart. Ignored on non-SELinux nodes.
 						SELinuxOptions: &corev1.SELinuxOptions{
-							Level: "s0:c0,c0",
+							Level: seLinuxMCSLevel,
 						},
 						FSGroup:             &fsGroup,
 						FSGroupChangePolicy: &fsGroupPolicy,
@@ -714,6 +899,7 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 						ImagePullPolicy: corev1.PullAlways,
 						SecurityContext: &corev1.SecurityContext{Privileged: &privileged, AllowPrivilegeEscalation: &allowPrivEsc},
 						Env:             envVars,
+						Ports:           containerPorts(params.Ports),
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{
 								corev1.ResourceCPU:    resource.MustParse(params.CPURequest),
@@ -753,6 +939,160 @@ func buildDeployment(params CreateParams, ns string) *appsv1.Deployment {
 	}
 }
 
+// instanceServiceAccountName returns the ServiceAccount name to set on the
+// pod spec, or "" to fall back to the namespace's default SA. The SA is
+// named after the instance (1:1, static) - only created when there's
+// something to annotate it with; the common OpenClaw-agent case has none and
+// keeps running under the default SA exactly as before this field existed.
+func instanceServiceAccountName(instanceName string, annotations map[string]string) string {
+	if len(annotations) == 0 {
+		return ""
+	}
+	return instanceName
+}
+
+// containerPorts converts PortSpec entries into K8s container ports. Returns
+// nil (no field on the container) when the instance exposes none, which is
+// the common OpenClaw-agent case - SSH-only, no Service. Deliberately does
+// NOT declare the sshd port: the control plane dials the pod IP directly for
+// SSH (see WaitForSSH/ConfigureSSHAccess), never through a container port
+// declaration or a Service, so declaring it here would be decorative only -
+// unlike the browser sidecar's Service, which genuinely is how the control
+// plane reaches that workload's sshd.
+func containerPorts(ports []PortSpec) []corev1.ContainerPort {
+	if len(ports) == 0 {
+		return nil
+	}
+	out := make([]corev1.ContainerPort, 0, len(ports))
+	for _, p := range ports {
+		out = append(out, corev1.ContainerPort{Name: p.Name, ContainerPort: int32(p.ContainerPort)})
+	}
+	return out
+}
+
+// desiredServiceAccount returns the ServiceAccount object an instance should
+// have, or nil when it should have none (instanceServiceAccountName == "").
+// Mirrors the shape kubernetes_apply.go builds for generic workloads.
+func desiredServiceAccount(instanceName, ns string, annotations map[string]string) *corev1.ServiceAccount {
+	if len(annotations) == 0 {
+		return nil
+	}
+	return &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        instanceName,
+			Namespace:   ns,
+			Labels:      map[string]string{"app": instanceName, "managed-by": "claworc"},
+			Annotations: annotations,
+		},
+	}
+}
+
+// desiredService returns the ClusterIP Service an instance should have, or
+// nil when it should have none (no ports configured). Mirrors applyService
+// in kubernetes_apply.go. Deliberately excludes ssh:22 - the control plane
+// never reaches this workload's sshd through a Service (direct pod-IP dial,
+// see WaitForSSH/ConfigureSSHAccess), so adding it here would be pure noise.
+func desiredService(instanceName, ns string, ports []PortSpec) *corev1.Service {
+	if len(ports) == 0 {
+		return nil
+	}
+	svcPorts := make([]corev1.ServicePort, 0, len(ports))
+	for _, p := range ports {
+		svcPort := p.ServicePort
+		if svcPort == 0 {
+			svcPort = p.ContainerPort
+		}
+		proto := corev1.ProtocolTCP
+		if strings.EqualFold(p.Protocol, "UDP") {
+			proto = corev1.ProtocolUDP
+		}
+		svcPorts = append(svcPorts, corev1.ServicePort{
+			Name:       p.Name,
+			Port:       int32(svcPort),
+			TargetPort: intstr.FromInt32(int32(p.ContainerPort)),
+			Protocol:   proto,
+		})
+	}
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      instanceName,
+			Namespace: ns,
+			Labels:    map[string]string{"app": instanceName, "managed-by": "claworc"},
+		},
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeClusterIP,
+			Selector: map[string]string{"app": instanceName},
+			Ports:    svcPorts,
+		},
+	}
+}
+
+// reconcileServiceAccount creates, updates, or deletes the instance's
+// ServiceAccount to match the desired annotations. Safe to call whether or
+// not one already exists.
+func (k *KubernetesOrchestrator) reconcileServiceAccount(ctx context.Context, ns, instanceName string, annotations map[string]string) error {
+	desired := desiredServiceAccount(instanceName, ns, annotations)
+	existing, err := k.clientset.CoreV1().ServiceAccounts(ns).Get(ctx, instanceName, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		if desired == nil {
+			return nil
+		}
+		if _, err := k.clientset.CoreV1().ServiceAccounts(ns).Create(ctx, desired, metav1.CreateOptions{}); err != nil {
+			return fmt.Errorf("create serviceaccount %s: %w", instanceName, err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("get serviceaccount %s: %w", instanceName, err)
+	}
+	if desired == nil {
+		if err := k.clientset.CoreV1().ServiceAccounts(ns).Delete(ctx, instanceName, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("delete serviceaccount %s: %w", instanceName, err)
+		}
+		return nil
+	}
+	existing.Annotations = desired.Annotations
+	existing.Labels = desired.Labels
+	if _, err := k.clientset.CoreV1().ServiceAccounts(ns).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("update serviceaccount %s: %w", instanceName, err)
+	}
+	return nil
+}
+
+// reconcileInstanceService creates, updates, or deletes the instance's
+// Service to match the desired ports. Safe to call whether or not one
+// already exists.
+func (k *KubernetesOrchestrator) reconcileInstanceService(ctx context.Context, ns, instanceName string, ports []PortSpec) error {
+	desired := desiredService(instanceName, ns, ports)
+	existing, err := k.clientset.CoreV1().Services(ns).Get(ctx, instanceName, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		if desired == nil {
+			return nil
+		}
+		if _, err := k.clientset.CoreV1().Services(ns).Create(ctx, desired, metav1.CreateOptions{}); err != nil {
+			return fmt.Errorf("create service %s: %w", instanceName, err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("get service %s: %w", instanceName, err)
+	}
+	if desired == nil {
+		if err := k.clientset.CoreV1().Services(ns).Delete(ctx, instanceName, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("delete service %s: %w", instanceName, err)
+		}
+		return nil
+	}
+	// Preserve ClusterIP and resourceVersion; replace selector + ports + labels.
+	existing.Spec.Selector = desired.Spec.Selector
+	existing.Spec.Ports = desired.Spec.Ports
+	existing.Labels = desired.Labels
+	if _, err := k.clientset.CoreV1().Services(ns).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("update service %s: %w", instanceName, err)
+	}
+	return nil
+}
+
 // buildInitContainers builds the pod's init containers. It always includes
 // fix-home-selinux which relabels the home/homebrew PVCs to a fixed MCS
 // level on Bottlerocket/RHCOS-style SELinux nodes (no-op elsewhere). When
@@ -765,7 +1105,7 @@ func buildInitContainers(sfMounts []SharedFolderMount, privileged bool) []corev1
 		// chcon may fail on non-SELinux nodes — || true keeps the pod startable.
 		// Errors are intentionally left on stderr so they appear in pod logs.
 		Command: []string{"sh", "-c",
-			"chcon -R -l s0:c0,c0 /home/claworc /home/linuxbrew/.linuxbrew || true"},
+			"chcon -R -l " + seLinuxMCSLevel + " /home/claworc /home/linuxbrew/.linuxbrew || true"},
 		SecurityContext: &corev1.SecurityContext{Privileged: &privileged},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "home-data", MountPath: "/home/claworc"},

@@ -429,19 +429,30 @@ func TestRotateSSHKey_PartialFailure(t *testing.T) {
 	_, cleanup := setupRotationTest(t)
 	defer cleanup()
 
+	// Give each instance a distinct SSH host so the connection test can fail
+	// for one specific instance deterministically. The rotation tests each
+	// instance concurrently, so keying off a shared call counter would be racy
+	// and order-dependent.
+	mock := &mockOrchestrator{
+		sshAddrFunc: func(id uint) (string, int, error) {
+			return fmt.Sprintf("10.0.0.%d", id), 22, nil
+		},
+	}
+	orchestrator.Set(mock)
+
+	createTestInstance(t, "bot-ok", "OK")
+	failInst := createTestInstance(t, "bot-fail", "Fail")
+
+	failHost := fmt.Sprintf("10.0.0.%d", failInst.ID)
+
 	origTestConn := sshkeys.GetTestConnectionFunc()
-	callCount := 0
 	sshkeys.SetTestConnectionFunc(func(ctx context.Context, signer interface{}, host string, port int) error {
-		callCount++
-		if callCount == 2 {
+		if host == failHost {
 			return fmt.Errorf("connection refused")
 		}
 		return nil
 	})
 	defer sshkeys.SetTestConnectionFunc(origTestConn)
-
-	createTestInstance(t, "bot-ok", "OK")
-	createTestInstance(t, "bot-fail", "Fail")
 
 	user := createTestUser(t, "admin")
 	req := buildRequest(t, "POST", "/api/v1/settings/rotate-ssh-key", user, nil)

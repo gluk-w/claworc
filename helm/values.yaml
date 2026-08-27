@@ -14,6 +14,18 @@ config:
   backupsPath: ""
   k8sNamespace: claworc
 
+# Widens bot-instance-isolation (networkpolicy.yaml) to also allow ingress
+# from an Ingress controller's namespace, for instances that expose their own
+# ports via CreateParams.Ports (a per-instance Service). Disabled by default -
+# existing instances stay SSH-only (port 22, control-plane pods only) until a
+# consumer needs a routable port and turns this on.
+instanceIngress:
+  enabled: false
+  # Label(s) identifying the Ingress controller's namespace, e.g. the
+  # standard ingress-nginx namespace label:
+  #   kubernetes.io/metadata.name: ingress-nginx-int
+  fromNamespaceLabels: {}
+
 # External database. When unset, the chart preserves the default behavior:
 # SQLite stored on the data PVC. Setting database.url (or database.existingSecret
 # pointing at a Secret with a "url" key) switches the control plane to the
@@ -32,6 +44,17 @@ service:
   type: NodePort
   port: 8001
   nodePort: 30000
+
+# Inbound SSH gateway: lets users `ssh <user>+<agent-name>@<host>` and be
+# bridged to that agent. publicHost is display-only (the hostname shown in
+# the UI's usage snippet). Exposing the service port beyond the cluster
+# (LoadBalancer, ingress TCP passthrough) is environment-specific.
+sshGateway:
+  enabled: true
+  port: 2222
+  servicePort: 2222
+  nodePort: ""
+  publicHost: ""
 
 persistence:
   enabled: true
@@ -72,3 +95,9 @@ rbac:
 serviceAccount:
   create: true
   annotations: {}
+
+nodeSelector: {}
+
+affinity: {}
+
+tolerations: []

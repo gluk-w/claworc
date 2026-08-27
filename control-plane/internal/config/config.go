@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/kelseyhightower/envconfig"
 )
@@ -36,6 +37,20 @@ type Settings struct {
 	// Internal proxy settings
 	InternalProxyPort int    `envconfig:"INTERNAL_PROXY_PORT" default:"40001"`
 	LLMResponseLog    string `envconfig:"LLM_RESPONSE_LOG" default:""`
+
+	// SSH gateway settings. The gateway lets users `ssh <user>+<instance>@host`
+	// and be bridged onto the control plane's existing SSH connection to that
+	// instance. SSHGatewayPublicHost is display-only: the hostname shown in the
+	// frontend usage snippet (empty = frontend uses window.location.hostname).
+	SSHGatewayEnabled    bool   `envconfig:"SSH_GATEWAY_ENABLED" default:"true"`
+	SSHGatewayPort       int    `envconfig:"SSH_GATEWAY_PORT" default:"2222"`
+	SSHGatewayPublicHost string `envconfig:"SSH_GATEWAY_PUBLIC_HOST" default:""`
+
+	// WebhookIdleTimeout bounds how long the synchronous webhook bridge waits
+	// for the *next* event from OpenClaw before giving up. The deadline resets
+	// on every frame received, so an actively-streaming agent is never cut off;
+	// only a genuine stall trips it.
+	WebhookIdleTimeout time.Duration `envconfig:"WEBHOOK_IDLE_TIMEOUT" default:"120s"`
 }
 
 var Cfg Settings

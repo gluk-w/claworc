@@ -15,6 +15,40 @@ func GetInstance(id uint) (*Instance, error) {
 	return &inst, nil
 }
 
+// GetInstanceByName fetches an Instance by its unique K8s-safe name.
+func GetInstanceByName(name string) (*Instance, error) {
+	var inst Instance
+	if err := DB.Where("name = ?", name).First(&inst).Error; err != nil {
+		return nil, err
+	}
+	return &inst, nil
+}
+
+// CanUserAccessInstance reports whether the user may access the instance:
+// admins always; managers of the instance's team; regular team members with
+// an explicit UserInstance grant. This is the single source of truth —
+// middleware.CanAccessInstance and the SSH gateway both delegate here.
+func CanUserAccessInstance(user *User, instanceID uint) bool {
+	if user == nil {
+		return false
+	}
+	if user.Role == "admin" {
+		return true
+	}
+	inst, err := GetInstance(instanceID)
+	if err == nil {
+		role := GetTeamRole(user.ID, inst.TeamID)
+		if role == TeamRoleManager {
+			return true
+		}
+		if role == TeamRoleUser && IsUserAssignedToInstance(user.ID, instanceID) {
+			return true
+		}
+		return false
+	}
+	return IsUserAssignedToInstance(user.ID, instanceID)
+}
+
 // Team role constants. Stored as the Role column on TeamMember.
 const (
 	TeamRoleUser    = "user"

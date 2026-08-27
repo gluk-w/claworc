@@ -330,32 +330,8 @@ func UploadSkill(w http.ResponseWriter, r *http.Request) {
 		database.DB.Delete(&existing)
 	}
 
-	destDir := filepath.Join(config.Cfg.DataPath, "skills", slug)
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to create skill directory")
-		return
-	}
-
-	for name, data := range files {
-		destPath := filepath.Join(destDir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to create directory")
-			return
-		}
-		if err := os.WriteFile(destPath, data, 0644); err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to write file")
-			return
-		}
-	}
-
-	skill := database.Skill{
-		Slug:            slug,
-		Name:            fm.Name,
-		Summary:         fm.Description,
-		RequiredEnvVars: encodeRequiredEnvVars(fm.RequiredEnvVars),
-	}
-	if err := database.DB.Create(&skill).Error; err != nil {
-		os.RemoveAll(destDir)
+	skill, err := saveSkillToLibrary(slug, fm, files)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to save skill")
 		return
 	}
@@ -367,6 +343,167 @@ func UploadSkill(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusCreated, skillToResponse(skill))
+}
+
+// isSafeSlug reports whether slug is a single, safe path component: non-empty,
+// no path separators, and a local path (no absolute paths or ".." traversal).
+// filepath.IsLocal is the canonical containment check (and is recognized as a
+// path-injection sanitizer).
+func isSafeSlug(slug string) bool {
+	if slug == "" {
+		return false
+	}
+	if strings.ContainsRune(slug, '/') || strings.ContainsRune(slug, '\\') {
+		return false
+	}
+	return filepath.IsLocal(slug)
+}
+
+// safeJoin joins a user-supplied (slash-separated) relative name onto baseDir,
+// guaranteeing the result stays within baseDir. It rejects absolute paths and
+// any ".." traversal that would escape baseDir by requiring the localized,
+// cleaned name to be a local path (filepath.IsLocal) before joining.
+func safeJoin(baseDir, name string) (string, error) {
+	// Normalize slash-separated archive names to the OS separator and collapse
+	// any "." / ".." segments.
+	clean := filepath.Clean(filepath.FromSlash(name))
+	if clean == "" || clean == "." {
+		return "", fmt.Errorf("empty path")
+	}
+	// filepath.IsLocal rejects absolute paths and anything that escapes the
+	// current directory (e.g. "../x"); it is modeled as a sanitizer barrier.
+	if !filepath.IsLocal(clean) {
+		return "", fmt.Errorf("path escapes base directory")
+	}
+	return filepath.Join(baseDir, clean), nil
+}
+
+// saveSkillToLibrary writes the given file map to {DataPath}/skills/{slug} and
+// creates the matching database record. The caller is responsible for any
+// pre-existing slug handling (overwrite, unique-suffix, etc.). On DB failure the
+// freshly-written directory is removed so the filesystem and DB stay in sync.
+func saveSkillToLibrary(slug string, fm *skillFrontmatter, files map[string][]byte) (database.Skill, error) {
+	// The slug and file names originate from user-controlled input (request body
+	// and downloaded archive entry names). Validate them so the resulting paths
+	// cannot escape {DataPath}/skills via separators or ".." traversal.
+	if !isSafeSlug(slug) {
+		return database.Skill{}, fmt.Errorf("invalid skill slug %q", slug)
+	}
+
+	skillsRoot := filepath.Join(config.Cfg.DataPath, "skills")
+	destDir, err := safeJoin(skillsRoot, slug)
+	if err != nil {
+		return database.Skill{}, fmt.Errorf("invalid skill slug %q: %w", slug, err)
+	}
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return database.Skill{}, fmt.Errorf("create skill directory: %w", err)
+	}
+
+	for name, data := range files {
+		destPath, err := safeJoin(destDir, name)
+		if err != nil {
+			os.RemoveAll(destDir)
+			return database.Skill{}, fmt.Errorf("invalid skill file path %q: %w", name, err)
+		}
+		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+			os.RemoveAll(destDir)
+			return database.Skill{}, fmt.Errorf("create directory: %w", err)
+		}
+		if err := os.WriteFile(destPath, data, 0644); err != nil {
+			os.RemoveAll(destDir)
+			return database.Skill{}, fmt.Errorf("write file: %w", err)
+		}
+	}
+
+	skill := database.Skill{
+		Slug:            slug,
+		Name:            fm.Name,
+		Summary:         fm.Description,
+		RequiredEnvVars: encodeRequiredEnvVars(fm.RequiredEnvVars),
+	}
+	if err := database.DB.Create(&skill).Error; err != nil {
+		os.RemoveAll(destDir)
+		return database.Skill{}, fmt.Errorf("save skill: %w", err)
+	}
+	return skill, nil
+}
+
+// ---------------------------------------------------------------------------
+// Import a Clawhub skill into the local library
+// ---------------------------------------------------------------------------
+
+// ImportClawhubSkill downloads a skill from Clawhub and saves it into the local
+// library (without deploying it to any instance). If a skill with the same slug
+// already exists, the caller must pass create_new=true to store it under a fresh
+// "{slug}-1", "{slug}-2", … slug; otherwise a 409 is returned.
+func ImportClawhubSkill(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Slug      string `json:"slug"`
+		Version   string `json:"version"`
+		CreateNew bool   `json:"create_new"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if body.Slug == "" {
+		writeError(w, http.StatusBadRequest, "Missing slug")
+		return
+	}
+
+	files, err := buildSkillFileMap(r.Context(), body.Slug, "clawhub", body.Version)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "Failed to download skill: "+err.Error())
+		return
+	}
+
+	skillMD, ok := files["SKILL.md"]
+	if !ok {
+		writeError(w, http.StatusBadGateway, "Downloaded skill does not contain SKILL.md")
+		return
+	}
+	fm, err := parseSkillFrontmatter(skillMD)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "Invalid SKILL.md: "+err.Error())
+		return
+	}
+
+	targetSlug := body.Slug
+	var existing database.Skill
+	if err := database.DB.Where("slug = ?", targetSlug).First(&existing).Error; err == nil {
+		if !body.CreateNew {
+			writeError(w, http.StatusConflict, "Skill '"+targetSlug+"' already exists")
+			return
+		}
+		targetSlug = nextAvailableSkillSlug(body.Slug)
+	}
+
+	skill, err := saveSkillToLibrary(targetSlug, fm, files)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to save skill")
+		return
+	}
+
+	var totalSkills int64
+	database.DB.Model(&database.Skill{}).Count(&totalSkills)
+	analytics.Track(r.Context(), analytics.EventSkillUploaded, map[string]any{
+		"total_skills": totalSkills,
+	})
+
+	writeJSON(w, http.StatusCreated, skillToResponse(skill))
+}
+
+// nextAvailableSkillSlug returns the first "{base}-N" slug (N starting at 1) that
+// is not already present in the skills table.
+func nextAvailableSkillSlug(base string) string {
+	for i := 1; ; i++ {
+		candidate := fmt.Sprintf("%s-%d", base, i)
+		var count int64
+		database.DB.Model(&database.Skill{}).Where("slug = ?", candidate).Count(&count)
+		if count == 0 {
+			return candidate
+		}
+	}
 }
 
 // detectZipPrefix returns a common top-level directory prefix if all files share one.

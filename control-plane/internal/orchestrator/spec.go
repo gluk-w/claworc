@@ -88,14 +88,17 @@ type EmptyDirMount struct {
 	SizeLimit string // e.g. "2Gi"; optional
 }
 
-// PortSpec is a TCP port exposed by the workload.
+// PortSpec is a TCP port exposed by the workload. JSON tags match the
+// snake_case convention used by every other field the API round-trips
+// (pod_annotations, node_selector, ...) - this struct is marshaled directly
+// into instanceCreateRequest.Ports / instanceResponse.
 type PortSpec struct {
-	Name          string
-	ContainerPort int
+	Name          string `json:"name,omitempty"`
+	ContainerPort int    `json:"container_port"`
 	// ServicePort defaults to ContainerPort if zero.
-	ServicePort int
+	ServicePort int `json:"service_port,omitempty"`
 	// Protocol defaults to "TCP" if empty.
-	Protocol string
+	Protocol string `json:"protocol,omitempty"`
 }
 
 // ProbeSpec carries optional health probes. nil sub-fields disable that probe.

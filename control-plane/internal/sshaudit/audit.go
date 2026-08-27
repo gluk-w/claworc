@@ -29,6 +29,12 @@ const (
 	EventTerminalSession EventType = "terminal_session"
 	EventKeyUpload       EventType = "key_upload"
 	EventKeyRotation     EventType = "key_rotation"
+
+	// Inbound SSH gateway events (user -> control plane -> instance).
+	EventGatewayLogin       EventType = "gateway_login"
+	EventGatewayLoginFailed EventType = "gateway_login_failed"
+	EventGatewaySession     EventType = "gateway_session"
+	EventGatewayDisconnect  EventType = "gateway_disconnection"
 )
 
 // AuditEntry is the GORM model for the ssh_audit_logs table.

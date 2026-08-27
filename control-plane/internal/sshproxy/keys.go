@@ -52,6 +52,31 @@ func GenerateKeyPair() (publicKey, privateKeyPEM []byte, err error) {
 	return publicKey, privateKeyPEM, nil
 }
 
+// GenerateOpenSSHKeyPair generates an ED25519 key pair with the private key
+// in OpenSSH's native format ("OPENSSH PRIVATE KEY"). Use this for keys
+// handed to end users: the openssh client rejects PKCS#8 ed25519 keys
+// ("invalid format"), while ssh.ParsePrivateKey reads both.
+func GenerateOpenSSHKeyPair() (publicKey, privateKeyPEM []byte, err error) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate ed25519 key: %w", err)
+	}
+
+	block, err := ssh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal private key: %w", err)
+	}
+	privateKeyPEM = pem.EncodeToMemory(block)
+
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create ssh public key: %w", err)
+	}
+	publicKey = ssh.MarshalAuthorizedKey(sshPub)
+
+	return publicKey, privateKeyPEM, nil
+}
+
 // SaveKeyPair writes the private and public key files to the given directory.
 // The private key is written with mode 0600 and the public key with mode 0644.
 func SaveKeyPair(dir string, privateKey, publicKey []byte) error {

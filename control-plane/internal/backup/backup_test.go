@@ -60,6 +60,9 @@ func (m *mockOrch) StreamExecInInstance(ctx context.Context, name string, cmd []
 	}
 	return "", 0, nil
 }
+func (m *mockOrch) UpdatePlacementConfig(_ context.Context, _ string, _ orchestrator.UpdatePlacementParams) error {
+	return nil
+}
 func (m *mockOrch) DeleteSharedVolume(_ context.Context, _ uint) error { return nil }
 func (m *mockOrch) CloneVolume(_ context.Context, _, _ string) error    { return nil }
 func (m *mockOrch) VolumeNameFor(name, suffix string) string            { return name + "-" + suffix }
