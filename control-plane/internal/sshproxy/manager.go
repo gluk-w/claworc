@@ -35,6 +35,11 @@ const (
 
 	// connectTimeout is the default timeout for establishing SSH connections.
 	connectTimeout = 30 * time.Second
+
+	// keepaliveTimeout bounds a single keepalive round-trip. It must stay well
+	// under keepaliveInterval so a stalled probe is resolved before the next
+	// tick fires.
+	keepaliveTimeout = 10 * time.Second
 )
 
 // Orchestrator defines the orchestrator methods needed by EnsureConnected.
@@ -321,9 +326,9 @@ func (m *SSHManager) IsConnected(instanceID uint) bool {
 		return false
 	}
 
-	// Send a keepalive to verify the connection is still alive
-	_, _, err := mc.client.SendRequest("keepalive@openssh.com", true, nil)
-	return err == nil
+	// Send a keepalive to verify the connection is still alive. Bounded: a
+	// half-open connection must not wedge the caller (see probeAlive).
+	return probeAlive(mc.client, keepaliveTimeout) == nil
 }
 
 // EnsureConnected is the single entry point for obtaining an SSH connection to
@@ -415,6 +420,44 @@ func (m *SSHManager) Signer() ssh.Signer {
 	return m.getSigner()
 }
 
+// probeAlive sends a keepalive request and waits at most timeout for the reply.
+//
+// It exists because ssh.Client.SendRequest cannot be given a deadline. Inside
+// x/crypto/ssh, a global request with wantReply=true takes the mux's
+// globalSentMu and holds it across the *blocking* receive of the reply. On a
+// half-open connection — a force-killed pod, a node that dropped off the
+// network — that receive never returns, so the request parks forever while
+// holding the mutex, and every later request on the same client blocks behind
+// it. That is what wedges callers of IsConnected indefinitely.
+//
+// A timeout alone is therefore not enough: abandoning the wait leaves the
+// goroutine holding globalSentMu, so the next probe is stuck just the same. On
+// timeout we also close the client, which tears down the mux, closes the
+// globalResponses channel, and releases the parked goroutine. A connection that
+// cannot answer a keepalive within the timeout is dead by our definition, so
+// closing it costs nothing.
+func probeAlive(client *ssh.Client, timeout time.Duration) error {
+	// Buffered: if we give up first, the goroutine must still be able to send
+	// without leaking.
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+		done <- err
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		// Frees the goroutine parked on globalSentMu.
+		client.Close()
+		return fmt.Errorf("keepalive timed out after %s", timeout)
+	}
+}
+
 // keepalive sends periodic keepalive requests to detect dead connections.
 // If the connection is dead, it is removed from the map.
 func (m *SSHManager) keepalive(ctx context.Context, instanceID uint, client *ssh.Client) {
@@ -426,8 +469,10 @@ func (m *SSHManager) keepalive(ctx context.Context, instanceID uint, client *ssh
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// SendRequest with wantReply=true acts as a keepalive check
-			_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+			// A bounded round-trip: an unbounded one would park here forever
+			// on a half-open connection and poison every other request on this
+			// client (see probeAlive).
+			err := probeAlive(client, keepaliveTimeout)
 			if err != nil {
 				log.Printf("SSH keepalive failed for instance %d: %v, removing connection", instanceID, err)
 				m.mu.Lock()
