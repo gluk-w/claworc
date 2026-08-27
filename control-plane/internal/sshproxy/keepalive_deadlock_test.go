@@ -1,9 +1,11 @@
 package sshproxy
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -208,5 +210,97 @@ func TestProbeAlive_HealthyConnection(t *testing.T) {
 
 	if err := probeAlive(client, keepaliveTimeout); err != nil {
 		t.Errorf("probeAlive failed on a healthy connection: %v", err)
+	}
+}
+
+// blockingListener stands in for an ssh.tcpListener whose Close blocks forever,
+// which is what x/crypto does on a half-open connection: Close sends a
+// cancel-tcpip-forward request with wantReply=true and waits for a reply that
+// never comes, holding the mux mutex the whole time.
+type blockingListener struct {
+	release chan struct{}
+	closed  atomic.Bool
+}
+
+func (l *blockingListener) Accept() (net.Conn, error) { <-l.release; return nil, net.ErrClosed }
+func (l *blockingListener) Addr() net.Addr            { return &net.TCPAddr{} }
+func (l *blockingListener) Close() error {
+	<-l.release // never returns until the test releases it
+	l.closed.Store(true)
+	return nil
+}
+
+// TestStopTunnelsForInstance_DoesNotHangOnDeadConnection is the regression test
+// for the instance-delete hang: StopTunnelsForInstance closed listeners
+// serially, so the first dead one wedged DeleteInstance — and with it the HTTP
+// handler — indefinitely.
+func TestStopTunnelsForInstance_DoesNotHangOnDeadConnection(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+
+	tm := &TunnelManager{tunnels: map[uint][]*ActiveTunnel{}}
+	var tunnels []*ActiveTunnel
+	for i := 0; i < 3; i++ {
+		_, cancel := context.WithCancel(context.Background())
+		tunnels = append(tunnels, &ActiveTunnel{
+			cancel:   cancel,
+			listener: &blockingListener{release: release},
+		})
+	}
+	tm.tunnels[1] = tunnels
+
+	done := make(chan error, 1)
+	go func() { done <- tm.StopTunnelsForInstance(1) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("StopTunnelsForInstance: %v", err)
+		}
+	case <-time.After(closeListenersTimeout + 15*time.Second):
+		t.Fatal("StopTunnelsForInstance hung on unresponsive listeners")
+	}
+}
+
+// TestCloseTunnelListeners_ReportsStuckCount checks the bookkeeping the log
+// line depends on, and that a healthy listener still closes.
+func TestCloseTunnelListeners_ReportsStuckCount(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+
+	good, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	tunnels := []*ActiveTunnel{
+		{listener: good},
+		{listener: &blockingListener{release: release}},
+		{listener: nil}, // agent-listener tunnels can have no local listener
+	}
+
+	stuck := closeTunnelListeners(tunnels, 300*time.Millisecond)
+	if stuck != 1 {
+		t.Errorf("stuck = %d, want 1", stuck)
+	}
+}
+
+// TestCloseTunnelListeners_AllHealthy returns promptly and reports none stuck.
+func TestCloseTunnelListeners_AllHealthy(t *testing.T) {
+	var tunnels []*ActiveTunnel
+	for i := 0; i < 3; i++ {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("listen: %v", err)
+		}
+		tunnels = append(tunnels, &ActiveTunnel{listener: l})
+	}
+
+	start := time.Now()
+	if stuck := closeTunnelListeners(tunnels, 5*time.Second); stuck != 0 {
+		t.Errorf("stuck = %d, want 0", stuck)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("healthy closes took %s — it waited on the timer", elapsed)
 	}
 }
