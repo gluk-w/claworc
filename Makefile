@@ -28,7 +28,8 @@ HELM_NAMESPACE := claworc
 .PHONY: agent agent-ci agent-base agent-base-china agent-build agent-test agent-push agent-exec agent-stable agent-stable-ci dashboard docker-prune release \
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
-	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models scrape-models test \
+	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models test \
+	models openai-models codex-models codex-login \
 	worker-deploy worker-test worker-build-models site-dev site-build site-deploy \
 	e2e e2e-debug e2e-install \
 	migration migration-check
@@ -222,8 +223,32 @@ migration-check:
 extract-models:
 	python3 scripts/extract_models.py
 
-scrape-models:
-	python3 scripts/scrape_provider_docs.py
+# Refresh the whole model catalog. Walks every source in turn, prompting for
+# each credential — press Enter to skip a source. Credentials already in the
+# environment are used without prompting, so this also runs unattended.
+models:
+	@./scripts/refresh_models.sh
+
+# Refresh the `openai` rows of models.csv from GET /v1/models. Reads
+# $$OPENAI_API_KEY unless a key is passed: make openai-models ARGS='sk-...'
+openai-models:
+	uv run scripts/openai_to_csv.py openai $(ARGS)
+
+# Refresh the `openai-codex` rows by probing which model slugs a ChatGPT
+# account actually accepts. Signs in through the Codex CLI if needed, then
+# reads the token out of auth.json — it is never passed on the command line,
+# so it cannot leak into shell history or the process table.
+#   make codex-models
+#   make codex-models ARGS='--dry-run'
+codex-models: codex-login
+	uv run scripts/openai_to_csv.py openai-codex $(ARGS)
+
+codex-login:
+	@command -v codex >/dev/null 2>&1 || { \
+		echo "error: 'codex' CLI not found in PATH; install it with 'npm i -g @openai/codex'"; \
+		exit 1; \
+	}
+	@codex login status >/dev/null 2>&1 || codex login
 
 worker-build-models:
 	cd website/worker && node build-models.mjs
