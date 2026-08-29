@@ -166,9 +166,17 @@ def fetch_openrouter_index():
     }
 
 
-def keep_model(model_id, extra_filter=None, keep_all=False):
-    if extra_filter:
-        return bool(extra_filter.search(model_id))
+def keep_model(model_id, extra_filter=None, keep_all=False, exclude=None):
+    """--filter and --exclude narrow the built-in rules, they don't replace them.
+
+    Prefer --exclude to --filter. An allow-list has to be rewritten the day
+    OpenAI ships a new family, and until someone notices, the catalog silently
+    cannot see it — which is the failure mode behind #209.
+    """
+    if extra_filter and not extra_filter.search(model_id):
+        return False
+    if exclude and exclude.search(model_id):
+        return False
     if keep_all:
         return True
     if not KEEP_RE.match(model_id):
@@ -356,10 +364,17 @@ def build_row(model_id, provider, header, existing, enrichment, refresh, fixed=N
 # ---------------------------------------------------------------------------
 
 
+def compile_filters(args):
+    return (
+        re.compile(args.filter) if args.filter else None,
+        re.compile(args.exclude) if args.exclude else None,
+    )
+
+
 def run_openai(args, existing, index):
     models = fetch_openai_models(args.credential)
-    extra = re.compile(args.filter) if args.filter else None
-    ids = [m["id"] for m in models if keep_model(m["id"], extra, args.all)]
+    extra, excl = compile_filters(args)
+    ids = [m["id"] for m in models if keep_model(m["id"], extra, args.all, excl)]
 
     # Newest first, so the flagship heads the provider's list in the UI.
     created = {m["id"]: m.get("created") or 0 for m in models}
@@ -383,11 +398,11 @@ def run_codex(args, existing, index, sibling=()):
     if args.candidates:
         candidates = [c.strip() for c in args.candidates.split(",") if c.strip()]
     elif args.from_api:
-        extra = re.compile(args.filter) if args.filter else None
+        extra, excl = compile_filters(args)
         candidates = [
             m["id"]
             for m in fetch_openai_models(args.from_api)
-            if keep_model(m["id"], extra, args.all)
+            if keep_model(m["id"], extra, args.all, excl)
         ]
     else:
         # Default to every slug the catalog already knows about on either
@@ -463,6 +478,11 @@ def main():
         help="write models with no metadata instead of skipping them",
     )
     ap.add_argument("--filter", help="regex a model id must match to be kept")
+    ap.add_argument(
+        "--exclude",
+        help="regex of model ids to drop; prefer this to --filter, since an "
+        "allow-list goes blind the day a new model family ships",
+    )
     ap.add_argument(
         "--refresh-metadata",
         action="store_true",

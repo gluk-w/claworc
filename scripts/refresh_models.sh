@@ -51,11 +51,13 @@ before=$(wc -l <"$CSV")
 bold "OpenAI — GET /v1/models"
 ask_secret OPENAI_API_KEY "OpenAI API key"
 if [ -n "${OPENAI_API_KEY:-}" ]; then
-	# Default to the current generation; the account also lists gpt-4 and
-	# gpt-3.5 era models that nobody should be picking in a new agent.
-	filter=${OPENAI_MODEL_FILTER:-'^(gpt-5|o[34])'}
-	note "filter: $filter  (override with OPENAI_MODEL_FILTER)"
-	if OPENAI_API_KEY="$OPENAI_API_KEY" uv run scripts/openai_to_csv.py openai --filter "$filter"; then
+	# Deny-list, not allow-list: the account still lists gpt-4 and gpt-3.5 era
+	# models nobody should pick for a new agent, but anything OpenAI ships
+	# next has to show up on its own. An allow-list would go blind the day
+	# gpt-6 lands, which is how #209 happened in the first place.
+	exclude=${OPENAI_MODEL_EXCLUDE:-'^(gpt-3|gpt-4|o1|o3-mini)'}
+	note "excluding: $exclude  (override with OPENAI_MODEL_EXCLUDE)"
+	if OPENAI_API_KEY="$OPENAI_API_KEY" uv run scripts/openai_to_csv.py openai --exclude "$exclude"; then
 		ran+=("openai")
 	else
 		skipped+=("openai (failed)")
