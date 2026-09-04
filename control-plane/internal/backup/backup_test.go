@@ -90,6 +90,15 @@ func setupTestDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
+	// Pin the pool to a single connection. The backup goroutine writes the
+	// final status while the test goroutine polls the same row; with two
+	// pooled connections on a shared-cache in-memory DB, SQLite's table-level
+	// locking makes the UPDATE fail with SQLITE_LOCKED ("database table is
+	// locked: backups"), which busy_timeout never retries, so the row stays
+	// "running" and the poll times out.
+	if sqlDB, err := database.DB.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
+	}
 	database.DB.AutoMigrate(&database.Instance{}, &database.Setting{}, &database.Backup{}, &database.BackupSchedule{})
 }
 
@@ -422,10 +431,12 @@ func TestCreateFullBackup_DefaultPaths(t *testing.T) {
 	setupTestDB(t)
 	setupTestDataPath(t)
 
-	var capturedCmd []string
+	// The backup goroutine hands the command back over a channel so the
+	// test never reads a slice the goroutine is still writing.
+	captured := make(chan []string, 1)
 	orch := &mockOrch{
 		streamFn: func(_ context.Context, _ string, cmd []string, stdout io.Writer) (string, int, error) {
-			capturedCmd = cmd
+			captured <- cmd
 			stdout.Write([]byte("data"))
 			return "", 0, nil
 		},
@@ -437,12 +448,11 @@ func TestCreateFullBackup_DefaultPaths(t *testing.T) {
 	CreateFullBackup(context.Background(), orch, inst.Name, inst.ID, 0, "", nil)
 
 	// Wait for goroutine to start and capture the command
-	deadline := time.Now().Add(5 * time.Second)
-	for capturedCmd == nil {
-		if time.Now().After(deadline) {
-			t.Fatal("timeout waiting for command capture")
-		}
-		time.Sleep(50 * time.Millisecond)
+	var capturedCmd []string
+	select {
+	case capturedCmd = <-captured:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for command capture")
 	}
 
 	// Default paths should resolve to /home/claworc
