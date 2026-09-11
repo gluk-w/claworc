@@ -10,7 +10,7 @@
     "@cloudflare/workers-types": "^5.20260801.1",
     "typescript": "^5.8.2",
     "vitest": "^4.1.11",
-    "wrangler": "^4.120.0"
+    "wrangler": "^4.131.1"
   },
   "overrides": {
     "postcss": "^8.5.10"
