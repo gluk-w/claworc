@@ -25,7 +25,7 @@ KUBECONFIG := ../kubeconfig
 HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
 
-.PHONY: agent agent-ci agent-base agent-base-china agent-build agent-test agent-push agent-exec agent-stable agent-stable-ci dashboard docker-prune release \
+.PHONY: agent agent-ci agent-base agent-base-china agent-build agent-test agent-instance-test agent-push agent-exec agent-stable agent-stable-ci dashboard docker-prune release \
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
 	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models test \
@@ -56,6 +56,16 @@ agent-build:
 	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/browser/Dockerfile.chromium --load agent/browser/
 	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/browser/Dockerfile.chrome --load agent/browser/
 	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --load agent/browser/
+
+# PR check: build only the instance image (it is FROM debian directly and does
+# not depend on the pushed browser-base image) and run the OpenClaw suite
+# against it. No registry push, so it is safe to run on pull requests. Catches
+# upstream OpenClaw breakage — Node engine bumps, config-schema tightening,
+# retired model ids — before it reaches the nightly publish job.
+agent-instance-test:
+	@echo "Building $(AGENT_IMAGE):$(TAG) for PR verification (no push)..."
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/instance/Dockerfile --load agent/instance/
+	cd agent/tests && AGENT_INSTANCE_TEST_IMAGE=$(AGENT_IMAGE):$(TAG) npm run test -- openclaw.test.ts
 
 agent-test:
 	cd agent/tests && AGENT_INSTANCE_TEST_IMAGE=$(AGENT_IMAGE):$(TAG) \

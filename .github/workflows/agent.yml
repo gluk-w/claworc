@@ -6,12 +6,43 @@ on:
     paths:
       - 'agent/**'
       - '.github/workflows/agent.yml'
+  pull_request:
+    paths:
+      - 'agent/**'
+      - 'Makefile'
+      - '.github/workflows/agent.yml'
   schedule:
     - cron: '0 6 * * *'
   workflow_dispatch:
 
 jobs:
+  # Pull-request gate. Builds the instance image and runs the OpenClaw suite
+  # against it without touching Docker Hub, so upstream breakage (Node engine
+  # bumps, config-schema tightening, retired model ids) surfaces on the PR
+  # instead of in the nightly publish job below.
+  verify:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install test dependencies
+        run: make install-test
+
+      - name: Build and test agent instance image
+        run: make agent-instance-test
+        env:
+          CACHE_ARGS: --cache-from type=gha,scope=agent
+
   agent:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
