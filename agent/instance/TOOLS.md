@@ -12,7 +12,7 @@ A Chromium-based browser is running in this environment with Chrome DevTools Pro
 ## General Environment
 
 - **OS**: Debian Bookworm (Linux)
-- **Node.js**: v22 (available via `node` / `npm`)
+- **Node.js**: v24 (available via `node` / `npm`)
 - **Python**: 3.x with pip and venv (available via `python3` / `pip3`)
 - **Poetry**: installed globally for Python project management
 - **Git**: available for version control

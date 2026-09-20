@@ -10,7 +10,7 @@ Docker image that provides a ready-to-use OpenClaw environment with a browser ac
 - **VNC access** via TigerVNC + noVNC (websockify bridge)
 - **Openbox** window manager
 - **SSH server** for remote access and port forwarding
-- **Dev tools**: Node.js 22, Python 3, Poetry, Git
+- **Dev tools**: Node.js 24, Python 3, Poetry, Git
 
 ## Architecture
 
