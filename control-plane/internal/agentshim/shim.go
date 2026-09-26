@@ -183,9 +183,7 @@ func (r LLMRouting) Models() []string {
 	if r.DefaultModel == "" {
 		return nil
 	}
-	models := make([]string, 0, 1+len(r.FallbackModels))
-	models = append(models, r.DefaultModel)
-	models = append(models, r.FallbackModels...)
+	models := append([]string{r.DefaultModel}, r.FallbackModels...)
 	return models
 }
 

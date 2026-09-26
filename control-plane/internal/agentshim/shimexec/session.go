@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
+	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
 
 // maxEventLine bounds a single JSONL event line (cumulative assistant
@@ -45,6 +46,10 @@ const eventBufferDepth = 256
 type session struct {
 	c   *Client
 	key string
+	// logKey is the session key sanitized for log output (the key can embed
+	// user-provided webhook names; raw control characters would allow log
+	// injection).
+	logKey string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -65,6 +70,7 @@ func newSession(c *Client, key string) *session {
 	s := &session{
 		c:      c,
 		key:    key,
+		logKey: utils.SanitizeForLog(key),
 		ctx:    ctx,
 		cancel: cancel,
 		sendCh: make(chan string, sendQueueDepth),
@@ -131,7 +137,7 @@ func (s *session) Abort(ctx context.Context) error {
 			select {
 			case <-t.C:
 				if s.currentHandle() == h {
-					log.Printf("[shimexec] session %s: chat-send still running %s after abort, terminating", s.key, grace)
+					log.Printf("[shimexec] session %s: chat-send still running %s after abort, terminating", s.logKey, grace)
 					_ = h.Terminate()
 				}
 			case <-s.ctx.Done():
@@ -223,7 +229,7 @@ func (s *session) runTurn(message string) {
 		}
 		var ev agentshim.Event
 		if err := json.Unmarshal(line, &ev); err != nil {
-			log.Printf("[shimexec] session %s: skipping malformed event line: %v", s.key, err)
+			log.Printf("[shimexec] session %s: skipping malformed event line: %s", s.logKey, utils.SanitizeForLog(err.Error()))
 			continue
 		}
 		switch ev.Kind {
@@ -243,7 +249,7 @@ func (s *session) runTurn(message string) {
 		}
 	}
 	if serr := sc.Err(); serr != nil {
-		log.Printf("[shimexec] session %s: chat-send stdout read error: %v", s.key, serr)
+		log.Printf("[shimexec] session %s: chat-send stdout read error: %s", s.logKey, utils.SanitizeForLog(serr.Error()))
 	}
 	if sawEnd {
 		// end is contractually the last line; drain any trailing output in
@@ -255,7 +261,7 @@ func (s *session) runTurn(message string) {
 
 	if sawEnd {
 		if code != 0 || werr != nil {
-			log.Printf("[shimexec] session %s: chat-send exited code=%d err=%v after end event", s.key, code, werr)
+			log.Printf("[shimexec] session %s: chat-send exited code=%d err=%s after end event", s.logKey, code, utils.SanitizeForLog(fmt.Sprintf("%v", werr)))
 		}
 		return
 	}

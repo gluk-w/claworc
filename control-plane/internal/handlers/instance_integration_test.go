@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim/openclawnative"
 	"github.com/gluk-w/claworc/control-plane/internal/auth"
 	"github.com/gluk-w/claworc/control-plane/internal/browserprov"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
@@ -462,7 +463,7 @@ func TestIntegration_InstanceLifecycle_ConfiguresOpenclaw(t *testing.T) {
 	deadline = time.Now().Add(90 * time.Second)
 	configured := false
 	for time.Now().Before(deadline) {
-		out, err := exec.Command("docker", "exec", instName, "cat", orchestrator.PathOpenClawConfig).Output()
+		out, err := exec.Command("docker", "exec", instName, "cat", openclawnative.ConfigPath).Output()
 		if err != nil {
 			t.Logf("docker exec cat openclaw.json: %v — retrying", err)
 			time.Sleep(3 * time.Second)

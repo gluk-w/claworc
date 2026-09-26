@@ -15,6 +15,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
 	"github.com/gluk-w/claworc/control-plane/internal/internalproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
+	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	gossh "golang.org/x/crypto/ssh"
 )
 
@@ -174,7 +175,7 @@ func (c *Client) ConfigureLLM(ctx context.Context, routing agentshim.LLMRouting)
 			return fmt.Errorf("set agents.defaults.model: %w", err)
 		}
 		if code != 0 {
-			log.Printf("[openclawnative] %s: set agents.defaults.model failed: %s", name, stderr)
+			log.Printf("[openclawnative] %s: set agents.defaults.model failed: %s", name, utils.SanitizeForLog(stderr))
 			// continue — providers must still be configured even if model config failed
 		}
 
@@ -195,7 +196,7 @@ func (c *Client) ConfigureLLM(ctx context.Context, routing agentshim.LLMRouting)
 			if err != nil {
 				log.Printf("[openclawnative] %s: set models allowlist: %v", name, err)
 			} else if code != 0 {
-				log.Printf("[openclawnative] %s: set models allowlist failed: %s", name, stderr)
+				log.Printf("[openclawnative] %s: set models allowlist failed: %s", name, utils.SanitizeForLog(stderr))
 			}
 		}
 	}
@@ -212,7 +213,7 @@ func (c *Client) ConfigureLLM(ctx context.Context, routing agentshim.LLMRouting)
 			if err != nil {
 				log.Printf("[openclawnative] %s: set providers: %v", name, err)
 			} else if code != 0 {
-				log.Printf("[openclawnative] %s: set providers failed: stdout=%q stderr=%q", name, stdout, stderr)
+				log.Printf("[openclawnative] %s: set providers failed: stdout=%q stderr=%q", name, utils.SanitizeForLog(stdout), utils.SanitizeForLog(stderr))
 			}
 		}
 	}
