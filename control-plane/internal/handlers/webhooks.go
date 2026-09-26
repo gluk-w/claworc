@@ -99,13 +99,13 @@ func ensureInstanceUUID(inst *database.Instance) error {
 // under the Vite dev proxy, behind any reverse proxy, and on the bare
 // control-plane port.
 //
-// The private URL is the loopback gateway address as each instance sees
+// The private URL is the loopback internal proxy address as each instance sees
 // it. Tunnel setup pins the agent-side remote port to
-// config.Cfg.LLMGatewayPort (see internal/sshproxy/tunnel.go), so this
+// config.Cfg.InternalProxyPort (see internal/sshproxy/tunnel.go), so this
 // is what other agents reach via 127.0.0.1.
 func webhookURLs(instUUID string) (publicURL, privateURL string) {
 	publicURL = fmt.Sprintf("/webhooks/%s", instUUID)
-	privateURL = fmt.Sprintf("http://127.0.0.1:%d/webhooks/%s", config.Cfg.LLMGatewayPort, instUUID)
+	privateURL = fmt.Sprintf("http://127.0.0.1:%d/webhooks/%s", config.Cfg.InternalProxyPort, instUUID)
 	return
 }
 

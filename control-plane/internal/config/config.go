@@ -2,14 +2,18 @@ package config
 
 import (
 	"log"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/kelseyhightower/envconfig"
 )
 
 type Settings struct {
-	DataPath     string   `envconfig:"DATA_PATH" default:"/app/data"`
-	BackupsPath  string   `envconfig:"BACKUPS_PATH" default:""`
+	DataPath    string `envconfig:"DATA_PATH" default:"/app/data"`
+	BackupsPath string `envconfig:"BACKUPS_PATH" default:""`
+	// Port is the HTTP listen port for the control plane server.
+	Port int `envconfig:"PORT" default:"8000"`
 	// Database is a URL-style connection string covering driver, credentials,
 	// host, and database name. Empty means "use SQLite at DataPath" (default
 	// behavior, fully backwards compatible). See docs/databases.md.
@@ -30,9 +34,9 @@ type Settings struct {
 	TerminalRecordingDir   string `envconfig:"TERMINAL_RECORDING_DIR" default:""`
 	TerminalSessionTimeout string `envconfig:"TERMINAL_SESSION_TIMEOUT" default:"30m"`
 
-	// LLM gateway settings
-	LLMGatewayPort int    `envconfig:"LLM_GATEWAY_PORT" default:"40001"`
-	LLMResponseLog string `envconfig:"LLM_RESPONSE_LOG" default:""`
+	// Internal proxy settings
+	InternalProxyPort int    `envconfig:"INTERNAL_PROXY_PORT" default:"40001"`
+	LLMResponseLog    string `envconfig:"LLM_RESPONSE_LOG" default:""`
 
 	// SSH gateway settings. The gateway lets users `ssh <user>+<instance>@host`
 	// and be bridged onto the control plane's existing SSH connection to that
@@ -54,5 +58,22 @@ var Cfg Settings
 func Load() {
 	if err := envconfig.Process("CLAWORC", &Cfg); err != nil {
 		log.Fatalf("failed to load config: %v", err)
+	}
+	applyLegacyEnvFallbacks()
+}
+
+// applyLegacyEnvFallbacks honors deprecated env var names when their modern
+// replacement is unset, so existing deployments keep working after a rename.
+func applyLegacyEnvFallbacks() {
+	// CLAWORC_LLM_GATEWAY_PORT → CLAWORC_INTERNAL_PROXY_PORT
+	if _, ok := os.LookupEnv("CLAWORC_INTERNAL_PROXY_PORT"); !ok {
+		if legacy, ok := os.LookupEnv("CLAWORC_LLM_GATEWAY_PORT"); ok && legacy != "" {
+			if port, err := strconv.Atoi(legacy); err == nil {
+				Cfg.InternalProxyPort = port
+				log.Printf("config: CLAWORC_LLM_GATEWAY_PORT is deprecated; use CLAWORC_INTERNAL_PROXY_PORT")
+			} else {
+				log.Printf("config: ignoring invalid CLAWORC_LLM_GATEWAY_PORT=%q: %v", legacy, err)
+			}
+		}
 	}
 }

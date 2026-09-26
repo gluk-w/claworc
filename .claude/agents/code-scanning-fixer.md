@@ -92,7 +92,7 @@ Produce a final summary containing:
 - Never weaken authentication, encryption, or input validation.
 - Always preserve the encrypted-at-rest invariant for API keys (Fernet via `internal/crypto`).
 - Always preserve the "API keys never returned in full" invariant.
-- If a fix changes config keys, update `internal/config/config.go` AND documentation in `docs/` or `website_docs/` as appropriate.
+- If a fix changes config keys, update `internal/config/config.go` AND documentation in `docs/` as appropriate.
 - If you're uncertain whether something is exploitable, treat it as exploitable.
 
 ## Escalation

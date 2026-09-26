@@ -1,4 +1,4 @@
-The dev server `http://localhost:5173` proxies `/api` and `/health` to `http://127.0.0.1:8000` (the Go backend).
+The dev server `http://localhost:5173` proxies `/api` and `/health` to `http://127.0.0.1:8173` (the Go backend).
 
 ## User Interface
 

@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
-	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
+	"github.com/gluk-w/claworc/control-plane/internal/internalproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	gossh "golang.org/x/crypto/ssh"
 )
@@ -258,7 +258,7 @@ func BuildProvidersJSON(routing agentshim.LLMRouting) (string, error) {
 		// client-side JWT decode of apiKey. The gateway translates
 		// path/auth/SSE upstream. The routing document keeps the codex
 		// api type for gateway routing.
-		if apiType == llmgateway.APITypeOpenAICodexResponses {
+		if apiType == internalproxy.APITypeOpenAICodexResponses {
 			apiType = "openai-responses"
 		}
 		models := make([]modelCfg, 0, len(p.Models))

@@ -23,10 +23,12 @@ RUN if [ "$USE_CHINA_MIRRORS" = "true" ]; then \
       sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; \
     fi
 
-# System packages + Node.js 22 in a single apt transaction.
+# System packages + Node.js 24 in a single apt transaction. OpenClaw requires
+# Node >=24.16.0 (see its engines field + preinstall check), so the NodeSource
+# 24.x LTS line is the floor for this image.
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates xz-utils gnupg && \
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       tzdata locales \
       openssh-server git python3 python3-pip python3-venv python3-numpy python-is-python3 \

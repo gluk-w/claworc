@@ -107,6 +107,12 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
     delete config.skills;
     delete config.plugins;
     delete config.hooks;
+    // `meta.migrations` is upstream's own one-shot migration bookkeeping. It
+    // gains a new boolean on essentially every openclaw release (e.g.
+    // `utilityModelSeparation` exists in 2026.9.5 but not in 2026.9.4), so it
+    // diverges between the `latest` and `stable` images that both assert
+    // against this one snapshot. Not schema we depend on either way.
+    delete config.meta?.migrations;
     expect(structureOf(config)).toMatchSnapshot();
   });
 
@@ -132,8 +138,8 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
 
   it("can set agents.defaults.model via --json", () => {
     const modelJson = JSON.stringify({
-      primary: "anthropic/claude-sonnet-4-20250514",
-      fallbacks: ["anthropic/claude-haiku-4-20250414"],
+      primary: "anthropic/claude-sonnet-5",
+      fallbacks: ["anthropic/claude-haiku-4-5-20251001"],
     });
 
     const result = execAsUser(
@@ -148,8 +154,8 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
     ]);
     const config = JSON.parse(configResult.stdout);
     expect(config.agents.defaults.model).toEqual({
-      primary: "anthropic/claude-sonnet-4-20250514",
-      fallbacks: ["anthropic/claude-haiku-4-20250414"],
+      primary: "anthropic/claude-sonnet-5",
+      fallbacks: ["anthropic/claude-haiku-4-5-20251001"],
     });
   });
 

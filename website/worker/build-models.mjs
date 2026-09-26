@@ -6,25 +6,18 @@ import { readFileSync, writeFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { join, dirname } from "path";
 
+import { parseCsv } from "./csv.mjs";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const csvPath = join(__dirname, "../../models.csv");
 const outPath = join(__dirname, "models.json");
 
-const text = readFileSync(csvPath, "utf8");
-const lines = text.trim().split("\n");
-const headers = lines[0].split(",").map((h) => h.trim());
+const table = parseCsv(readFileSync(csvPath, "utf8"));
+const headers = table[0].map((h) => h.trim());
 
-const numCols = headers.length;
-
-const rows = lines
+const rows = table
   .slice(1)
-  .map((line) => {
-    const parts = line.split(",");
-    // Join any extra trailing parts back into the last column (handles commas in description)
-    const values =
-      parts.length > numCols
-        ? [...parts.slice(0, numCols - 1), parts.slice(numCols - 1).join(",")]
-        : parts;
+  .map((values) => {
     const row = {};
     headers.forEach((h, i) => {
       row[h] = (values[i] ?? "").trim();

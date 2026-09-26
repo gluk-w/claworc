@@ -15,7 +15,7 @@ make dev
 make dev-stop
 ```
 
-The dashboard will be available at http://localhost:5173 (frontend proxies API calls to backend on port 8000).
+The dashboard will be available at http://localhost:5173 (frontend proxies API calls to backend on port 8173).
 
 ## Development Commands
 

@@ -132,7 +132,7 @@ func TestConfigureInstance_ModelSet(t *testing.T) {
 func TestConfigureInstance_GatewayStop(t *testing.T) {
 	inst := &mockInstance{}
 	// Only providers → should set providers then stop gateway
-	providers := map[string]GatewayProvider{
+	providers := map[string]LLMProxyProvider{
 		"anthropic": {Key: "vk-test", APIType: "openai-completions"},
 	}
 	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
@@ -149,7 +149,7 @@ func TestConfigureInstance_GatewayStop(t *testing.T) {
 
 func TestConfigureInstance_ProvidersSet(t *testing.T) {
 	inst := &mockInstance{}
-	providers := map[string]GatewayProvider{
+	providers := map[string]LLMProxyProvider{
 		"anthropic": {Key: "vk-test", APIType: "openai-completions"},
 	}
 	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
@@ -170,7 +170,7 @@ func TestConfigureInstance_ProvidersSet(t *testing.T) {
 func TestConfigureInstance_NilModelsEmptySlice(t *testing.T) {
 	inst := &mockInstance{}
 	// Nil models but with gateway providers → skip model set and allowlist, set providers, stop gateway
-	providers := map[string]GatewayProvider{
+	providers := map[string]LLMProxyProvider{
 		"openai": {Key: "vk-test2", APIType: "openai-completions"},
 	}
 	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
@@ -208,7 +208,7 @@ func TestConfigureInstance_ModelSetNonZeroCode(t *testing.T) {
 			{code: 1, stderr: "unknown model"},
 		},
 	}
-	providers := map[string]GatewayProvider{
+	providers := map[string]LLMProxyProvider{
 		"anthropic": {Key: "vk-test", APIType: "openai-completions"},
 	}
 	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
@@ -235,7 +235,7 @@ func TestConfigureInstance_ModelSetNonZeroCode(t *testing.T) {
 func TestConfigureInstance_CustomProviderAllModels(t *testing.T) {
 	// Custom providers (non-empty gp.Models) pass all models through regardless of effective list.
 	inst := &mockInstance{}
-	providers := map[string]GatewayProvider{
+	providers := map[string]LLMProxyProvider{
 		"anthropic": {
 			Key:     "vk-test",
 			APIType: "anthropic-messages",
@@ -292,7 +292,7 @@ func TestConfigureInstance_CatalogProviderModelsFiltered(t *testing.T) {
 	defer func() { getCatalogModels = orig }()
 
 	inst := &mockInstance{}
-	providers := map[string]GatewayProvider{
+	providers := map[string]LLMProxyProvider{
 		"anthropic": {Key: "vk-test", APIType: "anthropic-messages", CatalogKey: "anthropic"},
 	}
 	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
@@ -337,7 +337,7 @@ func TestConfigureInstance_CatalogProviderWithCachedModelsFiltered(t *testing.T)
 	defer func() { getCatalogModels = orig }()
 
 	inst := &mockInstance{}
-	providers := map[string]GatewayProvider{
+	providers := map[string]LLMProxyProvider{
 		"anthropic": {
 			Key:        "vk-test",
 			APIType:    "anthropic-messages",
@@ -391,7 +391,7 @@ func TestConfigureInstance_CatalogProviderEmptyWhenNoneSelected(t *testing.T) {
 	defer func() { getCatalogModels = orig }()
 
 	inst := &mockInstance{}
-	providers := map[string]GatewayProvider{
+	providers := map[string]LLMProxyProvider{
 		"anthropic": {Key: "vk-test", APIType: "anthropic-messages", CatalogKey: "anthropic"},
 	}
 	ConfigureInstance(context.Background(), mockOps{}, inst, "test",

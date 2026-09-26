@@ -27,10 +27,11 @@ KUBECONFIG := ../kubeconfig
 HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
 
-.PHONY: agent agent-ci agent-base agent-base-china agent-build agent-test agent-push agent-exec agent-stable agent-stable-ci dashboard docker-prune release \
-	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-docs \
+.PHONY: agent agent-ci agent-base agent-base-china agent-build agent-test agent-instance-test agent-push agent-exec agent-stable agent-stable-ci dashboard docker-prune release \
+	helm-install helm-upgrade helm-uninstall helm-template install-dev dev \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
-	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models scrape-models test \
+	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models test \
+	models openai-models codex-models codex-login \
 	worker-deploy worker-test worker-build-models site-dev site-build site-deploy \
 	e2e e2e-debug e2e-install \
 	migration migration-check
@@ -59,6 +60,16 @@ agent-build:
 	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/browser/Dockerfile.chromium --load agent/browser/
 	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/browser/Dockerfile.chrome --load agent/browser/
 	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --load agent/browser/
+
+# PR check: build only the instance image (it is FROM debian directly and does
+# not depend on the pushed browser-base image) and run the OpenClaw suite
+# against it. No registry push, so it is safe to run on pull requests. Catches
+# upstream OpenClaw breakage — Node engine bumps, config-schema tightening,
+# retired model ids — before it reaches the nightly publish job.
+agent-instance-test:
+	@echo "Building $(AGENT_IMAGE):$(TAG) for PR verification (no push)..."
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/openclaw/Dockerfile --load agent/openclaw/
+	cd agent/tests && AGENT_INSTANCE_TEST_IMAGE=$(AGENT_IMAGE):$(TAG) npm run test -- openclaw.test.ts
 
 agent-test:
 	cd agent/tests && AGENT_INSTANCE_TEST_IMAGE=$(AGENT_IMAGE):$(TAG) \
@@ -195,10 +206,10 @@ dev:
 	@echo "=== Development Config ==="
 	@echo "  DATA_PATH: $(CLAWORC_DATA_PATH)"
 	@echo ""
-	@echo "Control plane: http://localhost:8000"
+	@echo "Control plane: http://localhost:8173"
 	@echo "Frontend:      http://localhost:5173"
 	@echo ""
-	CLAWORC_AUTH_DISABLED=true CLAWORC_LLM_RESPONSE_LOG=$(CURDIR)/llm-responses.log CLAWORC_ALLOWED_HOST_MOUNTS=/tmp,~/ goreman -set-ports=false start
+	CLAWORC_PORT=8173 CLAWORC_AUTH_DISABLED=true CLAWORC_LLM_RESPONSE_LOG=$(CURDIR)/llm-responses.log CLAWORC_ALLOWED_HOST_MOUNTS=/tmp,~/ goreman -set-ports=false start
 
 ssh-integration-test:
 	docker build -f agent/openclaw/Dockerfile -t claworc-agent:local agent/openclaw/
@@ -209,7 +220,7 @@ ssh-file-integration-test:
 	cd agent/tests && npm run test:ssh -- --testPathPattern file.test
 
 test-integration-backend:
-	cd control-plane && CLAWORC_LLM_GATEWAY_PORT=40001 go test -tags docker_integration -v -timeout 600s -count=1 \
+	cd control-plane && CLAWORC_INTERNAL_PROXY_PORT=40001 go test -tags docker_integration -v -timeout 600s -count=1 \
 		./internal/handlers/ -run TestIntegration
 
 e2e-install:
@@ -243,11 +254,32 @@ migration-check:
 extract-models:
 	python3 scripts/extract_models.py
 
-scrape-models:
-	python3 scripts/scrape_provider_docs.py
+# Refresh the whole model catalog. Walks every source in turn, prompting for
+# each credential — press Enter to skip a source. Credentials already in the
+# environment are used without prompting, so this also runs unattended.
+models:
+	@./scripts/refresh_models.sh
 
-dev-docs:
-	cd website_docs && npx mint dev
+# Refresh the `openai` rows of models.csv from GET /v1/models. Reads
+# $$OPENAI_API_KEY unless a key is passed: make openai-models ARGS='sk-...'
+openai-models:
+	uv run scripts/openai_to_csv.py openai $(ARGS)
+
+# Refresh the `openai-codex` rows by probing which model slugs a ChatGPT
+# account actually accepts. Signs in through the Codex CLI if needed, then
+# reads the token out of auth.json — it is never passed on the command line,
+# so it cannot leak into shell history or the process table.
+#   make codex-models
+#   make codex-models ARGS='--dry-run'
+codex-models: codex-login
+	uv run scripts/openai_to_csv.py openai-codex $(ARGS)
+
+codex-login:
+	@command -v codex >/dev/null 2>&1 || { \
+		echo "error: 'codex' CLI not found in PATH; install it with 'npm i -g @openai/codex'"; \
+		exit 1; \
+	}
+	@codex login status >/dev/null 2>&1 || codex login
 
 worker-build-models:
 	cd website/worker && node build-models.mjs
@@ -256,7 +288,11 @@ worker-deploy: worker-build-models
 	cd website/worker && npx wrangler deploy
 
 worker-test:
-	cd website/worker && npm install && npx vitest run
+	# npm ci, not npm install: install re-resolves and can silently pick up a
+	# floating peer that the lockfile never sanctioned. That is how this target
+	# broke — wrangler's peerOptional @cloudflare/workers-types drifted ahead of
+	# the pinned major and every run started failing with ERESOLVE.
+	cd website/worker && npm ci && npx vitest run
 
 # Astro marketing site (claworc.com). Deployed as a Cloudflare Worker via
 # website/wrangler.toml — independent of website/worker/ (the providers API).

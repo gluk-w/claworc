@@ -6,10 +6,19 @@ exports[`agent image > openclaw.json structure matches snapshot 1`] = `
     "defaults": {
       "workspace": "string",
     },
+    "entries": {
+      "main": {
+        "agentDir": "string",
+        "identity": {
+          "name": "string",
+        },
+        "name": "string",
+        "workspace": "string",
+      },
+    },
   },
   "browser": {
     "attachOnly": "boolean",
-    "color": "string",
     "defaultProfile": "string",
     "enabled": "boolean",
     "headless": "boolean",
@@ -17,11 +26,8 @@ exports[`agent image > openclaw.json structure matches snapshot 1`] = `
     "profiles": {
       "remote": {
         "cdpUrl": "string",
-        "color": "string",
       },
     },
-    "remoteCdpHandshakeTimeoutMs": "number",
-    "remoteCdpTimeoutMs": "number",
   },
   "gateway": {
     "auth": {
@@ -36,18 +42,13 @@ exports[`agent image > openclaw.json structure matches snapshot 1`] = `
     "port": "number",
     "tailscale": {
       "mode": "string",
-      "resetOnExit": "boolean",
     },
   },
   "logging": {
     "file": "string",
   },
   "meta": {
-    "lastTouchedAt": "string",
     "lastTouchedVersion": "string",
-  },
-  "session": {
-    "dmScope": "string",
   },
   "tools": {
     "profile": "string",

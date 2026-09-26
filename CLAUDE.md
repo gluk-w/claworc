@@ -14,7 +14,11 @@ The project consists of the following components:
 
 ## Repository Structure
 
-- `agent/` - Agent docker images (`agent/openclaw`, `agent/hermes`, `agent/nanoclaw`, `agent/template`) and browser images `claworc/<browser>-browser`
+- `agent/` - Docker images
+    - `browser/` - Images with various browsers `claworc/<browser>-browser`
+    - `openclaw/`, `hermes/`, `nanoclaw/` - Agent images (`claworc/openclaw`, `claworc/hermes`, `claworc/nanoclaw`)
+    - `template/` - Copy-me starting point for custom agent images implementing the shim contract
+    - `tests/` - Tests for the OpenClaw image
 - `control-plane/` - Main application (Go backend + React frontend)
     - `main.go` - Entry point, Chi router, embedded SPA serving
     - `internal/` - Go packages (config, database, handlers, middleware, orchestrator, sshproxy, sshterminal)
@@ -33,8 +37,13 @@ SPA middleware for client-side routing.
 **API routes**: All under `/api/v1/`. Instance CRUD at `/api/v1/instances`, settings at `/api/v1/settings`, 
 health at `/health`. Logs are streamed via SSE. WebSocket proxying for chat and VNC.
 
-**LLM Gateway**: Proxy for LLM requests that replaces virtual keys with real, globally configured API tokens. It
-records statistics in a separate SQLite database. See`docs/virtual-keys.md`.
+**Internal Proxy** (`internal/internalproxy/`): A single internal-only HTTP server (`127.0.0.1`, default
+port `40001`, `CLAWORC_INTERNAL_PROXY_PORT`) that lets instances reach external services without ever
+holding real credentials. Each request carries a Claworc-issued token; the proxy validates it, injects the
+real upstream credential, and forwards. It serves several routes: the LLM virtual-key proxy (`/`, swaps
+`claworc-vk-*` virtual keys for the real, globally configured provider API tokens and records usage stats in
+a separate SQLite database), the Composio connections broker (`/connections/`), and the inter-agent webhook
+trigger (`/webhooks/`). See `docs/internal-proxy.md` (LLM route details in `docs/virtual-keys.md`).
 
 **Agent Shim** (`internal/agentshim/`): The universal interface between the control plane and the AI agent
 running inside an instance container (OpenClaw, Hermes, NanoClaw, custom). All agent-specific knowledge —
@@ -62,7 +71,11 @@ for local development.
 **Crypto** (`internal/crypto/crypto.go`): API keys encrypted at rest in SQLite using Fernet. The Fernet key is 
 auto-generated on first run and stored in the `settings` table.
 
-**Database migrations** (`internal/database/migrations/`): Goose v3 invoked as a library, embedded into the binary, applied at startup from `database.Init()`. New migrations are versioned Go files in the `migrations` subpackage that use the GORM Migrator interface; model types live in `internal/database/models/` and are re-exported by the `database` package via type aliases for backward compat. See `docs/migrations.md` for the full spec, including the `make migration` workflow that delegates to the `migration-author` subagent.
+**Database migrations** (`internal/database/migrations/`): Goose v3 invoked as a library, embedded in the binary, 
+applied at startup from `database.Init()`. New migrations are versioned Go files in the `migrations` subpackage
+that use the GORM Migrator interface; model types live in `internal/database/models/` and are re-exported by
+the `database` package via type aliases for backward compat. See `docs/migrations.md` for the full spec, 
+including the `make migration` workflow that delegates to the `migration-author` subagent.
 
 **SSH Proxy** (`internal/sshproxy/`): Unified package consolidating SSH key management, connection management, 
 tunnel management, health monitoring, automatic reconnection, connection state tracking, and connection event logging. 
@@ -85,6 +98,7 @@ Backend settings use `envconfig` with `CLAWORC_` env prefix (see `internal/confi
 - `CLAWORC_DATA_PATH` - Data directory for SQLite database and SSH keys (default: `/app/data`)
 - `CLAWORC_BACKUPS_PATH` - Directory for backup archives (default: empty, falls back to `<DATA_PATH>/backups`)
 - `CLAWORC_K8S_NAMESPACE` - Target namespace (default: `claworc`)
+- `CLAWORC_INTERNAL_PROXY_PORT` - Listen port for the internal proxy (default: `40001`). The former `CLAWORC_LLM_GATEWAY_PORT` still works as a deprecated fallback. See `docs/internal-proxy.md`.
 - `CLAWORC_TERMINAL_HISTORY_LINES` - Scrollback buffer size in lines (default: `1000`, `0` to disable)
 - `CLAWORC_TERMINAL_RECORDING_DIR` - Directory for audit recordings (default: empty, disabled)
 - `CLAWORC_TERMINAL_SESSION_TIMEOUT` - Idle detached session timeout (default: `30m`)
@@ -98,7 +112,7 @@ Backend settings use `envconfig` with `CLAWORC_` env prefix (see `internal/confi
 
 ## Key Conventions
 
-- K8s-safe instance names are derived from display names: lowercase, hyphens, prefixed with `bot-`, max 63 chars
+- K8S-safe instance names are derived from display names: lowercase, hyphens, prefixed with `bot-`, max 63 chars
 - API keys are never returned in full by the API -- only masked (`****` + last 4 chars)
 - Instance status in API responses is enriched with live K8s/Docker status, not just the DB value
 - Global API key changes propagate to all instances without overrides

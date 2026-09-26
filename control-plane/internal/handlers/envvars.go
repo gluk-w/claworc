@@ -18,6 +18,7 @@ import (
 var ReservedEnvVarNames = []string{
 	"OPENCLAW_GATEWAY_TOKEN",
 	"CLAWORC_INSTANCE_ID",
+	"CLAWORC_CONNECTION_SECRET",
 	"OPENCLAW_INITIAL_MODELS",
 	"OPENCLAW_INITIAL_PROVIDERS",
 	// Universal agent shim contract variables (docs/shim.md), injected for

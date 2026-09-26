@@ -20,7 +20,7 @@ const tunnelLabelMap: Record<string, string> = {
   VNC: "Browser",
   CDP: "Browser CDP",
   Gateway: "Agent Gateway",
-  LLMProxy: "API Gateway",
+  InternalProxy: "Internal Proxy",
 };
 
 interface SSHStatusProps {

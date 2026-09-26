@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
-"""Extract OpenClaw model catalog to models.csv.
+"""Extract the OpenClaw model catalog into models.csv.
 
-Parses TypeScript source files from the openclaw-github repo and produces
-a CSV with one row per model, suitable for auditing and catalog tracking.
+Parses TypeScript source files from the openclaw-github repo, one row per
+model, and merges the result into models.csv.
+
+Merge, not overwrite. This script knows about the providers in PROVIDERS and
+nothing else, and the TS source it reads has no pricing or curation data, so:
+
+  - providers it does not generate (bedrock, zai, ollama, ...) keep their rows
+  - PRESERVED columns (costs, tag, description) are carried forward per model
+  - `openai` and `openai-codex` are owned by scripts/openai_to_csv.py, which
+    reads OpenAI's own API, and are left alone here
 
 Usage:
     python3 scripts/extract_models.py
@@ -33,6 +41,24 @@ FIELDNAMES = [
     "vision",
     "context_window",
     "max_tokens",
+    "input_cost",
+    "output_cost",
+    "cached_read_cost",
+    "cached_write_cost",
+    "tag",
+    "description",
+]
+
+# The OpenClaw TypeScript source carries no pricing or curation data, so these
+# columns are never regenerated — they are carried forward from the existing
+# models.csv row. Before this was handled, every run silently blanked them.
+PRESERVED = [
+    "input_cost",
+    "output_cost",
+    "cached_read_cost",
+    "cached_write_cost",
+    "tag",
+    "description",
 ]
 
 # ---------------------------------------------------------------------------
@@ -426,6 +452,11 @@ PROVIDERS = [
         "icon_key": "",
         "api_format": "openai-completions",
         "base_url": "https://api.kilo.ai/api/gateway/",
+        # KILOCODE_MODEL_CATALOG has moved to plugins/provider-model-kilocode.ts,
+        # but there it is only a one-entry fallback — Kilocode fetches its real
+        # list from KILOCODE_MODELS_URL at runtime. Extracting the fallback
+        # would delete the curated rows in models.csv, so this path is left
+        # pointing at the old location and the provider is reported as stale.
         "type": "file",
         "file": "providers/kilocode-shared.ts",
         "catalog_var": "KILOCODE_MODEL_CATALOG",
@@ -534,93 +565,83 @@ PROVIDERS = [
         "type": "func",
         "func": "buildXiaomiProvider",
     },
-    {
-        "key": "openai",
-        "label": "OpenAI",
-        "icon_key": "openai",
-        "api_format": "openai-responses",
-        "base_url": "https://api.openai.com/v1",
-        "type": "hardcoded",
-        "models": [
-            {
-                "model_id": "gpt-5.2",
-                "model_name": "GPT-5.2",
-                "reasoning": "true",
-                "vision": "true",
-                "context_window": "400000",
-                "max_tokens": "128000",
-            },
-            {
-                "model_id": "gpt-5.1",
-                "model_name": "GPT-5.1",
-                "reasoning": "true",
-                "vision": "true",
-                "context_window": "400000",
-                "max_tokens": "128000",
-            },
-        ],
-    },
-    {
-        "key": "openai-codex",
-        "label": "OpenAI Codex",
-        "icon_key": "openai",
-        "api_format": "openai-codex-responses",
-        "base_url": "https://api.openai.com/v1",
-        "type": "hardcoded",
-        "models": [
-            {
-                "model_id": "gpt-5.1-codex",
-                "model_name": "GPT-5.1 Codex",
-                "reasoning": "true",
-                "vision": "true",
-                "context_window": "400000",
-                "max_tokens": "128000",
-            },
-            {
-                "model_id": "gpt-5.1-codex-mini",
-                "model_name": "GPT-5.1 Codex Mini",
-                "reasoning": "true",
-                "vision": "true",
-                "context_window": "400000",
-                "max_tokens": "128000",
-            },
-            {
-                "model_id": "gpt-5.1-codex-max",
-                "model_name": "GPT-5.1 Codex Max",
-                "reasoning": "true",
-                "vision": "true",
-                "context_window": "400000",
-                "max_tokens": "128000",
-            },
-        ],
-    },
-    {
-        "key": "anthropic",
-        "label": "Anthropic",
-        "icon_key": "anthropic",
-        "api_format": "anthropic-messages",
-        "base_url": "https://api.anthropic.com",
-        "type": "hardcoded",
-        "models": [
-            {
-                "model_id": "claude-opus-4-6",
-                "model_name": "Claude Opus 4.6",
-                "reasoning": "true",
-                "vision": "true",
-                "context_window": "1000000",
-                "max_tokens": "128000",
-            },
-            {
-                "model_id": "claude-opus-4-5",
-                "model_name": "Claude Opus 4.5",
-                "reasoning": "true",
-                "vision": "true",
-                "context_window": "200000",
-                "max_tokens": "64000",
-            },
-        ],
-    },
+    # `openai` and `openai-codex` are deliberately absent: they are owned by
+    # scripts/openai_to_csv.py, which reads OpenAI's own API instead of the
+    # OpenClaw source. The hardcoded blocks that used to live here listed
+    # gpt-5.1-codex{,-mini,-max} — `-codex`-suffixed slugs that ChatGPT-account
+    # auth rejects outright (gluk-w/claworc#209).
+    # `anthropic` used to be a hardcoded block here listing only opus-4-6 and
+    # opus-4-5, so a run deleted the curated claude-sonnet-4-6 and
+    # claude-haiku-4-5 rows. Hardcoded blocks are a stale-catalog trap — the
+    # same one behind gluk-w/claworc#209 — so there are none left: this script
+    # now only reports what it can actually read out of the OpenClaw source.
 ]
+
+
+# ---------------------------------------------------------------------------
+# Merging into models.csv
+# ---------------------------------------------------------------------------
+
+
+def merge_into_csv(rows: list[dict], path: Path) -> tuple[list[dict], dict[str, int]]:
+    """Fold freshly extracted rows into the existing models.csv.
+
+    This script only knows about the providers in PROVIDERS, and the TS source
+    it reads carries no pricing or curation data. So it must merge, not
+    overwrite: providers it does not generate (bedrock, zai, ollama, ...) keep
+    their rows verbatim, and PRESERVED columns are carried forward per model.
+    Row order is preserved so a re-run produces a readable diff.
+    """
+    if not path.exists():
+        return rows, {"updated": 0, "added": len(rows), "dropped": 0, "untouched": 0}
+
+    with open(path, newline="") as f:
+        existing = [r for r in csv.DictReader(f) if r.get("provider_key")]
+
+    # Owned = providers that actually yielded models on THIS run, not every
+    # provider in PROVIDERS. The OpenClaw source moves symbols around, and a
+    # provider whose catalog we failed to locate must keep its existing rows
+    # rather than have them deleted by a partial extraction.
+    owned = {r["provider_key"] for r in rows}
+    fresh = {(r["provider_key"], r["model_id"]): r for r in rows}
+    stats = {"updated": 0, "added": 0, "dropped": 0, "untouched": 0}
+
+    merged: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for old in existing:
+        key = (old["provider_key"], old.get("model_id", ""))
+        if old["provider_key"] not in owned:
+            merged.append({c: (old.get(c) or "") for c in FIELDNAMES})
+            stats["untouched"] += 1
+            continue
+        new = fresh.get(key)
+        if new is None:
+            stats["dropped"] += 1
+            continue
+        for col in PRESERVED:
+            if not new.get(col):
+                new[col] = old.get(col) or ""
+        merged.append(new)
+        seen.add(key)
+        stats["updated"] += 1
+
+    # Models that are new to the catalog: append after the last row of their
+    # provider so they land next to their siblings rather than at the bottom.
+    for key, new in fresh.items():
+        if key in seen:
+            continue
+        at = next(
+            (
+                i + 1
+                for i in range(len(merged) - 1, -1, -1)
+                if merged[i]["provider_key"] == key[0]
+            ),
+            len(merged),
+        )
+        merged.insert(at, new)
+        stats["added"] += 1
+
+    return merged, stats
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +662,9 @@ def main() -> None:
     providers_num_c = extract_numeric_consts(providers_text)
 
     rows: list[dict] = []
+    # Providers whose catalog could not be located in the OpenClaw source.
+    # Their existing models.csv rows are preserved untouched.
+    stale: list[str] = []
 
     for prov in PROVIDERS:
         key = prov["key"]
@@ -655,13 +679,14 @@ def main() -> None:
             "base_url": prov["base_url"],
         }
 
-        if ptype == "hardcoded":
-            for m in prov["models"]:
-                rows.append({**base_row, **m})
-            print(f" {len(prov['models'])} models")
-
-        elif ptype == "file":
+        if ptype == "file":
             path = OPENCLAW_SRC / prov["file"]
+            if not path.exists():
+                # A moved source file must not abort the whole extraction —
+                # merge_into_csv leaves this provider's existing rows alone.
+                print(f"\n  WARNING: {prov['file']} not found; skipping {key}")
+                stale.append(key)
+                continue
             text = strip_comments(path.read_text())
             str_c = extract_string_consts(text)
             num_c = extract_numeric_consts(text)
@@ -669,6 +694,7 @@ def main() -> None:
             array_content = get_array_content(text, prov["catalog_var"])
             if not array_content:
                 print(f"\n  WARNING: Could not find {prov['catalog_var']} in {prov['file']}")
+                stale.append(key)
                 continue
             models = scan_array_for_models(
                 array_content, str_c, num_c, volc_objects if use_volc else None
@@ -682,19 +708,34 @@ def main() -> None:
             array_content = get_models_array_from_function(providers_text, func_name)
             if not array_content:
                 print(f"\n  WARNING: Could not find models array in {func_name}()")
+                stale.append(key)
                 continue
             models = scan_array_for_models(array_content, providers_str_c, providers_num_c)
             print(f" {len(models)} models")
             for m in models:
                 rows.append({**base_row, **m})
 
-    # Write CSV
-    with open(OUTPUT_CSV, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
-        writer.writeheader()
-        writer.writerows(rows)
+    merged, stats = merge_into_csv(rows, OUTPUT_CSV)
 
-    print(f"\nWrote {len(rows)} rows to {OUTPUT_CSV}")
+    # lineterminator: csv defaults to CRLF, which would rewrite every line in
+    # an LF file and bury the real change in a whole-file diff.
+    with open(OUTPUT_CSV, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(merged)
+
+    print(
+        f"\nWrote {len(merged)} rows to {OUTPUT_CSV} "
+        f"({stats['updated']} updated, {stats['added']} added, "
+        f"{stats['dropped']} dropped, {stats['untouched']} left alone)"
+    )
+    if stale:
+        print(
+            f"\n{len(stale)} provider(s) could not be extracted and were left "
+            f"as-is: {', '.join(stale)}\n"
+            "Their definitions have moved in the OpenClaw source; update "
+            "PROVIDERS to point at the new locations."
+        )
 
 
 if __name__ == "__main__":

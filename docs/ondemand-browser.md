@@ -94,6 +94,12 @@ PermitListen 127.0.0.1:9222 127.0.0.1:40001
 - `cdpUrl: "http://127.0.0.1:9222"` (unchanged)
 - `attachOnly: true` (unchanged)
 
+> **Note (2026-09):** OpenClaw dropped `remoteCdpTimeoutMs` and
+> `remoteCdpHandshakeTimeoutMs` from its `browser` config schema (as well as
+> `browser.color` and `browser.profiles.*.color`). Its config validator now
+> rejects unknown keys outright, so `agent/openclaw/browser.json` no longer
+> seeds them and there is no replacement knob for the cold-start grace period.
+
 This is the existing browser section of OpenClaw's config that `svc-agent` already initialises at startup; no new file.
 
 **Control-plane changes** — `control-plane/internal/sshproxy/tunnel.go`:

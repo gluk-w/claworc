@@ -66,6 +66,7 @@ vi.mock("./models.json", () => ({
 }));
 
 import worker from "./index";
+import { parseCsv } from "./csv.mjs";
 
 async function get(path: string): Promise<Response> {
   return worker.fetch(new Request(`https://example.com${path}`), {} as any, {} as any);
@@ -220,5 +221,45 @@ describe("404 routes", () => {
   it("GET /providers/anthropic/model returns 404", async () => {
     const res = await get("/providers/anthropic/model");
     expect(res.status).toBe(404);
+  });
+});
+
+// models.json is generated from models.csv by build-models.mjs. The parser it
+// uses is covered here because a mis-parse ships silently: it corrupts field
+// values rather than failing the build.
+describe("CSV parsing", () => {
+  const HEADER = "provider_key,model_id,description";
+
+  it("unquotes a comma-bearing description", () => {
+    const rows = parseCsv(
+      `${HEADER}\nopenai,gpt-5.6-sol,"Flagship model, tuned for agentic coding."\n`,
+    );
+    expect(rows[1]).toEqual([
+      "openai",
+      "gpt-5.6-sol",
+      "Flagship model, tuned for agentic coding.",
+    ]);
+  });
+
+  it("collapses doubled quotes inside a quoted field", () => {
+    const rows = parseCsv(`${HEADER}\nopenai,gpt-5.6-sol,"He said ""hi"", then left."\n`);
+    expect(rows[1][2]).toBe('He said "hi", then left.');
+  });
+
+  it("keeps trailing empty columns", () => {
+    const rows = parseCsv(`${HEADER}\nopenai,gpt-5.6-sol,\n`);
+    expect(rows[1]).toEqual(["openai", "gpt-5.6-sol", ""]);
+  });
+
+  it("handles a newline inside a quoted field", () => {
+    const rows = parseCsv(`${HEADER}\nopenai,gpt-5.6-sol,"line one\nline two"\n`);
+    expect(rows).toHaveLength(2);
+    expect(rows[1][2]).toBe("line one\nline two");
+  });
+
+  it("ignores blank lines and a missing trailing newline", () => {
+    const rows = parseCsv(`${HEADER}\n\nopenai,gpt-5.6-sol,ok`);
+    expect(rows).toHaveLength(2);
+    expect(rows[1][2]).toBe("ok");
   });
 });

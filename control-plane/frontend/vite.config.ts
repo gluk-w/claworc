@@ -4,6 +4,8 @@ import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
 import path from "path";
 
+const backendTarget = `http://127.0.0.1:${process.env.CLAWORC_PORT ?? "8000"}`;
+
 export default defineConfig({
   plugins: [
     react(),
@@ -96,24 +98,24 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8000",
+        target: backendTarget,
         changeOrigin: true,
         autoRewrite: true,
         ws: true,
       },
       "/health": {
-        target: "http://127.0.0.1:8000",
+        target: backendTarget,
         changeOrigin: true,
         autoRewrite: true,
       },
       "/openclaw": {
-        target: "http://127.0.0.1:8000",
+        target: backendTarget,
         changeOrigin: true,
         autoRewrite: true,
         ws: true,
       },
       "/webhooks": {
-        target: "http://127.0.0.1:8000",
+        target: backendTarget,
         changeOrigin: true,
         autoRewrite: true,
       },

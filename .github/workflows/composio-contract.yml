@@ -1,0 +1,122 @@
+name: Composio Contract
+
+# Nightly check that the Composio REST contract Claworc depends on has not
+# drifted. Composio ignores unknown query parameters rather than rejecting them,
+# so a renamed path segment or filter does not show up as an error — it shows up
+# as a 200 carrying the wrong data (see control-plane/internal/internalproxy/
+# composio_live_test.go). Nothing here writes to Composio.
+
+on:
+  schedule:
+    # 06:00 UTC daily.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+  push:
+    # Re-run whenever the integration or this workflow changes, so drift is
+    # caught at the same time as our own edits.
+    paths:
+      - 'control-plane/internal/internalproxy/composio*.go'
+      - '.github/workflows/composio-contract.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: composio-contract
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: Composio API Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: control-plane/go.mod
+          cache-dependency-path: control-plane/go.sum
+
+      - name: Check for API key
+        id: key
+        env:
+          COMPOSIO_API_KEY: ${{ secrets.COMPOSIO_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${COMPOSIO_API_KEY}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "present=false" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event.repository.fork }}" = "true" ]; then
+            echo "::notice::COMPOSIO_API_KEY is not set on this fork; skipping the contract check."
+            exit 0
+          fi
+          echo "::error::COMPOSIO_API_KEY secret is not configured. Add a Composio project API key with the six permission areas listed in docs/connections.md."
+          exit 1
+
+      - name: Run contract tests against the live Composio API
+        if: steps.key.outputs.present == 'true'
+        working-directory: control-plane
+        env:
+          COMPOSIO_API_KEY: ${{ secrets.COMPOSIO_API_KEY }}
+        run: |
+          set -euo pipefail
+          go test -tags composio_live -count=1 -v -timeout 5m \
+            ./internal/internalproxy/ -run TestComposioContract 2>&1 | tee contract.log
+          # `go test` output is teed so the failure summary below can quote it.
+
+      - name: Summarize failures
+        if: failure() && steps.key.outputs.present == 'true'
+        working-directory: control-plane
+        run: |
+          set -uo pipefail
+          {
+            echo "## Composio contract drift"
+            echo
+            echo "The nightly check against the live Composio API failed. Failing assertions:"
+            echo
+            echo '```'
+            grep -E '^\s+composio_live_test\.go:[0-9]+:' contract.log | head -40 || echo "(no assertion lines captured; see the job log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open an issue on drift
+        if: failure() && steps.key.outputs.present == 'true' && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # One open issue at a time — a nightly job must not file a duplicate
+          # every day while the drift is being fixed.
+          existing=$(gh issue list --label composio-contract --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Still failing as of $(date -u +%Y-%m-%d). Run: ${RUN_URL}"
+            exit 0
+          fi
+          gh label create composio-contract --description "Composio REST contract drift" --color B60205 --force >/dev/null 2>&1 || true
+          body=$(cat <<EOF
+          The nightly Composio contract check failed, which means a path or query-string
+          parameter Claworc depends on has changed upstream.
+
+          **Run:** ${RUN_URL}
+
+          The failing assertions name the affected call. Fix the call sites in
+          \`control-plane/internal/internalproxy/composio_client.go\`, \`composio_skill.go\`
+          and \`composio.go\`, then update \`docs/connections.md\`.
+
+          Assertions live in \`control-plane/internal/internalproxy/composio_live_test.go\`
+          and can be reproduced with:
+
+          \`\`\`bash
+          cd control-plane
+          COMPOSIO_API_KEY=... go test -tags composio_live -count=1 -v ./internal/internalproxy/ -run TestComposioContract
+          \`\`\`
+          EOF
+          )
+          gh issue create \
+            --title "Composio API contract drift detected" \
+            --label composio-contract \
+            --body "$body"

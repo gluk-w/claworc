@@ -25,11 +25,11 @@ AGENT_TEST_IMAGE=glukw/openclaw-vnc-chromium:local make test-integration-backend
 1. Creates a temp directory for the SQLite database and SSH keys.
 2. Sets `CLAWORC_AUTH_DISABLED=true` and `CLAWORC_DATA_PATH` in the process environment and calls `config.Load()`.
 3. Initialises the database (GORM + SQLite), seeds `orchestrator_backend=docker`, and creates an `admin` user.
-4. Finds a free TCP port and assigns it to `config.Cfg.LLMGatewayPort`.
+4. Finds a free TCP port and assigns it to `config.Cfg.InternalProxyPort`.
 5. Generates the global SSH key pair (`sshproxy.EnsureKeyPair`).
 6. Wires up SSHManager, TunnelManager, SSH audit logger, terminal session manager, and session store — exactly as `main.go` does.
 7. Initialises the Docker orchestrator (`orchestrator.InitOrchestrator`).
-8. Starts the LLM gateway on the chosen port.
+8. Starts the internal proxy on the chosen port.
 9. Registers background goroutines: SSH health checker, tunnel background manager, tunnel health checker, key rotation job.
 10. Builds a minimal Chi router with only the routes the tests use and wraps it in `httptest.NewServer`.
 
@@ -38,7 +38,7 @@ The returned URL, cancel function, and cleanup function are stored at package le
 ## Session reuse
 
 One server is started for the entire test binary run. All `TestIntegration_*` functions share
-`sessionURL` (the httptest base URL) and `sessionGatewayPort`.
+`sessionURL` (the httptest base URL) and `sessionInternalProxyPort`.
 
 Database and SSH state persist across tests within a single run. Each test is responsible for
 creating its own instances and providers **and cleaning them up** via `defer` so subsequent tests
@@ -51,7 +51,7 @@ Write a function with the signature:
 ```go
 func TestIntegration_MyScenario(t *testing.T) {
     baseURL := sessionURL
-    // use baseURL and sessionGatewayPort
+    // use baseURL and sessionInternalProxyPort
 }
 ```
 

@@ -20,7 +20,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
-	"github.com/gluk-w/claworc/control-plane/internal/llmgateway"
+	"github.com/gluk-w/claworc/control-plane/internal/internalproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
@@ -272,8 +272,8 @@ func computeEffectiveModels(mc modelsConfig) []string {
 	return effective
 }
 
-// GatewayProvider holds the virtual auth key, API type, and models for a gateway provider.
-type GatewayProvider struct {
+// LLMProxyProvider holds the virtual key, API type, and models for an LLM proxy provider.
+type LLMProxyProvider struct {
 	Key        string
 	APIType    string
 	Models     []database.ProviderModel
@@ -285,7 +285,7 @@ type GatewayProvider struct {
 // Catalog providers are filtered to only the selected models; agent-specific
 // config shapes (e.g. OpenClaw's models.providers JSON) are produced from
 // this document by the agent adapter (see agentshim/openclawnative).
-func buildLLMRouting(models []string, gatewayProviders map[string]GatewayProvider, gatewayPort int) agentshim.LLMRouting {
+func buildLLMRouting(models []string, gatewayProviders map[string]LLMProxyProvider, gatewayPort int) agentshim.LLMRouting {
 	routing := agentshim.LLMRouting{
 		Style:          "openai",
 		FallbackModels: []string{},
@@ -341,12 +341,12 @@ func buildLLMRouting(models []string, gatewayProviders map[string]GatewayProvide
 	return routing
 }
 
-// resolveGatewayProviders builds the providerKey→GatewayProvider map for an instance's enabled
-// providers (both global and instance-specific). Each entry includes the virtual auth key,
+// resolveLLMProviders builds the providerKey→LLMProxyProvider map for an instance's enabled
+// providers (both global and instance-specific). Each entry includes the virtual key,
 // API type, and stored model list.
-func resolveGatewayProviders(inst database.Instance) map[string]GatewayProvider {
+func resolveLLMProviders(inst database.Instance) map[string]LLMProxyProvider {
 	enabledIDs := parseEnabledProviders(inst.EnabledProviders)
-	gatewayKeys := llmgateway.GetInstanceGatewayKeys(inst.ID)
+	gatewayKeys := internalproxy.GetInstanceVirtualKeys(inst.ID)
 
 	var providers []database.LLMProvider
 	if len(enabledIDs) > 0 {
@@ -362,13 +362,13 @@ func resolveGatewayProviders(inst database.Instance) map[string]GatewayProvider 
 		return nil
 	}
 
-	result := make(map[string]GatewayProvider, len(providers))
+	result := make(map[string]LLMProxyProvider, len(providers))
 	for _, p := range providers {
 		gk, ok := gatewayKeys[p.ID]
 		if !ok {
 			continue
 		}
-		result[p.Key] = GatewayProvider{
+		result[p.Key] = LLMProxyProvider{
 			Key:        gk,
 			APIType:    p.APIType,
 			Models:     database.ParseProviderModels(p.Models),
@@ -713,6 +713,22 @@ func restartInstanceAsyncWithToast(inst database.Instance, userID uint, title, m
 		})
 }
 
+// injectConnectionSecret ensures the instance has a connection secret (lazily
+// generating + persisting one on first use) and injects it as the reserved
+// CLAWORC_CONNECTION_SECRET env var. Called on every (re)create so the secret is
+// always present in the running container. Best-effort: a failure here only
+// means the instance can't reach the Composio broker until the next start.
+func injectConnectionSecret(envVars map[string]string, instanceID uint) {
+	secret, _, err := internalproxy.EnsureConnectionSecret(instanceID)
+	if err != nil {
+		log.Printf("Failed to ensure connection secret for instance %d: %v", instanceID, err)
+		return
+	}
+	if secret != "" {
+		envVars["CLAWORC_CONNECTION_SECRET"] = secret
+	}
+}
+
 // instancePlacementFields groups the JSON-encoded placement/service columns
 // decoded off an Instance row, shared by buildCreateParams and the initial
 // CreateInstance provisioning call (which historically duplicated the
@@ -758,14 +774,15 @@ func instancePlacementParams(inst database.Instance) instancePlacementFields {
 // OPENCLAW_INITIAL_PROVIDERS variables for backward compatibility.
 func applyReservedAgentEnv(envVars map[string]string, inst database.Instance, agentTokenPlain string) {
 	envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
+	injectConnectionSecret(envVars, inst.ID)
 	if agentTokenPlain != "" {
 		envVars["CLAWORC_AGENT_TOKEN"] = agentTokenPlain
 	}
-	if config.Cfg.LLMGatewayPort > 0 {
-		envVars["CLAWORC_LLM_PROXY_URL"] = fmt.Sprintf("http://127.0.0.1:%d", config.Cfg.LLMGatewayPort)
+	if config.Cfg.InternalProxyPort > 0 {
+		envVars["CLAWORC_LLM_PROXY_URL"] = fmt.Sprintf("http://127.0.0.1:%d", config.Cfg.InternalProxyPort)
 	}
 
-	routing := buildLLMRouting(resolveInstanceModels(inst), resolveGatewayProviders(inst), config.Cfg.LLMGatewayPort)
+	routing := buildLLMRouting(resolveInstanceModels(inst), resolveLLMProviders(inst), config.Cfg.InternalProxyPort)
 	if b, err := json.Marshal(routing); err == nil {
 		envVars["CLAWORC_INITIAL_LLM_CONFIG"] = string(b)
 	}
@@ -1199,11 +1216,12 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	// Pre-create virtual keys so we can pass initial config to the container.
 	// This eliminates the race where messages arrive before providers are configured.
 	allIDs := allProviderIDsForInstance(inst.ID, enabledProviders)
-	if err := llmgateway.EnsureKeysForInstance(inst.ID, allIDs); err != nil {
+	if err := internalproxy.EnsureKeysForInstance(inst.ID, allIDs); err != nil {
 		log.Printf("Failed to ensure LLM gateway keys for instance %d: %s", inst.ID, utils.SanitizeForLog(err.Error()))
 	}
 	models := resolveInstanceModels(inst)
-	gatewayProviders := resolveGatewayProviders(inst)
+	gatewayProviders := resolveLLMProviders(inst)
+
 
 	// Launch container creation asynchronously (image pull can take minutes)
 	startInstanceTask(taskmanager.TaskInstanceCreate, inst.ID, callerID(r), inst.DisplayName,
@@ -1276,7 +1294,8 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Failed to get SSH connection for instance %d during configure: %v", inst.ID, err)
 				return
 			}
-			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), inst.Name, models, gatewayProviders, config.Cfg.LLMGatewayPort)
+			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), inst.Name, models, gatewayProviders, config.Cfg.InternalProxyPort)
+			deployActiveConnectionSkills(inst.ID)
 		})
 
 	var totalInstances int64
@@ -1515,7 +1534,7 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(*body.EnabledProviders)
 		database.DB.Model(&inst).Update("enabled_providers", string(b))
 		allIDs := allProviderIDsForInstance(inst.ID, *body.EnabledProviders)
-		if err := llmgateway.EnsureKeysForInstance(inst.ID, allIDs); err != nil {
+		if err := internalproxy.EnsureKeysForInstance(inst.ID, allIDs); err != nil {
 			log.Printf("Failed to ensure LLM gateway keys for instance %d: %s", inst.ID, utils.SanitizeForLog(err.Error()))
 		}
 	}
@@ -1722,7 +1741,7 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 
 	if orch != nil && orchStatus == "running" {
 		models := resolveInstanceModels(inst)
-		gatewayProviders := resolveGatewayProviders(inst)
+		gatewayProviders := resolveLLMProviders(inst)
 		instID := inst.ID
 		instName := inst.Name
 		go func() {
@@ -1732,7 +1751,8 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Failed to get SSH connection for instance %d during configure: %v", instID, err)
 				return
 			}
-			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.LLMGatewayPort)
+			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.InternalProxyPort)
+			deployActiveConnectionSkills(instID)
 		}()
 	}
 
@@ -1962,7 +1982,23 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.LLMProvider{})
 
 	// Delete associated gateway keys
-	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.LLMGatewayKey{})
+	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.LLMProxyKey{})
+
+	// Best-effort: remove the instance's Composio connected accounts upstream,
+	// then drop the local connection rows.
+	if client, ok := composioClient(); ok {
+		var conns []database.ComposioConnection
+		database.DB.Where("instance_id = ?", inst.ID).Find(&conns)
+		for _, c := range conns {
+			if c.ComposioConnectedAccountID != "" {
+				if err := client.DeleteConnectedAccount(r.Context(), c.ComposioConnectedAccountID); err != nil {
+					log.Printf("Failed to delete Composio connected account %s for instance %d: %v", c.ComposioConnectedAccountID, inst.ID, err)
+				}
+			}
+		}
+	}
+	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.ComposioConnection{})
+
 	database.DB.Delete(&inst)
 	var remaining int64
 	database.DB.Model(&database.Instance{}).Count(&remaining)
@@ -2422,7 +2458,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Failed to get SSH connection for clone %d during configure: %v", inst.ID, err)
 				return
 			}
-			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.LLMGatewayPort)
+			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.InternalProxyPort)
 		})
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -2466,7 +2502,7 @@ func cloneOnCancel(instanceID uint, cloneName string) taskmanager.OnCancel {
 		// Drop instance providers / gateway keys / instance row. Mirrors the
 		// teardown in DeleteInstance so a canceled clone leaves no rows behind.
 		database.DB.Where("instance_id = ?", instanceID).Delete(&database.LLMProvider{})
-		database.DB.Where("instance_id = ?", instanceID).Delete(&database.LLMGatewayKey{})
+		database.DB.Where("instance_id = ?", instanceID).Delete(&database.LLMProxyKey{})
 		// Detach the cancelled clone from any shared folders it inherited so
 		// no dangling reference is left behind after the row is deleted.
 		if folders, ferr := database.GetSharedFoldersForInstance(instanceID); ferr == nil {
@@ -2552,9 +2588,9 @@ func ReorderInstances(w http.ResponseWriter, r *http.Request) {
 // openclaw CLI over SSH through inst.
 //
 // gatewayProviders (optional) maps provider key → gateway auth key for routing
-// the agent's LLM traffic through the internal LLM gateway.
-// gatewayPort is the port the LLM gateway listens on (typically 40001).
-func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, inst sshproxy.Instance, name string, models []string, gatewayProviders map[string]GatewayProvider, gatewayPort int) {
+// the agent's LLM traffic through the internal proxy's LLM route.
+// gatewayPort is the port the internal proxy listens on (typically 40001).
+func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, inst sshproxy.Instance, name string, models []string, gatewayProviders map[string]LLMProxyProvider, gatewayPort int) {
 	if len(models) == 0 && len(gatewayProviders) == 0 {
 		return
 	}

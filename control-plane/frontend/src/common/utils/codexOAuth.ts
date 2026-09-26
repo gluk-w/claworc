@@ -1,6 +1,6 @@
 // PKCE helpers and authorize-URL builder for the openai-codex-responses
 // (ChatGPT subscription) login flow. These constants mirror those in
-// control-plane/internal/llmgateway/oauth_codex.go — keep them in sync.
+// control-plane/internal/internalproxy/oauth_codex.go — keep them in sync.
 //
 // The control plane never binds the redirect URI port; the user pastes the
 // redirect URL back into the modal and the backend extracts the `code` from

@@ -18,7 +18,7 @@ accept*, not by what they do:
 | Endpoint | Path | Authenticates against | Reachable from |
 | --- | --- | --- | --- |
 | Public | `POST /webhooks/{instance-uuid}` on the control plane | `WebhookApiKey` rows where `is_private = false` | The public network the control-plane is exposed on |
-| Private | `POST http://127.0.0.1:<LLMGatewayPort>/webhooks/{instance-uuid}` | `WebhookApiKey` rows where `is_private = true` | Reachable from other AI agents only — each instance gets an agent-listener tunnel that pins the gateway to `127.0.0.1:<LLMGatewayPort>` on the instance side (see `internal/sshproxy/tunnel.go`). |
+| Private | `POST http://127.0.0.1:<InternalProxyPort>/webhooks/{instance-uuid}` | `WebhookApiKey` rows where `is_private = true` | Reachable from other AI agents only — each instance gets an agent-listener tunnel that pins the internal proxy to `127.0.0.1:<InternalProxyPort>` on the instance side (see `internal/sshproxy/tunnel.go`). |
 
 The control plane returns the private URL in its absolute form (e.g.
 `http://127.0.0.1:40001/webhooks/<uuid>`) so the UI can show what
@@ -173,8 +173,8 @@ index.
 - `internal/handlers/webhook_trigger.go` — public + private entry handlers.
 - `internal/handlers/webhook_bridge.go` — shared OpenClaw chat bridge.
 - `internal/handlers/files.go` — `WriteInstanceFile` helper used for attachments.
-- `internal/llmgateway/gateway.go` — `RegisterRoute` hook used to plug
-  the private trigger into the gateway mux.
+- `internal/internalproxy/gateway.go` — `RegisterRoute` hook used to plug
+  the private trigger into the internal proxy mux.
 - `frontend/src/components/WebhookSection.tsx` — UI section embedded in
   the agent detail page after Enabled Models.
 - `frontend/src/api/webhooks.ts`, `frontend/src/hooks/useWebhook.ts`,

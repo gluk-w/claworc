@@ -204,7 +204,7 @@ func TestCloneInstance_RegistersCancellableTask(t *testing.T) {
 // observable order is non-deterministic on in-memory SQLite.
 func TestCloneInstance_Cancel_TransitionsToCanceled(t *testing.T) {
 	setupTestDB(t)
-	if err := database.DB.AutoMigrate(&database.LLMProvider{}, &database.LLMGatewayKey{}, &database.BrowserSession{}); err != nil {
+	if err := database.DB.AutoMigrate(&database.LLMProvider{}, &database.LLMProxyKey{}, &database.BrowserSession{}); err != nil {
 		t.Fatalf("migrate ancillary tables: %v", err)
 	}
 
@@ -665,14 +665,14 @@ func TestCloneOnCancel_DeletesBrowserSessionRow(t *testing.T) {
 	}
 }
 
-// TestCloneOnCancel_DeletesProviderAndGatewayRows seeds LLMProvider and
-// LLMGatewayKey rows tied to the destination instance and confirms both
+// TestCloneOnCancel_DeletesProviderAndProxyKeyRows seeds LLMProvider and
+// LLMProxyKey rows tied to the destination instance and confirms both
 // are removed by the OnCancel sweep. These rows must follow the instance
 // row to avoid foreign-key-like dangling references.
-func TestCloneOnCancel_DeletesProviderAndGatewayRows(t *testing.T) {
+func TestCloneOnCancel_DeletesProviderAndProxyKeyRows(t *testing.T) {
 	setupTestDB(t)
-	if err := database.DB.AutoMigrate(&database.LLMProvider{}, &database.LLMGatewayKey{}); err != nil {
-		t.Fatalf("migrate provider/gateway tables: %v", err)
+	if err := database.DB.AutoMigrate(&database.LLMProvider{}, &database.LLMProxyKey{}); err != nil {
+		t.Fatalf("migrate provider/proxy-key tables: %v", err)
 	}
 	mock := &mockOrchestrator{}
 	orchestrator.Set(mock)
@@ -690,12 +690,12 @@ func TestCloneOnCancel_DeletesProviderAndGatewayRows(t *testing.T) {
 	if err := database.DB.Create(&provider).Error; err != nil {
 		t.Fatalf("seed LLMProvider: %v", err)
 	}
-	if err := database.DB.Create(&database.LLMGatewayKey{
+	if err := database.DB.Create(&database.LLMProxyKey{
 		InstanceID: dst.ID,
 		ProviderID: provider.ID,
-		GatewayKey: "claworc-vk-test",
+		VirtualKey: "claworc-vk-test",
 	}).Error; err != nil {
-		t.Fatalf("seed LLMGatewayKey: %v", err)
+		t.Fatalf("seed LLMProxyKey: %v", err)
 	}
 
 	cloneOnCancel(dst.ID, dst.Name)(context.Background())
@@ -706,8 +706,8 @@ func TestCloneOnCancel_DeletesProviderAndGatewayRows(t *testing.T) {
 		t.Errorf("LLMProvider rows for dst after cleanup = %d, want 0", providers)
 	}
 	var gateway int64
-	database.DB.Model(&database.LLMGatewayKey{}).Where("instance_id = ?", dst.ID).Count(&gateway)
+	database.DB.Model(&database.LLMProxyKey{}).Where("instance_id = ?", dst.ID).Count(&gateway)
 	if gateway != 0 {
-		t.Errorf("LLMGatewayKey rows for dst after cleanup = %d, want 0", gateway)
+		t.Errorf("LLMProxyKey rows for dst after cleanup = %d, want 0", gateway)
 	}
 }

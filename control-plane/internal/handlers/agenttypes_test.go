@@ -34,7 +34,7 @@ func setupAgentTypesTestDB(t *testing.T) {
 	if err := db.AutoMigrate(
 		&database.Instance{}, &database.Setting{}, &database.User{},
 		&database.UserInstance{}, &database.Team{}, &database.TeamMember{},
-		&database.LLMProvider{}, &database.LLMGatewayKey{},
+		&database.LLMProvider{}, &database.LLMProxyKey{},
 	); err != nil {
 		t.Fatalf("auto-migrate: %v", err)
 	}
@@ -185,9 +185,9 @@ func TestApplyReservedAgentEnv_OpenClaw(t *testing.T) {
 	setupAgentTypesTestDB(t)
 	database.SetSetting("default_models", `["anthropic/claude-sonnet-4-5"]`)
 
-	prevPort := config.Cfg.LLMGatewayPort
-	config.Cfg.LLMGatewayPort = 40001
-	defer func() { config.Cfg.LLMGatewayPort = prevPort }()
+	prevPort := config.Cfg.InternalProxyPort
+	config.Cfg.InternalProxyPort = 40001
+	defer func() { config.Cfg.InternalProxyPort = prevPort }()
 
 	inst := database.Instance{Name: "bot-env", DisplayName: "Env", AgentType: "openclaw"}
 	if err := database.DB.Create(&inst).Error; err != nil {
@@ -230,9 +230,9 @@ func TestApplyReservedAgentEnv_NonOpenClawSkipsLegacyVars(t *testing.T) {
 	setupAgentTypesTestDB(t)
 	database.SetSetting("default_models", `["anthropic/claude-sonnet-4-5"]`)
 
-	prevPort := config.Cfg.LLMGatewayPort
-	config.Cfg.LLMGatewayPort = 40001
-	defer func() { config.Cfg.LLMGatewayPort = prevPort }()
+	prevPort := config.Cfg.InternalProxyPort
+	config.Cfg.InternalProxyPort = 40001
+	defer func() { config.Cfg.InternalProxyPort = prevPort }()
 
 	inst := database.Instance{Name: "bot-hermes-env", DisplayName: "HermesEnv", AgentType: "hermes"}
 	if err := database.DB.Create(&inst).Error; err != nil {

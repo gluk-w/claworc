@@ -6,6 +6,8 @@ export interface RestartingInstance {
 
 export interface Settings {
   brave_api_key: string;
+  /** Masked Composio API key (e.g. "****abcd"). Empty if not configured. */
+  composio_api_key: string;
   default_models: string[];
   default_container_image: string;
   default_agent_image: string;
@@ -45,6 +47,7 @@ export interface Settings {
 export interface SettingsUpdatePayload {
   default_models?: string[];
   brave_api_key?: string;
+  composio_api_key?: string;
   default_container_image?: string;
   default_agent_image?: string;
   /** Per-agent-type default images for non-OpenClaw types. */
@@ -73,3 +76,20 @@ export interface SettingsUpdatePayload {
 
 // Keep backward compat alias
 export type SettingsUpdate = SettingsUpdatePayload;
+
+/** One Composio permission area probed by the "Test" button. */
+export interface ComposioPermissionCheck {
+  id: string;
+  label: string;
+  ok: boolean;
+  status?: number;
+  detail?: string;
+}
+
+/** Result of POST /settings/composio/test. Always HTTP 200 — branch on `ok`. */
+export interface ComposioKeyTestResult {
+  ok: boolean;
+  invalid_key: boolean;
+  error?: string;
+  checks: ComposioPermissionCheck[];
+}
