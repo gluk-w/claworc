@@ -1,0 +1,4 @@
+#!/bin/sh
+# chat-send --session <key> [--turn <id>] — stream one chat turn as JSONL.
+# Thin wrapper over the shared gateway bridge (docs/shim.md).
+exec /usr/bin/node /opt/claworc/shim/lib/gateway-bridge.mjs send "$@"

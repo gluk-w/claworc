@@ -1,0 +1,36 @@
+#!/bin/sh
+# config-set [--id <file-id>] — replace agent.env with stdin bytes.
+# Validates shell syntax (exit 6 + {"error":...} on stdout when invalid),
+# writes atomically (tmp + mv), does NOT restart the agent (docs/shim.md).
+set -eu
+
+SHIM_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ENV_FILE=${CLAWORC_SHIM_ENV_FILE:-$SHIM_DIR/agent.env}
+
+ID=main
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --id) ID="$2"; shift 2 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+if [ "$ID" != "main" ]; then
+    echo "unknown config file id: $ID" >&2
+    exit 2
+fi
+
+TMP="$ENV_FILE.shim-tmp.$$"
+trap 'rm -f "$TMP"' EXIT
+
+cat > "$TMP"
+
+# agent.env is sourced by the verbs — refuse content sh cannot parse.
+if ! ERR=$(sh -n "$TMP" 2>&1); then
+    python3 -c 'import json,sys; print(json.dumps({"error": "invalid shell syntax: " + sys.argv[1]}))' "$ERR"
+    exit 6
+fi
+
+chmod 0644 "$TMP"
+mv -f "$TMP" "$ENV_FILE"
+trap - EXIT
+exit 0

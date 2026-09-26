@@ -1,0 +1,32 @@
+#!/bin/sh
+# meta — Claworc agent shim capability probe (docs/shim.md, contract v1).
+#
+# Static JSON except for the Hermes version, which is baked into
+# /opt/hermes/VERSION at image build time (running the agent must not be a
+# prerequisite for meta).
+#
+# session_persistence is "native": chat-send resumes Hermes sessions by ID
+# (`hermes chat -q ... -Q --resume <session_id>`); the Claworc session key ->
+# Hermes session id map lives in /home/claworc/.claworc/shim/hermes-sessions/.
+set -eu
+
+VERSION=""
+[ -f /opt/hermes/VERSION ] && VERSION=$(head -n1 /opt/hermes/VERSION | tr -d '"\\')
+
+cat <<EOF
+{
+  "contract": 1,
+  "shim_version": "0.1.0",
+  "agent": {"name": "hermes", "version": "${VERSION}"},
+  "capabilities": ["chat", "chat.abort", "session.reset", "config", "configure-llm", "restart", "skills"],
+  "config_files": [
+    {"id": "config", "path": "/home/claworc/.hermes/config.yaml", "language": "yaml", "label": "config.yaml", "restart_required": false},
+    {"id": "env", "path": "/home/claworc/.hermes/.env", "language": "shell", "label": ".env", "restart_required": false}
+  ],
+  "workspace_dir": "/home/claworc/hermes-workspace",
+  "skills_dir": "/home/claworc/.hermes/skills",
+  "log_files": [{"path": "/var/log/claworc/agent.log", "label": "Agent"}],
+  "llm": {"styles": ["openai"]},
+  "session_persistence": "native"
+}
+EOF

@@ -1,0 +1,4 @@
+#!/bin/sh
+# session-reset --session <key> — clear conversation history for the key.
+# Idempotent (docs/shim.md).
+exec /usr/bin/node /opt/claworc/shim/lib/gateway-bridge.mjs reset "$@"

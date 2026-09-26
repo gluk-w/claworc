@@ -1,0 +1,26 @@
+#!/bin/sh
+# Conformance-harness chat-abort verb: SIGTERM the chat-send recorded in the
+# pid file. ABORT_NOOP=1 makes it do nothing (exercises the adapter's
+# safety-kill grace path). Exit 0 also when nothing is running.
+set -u
+
+SESSION=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --session) SESSION="$2"; shift 2 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+[ -n "$SESSION" ] || { echo "--session is required" >&2; exit 2; }
+
+[ -n "${ABORT_NOOP:-}" ] && exit 0
+
+RUN_DIR="${CLAWORC_SHIM_RUN_DIR:-/tmp}"
+PIDFILE="$RUN_DIR/chat-$SESSION.pid"
+if [ -f "$PIDFILE" ]; then
+    PID=$(cat "$PIDFILE" 2>/dev/null || true)
+    if [ -n "$PID" ]; then
+        kill -TERM "$PID" 2>/dev/null || true
+    fi
+fi
+exit 0

@@ -1,0 +1,4 @@
+#!/bin/sh
+# chat-abort --session <key> — abort the in-flight turn for the session.
+# Exit 0 also when nothing was running (docs/shim.md).
+exec /usr/bin/node /opt/claworc/shim/lib/gateway-bridge.mjs abort "$@"

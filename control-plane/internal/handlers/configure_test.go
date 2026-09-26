@@ -54,7 +54,6 @@ func (mockOps) RestartInstance(_ context.Context, _ string, _ orchestrator.Creat
 }
 func (mockOps) GetInstanceStatus(_ context.Context, _ string) (string, error)    { return "running", nil }
 func (mockOps) GetInstanceImageInfo(_ context.Context, _ string) (string, error) { return "", nil }
-func (mockOps) UpdateInstanceConfig(_ context.Context, _ string, _ string) error { return nil }
 func (mockOps) CloneVolumes(_ context.Context, _, _ string) error                { return nil }
 func (mockOps) ConfigureSSHAccess(_ context.Context, _ uint, _ string) error     { return nil }
 func (mockOps) GetSSHAddress(_ context.Context, _ uint) (string, int, error)     { return "", 0, nil }
@@ -76,10 +75,10 @@ func (mockOps) StreamExecInInstance(_ context.Context, _ string, _ []string, _ i
 func (mockOps) UpdatePlacementConfig(_ context.Context, _ string, _ orchestrator.UpdatePlacementParams) error {
 	return nil
 }
-func (mockOps) DeleteSharedVolume(_ context.Context, _ uint) error               { return nil }
-func (mockOps) CloneVolume(_ context.Context, _, _ string) error                 { return nil }
-func (mockOps) VolumeNameFor(name, suffix string) string                         { return name + "-" + suffix }
-func (mockOps) Apply(_ context.Context, _ orchestrator.WorkloadSpec) error       { return nil }
+func (mockOps) DeleteSharedVolume(_ context.Context, _ uint) error         { return nil }
+func (mockOps) CloneVolume(_ context.Context, _, _ string) error           { return nil }
+func (mockOps) VolumeNameFor(name, suffix string) string                   { return name + "-" + suffix }
+func (mockOps) Apply(_ context.Context, _ orchestrator.WorkloadSpec) error { return nil }
 func (mockOps) DeleteWorkload(_ context.Context, _ orchestrator.WorkloadSpec) error {
 	return nil
 }

@@ -1,0 +1,21 @@
+#!/bin/sh
+# meta — Claworc agent shim capability probe (docs/shim.md, contract v1).
+# Pure shell, no jq: the JSON is a static heredoc. Keep it in sync with the
+# verbs you actually implement — `capabilities` gates the Claworc UI.
+set -eu
+
+cat <<'EOF'
+{
+  "contract": 1,
+  "shim_version": "0.1.0",
+  "agent": {"name": "template"},
+  "capabilities": ["chat", "chat.abort", "session.reset", "config", "configure-llm", "restart"],
+  "config_files": [
+    {"id": "main", "path": "/opt/claworc/shim/agent.env", "language": "shell", "label": "agent.env", "restart_required": false}
+  ],
+  "workspace_dir": "/home/claworc/workspace",
+  "log_files": [{"path": "/var/log/claworc/agent.log", "label": "Agent"}],
+  "llm": {"styles": ["openai"]},
+  "session_persistence": "none"
+}
+EOF

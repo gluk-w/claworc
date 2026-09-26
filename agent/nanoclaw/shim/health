@@ -1,0 +1,51 @@
+#!/bin/sh
+# health — exit 0 when the agent can take a chat turn, 4 while booting,
+# 1 when broken (docs/shim.md).
+#
+# "Able to take a turn" for this image means: the svc-agent supervisor
+# (shim/lib/host.mjs) is alive and its scan loop is ticking — it touches
+# /run/claworc/shim/host.heartbeat every 500ms. A fresh heartbeat implies a
+# new inbound message will be picked up and a runner spawned.
+set -u
+
+RUN_DIR=${CLAWORC_SHIM_RUN_DIR:-/run/claworc/shim}
+HEARTBEAT="$RUN_DIR/host.heartbeat"
+SVC_DIR=/run/service/svc-agent
+BUN=${CLAWORC_SHIM_BUN:-/usr/local/bin/bun}
+
+if [ ! -x "$BUN" ]; then
+    echo "bun runtime missing at $BUN" >&2
+    exit 1
+fi
+
+# s6 service tree not created yet => container still booting.
+if [ ! -d /run/service ]; then
+    echo "s6 service tree not up yet" >&2
+    exit 4
+fi
+
+if [ ! -d "$SVC_DIR" ]; then
+    echo "svc-agent service directory missing" >&2
+    exit 1
+fi
+
+if ! /command/s6-svstat -o up "$SVC_DIR" 2>/dev/null | grep -q '^true$'; then
+    echo "svc-agent service is down" >&2
+    exit 1
+fi
+
+# Service is up: heartbeat mtime decides ready vs still-booting.
+if [ -f "$HEARTBEAT" ]; then
+    NOW=$(date +%s)
+    MTIME=$(stat -c %Y "$HEARTBEAT" 2>/dev/null || stat -f %m "$HEARTBEAT" 2>/dev/null || echo 0)
+    AGE=$((NOW - MTIME))
+    if [ "$AGE" -le 15 ]; then
+        printf '{"status":"ok"}\n'
+        exit 0
+    fi
+    echo "supervisor heartbeat stale (${AGE}s)" >&2
+    exit 4
+fi
+
+echo "supervisor heartbeat not written yet" >&2
+exit 4

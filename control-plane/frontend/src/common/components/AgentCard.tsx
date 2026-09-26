@@ -60,6 +60,11 @@ export default function AgentCard({
           >
             {instance.display_name}
           </Link>
+          {instance.agent_display_name && (
+            <span className="shrink-0 px-1.5 py-0.5 text-xs font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-full">
+              {instance.agent_display_name}
+            </span>
+          )}
         </div>
         <StatusBadge status={instance.status} tooltip={tooltip} />
       </div>

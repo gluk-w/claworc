@@ -1,0 +1,97 @@
+#!/bin/sh
+# chat-send --session <key> [--turn <id>] — the CHAT_CMD wrapper pattern from
+# docs/shim.md, extended with a PID file (for chat-abort), SIGTERM abort
+# handling, and a per-session transcript (for session-reset).
+#
+# CHAT_CMD (from agent.env) reads the user message on stdin and writes the
+# reply to stdout. The reply is emitted as a single cumulative assistant
+# snapshot followed by the mandatory end event.
+set -eu
+
+SHIM_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ENV_FILE=${CLAWORC_SHIM_ENV_FILE:-$SHIM_DIR/agent.env}
+STATE_DIR=${CLAWORC_SHIM_STATE_DIR:-/home/claworc/.claworc/shim}
+RUN_DIR=${CLAWORC_SHIM_RUN_DIR:-/run/claworc/shim}
+
+SESSION=""
+TURN=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --session) SESSION="$2"; shift 2 ;;
+        --turn)    TURN="$2"; shift 2 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+[ -n "$SESSION" ] || { echo "--session is required" >&2; exit 2; }
+[ -n "$TURN" ] || TURN="t-$$"
+
+# shellcheck disable=SC1090
+[ -f "$ENV_FILE" ] && . "$ENV_FILE"
+[ -n "${CHAT_CMD:-}" ] || { echo "CHAT_CMD is not set in $ENV_FILE" >&2; exit 4; }
+
+json_escape() { python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'; }
+
+SESSION_JSON=$(printf %s "$SESSION" | json_escape)
+TURN_JSON=$(printf %s "$TURN" | json_escape)
+# Session keys are opaque; sanitize before using them as file names.
+SESSION_FILE=$(printf %s "$SESSION" | tr -c 'A-Za-z0-9._-' '_')
+
+mkdir -p "$RUN_DIR" "$STATE_DIR/sessions" 2>/dev/null || true
+PIDFILE="$RUN_DIR/chat-$SESSION_FILE.pid"
+TRANSCRIPT="$STATE_DIR/sessions/$SESSION_FILE.log"
+
+MSG_FILE=$(mktemp)
+REPLY_FILE=$(mktemp)
+cleanup() { rm -f "$MSG_FILE" "$REPLY_FILE" "$PIDFILE"; }
+
+cat > "$MSG_FILE" # the raw user message, stdin until EOF
+printf '%s\n' "$$" > "$PIDFILE" 2>/dev/null || true
+
+printf '{"v":1,"event":"start","session":%s,"turn":%s}\n' "$SESSION_JSON" "$TURN_JSON"
+
+# Drop to the claworc user when running as root (SSH is the auth boundary;
+# agent state must stay claworc-owned).
+if [ "$(id -u)" = "0" ]; then
+    su claworc -s /bin/sh -c "$CHAT_CMD" < "$MSG_FILE" > "$REPLY_FILE" &
+else
+    /bin/sh -c "$CHAT_CMD" < "$MSG_FILE" > "$REPLY_FILE" &
+fi
+CHILD=$!
+
+on_abort() {
+    kill -TERM "$CHILD" 2>/dev/null || true
+    printf '{"v":1,"event":"end","turn":%s,"stop_reason":"aborted","text":""}\n' "$TURN_JSON"
+    cleanup
+    exit 0
+}
+trap on_abort TERM INT HUP
+
+STATUS=0
+wait "$CHILD" || STATUS=$?
+trap - TERM INT HUP
+
+if [ "$STATUS" -ne 0 ]; then
+    printf '{"v":1,"event":"error","turn":%s,"code":"agent_failed","text":"CHAT_CMD exited with status %s","fatal":true}\n' "$TURN_JSON" "$STATUS"
+    printf '{"v":1,"event":"end","turn":%s,"stop_reason":"error","text":""}\n' "$TURN_JSON"
+    cleanup
+    exit 0
+fi
+
+REPLY_JSON=$(json_escape < "$REPLY_FILE")
+
+# Append to the per-session transcript so session-reset has real state to
+# clear. (The template declares session_persistence "none": CHAT_CMD only
+# sees the current message. Replay the transcript yourself for "emulated".)
+{
+    printf '>>> user (%s)\n' "$TURN"
+    cat "$MSG_FILE"
+    printf '\n<<< assistant (%s)\n' "$TURN"
+    cat "$REPLY_FILE"
+    printf '\n'
+} >> "$TRANSCRIPT" 2>/dev/null || true
+chown claworc:claworc "$TRANSCRIPT" 2>/dev/null || true
+
+printf '{"v":1,"event":"assistant","turn":%s,"message_id":"m1","text":%s}\n' "$TURN_JSON" "$REPLY_JSON"
+printf '{"v":1,"event":"end","turn":%s,"stop_reason":"complete","text":%s}\n' "$TURN_JSON" "$REPLY_JSON"
+cleanup
+exit 0

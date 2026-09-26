@@ -697,10 +697,6 @@ type dockerStatsJSON struct {
 	} `json:"memory_stats"`
 }
 
-func (d *DockerOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {
-	return updateInstanceConfig(ctx, d.ExecInInstance, d.InstanceFactory, name, configJSON)
-}
-
 func stripDockerLogHeaders(data []byte) string {
 	// Docker multiplexed log format: [stream_type(1)][0(3)][size(4)][payload]
 	// If the data starts with a valid header byte (0, 1, or 2), try to strip

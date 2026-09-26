@@ -1,0 +1,7 @@
+#!/bin/sh
+# restart — restart the agent service (docs/shim.md). This image runs Hermes
+# per chat turn (no svc-agent daemon), so restart is a contract-legal no-op
+# success. If a long-running `hermes gateway` service is ever added as
+# `svc-agent`, replace this with:
+#   exec /command/s6-svc -r /run/service/svc-agent
+exit 0

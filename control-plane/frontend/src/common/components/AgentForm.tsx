@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useQueries } from "@tanstack/react-query";
 import { useSettings } from "@common/hooks/useSettings";
+import { useAgentTypes } from "@common/hooks/useAgentTypes";
 import { useProviders } from "@common/hooks/useProviders";
 import { useAuth } from "@common/contexts/AuthContext";
 import { useHealth } from "@common/hooks/useHealth";
@@ -44,6 +45,7 @@ export default function AgentForm({
   const [storageHome, setStorageHome] = useState("");
   const [resourcesSeeded, setResourcesSeeded] = useState(false);
 
+  const [agentType, setAgentType] = useState("openclaw");
   const [containerImage, setContainerImage] = useState("");
   const [timezone, setTimezone] = useState("");
 
@@ -63,6 +65,8 @@ export default function AgentForm({
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const { data: settings } = useSettings();
+  const { data: agentTypes = [] } = useAgentTypes();
+  const selectedAgentType = agentTypes.find((t) => t.type === agentType);
   const { data: allProviders = [] } = useProviders();
   const { isAdmin } = useAuth();
   const { data: health } = useHealth();
@@ -144,6 +148,7 @@ export default function AgentForm({
 
     const payload: InstanceCreatePayload = {
       display_name: displayName.trim(),
+      agent_type: agentType,
       team_id: teamId ?? undefined,
       cpu_request: cpuRequest,
       cpu_limit: cpuLimit,
@@ -256,6 +261,28 @@ export default function AgentForm({
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">
+              Agent Type
+            </label>
+            {agentTypes.length === 0 ? (
+              <div className="w-full px-3 py-1.5 border border-gray-200 bg-gray-50 rounded-md text-sm text-gray-700">
+                OpenClaw
+              </div>
+            ) : (
+              <select
+                value={agentType}
+                onChange={(e) => setAgentType(e.target.value)}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {agentTypes.map((t) => (
+                  <option key={t.type} value={t.type}>
+                    {t.display_name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
               Timezone Override
             </label>
             <input
@@ -322,7 +349,12 @@ export default function AgentForm({
               type="text"
               value={containerImage}
               onChange={(e) => setContainerImage(e.target.value)}
-              placeholder={settings?.default_agent_image ?? "claworc/openclaw:latest"}
+              placeholder={
+                selectedAgentType?.default_image ||
+                (agentType === "openclaw"
+                  ? settings?.default_agent_image ?? "claworc/openclaw:latest"
+                  : "Specify a container image")
+              }
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>

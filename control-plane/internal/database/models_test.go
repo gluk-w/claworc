@@ -131,3 +131,23 @@ func TestParseEncodeSharedFolderInstanceIDs_Roundtrip(t *testing.T) {
 		}
 	}
 }
+
+func TestEffectiveAgentType(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		agentType string
+		want      string
+	}{
+		{"", AgentTypeOpenClaw}, // pre-shim rows store "" and mean openclaw
+		{"openclaw", "openclaw"},
+		{"hermes", "hermes"},
+		{"nanoclaw", "nanoclaw"},
+		{"custom", "custom"},
+	}
+	for _, tc := range cases {
+		inst := Instance{AgentType: tc.agentType}
+		if got := inst.EffectiveAgentType(); got != tc.want {
+			t.Errorf("EffectiveAgentType(%q) = %q, want %q", tc.agentType, got, tc.want)
+		}
+	}
+}

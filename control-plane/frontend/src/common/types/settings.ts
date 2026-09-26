@@ -11,6 +11,8 @@ export interface Settings {
   default_models: string[];
   default_container_image: string;
   default_agent_image: string;
+  /** Per-agent-type default images for non-OpenClaw types (hermes/nanoclaw/custom). */
+  default_agent_images: Record<string, string>;
   default_browser_image: string;
   default_vnc_resolution: string;
   default_cpu_request: string;
@@ -47,6 +49,9 @@ export interface SettingsUpdatePayload {
   brave_api_key?: string;
   composio_api_key?: string;
   default_container_image?: string;
+  default_agent_image?: string;
+  /** Per-agent-type default images for non-OpenClaw types. */
+  default_agent_images?: Record<string, string>;
   default_vnc_resolution?: string;
   default_cpu_request?: string;
   default_cpu_limit?: string;

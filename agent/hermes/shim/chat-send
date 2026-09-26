@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+"""chat-send --session <key> [--turn <id>] — one Hermes chat turn as Claworc
+shim JSONL events (docs/shim.md). Python 3 stdlib only.
+
+Hermes invocation (verified against NousResearch/hermes-agent v2026.8.x):
+
+    hermes chat -q <message> -Q --source tool --no-restore-cwd [--resume <id>]
+
+  - `-q` runs a single non-interactive query; `-Q` (quiet) keeps stdout
+    machine-readable: ONLY the final response is printed to stdout, while
+    `session_id: <id>` is printed to stderr on exit (cli.py single-query
+    path). Exit code is 0/1.
+  - `--resume <id>` restores the session's conversation history from the
+    Hermes SQLite store (~/.hermes) — native session persistence. The shim
+    maps the opaque Claworc session key to the Hermes session id under
+    STATE_DIR/hermes-sessions/<key>.id and resumes it on subsequent turns.
+  - `--source tool` keeps Claworc-driven sessions out of the user's own
+    `hermes sessions list`; `--no-restore-cwd` pins the turn to the Claworc
+    workspace dir instead of the session's recorded cwd.
+  - HERMES_YOLO_MODE=1 / HERMES_ACCEPT_HOOKS=1 mirror what `hermes -z`
+    (oneshot) sets: non-interactive runs cannot answer approval prompts.
+
+Events: cumulative assistant snapshots (message_id m1, throttled >= 150 ms)
+as Hermes' stdout arrives, then exactly one `end`. SIGTERM/INT/HUP or
+chat-abort (SIGTERM via the pidfile) => end/aborted. The shim exits 0
+whenever an end event was emitted, including error ends.
+"""
+import json
+import os
+import pwd
+import re
+import shlex
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+
+HERMES_BIN = "/opt/hermes/venv/bin/hermes"
+WORKSPACE = "/home/claworc/hermes-workspace"
+HERMES_HOME = "/home/claworc/.hermes"
+AGENT_LOG = "/var/log/claworc/agent.log"
+SNAPSHOT_INTERVAL = 0.15
+
+STATE_DIR = os.environ.get("CLAWORC_SHIM_STATE_DIR", "/home/claworc/.claworc/shim")
+RUN_DIR = os.environ.get("CLAWORC_SHIM_RUN_DIR", "/run/claworc/shim")
+
+_abort = threading.Event()
+
+
+def emit(obj):
+    # Compact separators: consumers (and the conformance selftest) grep for
+    # '"event":"end"' — keep the wire format free of gratuitous whitespace.
+    sys.stdout.write(json.dumps(obj, ensure_ascii=False, separators=(",", ":")) + "\n")
+    sys.stdout.flush()
+
+
+def claworc_ids():
+    try:
+        pw = pwd.getpwnam("claworc")
+        return pw.pw_uid, pw.pw_gid
+    except KeyError:
+        return None, None
+
+
+def chown_claworc(path):
+    if os.geteuid() != 0:
+        return
+    uid, gid = claworc_ids()
+    if uid is not None:
+        try:
+            os.chown(path, uid, gid)
+        except OSError:
+            pass
+
+
+def log_line(msg):
+    try:
+        with open(AGENT_LOG, "a", encoding="utf-8") as f:
+            f.write(time.strftime("[%Y-%m-%dT%H:%M:%S%z] ") + "[chat-send] " + msg + "\n")
+    except OSError:
+        pass
+
+
+def sanitize_key(key):
+    return re.sub(r"[^A-Za-z0-9._-]", "_", key)
+
+
+def build_command(message, resume_id):
+    """Argv that runs one hermes turn as the claworc user."""
+    # `--query=<msg>` (the = form) so a message that starts with `-` cannot
+    # be mistaken for an option by argparse.
+    argv = [
+        HERMES_BIN, "chat",
+        f"--query={message}",
+        "-Q",
+        "--source", "tool",
+        "--no-restore-cwd",
+    ]
+    if resume_id:
+        argv += ["--resume", resume_id]
+
+    env_prefix = [
+        "env",
+        "HOME=/home/claworc",
+        "USER=claworc",
+        "LOGNAME=claworc",
+        f"HERMES_HOME={HERMES_HOME}",
+        "HERMES_YOLO_MODE=1",
+        "HERMES_ACCEPT_HOOKS=1",
+        "PATH=/opt/hermes/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    ]
+    if os.geteuid() == 0:
+        if os.access("/command/s6-setuidgid", os.X_OK):
+            return ["/command/s6-setuidgid", "claworc"] + env_prefix + argv
+        # Fallback when s6 is unavailable: su with a quoted command line.
+        quoted = " ".join(shlex.quote(a) for a in (env_prefix + argv))
+        return ["su", "claworc", "-s", "/bin/sh", "-c", quoted]
+    return env_prefix + argv
+
+
+def run_turn(message, resume_id, snapshot_cb):
+    """Run one hermes invocation. Returns (rc, stdout_text, stderr_text).
+    rc is None when aborted."""
+    proc = subprocess.Popen(
+        build_command(message, resume_id),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
+        cwd=WORKSPACE if os.path.isdir(WORKSPACE) else "/home/claworc",
+        start_new_session=True,
+    )
+
+    out_chunks, err_chunks = [], []
+    lock = threading.Lock()
+
+    def reader(stream, sink):
+        while True:
+            chunk = stream.read(4096)
+            if not chunk:
+                break
+            with lock:
+                sink.append(chunk)
+        stream.close()
+
+    t_out = threading.Thread(target=reader, args=(proc.stdout, out_chunks), daemon=True)
+    t_err = threading.Thread(target=reader, args=(proc.stderr, err_chunks), daemon=True)
+    t_out.start()
+    t_err.start()
+
+    last_emit = 0.0
+    last_len = 0
+    while proc.poll() is None:
+        if _abort.is_set():
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except OSError:
+                proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    proc.kill()
+                proc.wait()
+            break
+        now = time.monotonic()
+        with lock:
+            cur = b"".join(out_chunks)
+        if len(cur) > last_len and now - last_emit >= SNAPSHOT_INTERVAL:
+            snapshot_cb(cur.decode("utf-8", "replace"))
+            last_len = len(cur)
+            last_emit = now
+        time.sleep(0.05)
+
+    t_out.join(timeout=5)
+    t_err.join(timeout=5)
+    stdout_text = b"".join(out_chunks).decode("utf-8", "replace")
+    stderr_text = b"".join(err_chunks).decode("utf-8", "replace")
+    rc = None if _abort.is_set() else proc.poll()
+    return rc, stdout_text, stderr_text
+
+
+def main():
+    session = ""
+    turn = ""
+    args = sys.argv[1:]
+    while args:
+        a = args.pop(0)
+        if a == "--session" and args:
+            session = args.pop(0)
+        elif a == "--turn" and args:
+            turn = args.pop(0)
+        else:
+            print(f"unknown argument: {a}", file=sys.stderr)
+            sys.exit(2)
+    if not session:
+        print("--session is required", file=sys.stderr)
+        sys.exit(2)
+    if not turn:
+        turn = f"t-{os.getpid()}"
+
+    if not os.access(HERMES_BIN, os.X_OK):
+        print(f"hermes CLI missing at {HERMES_BIN}", file=sys.stderr)
+        sys.exit(4)
+
+    # Lazily seed ~/.hermes / create runtime dirs when s6 has not run.
+    if not os.path.isdir(HERMES_HOME):
+        subprocess.run(["/opt/claworc/shim/lib/ensure-seed.sh"], check=False)
+    for d in (RUN_DIR, os.path.join(STATE_DIR, "hermes-sessions")):
+        os.makedirs(d, exist_ok=True)
+    chown_claworc(STATE_DIR)
+    chown_claworc(os.path.join(STATE_DIR, "hermes-sessions"))
+    if not os.path.isdir(WORKSPACE):
+        try:
+            os.makedirs(WORKSPACE, exist_ok=True)
+            chown_claworc(WORKSPACE)
+        except OSError:
+            pass
+
+    # The raw user message, stdin until EOF. Argv cannot carry NUL bytes.
+    message = sys.stdin.buffer.read().decode("utf-8", "replace").replace("\x00", "")
+    if not message.strip():
+        # An empty --query would drop hermes into interactive mode and hang.
+        emit({"v": 1, "event": "start", "session": session, "turn": turn})
+        emit({"v": 1, "event": "error", "turn": turn, "code": "empty_message",
+              "text": "empty user message", "fatal": True})
+        emit({"v": 1, "event": "end", "turn": turn,
+              "stop_reason": "error", "text": ""})
+        sys.exit(0)
+
+    key = sanitize_key(session)
+    pidfile = os.path.join(RUN_DIR, f"chat-{key}.pid")
+    mapfile = os.path.join(STATE_DIR, "hermes-sessions", f"{key}.id")
+
+    resume_id = ""
+    try:
+        with open(mapfile, encoding="utf-8") as f:
+            resume_id = f.read().strip()
+    except OSError:
+        pass
+
+    try:
+        with open(pidfile, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+    except OSError:
+        pidfile = None
+
+    def on_signal(signum, frame):
+        _abort.set()
+
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, on_signal)
+
+    def cleanup():
+        if pidfile:
+            try:
+                os.unlink(pidfile)
+            except OSError:
+                pass
+
+    emit({"v": 1, "event": "start", "session": session, "turn": turn})
+
+    def snapshot(text):
+        emit({"v": 1, "event": "assistant", "turn": turn,
+              "message_id": "m1", "text": text.rstrip("\n")})
+
+    rc, out, err = run_turn(message, resume_id, snapshot)
+
+    # Self-heal a stale mapping: the Hermes session store may have been
+    # wiped (fresh PVC, deleted state.db). Retry once with a fresh session.
+    if rc not in (0, None) and resume_id and "Session not found" in err:
+        log_line(f"session={session} stale hermes session {resume_id!r}; retrying fresh")
+        try:
+            os.unlink(mapfile)
+        except OSError:
+            pass
+        resume_id = ""
+        rc, out, err = run_turn(message, resume_id, snapshot)
+
+    # Persist the Claworc-key -> Hermes-session-id mapping. The single-query
+    # path prints `session_id: <id>` to stderr on every exit (including
+    # SIGTERM aborts), so history up to an abort stays resumable.
+    m = None
+    for m in re.finditer(r"^session_id:\s*(\S+)\s*$", err, re.MULTILINE):
+        pass
+    if m:
+        hermes_id = m.group(1)
+        if hermes_id != resume_id:
+            try:
+                fd, tmp = tempfile.mkstemp(dir=os.path.dirname(mapfile), prefix=".id.")
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(hermes_id + "\n")
+                chown_claworc(tmp)
+                os.replace(tmp, mapfile)
+            except OSError:
+                pass
+
+    text = out.rstrip("\n")
+
+    if rc is None:
+        emit({"v": 1, "event": "end", "turn": turn,
+              "stop_reason": "aborted", "text": text})
+        log_line(f"session={session} turn={turn} aborted")
+        cleanup()
+        sys.exit(0)
+
+    if text:
+        snapshot(text)
+
+    if rc != 0:
+        tail = err.strip().splitlines()
+        detail = tail[-1][:300] if tail else f"hermes exited with status {rc}"
+        emit({"v": 1, "event": "error", "turn": turn, "code": "agent_failed",
+              "text": detail, "fatal": True})
+        emit({"v": 1, "event": "end", "turn": turn,
+              "stop_reason": "error", "text": text})
+        log_line(f"session={session} turn={turn} error rc={rc}: {detail}")
+        cleanup()
+        sys.exit(0)
+
+    emit({"v": 1, "event": "end", "turn": turn,
+          "stop_reason": "complete", "text": text})
+    log_line(f"session={session} turn={turn} complete ({len(text)} chars)")
+    cleanup()
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

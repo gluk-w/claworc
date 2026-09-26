@@ -66,14 +66,19 @@ type LogType string
 
 const (
 	LogTypeOpenClaw LogType = "openclaw"
-	LogTypeSSHD     LogType = "sshd"
-	LogTypeSystem   LogType = "system"
-	LogTypeAuth     LogType = "auth"
+	// LogTypeAgent is the agent-agnostic alias for the primary agent log.
+	// It resolves to the same path as LogTypeOpenClaw; both names are
+	// accepted by the log-streaming API.
+	LogTypeAgent  LogType = "agent"
+	LogTypeSSHD   LogType = "sshd"
+	LogTypeSystem LogType = "system"
+	LogTypeAuth   LogType = "auth"
 )
 
 // DefaultLogPaths maps each LogType to its default file path on the agent.
 var DefaultLogPaths = map[LogType]string{
 	LogTypeOpenClaw: LogPathOpenClaw,
+	LogTypeAgent:    LogPathOpenClaw, // alias — same file as "openclaw"
 	LogTypeSSHD:     LogPathSSHD,
 	LogTypeSystem:   LogPathSyslog,
 	LogTypeAuth:     LogPathAuth,

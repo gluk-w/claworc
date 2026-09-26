@@ -22,9 +22,6 @@ type ContainerOrchestrator interface {
 	GetInstanceStatus(ctx context.Context, name string) (string, error)
 	GetInstanceImageInfo(ctx context.Context, name string) (string, error)
 
-	// Config
-	UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error
-
 	// Resources
 	UpdateResources(ctx context.Context, name string, params UpdateResourcesParams) error
 

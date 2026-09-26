@@ -1,0 +1,46 @@
+#!/bin/sh
+# health — exit 0 when a chat turn can run, 4 while booting, 1 when broken
+# (docs/shim.md). Hermes has no daemon in this image (each chat-send spawns
+# `hermes chat -q`), so "healthy" means the pinned Hermes install answers
+# `hermes --version` — a fast pre-config code path in hermes_cli/main.py.
+set -u
+
+HERMES_BIN=/opt/hermes/venv/bin/hermes
+
+if [ ! -x "$HERMES_BIN" ]; then
+    echo "hermes CLI missing at $HERMES_BIN" >&2
+    exit 1
+fi
+
+# Lazily seed ~/.hermes when the s6 boot sequence has not run (selftest /
+# exec'd containers). A missing-but-seedable home is "booting", a failed
+# seed is broken.
+if [ ! -d /home/claworc/.hermes ]; then
+    if ! /opt/claworc/shim/lib/ensure-seed.sh; then
+        echo "hermes home missing and seed failed" >&2
+        exit 4
+    fi
+fi
+
+run_as_claworc() {
+    if [ "$(id -u)" = "0" ] && [ -x /command/s6-setuidgid ]; then
+        /command/s6-setuidgid claworc env HOME=/home/claworc HERMES_HOME=/home/claworc/.hermes "$@"
+    else
+        env HOME=/home/claworc HERMES_HOME=/home/claworc/.hermes "$@"
+    fi
+}
+
+if command -v timeout >/dev/null 2>&1; then
+    OUT=$(run_as_claworc timeout 30 "$HERMES_BIN" --version 2>&1) || {
+        echo "hermes --version failed: $(printf %s "$OUT" | head -c 200)" >&2
+        exit 1
+    }
+else
+    OUT=$(run_as_claworc "$HERMES_BIN" --version 2>&1) || {
+        echo "hermes --version failed: $(printf %s "$OUT" | head -c 200)" >&2
+        exit 1
+    }
+fi
+
+printf '{"status":"ok"}\n'
+exit 0

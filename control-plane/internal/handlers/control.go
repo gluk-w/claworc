@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
@@ -68,6 +69,19 @@ func ControlProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Only agent types that ship a web control UI (per the static registry)
+	// can be proxied. For everything else this route is a clean 404 rather
+	// than an eternally-spinning "connecting" page.
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+	if entry, ok := agentshim.Get(inst.EffectiveAgentType()); !ok || !entry.HasControlUI {
+		writeError(w, http.StatusNotFound, "This agent type does not provide a web control UI.")
+		return
+	}
+
 	info, err := getTunnelPortInfo(uint(id), "gateway")
 	if err != nil {
 		// WebSocket clients can't display HTML — return plain error
@@ -81,8 +95,7 @@ func ControlProxy(w http.ResponseWriter, r *http.Request) {
 
 	// Look up gateway token so we can inject it into upstream WebSocket requests
 	var gatewayToken string
-	var inst database.Instance
-	if err := database.DB.First(&inst, id).Error; err == nil && inst.GatewayToken != "" {
+	if inst.GatewayToken != "" {
 		if tok, err := utils.Decrypt(inst.GatewayToken); err == nil && tok != "" {
 			gatewayToken = tok
 		}

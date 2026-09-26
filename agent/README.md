@@ -19,7 +19,7 @@ All services are managed by s6-overlay:
 | Service        | Port  | Description                    |
 |----------------|-------|--------------------------------|
 | sshd           | 22    | SSH server for remote access   |
-| svc-openclaw   | 18789 | OpenClaw gateway               |
+| svc-agent   | 18789 | OpenClaw gateway               |
 | svc-xvnc       | 5900  | TigerVNC X server              |
 | svc-novnc      | 3000  | noVNC websockify bridge        |
 | svc-desktop    | -     | Openbox + Chromium             |

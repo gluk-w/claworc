@@ -1,0 +1,20 @@
+#!/bin/sh
+# session-reset --session <key> — clear conversation history for the key by
+# removing its transcript; the next chat-send starts fresh. Idempotent
+# (docs/shim.md).
+set -eu
+
+STATE_DIR=${CLAWORC_SHIM_STATE_DIR:-/home/claworc/.claworc/shim}
+
+SESSION=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --session) SESSION="$2"; shift 2 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+[ -n "$SESSION" ] || { echo "--session is required" >&2; exit 2; }
+
+SESSION_FILE=$(printf %s "$SESSION" | tr -c 'A-Za-z0-9._-' '_')
+rm -f "$STATE_DIR/sessions/$SESSION_FILE.log"
+exit 0

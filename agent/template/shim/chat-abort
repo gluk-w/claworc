@@ -1,0 +1,27 @@
+#!/bin/sh
+# chat-abort --session <key> — best-effort abort of the in-flight turn:
+# SIGTERM the running chat-send (it emits end/aborted and exits 0).
+# Exit 0 also when nothing was running (docs/shim.md).
+set -eu
+
+RUN_DIR=${CLAWORC_SHIM_RUN_DIR:-/run/claworc/shim}
+
+SESSION=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --session) SESSION="$2"; shift 2 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+[ -n "$SESSION" ] || { echo "--session is required" >&2; exit 2; }
+
+SESSION_FILE=$(printf %s "$SESSION" | tr -c 'A-Za-z0-9._-' '_')
+PIDFILE="$RUN_DIR/chat-$SESSION_FILE.pid"
+
+if [ -f "$PIDFILE" ]; then
+    PID=$(cat "$PIDFILE" 2>/dev/null || true)
+    if [ -n "$PID" ]; then
+        kill -TERM "$PID" 2>/dev/null || true
+    fi
+fi
+exit 0

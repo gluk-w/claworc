@@ -1,0 +1,30 @@
+#!/bin/sh
+# health — exit 0 when the agent can take a chat turn, 4 while booting,
+# 1 when broken (docs/shim.md). The template has no daemon; "healthy" means
+# the configured CHAT_CMD executable resolves.
+set -u
+
+SHIM_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ENV_FILE=${CLAWORC_SHIM_ENV_FILE:-$SHIM_DIR/agent.env}
+
+if [ ! -f "$ENV_FILE" ]; then
+    echo "agent.env missing at $ENV_FILE" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+
+if [ -z "${CHAT_CMD:-}" ]; then
+    echo "CHAT_CMD is not set in $ENV_FILE" >&2
+    exit 1
+fi
+
+# First word of CHAT_CMD must be an executable on PATH (or an absolute path).
+set -- $CHAT_CMD
+if ! command -v "$1" >/dev/null 2>&1; then
+    echo "CHAT_CMD executable not found: $1" >&2
+    exit 1
+fi
+
+printf '{"status":"ok"}\n'
+exit 0

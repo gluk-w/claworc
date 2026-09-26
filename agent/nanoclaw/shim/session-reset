@@ -1,0 +1,15 @@
+#!/bin/sh
+# session-reset — Claworc shim verb (docs/shim.md). Thin wrapper: verbs are invoked
+# as root over SSH; agent state must stay claworc-owned, so drop privileges
+# and exec the Bun implementation in lib/. Bun is used because bun:sqlite is
+# the same SQLite driver NanoClaw's own agent-runner uses — no dependency of
+# our own.
+set -eu
+
+SHIM_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+BUN=${CLAWORC_SHIM_BUN:-/usr/local/bin/bun}
+
+if [ "$(id -u)" = "0" ] && [ -x /command/s6-setuidgid ]; then
+    exec env HOME=/home/claworc /command/s6-setuidgid claworc "$BUN" "$SHIM_DIR/lib/session-reset.mjs" "$@"
+fi
+exec "$BUN" "$SHIM_DIR/lib/session-reset.mjs" "$@"

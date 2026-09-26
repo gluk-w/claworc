@@ -673,10 +673,6 @@ func (k *KubernetesOrchestrator) GetContainerStats(ctx context.Context, name str
 	}, nil
 }
 
-func (k *KubernetesOrchestrator) UpdateInstanceConfig(ctx context.Context, name string, configJSON string) error {
-	return updateInstanceConfig(ctx, k.ExecInInstance, k.InstanceFactory, name, configJSON)
-}
-
 func (k *KubernetesOrchestrator) ExecInInstance(ctx context.Context, name string, cmd []string) (string, string, int, error) {
 	podName, err := k.getPodName(ctx, name)
 	if err != nil {

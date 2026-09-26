@@ -4,10 +4,29 @@ export interface InstanceModels {
   extra: string[];
 }
 
+export interface AgentCapabilities {
+  chat: boolean;
+  chat_abort: boolean;
+  session_reset: boolean;
+  config: boolean;
+  configure_llm: boolean;
+  restart: boolean;
+  control_ui: boolean;
+  skills: boolean;
+}
+
 export interface Instance {
   id: number;
   name: string;
   display_name: string;
+  /** Effective agent type ("openclaw" for pre-shim rows). */
+  agent_type: string;
+  /** Registry display name for agent_type (e.g. "OpenClaw"). */
+  agent_display_name: string;
+  /** Whether this agent type serves a web control UI. */
+  has_control_ui: boolean;
+  /** Static registry capabilities. Only present on the detail response. */
+  agent_capabilities?: AgentCapabilities;
   status: "creating" | "running" | "restarting" | "stopping" | "stopped" | "error";
   status_message?: string;
   cpu_request: string;
@@ -72,6 +91,8 @@ export type InstanceDetail = Instance;
 
 export interface InstanceCreatePayload {
   display_name: string;
+  /** Agent type ("openclaw" | "hermes" | "nanoclaw" | "custom"); defaults to "openclaw". */
+  agent_type?: string;
   cpu_request?: string;
   cpu_limit?: string;
   memory_request?: string;
@@ -180,9 +201,12 @@ export interface LLMProvider {
 
 export interface InstanceConfig {
   config: string;
+  /** Monaco editor language for the config file (json | yaml | toml | ini | shell | plaintext). */
+  language?: string;
 }
 
 export interface InstanceConfigUpdate {
   config: string;
   restarted: boolean;
+  language?: string;
 }

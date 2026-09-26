@@ -1,0 +1,47 @@
+#!/bin/sh
+# meta — Claworc agent shim capability/version probe (docs/shim.md, contract v1).
+# Prints one JSON object on stdout. Must stay fast: the control plane runs this
+# with a short timeout on every SSH (re)connect, so the openclaw version probe
+# is bounded and cached under /run.
+set -eu
+
+VERSION_CACHE=/run/claworc/shim/agent-version
+mkdir -p /run/claworc/shim 2>/dev/null || true
+
+AGENT_VERSION=""
+if [ -s "$VERSION_CACHE" ]; then
+    AGENT_VERSION=$(cat "$VERSION_CACHE")
+else
+    # `openclaw --version` is a node CLI start (~1s); bound it and cache the
+    # result for subsequent probes. Sanitize to a version-looking token so the
+    # value is safe to splice into JSON.
+    AGENT_VERSION=$(timeout 10 env HOME=/home/claworc /command/s6-setuidgid claworc \
+        /usr/bin/openclaw --version 2>/dev/null \
+        | grep -oE '[0-9]+\.[0-9]+\.[0-9]+([0-9A-Za-z.-]*)?' | head -n1 || true)
+    if [ -n "$AGENT_VERSION" ]; then
+        printf '%s' "$AGENT_VERSION" > "$VERSION_CACHE" 2>/dev/null || true
+    fi
+fi
+
+if [ -n "$AGENT_VERSION" ]; then
+    AGENT_JSON=$(printf '{"name":"openclaw","version":"%s"}' "$AGENT_VERSION")
+else
+    AGENT_JSON='{"name":"openclaw"}'
+fi
+
+cat <<EOF
+{
+  "contract": 1,
+  "shim_version": "0.1.0",
+  "agent": $AGENT_JSON,
+  "capabilities": ["chat", "chat.abort", "session.reset", "config", "configure-llm", "restart", "control-ui", "skills"],
+  "config_files": [
+    {"id": "main", "path": "/home/claworc/.openclaw/openclaw.json", "language": "json", "label": "openclaw.json", "restart_required": true}
+  ],
+  "workspace_dir": "/home/claworc/.openclaw/workspace",
+  "skills_dir": "/home/claworc/.openclaw/skills",
+  "log_files": [{"path": "/var/log/claworc/agent.log", "label": "Agent"}],
+  "llm": {"styles": ["openai"]},
+  "session_persistence": "native"
+}
+EOF

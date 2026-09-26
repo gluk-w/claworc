@@ -1,0 +1,33 @@
+#!/bin/sh
+# health — exit 0 when the agent can take a chat turn, 4 while booting,
+# 1 when broken (docs/shim.md).
+set -u
+
+SVC_DIR=/run/service/svc-agent
+GATEWAY_PORT=${OPENCLAW_GATEWAY_PORT:-18789}
+
+# s6-svscan has not created the service tree yet => still booting.
+if [ ! -d /run/service ]; then
+    echo "s6 service tree not up yet" >&2
+    exit 4
+fi
+
+if [ ! -d "$SVC_DIR" ]; then
+    echo "svc-agent service directory missing" >&2
+    exit 1
+fi
+
+if ! /command/s6-svstat -o up "$SVC_DIR" 2>/dev/null | grep -q '^true$'; then
+    echo "svc-agent service is down" >&2
+    exit 1
+fi
+
+# Service is up — the gateway WS port must accept connections before chat can
+# work. /dev/tcp needs bash (this image always has it).
+if bash -c "exec 3<>/dev/tcp/127.0.0.1/${GATEWAY_PORT}" 2>/dev/null; then
+    printf '{"status":"ok"}\n'
+    exit 0
+fi
+
+echo "gateway port ${GATEWAY_PORT} not accepting connections yet" >&2
+exit 4
