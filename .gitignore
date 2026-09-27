@@ -2,6 +2,11 @@
 .air
 .env
 !.env.development
+# Image build context: the baked Hermes ~/.hermes skeleton ships an .env
+# (comments only, no secrets) that the shim exposes as an editable config
+# file. Without this negation it is absent from a clean checkout and the
+# claworc/hermes build fails on COPY skeleton/.
+!agent/hermes/skeleton/.env
 data/
 *.db
 *.db-shm

@@ -59,7 +59,7 @@ agent-build:
 	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(NANOCLAW_IMAGE):$(TAG) -f agent/nanoclaw/Dockerfile --load agent/nanoclaw/
 	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/browser/Dockerfile.chromium --load agent/browser/
 	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/browser/Dockerfile.chrome --load agent/browser/
-	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --load agent/browser/
+	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --load agent/browser/
 
 # PR check: build only the instance image (it is FROM debian directly and does
 # not depend on the pushed browser-base image) and run the OpenClaw suite
@@ -97,13 +97,16 @@ agent-test:
 
 agent-push:
 	@echo "Pushing all agent + browser images in parallel..."
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/openclaw/Dockerfile --push agent/openclaw/ & \
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(HERMES_IMAGE):$(TAG) -f agent/hermes/Dockerfile --push agent/hermes/ & \
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(NANOCLAW_IMAGE):$(TAG) -f agent/nanoclaw/Dockerfile --push agent/nanoclaw/ & \
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/browser/Dockerfile.chromium --push agent/browser/ & \
-	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/browser/Dockerfile.chrome --push agent/browser/ & \
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --push agent/browser/ & \
-	wait
+	@pids=""; \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/openclaw/Dockerfile --push agent/openclaw/ & pids="$$pids $$!"; \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(HERMES_IMAGE):$(TAG) -f agent/hermes/Dockerfile --push agent/hermes/ & pids="$$pids $$!"; \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(NANOCLAW_IMAGE):$(TAG) -f agent/nanoclaw/Dockerfile --push agent/nanoclaw/ & pids="$$pids $$!"; \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/browser/Dockerfile.chromium --push agent/browser/ & pids="$$pids $$!"; \
+	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/browser/Dockerfile.chrome --push agent/browser/ & pids="$$pids $$!"; \
+	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --push agent/browser/ & pids="$$pids $$!"; \
+	rc=0; for p in $$pids; do wait $$p || rc=1; done; \
+	if [ $$rc -ne 0 ]; then echo "ERROR: at least one image failed to build or push (see log above)" >&2; fi; \
+	exit $$rc
 
 # Nightly stable agent image: same Dockerfile as claworc/openclaw, but pins
 # OpenClaw to the version blessed by isitstable.com. Resolved at build time so
