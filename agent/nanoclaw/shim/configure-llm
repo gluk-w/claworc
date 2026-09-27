@@ -9,6 +9,13 @@ set -eu
 SHIM_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 BUN=${CLAWORC_SHIM_BUN:-/usr/local/bin/bun}
 
+# configure-llm takes no arguments — the routing document is stdin. Reject
+# anything else as a usage error (exit 2, docs/shim.md).
+if [ $# -gt 0 ]; then
+    echo "unknown argument: $1" >&2
+    exit 2
+fi
+
 if [ "$(id -u)" = "0" ] && [ -x /command/s6-setuidgid ]; then
     exec env HOME=/home/claworc /command/s6-setuidgid claworc "$BUN" "$SHIM_DIR/lib/configure-llm.mjs" "$@"
 fi

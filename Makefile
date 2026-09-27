@@ -27,7 +27,7 @@ KUBECONFIG := ../kubeconfig
 HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
 
-.PHONY: agent agent-ci agent-base agent-base-china agent-build agent-test agent-instance-test agent-push agent-exec agent-stable agent-stable-ci dashboard docker-prune release \
+.PHONY: agent agent-ci agent-base agent-base-china agent-build agent-test agent-instance-test agent-shim-test agent-push agent-exec agent-stable agent-stable-ci dashboard docker-prune release \
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
 	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models test \
@@ -71,27 +71,28 @@ agent-instance-test:
 	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/openclaw/Dockerfile --load agent/openclaw/
 	cd agent/tests && AGENT_INSTANCE_TEST_IMAGE=$(AGENT_IMAGE):$(TAG) npm run test -- openclaw.test.ts
 
+# PR check for the shim-contract images (docs/shim.md). Both are FROM debian
+# directly (no pushed base image), so they can be built and tested on pull
+# requests without registry access. Runs the per-image suites plus the
+# env-var propagation suite (the shim verbs are exec'd over SSH, so that
+# path matters for them). Kept separate from agent-instance-test so the
+# OpenClaw gate's signal and duration are unchanged.
+agent-shim-test:
+	@echo "Building $(HERMES_IMAGE):$(TAG) and $(NANOCLAW_IMAGE):$(TAG) for PR verification (no push)..."
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(HERMES_IMAGE):$(TAG) -f agent/hermes/Dockerfile --load agent/hermes/
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(NANOCLAW_IMAGE):$(TAG) -f agent/nanoclaw/Dockerfile --load agent/nanoclaw/
+	cd agent/tests && AGENT_HERMES_TEST_IMAGE=$(HERMES_IMAGE):$(TAG) \
+		AGENT_NANOCLAW_TEST_IMAGE=$(NANOCLAW_IMAGE):$(TAG) \
+		npm run test -- hermes.test.ts nanoclaw.test.ts env-vars.test.ts
+
 agent-test:
 	cd agent/tests && AGENT_INSTANCE_TEST_IMAGE=$(AGENT_IMAGE):$(TAG) \
+		AGENT_HERMES_TEST_IMAGE=$(HERMES_IMAGE):$(TAG) \
+		AGENT_NANOCLAW_TEST_IMAGE=$(NANOCLAW_IMAGE):$(TAG) \
 		AGENT_TEST_IMAGE=$(BROWSER_CHROMIUM_IMAGE):$(TAG) \
 		AGENT_CHROME_TEST_IMAGE=$(BROWSER_CHROME_IMAGE):$(TAG) \
 		AGENT_BRAVE_TEST_IMAGE=$(BROWSER_BRAVE_IMAGE):$(TAG) \
 		npm run test
-	@echo "Running shim conformance selftest against $(HERMES_IMAGE):$(TAG)..."
-	docker run --rm --entrypoint sh $(HERMES_IMAGE):$(TAG) -c 'sh /opt/claworc/shim/shim-selftest /opt/claworc/shim'
-	@echo "Running shim conformance selftest against $(NANOCLAW_IMAGE):$(TAG)..."
-	# NanoClaw's shim needs its s6 services (svc-agent supervisor) running, so
-	# boot the image, wait for health, then exec the selftest. The LLM proxy
-	# URL points at an unreachable port on purpose: the chat check then fails
-	# fast inside the agent (connection refused) instead of hanging on auth,
-	# and the turn still ends cleanly per contract.
-	docker rm -f claworc-nanoclaw-selftest >/dev/null 2>&1 || true
-	docker run -d --name claworc-nanoclaw-selftest \
-		-e CLAWORC_INITIAL_LLM_CONFIG='{"proxy_url":"http://127.0.0.1:40001","style":"anthropic","default_model":"anthropic/claude-sonnet-4-5","providers":[{"key":"anthropic","api_key":"claworc-vk-ci","api_type":"anthropic-messages"}]}' \
-		$(NANOCLAW_IMAGE):$(TAG)
-	sh -c 'for i in $$(seq 1 30); do docker exec claworc-nanoclaw-selftest /opt/claworc/shim/health >/dev/null 2>&1 && exit 0; sleep 2; done; echo "nanoclaw health never became ready" >&2; docker logs claworc-nanoclaw-selftest; docker rm -f claworc-nanoclaw-selftest; exit 1'
-	docker exec claworc-nanoclaw-selftest sh /opt/claworc/shim/shim-selftest /opt/claworc/shim; \
-	rc=$$?; docker rm -f claworc-nanoclaw-selftest >/dev/null 2>&1; exit $$rc
 
 
 agent-push:

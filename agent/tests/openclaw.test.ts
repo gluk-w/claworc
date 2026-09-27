@@ -116,6 +116,24 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
     expect(structureOf(config)).toMatchSnapshot();
   });
 
+  // The gateway run script starts with `#!/command/with-contenv bash`, so
+  // env vars passed by the orchestrator must be visible in its live environ
+  // (env-vars.test.ts covers the with-contenv mechanism itself; this pins
+  // the actual service). `[o]penclaw` defeats pgrep's self-match against
+  // the `bash -c` command line; `-o` picks the oldest match (the gateway).
+  it("openclaw gateway sees orchestrator env vars", () => {
+    const result = exec(container!, [
+      "bash",
+      "-c",
+      `pid=$(pgrep -o -f '[o]penclaw gateway') && test -n "$pid" && tr '\\0' '\\n' < /proc/$pid/environ`,
+    ]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("TEST_ENV_PLAIN=plain_value");
+    expect(result.stdout).toContain("TEST_ENV_SPACED=has spaces in it");
+    expect(result.stdout).toContain("TEST_ENV_SPECIAL=a!b#c$d");
+    expect(result.stdout).toContain("OPENCLAW_GATEWAY_TOKEN=zzzbbb");
+  });
+
   it("openclaw logs exits without crash", () => {
     const result = execAsUser(container!, "openclaw logs --plain --limit 5");
     expect(result.exitCode).toBeDefined();

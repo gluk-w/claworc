@@ -59,18 +59,29 @@ state shared by all sessions — upstream semantics — and is not touched.
 
 ## Validate
 
-The image ships the template's `shim-selftest` at
-`/opt/claworc/shim/shim-selftest`. Unlike the daemonless template/Hermes
-images it needs its s6 services (the svc-agent supervisor) running, so boot
-the container first — this is exactly what `make agent-test` does:
+The image is covered by the vitest integration suite in `agent/tests/`
+(`nanoclaw.test.ts`: toolchain and layout, the `CLAWORC_INITIAL_LLM_CONFIG`
+boot path, the svc-agent supervisor, every shim verb, a chat turn through the
+session-DB contract, and finally the image's own `shim-selftest`). It runs on
+pull requests via `make agent-shim-test` and nightly via `make agent-test`:
 
 ```sh
-docker build -t claworc/nanoclaw:test agent/nanoclaw/
-docker run -d --name ncl-test claworc/nanoclaw:test
-# wait until: docker exec ncl-test /opt/claworc/shim/health  → exit 0
-docker exec ncl-test sh /opt/claworc/shim/shim-selftest /opt/claworc/shim
-docker rm -f ncl-test
+make agent-shim-test            # builds claworc/hermes + claworc/nanoclaw, runs their suites
 ```
+
+Or against an image you built yourself:
+
+```sh
+docker build -t claworc-nanoclaw:test agent/nanoclaw/
+cd agent/tests && AGENT_NANOCLAW_TEST_IMAGE=claworc-nanoclaw:test npm run test -- nanoclaw.test.ts
+```
+
+The harness pins `--platform linux/amd64` to match CI; on Apple silicon set
+`AGENT_TEST_PLATFORM=linux/arm64` (or build with `--platform linux/amd64`).
+
+Unlike the daemonless template/Hermes images, the shim here needs its s6
+services (the svc-agent supervisor) running, so the suite boots the container
+and waits for `/opt/claworc/shim/health` to exit 0 before testing anything.
 
 Chat checks need an Anthropic-compatible endpoint. Without one the agent
 replies with the API error text and the turn still ends cleanly per contract;
