@@ -3,6 +3,7 @@ import { formatDistanceToNow } from "date-fns";
 import { GripVertical } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import ActionButtons from "./ActionButtons";
+import AgentTypeIcon from "./AgentTypeIcon";
 import { useSSHStatus } from "@common/hooks/useSSHStatus";
 import { buildSSHTooltip } from "@common/utils/sshTooltip";
 import type { Instance } from "@common/types/instance";
@@ -53,6 +54,11 @@ export default function AgentCard({
           >
             <GripVertical size={16} />
           </button>
+          <AgentTypeIcon
+            agentType={instance.agent_type}
+            title={instance.agent_display_name || instance.agent_type}
+            className="w-4 h-4"
+          />
           <Link
             data-testid={`instance-link-${instance.id}`}
             to={`/instances/${instance.id}`}
@@ -60,11 +66,6 @@ export default function AgentCard({
           >
             {instance.display_name}
           </Link>
-          {instance.agent_display_name && (
-            <span className="shrink-0 px-1.5 py-0.5 text-xs font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-full">
-              {instance.agent_display_name}
-            </span>
-          )}
         </div>
         <StatusBadge status={instance.status} tooltip={tooltip} />
       </div>

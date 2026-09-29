@@ -10,7 +10,22 @@ const BACKOFF_INITIAL = 1000;
 const BACKOFF_MAX = 30000;
 const MAX_RETRIES = 5;
 
-export function useChat(instanceId: number, enabled: boolean, initialMessages?: ChatMessage[]) {
+/** Chat commands the agent supports (from its capabilities). Unknown → allowed. */
+export interface ChatCommandSupport {
+  /** Agent can abort an in-flight response (`/stop`). */
+  canStop?: boolean;
+  /** Agent can reset its conversation history (`/new`, `/reset`). */
+  canReset?: boolean;
+}
+
+export function useChat(
+  instanceId: number,
+  enabled: boolean,
+  initialMessages?: ChatMessage[],
+  support: ChatCommandSupport = {},
+) {
+  const canStop = support.canStop ?? true;
+  const canReset = support.canReset ?? true;
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages ?? []);
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("disconnected");
@@ -217,6 +232,18 @@ export function useChat(instanceId: number, enabled: boolean, initialMessages?: 
     (content: string) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
+      // Block chat commands the agent does not implement — the backend would
+      // only answer with an error.
+      const command = content.trim().toLowerCase();
+      if (command === "/stop" && !canStop) {
+        addSystemMessage("This agent does not support stopping a response.");
+        return;
+      }
+      if ((command === "/new" || command === "/reset") && !canReset) {
+        addSystemMessage("This agent does not support starting a new chat.");
+        return;
+      }
+
       // Optimistic UI update
       setMessages((prev) => [
         ...prev,
@@ -227,7 +254,7 @@ export function useChat(instanceId: number, enabled: boolean, initialMessages?: 
         JSON.stringify({ type: "chat", role: "user", content }),
       );
     },
-    [],
+    [addSystemMessage, canStop, canReset],
   );
 
   const clearMessages = useCallback(() => setMessages([]), []);
@@ -239,20 +266,22 @@ export function useChat(instanceId: number, enabled: boolean, initialMessages?: 
   }, []);
 
   const stopResponse = useCallback(() => {
+    if (!canStop) return;
     sendCommand("/stop");
     setThinkingLabel(null);
     streamingRef.current = null;
-  }, [sendCommand]);
+  }, [sendCommand, canStop]);
 
   /** Abort current run, reset session, and clear local history */
   const newChat = useCallback(() => {
-    sendCommand("/stop");
+    if (!canReset) return;
+    if (canStop) sendCommand("/stop");
     sendCommand("/new");
     setThinkingLabel(null);
     streamingRef.current = null;
     completedMessagesRef.current.clear();
     setMessages([]);
-  }, [sendCommand]);
+  }, [sendCommand, canStop, canReset]);
 
   const reconnect = useCallback(() => {
     retriesRef.current = 0;
@@ -269,5 +298,7 @@ export function useChat(instanceId: number, enabled: boolean, initialMessages?: 
     stopResponse,
     newChat,
     reconnect,
+    canStop,
+    canReset,
   };
 }

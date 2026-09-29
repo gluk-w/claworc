@@ -12,7 +12,6 @@ import (
 
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
-	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -34,11 +33,10 @@ import (
 const seLinuxMCSLevel = "s0:c0,c0"
 
 type KubernetesOrchestrator struct {
-	clientset       kubernetes.Interface
-	restConfig      *rest.Config
-	available       bool
-	inCluster       bool
-	InstanceFactory sshproxy.InstanceFactory
+	clientset  kubernetes.Interface
+	restConfig *rest.Config
+	available  bool
+	inCluster  bool
 }
 
 func (k *KubernetesOrchestrator) Initialize(ctx context.Context) error {

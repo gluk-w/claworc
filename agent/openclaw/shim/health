@@ -1,8 +1,10 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # health — exit 0 when the agent can take a chat turn, 4 while booting,
 # 1 when broken (docs/shim.md).
-set -u
+set -uo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
 
+parse_no_args "$@"
 SVC_DIR=/run/service/svc-agent
 GATEWAY_PORT=${OPENCLAW_GATEWAY_PORT:-18789}
 
@@ -23,8 +25,8 @@ if ! /command/s6-svstat -o up "$SVC_DIR" 2>/dev/null | grep -q '^true$'; then
 fi
 
 # Service is up — the gateway WS port must accept connections before chat can
-# work. /dev/tcp needs bash (this image always has it).
-if bash -c "exec 3<>/dev/tcp/127.0.0.1/${GATEWAY_PORT}" 2>/dev/null; then
+# work.
+if (exec 3<>"/dev/tcp/127.0.0.1/${GATEWAY_PORT}") 2>/dev/null; then
     printf '{"status":"ok"}\n'
     exit 0
 fi

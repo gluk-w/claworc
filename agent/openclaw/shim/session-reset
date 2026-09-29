@@ -1,4 +1,8 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # session-reset --session <key> — clear conversation history for the key.
-# Idempotent (docs/shim.md).
-exec /usr/bin/node /opt/claworc/shim/lib/gateway-bridge.mjs reset "$@"
+# Idempotent.
+# Thin wrapper over the shared gateway bridge in lib/ (docs/shim.md).
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+exec /usr/bin/node "$SHIM_DIR/lib/gateway-bridge.mjs" reset "$@"

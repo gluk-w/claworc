@@ -2,7 +2,7 @@
 
 ## Overview
 
-Shared Folders allow users to create named shared volumes and map them to multiple OpenClaw instances. Data written to a shared folder from one instance is immediately visible to all other mapped instances. This enables collaboration, shared datasets, and common workspace patterns.
+Shared Folders allow users to create named shared volumes and map them to multiple agent instances. Data written to a shared folder from one instance is immediately visible to all other mapped instances. This enables collaboration, shared datasets, and common workspace patterns.
 
 Any authenticated user can create shared folders and map them to instances they have access to. Admins can see and manage all shared folders.
 

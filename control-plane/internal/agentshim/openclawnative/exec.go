@@ -1,26 +1,18 @@
-package sshproxy
+package openclawnative
 
 import (
 	"context"
 	"fmt"
 	"strings"
 
+	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	gossh "golang.org/x/crypto/ssh"
 )
 
-// Instance represents an active connection to a running OpenClaw agent.
-// All remote openclaw CLI calls go through this interface; tests supply a mock.
+// Instance runs openclaw CLI commands inside a legacy (pre-shim) OpenClaw
+// container. Tests supply a mock.
 type Instance interface {
 	ExecOpenclaw(ctx context.Context, args ...string) (stdout, stderr string, code int, err error)
-}
-
-// InstanceFactory resolves an Instance for the given instance name,
-// blocking until SSH is available.
-type InstanceFactory func(ctx context.Context, instanceName string) (Instance, error)
-
-// ShellQuote wraps s in single quotes, escaping embedded single quotes.
-func ShellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // SSHInstance implements Instance over a live SSH connection.
@@ -43,8 +35,8 @@ func (i *SSHInstance) ExecOpenclaw(ctx context.Context, args ...string) (string,
 	parts := make([]string, len(args)+1)
 	parts[0] = "openclaw"
 	for j, a := range args {
-		parts[j+1] = ShellQuote(a)
+		parts[j+1] = sshproxy.ShellQuote(a)
 	}
-	cmd := "su - claworc -c " + ShellQuote(strings.Join(parts, " "))
-	return RunCommand(i.client, cmd)
+	cmd := "su - claworc -c " + sshproxy.ShellQuote(strings.Join(parts, " "))
+	return sshproxy.RunCommand(i.client, cmd)
 }

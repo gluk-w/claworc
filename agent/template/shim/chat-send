@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # chat-send --session <key> [--turn <id>] — the CHAT_CMD wrapper pattern from
 # docs/shim.md, extended with a PID file (for chat-abort), SIGTERM abort
 # handling, and a per-session transcript (for session-reset).
@@ -6,35 +6,27 @@
 # CHAT_CMD (from agent.env) reads the user message on stdin and writes the
 # reply to stdout. The reply is emitted as a single cumulative assistant
 # snapshot followed by the mandatory end event.
-set -eu
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
 
-SHIM_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ENV_FILE=${CLAWORC_SHIM_ENV_FILE:-$SHIM_DIR/agent.env}
 STATE_DIR=${CLAWORC_SHIM_STATE_DIR:-/home/claworc/.claworc/shim}
 RUN_DIR=${CLAWORC_SHIM_RUN_DIR:-/run/claworc/shim}
 
-SESSION=""
-TURN=""
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --session) SESSION="$2"; shift 2 ;;
-        --turn)    TURN="$2"; shift 2 ;;
-        *) echo "unknown argument: $1" >&2; exit 2 ;;
-    esac
-done
-[ -n "$SESSION" ] || { echo "--session is required" >&2; exit 2; }
-[ -n "$TURN" ] || TURN="t-$$"
+parse_session_args "$@"
+SESSION=$SHIM_SESSION
+TURN=${SHIM_TURN:-t-$$}
 
 # shellcheck disable=SC1090
 [ -f "$ENV_FILE" ] && . "$ENV_FILE"
 [ -n "${CHAT_CMD:-}" ] || { echo "CHAT_CMD is not set in $ENV_FILE" >&2; exit 4; }
 
+# JSON-encode stdin (python3 handles large replies faster than a bash loop).
 json_escape() { python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'; }
 
 SESSION_JSON=$(printf %s "$SESSION" | json_escape)
 TURN_JSON=$(printf %s "$TURN" | json_escape)
-# Session keys are opaque; sanitize before using them as file names.
-SESSION_FILE=$(printf %s "$SESSION" | tr -c 'A-Za-z0-9._-' '_')
+SESSION_FILE=$SHIM_SESSION_SLUG
 
 mkdir -p "$RUN_DIR" "$STATE_DIR/sessions" 2>/dev/null || true
 PIDFILE="$RUN_DIR/chat-$SESSION_FILE.pid"

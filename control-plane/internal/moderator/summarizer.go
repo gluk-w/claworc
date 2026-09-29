@@ -49,7 +49,7 @@ func (s *Service) refreshAll(ctx context.Context) {
 }
 
 func (s *Service) refreshOne(ctx context.Context, instanceID uint) error {
-	workspace := s.opts.Settings.WorkspaceDir()
+	workspace := s.workspaceDir(ctx, instanceID)
 	entries, err := s.opts.Workspace.List(ctx, instanceID, workspace)
 	if err != nil {
 		return err
@@ -74,7 +74,7 @@ func (s *Service) refreshOne(ctx context.Context, instanceID uint) error {
 	summary := ""
 	if b.Len() > 0 {
 		provKey, model := s.opts.Settings.ModeratorProvider()
-		prompt := "In ONE paragraph (max 120 words), describe the personality, current focus, and recent activity of the OpenClaw agent whose workspace markdown is below. Be concrete.\n\n" + b.String()
+		prompt := "In ONE paragraph (max 120 words), describe the personality, current focus, and recent activity of the AI agent whose workspace markdown is below. Be concrete.\n\n" + b.String()
 		if resp, err := s.opts.LLM.Complete(ctx, provKey, model, prompt); err == nil {
 			summary = strings.TrimSpace(resp)
 		}

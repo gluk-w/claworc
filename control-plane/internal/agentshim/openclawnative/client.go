@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"path"
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
@@ -24,6 +25,9 @@ const Type = "openclaw"
 
 // ConfigPath is the OpenClaw config file location inside the instance.
 const ConfigPath = "/home/claworc/.openclaw/openclaw.json"
+
+// SkillsDir is the OpenClaw skills directory inside the instance.
+const SkillsDir = "/home/claworc/.openclaw/skills"
 
 // configFileID is the ID of the single config file OpenClaw exposes.
 const configFileID = "main"
@@ -40,7 +44,7 @@ type Client struct {
 	// exec, when non-nil, overrides SSH-resolved CLI execution. Used by
 	// callers that already hold an established connection (instance
 	// create/clone flows) and by tests.
-	exec sshproxy.Instance
+	exec Instance
 }
 
 var _ agentshim.Client = (*Client)(nil)
@@ -49,9 +53,9 @@ var _ agentshim.Client = (*Client)(nil)
 func New(deps agentshim.InstanceDeps) *Client { return &Client{deps: deps} }
 
 // NewWithExec builds a Client whose CLI verbs run over an already-established
-// sshproxy.Instance. Only exec-backed operations (ConfigureLLM, Restart) are
+// Instance. Only exec-backed operations (ConfigureLLM, Restart) are
 // usable on such a client; chat and config file access need factory deps.
-func NewWithExec(exec sshproxy.Instance) *Client { return &Client{exec: exec} }
+func NewWithExec(exec Instance) *Client { return &Client{exec: exec} }
 
 // Type implements agentshim.Client.
 func (c *Client) Type() string { return Type }
@@ -76,7 +80,7 @@ func (c *Client) Capabilities(_ context.Context) (agentshim.Capabilities, error)
 			RestartRequired: true,
 		}},
 		WorkspaceDir:       "/home/claworc/.openclaw/workspace",
-		SkillsDir:          "/home/claworc/.openclaw/skills",
+		SkillsDir:          SkillsDir,
 		LogFiles:           []agentshim.LogFile{{Path: "/var/log/claworc/openclaw.log", Label: "OpenClaw"}},
 		LLMStyles:          []string{"openai"},
 		SessionPersistence: "native",
@@ -131,6 +135,60 @@ func (c *Client) SetConfig(ctx context.Context, fileID, content string) error {
 		return fmt.Errorf("write %s: %w", ConfigPath, err)
 	}
 	return nil
+}
+
+// DeploySkill implements agentshim.Client: syncs the skill's files into
+// SkillsDir over SFTP-style writes (files end up claworc-owned).
+func (c *Client) DeploySkill(ctx context.Context, name string, files map[string][]byte) error {
+	base, err := skillBase(name)
+	if err != nil {
+		return err
+	}
+	client, err := c.sshClient(ctx)
+	if err != nil {
+		return &agentshim.TransportError{Err: err}
+	}
+	if err := sshproxy.CreateDirectory(client, base); err != nil {
+		return fmt.Errorf("create skill directory: %w", err)
+	}
+	for rel, data := range files {
+		rel = path.Clean(rel)
+		if !agentshim.SkillPathSafe(rel) {
+			return fmt.Errorf("invalid skill file path %q", rel)
+		}
+		remote := path.Join(base, rel)
+		if parent := path.Dir(remote); parent != base {
+			if err := sshproxy.CreateDirectory(client, parent); err != nil {
+				return fmt.Errorf("create directory %s: %w", parent, err)
+			}
+		}
+		if err := sshproxy.WriteFile(client, remote, data); err != nil {
+			return fmt.Errorf("write %s: %w", rel, err)
+		}
+	}
+	return nil
+}
+
+// RemoveSkill implements agentshim.Client: deletes <SkillsDir>/<name>.
+// Removing a skill that was never deployed is not an error.
+func (c *Client) RemoveSkill(ctx context.Context, name string) error {
+	base, err := skillBase(name)
+	if err != nil {
+		return err
+	}
+	client, err := c.sshClient(ctx)
+	if err != nil {
+		return &agentshim.TransportError{Err: err}
+	}
+	return sshproxy.DeletePath(client, base)
+}
+
+// skillBase joins a validated skill name under SkillsDir.
+func skillBase(name string) (string, error) {
+	if !agentshim.SkillPathSafe(name) {
+		return "", fmt.Errorf("invalid skill name %q", name)
+	}
+	return path.Join(SkillsDir, name), nil
 }
 
 // Restart implements agentshim.Client: `openclaw gateway stop` — s6
@@ -324,7 +382,7 @@ func (c *Client) sshClient(ctx context.Context) (*gossh.Client, error) {
 	return c.deps.SSHClient(ctx)
 }
 
-func (c *Client) execInstance(ctx context.Context) (sshproxy.Instance, error) {
+func (c *Client) execInstance(ctx context.Context) (Instance, error) {
 	if c.exec != nil {
 		return c.exec, nil
 	}
@@ -335,5 +393,46 @@ func (c *Client) execInstance(ctx context.Context) (sshproxy.Instance, error) {
 	if err != nil {
 		return nil, &agentshim.TransportError{Err: err}
 	}
-	return sshproxy.NewSSHInstance(client), nil
+	return NewSSHInstance(client), nil
+}
+
+// ControlUI implements agentshim.Client: the OpenClaw gateway serves its
+// Control UI under /openclaw/<instance id>/ on the gateway port (the claworc
+// image sets gateway.controlUi.basePath to it; older images ignore the prefix
+// and the proxy retries at the root), authenticated by the
+// gateway token and a localhost Origin.
+func (c *Client) ControlUI(_ context.Context) (agentshim.ControlUISpec, error) {
+	spec := agentshim.ControlUISpec{
+		Port:     GatewayPort,
+		BasePath: fmt.Sprintf("/openclaw/%d/", c.deps.Instance.ID),
+		Headers:  map[string]string{"Origin": fmt.Sprintf("http://localhost:%d", GatewayPort)},
+	}
+	if c.deps.GatewayToken != "" {
+		spec.Query = map[string]string{"token": c.deps.GatewayToken}
+	}
+	return spec, nil
+}
+
+// GatewayPort is the OpenClaw gateway's container-local port.
+const GatewayPort = 18789
+
+// Legacy env vars read by pre-shim OpenClaw images at first boot. Shim images
+// read CLAWORC_INITIAL_LLM_CONFIG / CLAWORC_AGENT_TOKEN instead, but an
+// OpenClaw instance's image may be either, so both are always injected.
+func init() {
+	agentshim.RegisterLegacyEnv(agentshim.TypeOpenClaw,
+		[]string{"OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_INITIAL_MODELS", "OPENCLAW_INITIAL_PROVIDERS"},
+		func(routing agentshim.LLMRouting, agentToken string) map[string]string {
+			env := map[string]string{}
+			if agentToken != "" {
+				env["OPENCLAW_GATEWAY_TOKEN"] = agentToken
+			}
+			if modelsJSON := BuildModelsJSON(routing); modelsJSON != "" {
+				env["OPENCLAW_INITIAL_MODELS"] = modelsJSON
+			}
+			if providersJSON, _ := BuildProvidersJSON(routing); providersJSON != "" {
+				env["OPENCLAW_INITIAL_PROVIDERS"] = providersJSON
+			}
+			return env
+		})
 }

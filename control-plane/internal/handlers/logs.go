@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
@@ -13,6 +15,22 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/go-chi/chi/v5"
 )
+
+// agentLogPath returns the primary log file the agent declares (shim meta
+// log_files[0]), or "" when it declares none or cannot be probed.
+func agentLogPath(ctx context.Context, instanceID uint) string {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	client, err := agentClientFor(ctx, instanceID)
+	if err != nil {
+		return ""
+	}
+	caps, err := client.Capabilities(ctx)
+	if err != nil || len(caps.LogFiles) == 0 {
+		return ""
+	}
+	return caps.LogFiles[0].Path
+}
 
 func StreamLogs(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
@@ -34,14 +52,9 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logType := sshproxy.LogType(r.URL.Query().Get("type"))
-	if logType == "" {
-		logType = sshproxy.LogTypeOpenClaw
-	}
-	// "agent" is an alias for the primary agent log; normalize it to
-	// "openclaw" so per-instance custom log-path overrides keyed "openclaw"
-	// keep applying. Both names resolve to the same file.
-	if logType == sshproxy.LogTypeAgent {
-		logType = sshproxy.LogTypeOpenClaw
+	// "openclaw" is the legacy name of the primary agent log.
+	if logType == "" || logType == sshproxy.LogTypeOpenClaw {
+		logType = sshproxy.LogTypeAgent
 	}
 
 	var inst database.Instance
@@ -74,7 +87,12 @@ func StreamLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	logPath := sshproxy.ResolveLogPath(logType, customPaths)
+	var logPath string
+	if logType == sshproxy.LogTypeAgent {
+		logPath = sshproxy.ResolveAgentLogPath(agentLogPath(r.Context(), inst.ID), customPaths)
+	} else {
+		logPath = sshproxy.ResolveLogPath(logType, customPaths)
+	}
 	if logPath == "" {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("Unknown log type: %s", logType))
 		return

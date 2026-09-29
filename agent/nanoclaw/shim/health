@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # health — exit 0 when the agent can take a chat turn, 4 while booting,
 # 1 when broken (docs/shim.md).
 #
@@ -6,8 +6,10 @@
 # (shim/lib/host.mjs) is alive and its scan loop is ticking — it touches
 # /run/claworc/shim/host.heartbeat every 500ms. A fresh heartbeat implies a
 # new inbound message will be picked up and a runner spawned.
-set -u
+set -uo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
 
+parse_no_args "$@"
 RUN_DIR=${CLAWORC_SHIM_RUN_DIR:-/run/claworc/shim}
 HEARTBEAT="$RUN_DIR/host.heartbeat"
 SVC_DIR=/run/service/svc-agent

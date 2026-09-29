@@ -26,10 +26,10 @@ const (
 )
 
 // RegistryEntry describes one agent type the control plane can manage. The
-// registry is static: it captures what is known about a type before any
-// container exists (display name, conservative capabilities, log path).
-// Live capability probing — once shim-capable images land — refines, never
-// replaces, this data.
+// registry is static presentation data only — display name, default image
+// resolution and a pre-probe capability placeholder. Everything the control
+// plane actually does with an agent is driven by the image's shim `meta`
+// (docs/shim.md), never by the type.
 type RegistryEntry struct {
 	// Type is the identifier stored in Instance.AgentType.
 	Type string
@@ -38,12 +38,10 @@ type RegistryEntry struct {
 	// HasControlUI reports whether the agent serves its own web control UI
 	// that the control plane reverse-proxies (/openclaw/{id}/*).
 	HasControlUI bool
-	// StaticCapabilities are the capabilities assumed for instances of this
-	// type without probing the container. OpenClaw's are exact (the adapter
-	// is built in); other types are conservative.
+	// StaticCapabilities are a placeholder shown before the agent has been
+	// probed (instance stopped, SSH down). Once reachable, the live
+	// capabilities from the image's shim `meta` replace them.
 	StaticCapabilities Capabilities
-	// LogPath is the primary agent log file inside the container.
-	LogPath string
 }
 
 // registryEntries is the ordered static registry. Order is the UI display
@@ -65,7 +63,6 @@ var registryEntries = []RegistryEntry{
 			LLMStyles:          []string{"openai"},
 			SessionPersistence: "native",
 		},
-		LogPath: "/var/log/claworc/openclaw.log",
 	},
 	{
 		Type:        TypeHermes,
@@ -76,7 +73,6 @@ var registryEntries = []RegistryEntry{
 			ConfigureLLM: true,
 			Restart:      true,
 		},
-		LogPath: "/var/log/claworc/agent.log",
 	},
 	{
 		Type:        TypeNanoClaw,
@@ -86,7 +82,6 @@ var registryEntries = []RegistryEntry{
 			ConfigureLLM: true,
 			Restart:      true,
 		},
-		LogPath: "/var/log/claworc/agent.log",
 	},
 	{
 		Type:        TypeCustom,
@@ -97,7 +92,6 @@ var registryEntries = []RegistryEntry{
 			ConfigureLLM: true,
 			Restart:      true,
 		},
-		LogPath: "/var/log/claworc/agent.log",
 	},
 }
 

@@ -25,6 +25,8 @@ chown claworc:claworc /var/log/claworc/agent.log
 
 test -f /home/claworc/.bashrc || cp -a /etc/skel/. /home/claworc/
 mkdir -p /home/claworc/workspace
+# Skills installed by the skill-install verb (meta.skills_dir).
+mkdir -p /home/claworc/skills
 # Shim persistent state (session transcripts) lives on the instance PVC.
 mkdir -p /home/claworc/.claworc/shim
 chown -R claworc:claworc /home/claworc

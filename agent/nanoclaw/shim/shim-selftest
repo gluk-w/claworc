@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # shim-selftest — conformance check for the Claworc Agent Shim Contract v1
 # (docs/shim.md). Runnable inside any agent image, or against a shim
 # directory in the repo:
@@ -6,16 +6,17 @@
 #   shim-selftest [shim-dir]           # default: /opt/claworc/shim
 #   docker run --rm my-agent-image /opt/claworc/shim/shim-selftest
 #
-# Exercises: identity files, meta (JSON + required fields + verb presence per
-# capability), health exit codes, chat-send JSONL well-formedness, the config
-# round-trip, and configure-llm idempotency. Exits non-zero with a per-check
-# report when anything fails.
+# Exercises: identity files, bash entrypoints, meta (JSON + required fields +
+# verb presence per capability), health exit codes, chat-send JSONL
+# well-formedness, the chat-stream ready line, the config round-trip, configure-llm idempotency, and the
+# skill-install / skill-remove verbs. Exits non-zero with a per-check report
+# when anything fails. Needs bash, jq and tar.
 #
-# NOTE: the config and configure-llm checks MUTATE agent configuration
+# NOTE: the config, configure-llm and skills checks MUTATE agent state
 # (config-set writes the current bytes back; configure-llm applies a sample
-# routing document twice). Run in a throwaway container/CI, or pass
-# --skip-mutating.
-set -u
+# routing document twice; a throwaway skill is installed and removed). Run in
+# a throwaway container/CI, or pass --skip-mutating.
+set -uo pipefail
 
 SHIM_DIR=/opt/claworc/shim
 SKIP_MUTATING=0
@@ -37,46 +38,19 @@ skip() { SKIP=$((SKIP + 1)); printf '[SKIP] %s\n' "$1"; }
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-# --- JSON helpers (jq preferred, python3 fallback) --------------------------
-if command -v jq >/dev/null 2>&1; then
-    JSON_TOOL=jq
-elif command -v python3 >/dev/null 2>&1; then
-    JSON_TOOL=python3
-else
-    echo "shim-selftest needs jq or python3 for JSON validation" >&2
+# --- JSON helpers (jq) -------------------------------------------------------
+if ! command -v jq >/dev/null 2>&1; then
+    echo "shim-selftest needs jq for JSON validation" >&2
     exit 2
 fi
 
 json_valid() { # json_valid <file>
-    if [ "$JSON_TOOL" = jq ]; then jq -e . "$1" >/dev/null 2>&1
-    else python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$1" >/dev/null 2>&1
-    fi
+    jq -e . "$1" >/dev/null 2>&1
 }
 
-json_query() { # json_query <file> <python-expr over d> — prints result or "None"
-    python3 -c '
-import json, sys
-d = json.load(open(sys.argv[1]))
-try:
-    print(eval(sys.argv[2], {"d": d}))
-except Exception:
-    print("None")
-' "$1" "$2" 2>/dev/null
+json_query() { # json_query <file> <jq filter> — prints the raw result, "null" on error
+    jq -r "$2" "$1" 2>/dev/null || echo null
 }
-
-if [ "$JSON_TOOL" = jq ] && ! command -v python3 >/dev/null 2>&1; then
-    # json_query needs python3; degrade to jq-only equivalents where used.
-    json_query() {
-        case "$2" in
-            'd["contract"]') jq -r '.contract' "$1" 2>/dev/null ;;
-            '"chat" in d.get("capabilities", [])') jq -r '.capabilities | contains(["chat"])' "$1" 2>/dev/null | sed 's/true/True/; s/false/False/' ;;
-            'isinstance(d.get("capabilities"), list)') jq -r '.capabilities | type == "array"' "$1" 2>/dev/null | sed 's/true/True/; s/false/False/' ;;
-            '",".join(d.get("capabilities", []))') jq -r '.capabilities | join(",")' "$1" 2>/dev/null ;;
-            'd.get("llm", {}).get("styles", ["openai"])[0]') jq -r '.llm.styles[0] // "openai"' "$1" 2>/dev/null ;;
-            *) echo "None" ;;
-        esac
-    }
-fi
 
 run_timeout() { # run_timeout <seconds> <cmd...>
     if command -v timeout >/dev/null 2>&1; then
@@ -119,25 +93,25 @@ if json_valid "$META"; then
 else
     fail "meta: stdout is not valid JSON"
 fi
-CONTRACT=$(json_query "$META" 'd["contract"]')
+CONTRACT=$(json_query "$META" '.contract')
 if [ "$CONTRACT" = "1" ]; then
     pass "meta: contract=1"
 else
     fail "meta: contract must be the integer 1, got '$CONTRACT'"
 fi
-if [ "$(json_query "$META" 'isinstance(d.get("capabilities"), list)')" = "True" ]; then
+if [ "$(json_query "$META" '.capabilities | type == "array"')" = "true" ]; then
     pass "meta: capabilities is an array"
 else
     fail "meta: capabilities missing or not an array"
 fi
-if [ "$(json_query "$META" '"chat" in d.get("capabilities", [])')" = "True" ]; then
+if [ "$(json_query "$META" '(.capabilities // []) | index("chat") != null')" = "true" ]; then
     pass "meta: capabilities include required \"chat\""
 else
     fail "meta: capabilities must include \"chat\""
 fi
 
-CAPS=$(json_query "$META" '",".join(d.get("capabilities", []))')
-[ "$CAPS" = "None" ] && CAPS=""
+CAPS=$(json_query "$META" '(.capabilities // []) | join(",")')
+[ "$CAPS" = "null" ] && CAPS=""
 has_cap() { printf ',%s,' "$CAPS" | grep -q ",$1,"; }
 
 # Verb executables required by declared capabilities.
@@ -152,12 +126,32 @@ check_verb() { # check_verb <file> <needed:1/0> <why>
 }
 check_verb health 1 "always required"
 check_verb chat-send 1 "chat capability is mandatory"
+check_verb chat-stream "$(has_cap chat.stream && echo 1 || echo 0)" "chat.stream declared"
 check_verb chat-abort "$(has_cap chat.abort && echo 1 || echo 0)" "chat.abort declared"
 check_verb session-reset "$(has_cap session.reset && echo 1 || echo 0)" "session.reset declared"
 check_verb config-get "$(has_cap config && echo 1 || echo 0)" "config declared"
 check_verb config-set "$(has_cap config && echo 1 || echo 0)" "config declared"
 check_verb configure-llm "$(has_cap configure-llm && echo 1 || echo 0)" "configure-llm declared"
 check_verb restart "$(has_cap restart && echo 1 || echo 0)" "restart declared"
+check_verb skill-install "$(has_cap skills && echo 1 || echo 0)" "skills declared"
+check_verb skill-remove "$(has_cap skills && echo 1 || echo 0)" "skills declared"
+
+# Every verb entrypoint is a bash script (docs/shim.md "Implementing a shim").
+NON_BASH=""
+for f in "$SHIM_DIR"/*; do
+    [ -f "$f" ] && [ -x "$f" ] || continue
+    [ "$(head -n1 "$f")" = "#!/usr/bin/env bash" ] || NON_BASH="$NON_BASH $(basename "$f")"
+done
+if [ -z "$NON_BASH" ]; then
+    pass "verbs: every executable entrypoint is a bash script"
+else
+    fail "verbs: not bash entrypoints:$NON_BASH"
+fi
+if [ -f "$SHIM_DIR/lib/shimlib.sh" ]; then
+    pass "lib/shimlib.sh: present"
+else
+    fail "lib/shimlib.sh: missing"
+fi
 
 # --- 3. health --------------------------------------------------------------
 HEALTH_RC=0
@@ -209,8 +203,8 @@ else
             fail "chat-send: expected exactly one end event, got $ENDS"
         fi
         tail -n1 "$CHAT_OUT" > "$WORK/last.json"
-        if [ "$(json_query "$WORK/last.json" 'd.get("event")')" = "end" ] && \
-           [ "$(json_query "$WORK/last.json" 'd.get("stop_reason") in ("complete","aborted","error")')" = "True" ]; then
+        if [ "$(json_query "$WORK/last.json" '.event')" = "end" ] && \
+           [ "$(json_query "$WORK/last.json" '.stop_reason | IN("complete", "aborted", "error")')" = "true" ]; then
             pass "chat-send: last line is end with a legal stop_reason"
         else
             fail "chat-send: last line must be the end event with stop_reason complete|aborted|error"
@@ -220,6 +214,23 @@ else
         else
             fail "chat-send: no start event emitted"
         fi
+    fi
+fi
+
+# --- 4b. chat-stream -------------------------------------------------------
+if ! has_cap chat.stream; then
+    skip "chat-stream: chat.stream capability not declared"
+else
+    RC=0
+    run_timeout 30 "$SHIM_DIR/chat-stream" --session shim-selftest-stream \
+        < /dev/null > "$WORK/stream.jsonl" 2> "$WORK/stream.err" || RC=$?
+    head -n1 "$WORK/stream.jsonl" > "$WORK/stream.first"
+    if [ "$RC" -eq 0 ] && [ "$(json_query "$WORK/stream.first" '.event' 2>/dev/null)" = "ready" ]; then
+        pass "chat-stream: prints ready and exits 0 on stdin EOF"
+    elif [ "$RC" -eq 4 ]; then
+        pass "chat-stream: exit 4 (agent booting — contract-legal)"
+    else
+        fail "chat-stream: expected a ready line and exit 0 on EOF (exit $RC, $(head -c 200 "$WORK/stream.err"))"
     fi
 fi
 
@@ -245,6 +256,18 @@ else
             else
                 fail "config: round-trip altered the file"
             fi
+            # config-set stores bytes verbatim — no parsing, no validation.
+            printf 'shim-selftest {not: [valid json or yaml\n\ttrailing' > "$WORK/cfg.raw"
+            RC=0
+            "$SHIM_DIR/config-set" < "$WORK/cfg.raw" > "$WORK/cfgset.out" 2>&1 || RC=$?
+            "$SHIM_DIR/config-get" > "$WORK/cfg.raw.after" 2>/dev/null || true
+            if [ "$RC" -eq 0 ] && cmp -s "$WORK/cfg.raw" "$WORK/cfg.raw.after"; then
+                pass "config-set: stores arbitrary bytes verbatim"
+            else
+                fail "config-set: arbitrary bytes not stored verbatim (exit $RC)"
+            fi
+            "$SHIM_DIR/config-set" < "$WORK/cfg.before" > /dev/null 2>&1 || \
+                fail "config-set: could not restore the original config"
         fi
     fi
 fi
@@ -255,8 +278,8 @@ if ! has_cap configure-llm; then
 elif [ "$SKIP_MUTATING" = 1 ]; then
     skip "configure-llm: --skip-mutating"
 else
-    STYLE=$(json_query "$META" 'd.get("llm", {}).get("styles", ["openai"])[0]')
-    [ "$STYLE" = "None" ] && STYLE=openai
+    STYLE=$(json_query "$META" '.llm.styles[0] // "openai"')
+    [ "$STYLE" = "null" ] && STYLE=openai
     cat > "$WORK/routing.json" <<EOF
 {
   "proxy_url": "http://127.0.0.1:40001",
@@ -292,6 +315,59 @@ EOF
         else
             pass "configure-llm: second run exit 0 (no config verb to diff state)"
         fi
+    fi
+fi
+
+# --- 7. skills ---------------------------------------------------------------
+if ! has_cap skills; then
+    skip "skills: capability not declared"
+elif [ "$SKIP_MUTATING" = 1 ]; then
+    skip "skills: --skip-mutating"
+else
+    SKILLS_DIR=$(json_query "$META" '.skills_dir // ""')
+    SKILL=shim-selftest-skill
+    mkdir -p "$WORK/skill/scripts"
+    printf -- '---\nname: %s\n---\nselftest\n' "$SKILL" > "$WORK/skill/SKILL.md"
+    printf 'echo ok\n' > "$WORK/skill/scripts/run.sh"
+    RC=0
+    tar -C "$WORK/skill" -cf - . | "$SHIM_DIR/skill-install" --name "$SKILL" > "$WORK/skill.out" 2>&1 || RC=$?
+    if [ "$RC" -eq 0 ] && [ -n "$SKILLS_DIR" ] && \
+       cmp -s "$WORK/skill/SKILL.md" "$SKILLS_DIR/$SKILL/SKILL.md" && \
+       cmp -s "$WORK/skill/scripts/run.sh" "$SKILLS_DIR/$SKILL/scripts/run.sh"; then
+        pass "skill-install: files land in skills_dir/<name>"
+    else
+        fail "skill-install: exit $RC or files missing ($(head -c 200 "$WORK/skill.out"))"
+    fi
+    rm "$WORK/skill/scripts/run.sh"
+    RC=0
+    tar -C "$WORK/skill" -cf - . | "$SHIM_DIR/skill-install" --name "$SKILL" > /dev/null 2>&1 || RC=$?
+    if [ "$RC" -eq 0 ] && [ ! -e "$SKILLS_DIR/$SKILL/scripts/run.sh" ]; then
+        pass "skill-install: reinstall replaces the whole skill"
+    else
+        fail "skill-install: reinstall left stale files (exit $RC)"
+    fi
+    ln -s /etc/passwd "$WORK/skill/link"
+    RC=0
+    tar -C "$WORK/skill" -cf - . | "$SHIM_DIR/skill-install" --name "$SKILL" > "$WORK/skill.out" 2>/dev/null || RC=$?
+    if [ "$RC" -eq 6 ] && json_valid "$WORK/skill.out" && [ ! -e "$SKILLS_DIR/$SKILL/link" ]; then
+        pass "skill-install: rejects links with exit 6"
+    else
+        fail "skill-install: archive with a symlink must exit 6 (got $RC)"
+    fi
+    RC=0
+    "$SHIM_DIR/skill-install" --name ../escape < /dev/null > /dev/null 2>&1 || RC=$?
+    if [ "$RC" -eq 2 ]; then
+        pass "skill-install: invalid --name exits 2"
+    else
+        fail "skill-install: invalid --name must exit 2 (got $RC)"
+    fi
+    RC1=0; RC2=0
+    "$SHIM_DIR/skill-remove" --name "$SKILL" > /dev/null 2>&1 || RC1=$?
+    "$SHIM_DIR/skill-remove" --name "$SKILL" > /dev/null 2>&1 || RC2=$?
+    if [ "$RC1" -eq 0 ] && [ "$RC2" -eq 0 ] && [ ! -e "$SKILLS_DIR/$SKILL" ]; then
+        pass "skill-remove: removes the skill and is idempotent"
+    else
+        fail "skill-remove: exit $RC1/$RC2 or skill still present"
     fi
 fi
 

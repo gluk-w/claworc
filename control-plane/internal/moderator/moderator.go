@@ -13,7 +13,7 @@ var ErrStopped = errors.New("task stopped by user")
 // Options holds all dependencies needed to construct a Service. Every field
 // is an interface so the package has zero claworc-internal imports.
 type Options struct {
-	Dialer    GatewayDialer
+	Agents    Agents
 	Workspace WorkspaceFS
 	LLM       LLMClient
 	Store     Store

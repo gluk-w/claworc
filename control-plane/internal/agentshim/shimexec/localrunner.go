@@ -104,7 +104,14 @@ func (r *LocalRunner) Start(ctx context.Context, argv []string, stdin io.Reader)
 	}
 	pr, pw := io.Pipe()
 	tail := newTailBuffer(stderrTailCap)
-	cmd.Stdin = stdin
+	var stdinW io.WriteCloser
+	if stdin == nil {
+		if stdinW, err = cmd.StdinPipe(); err != nil {
+			return nil, err
+		}
+	} else {
+		cmd.Stdin = stdin
+	}
 	cmd.Stdout = pw
 	cmd.Stderr = tail
 
@@ -112,7 +119,7 @@ func (r *LocalRunner) Start(ctx context.Context, argv []string, stdin io.Reader)
 		pw.Close()
 		return nil, err
 	}
-	h := &localStream{cmd: cmd, pr: pr, tail: tail, done: make(chan struct{})}
+	h := &localStream{cmd: cmd, stdin: stdinW, pr: pr, tail: tail, done: make(chan struct{})}
 	go func() {
 		werr := cmd.Wait()
 		h.mu.Lock()
@@ -138,9 +145,10 @@ func (r *LocalRunner) ReadFile(_ context.Context, path string) ([]byte, error) {
 
 // localStream is the StreamHandle for one local streaming command.
 type localStream struct {
-	cmd  *exec.Cmd
-	pr   *io.PipeReader
-	tail *tailBuffer
+	cmd   *exec.Cmd
+	stdin io.WriteCloser
+	pr    *io.PipeReader
+	tail  *tailBuffer
 
 	done chan struct{}
 
@@ -151,8 +159,9 @@ type localStream struct {
 	termOnce sync.Once
 }
 
-func (h *localStream) Stdout() io.Reader  { return h.pr }
-func (h *localStream) StderrTail() string { return h.tail.String() }
+func (h *localStream) Stdin() io.WriteCloser { return h.stdin }
+func (h *localStream) Stdout() io.Reader     { return h.pr }
+func (h *localStream) StderrTail() string    { return h.tail.String() }
 
 // Terminate delivers SIGTERM (the contract's abort signal) and escalates to
 // SIGKILL if the process is still alive shortly after.

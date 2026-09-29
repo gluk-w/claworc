@@ -8,7 +8,6 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
-	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/google/uuid"
 )
 
@@ -20,7 +19,7 @@ func (c *Client) OpenSession(ctx context.Context, sessionKey string) (agentshim.
 	if err != nil {
 		return nil, &agentshim.TransportError{Err: err}
 	}
-	conn, err := sshproxy.DialGateway(ctx, port, c.deps.GatewayToken)
+	conn, err := DialGateway(ctx, port, c.deps.GatewayToken)
 	if err != nil {
 		return nil, err
 	}

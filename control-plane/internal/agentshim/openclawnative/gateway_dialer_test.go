@@ -1,4 +1,4 @@
-package sshproxy
+package openclawnative
 
 import (
 	"context"
@@ -14,11 +14,11 @@ import (
 	"github.com/coder/websocket"
 )
 
-// fakeGateway serves a minimal OpenClaw gateway handshake: it emits a
+// fakeHandshakeGateway serves a minimal OpenClaw gateway handshake: it emits a
 // connect.challenge event, captures the client's connect frame and replies with
 // the caller-supplied response. It returns the local port to dial and a channel
 // carrying the connect params the client advertised.
-func fakeGateway(t *testing.T, response map[string]any) (int, <-chan map[string]any) {
+func fakeHandshakeGateway(t *testing.T, response map[string]any) (int, <-chan map[string]any) {
 	t.Helper()
 
 	params := make(chan map[string]any, 1)
@@ -79,7 +79,7 @@ func fakeGateway(t *testing.T, response map[string]any) (int, <-chan map[string]
 }
 
 func TestDialGatewayAdvertisesProtocolRange(t *testing.T) {
-	port, params := fakeGateway(t, map[string]any{"ok": true})
+	port, params := fakeHandshakeGateway(t, map[string]any{"ok": true})
 
 	conn, err := DialGateway(context.Background(), port, "test-token")
 	if err != nil {
@@ -150,7 +150,7 @@ func TestDialGatewayHandshakeErrors(t *testing.T) {
 			if tt.errObj != nil {
 				resp["error"] = tt.errObj
 			}
-			port, _ := fakeGateway(t, resp)
+			port, _ := fakeHandshakeGateway(t, resp)
 
 			conn, err := DialGateway(context.Background(), port, "test-token")
 			if err == nil {

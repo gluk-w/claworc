@@ -1,15 +1,12 @@
-#!/bin/sh
-# chat-send — Claworc shim verb (docs/shim.md). Thin wrapper: verbs are invoked
-# as root over SSH; agent state must stay claworc-owned, so drop privileges
-# and exec the Bun implementation in lib/. Bun is used because bun:sqlite is
-# the same SQLite driver NanoClaw's own agent-runner uses — no dependency of
-# our own.
-set -eu
+#!/usr/bin/env bash
+# chat-send --session <key> [--turn <id>] — stream one chat turn as JSONL
+# (docs/shim.md). Thin wrapper: verbs run as root over SSH but agent state
+# must stay claworc-owned, so drop privileges and exec the Bun implementation
+# in lib/. Bun is used because bun:sqlite is the same SQLite driver
+# NanoClaw's own agent-runner uses — no dependency of our own.
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
 
-SHIM_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 BUN=${CLAWORC_SHIM_BUN:-/usr/local/bin/bun}
 
-if [ "$(id -u)" = "0" ] && [ -x /command/s6-setuidgid ]; then
-    exec env HOME=/home/claworc /command/s6-setuidgid claworc "$BUN" "$SHIM_DIR/lib/chat-send.mjs" "$@"
-fi
-exec "$BUN" "$SHIM_DIR/lib/chat-send.mjs" "$@"
+run_as_claworc "$BUN" "$SHIM_DIR/lib/chat-send.mjs" "$@"

@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { exec, execAsUser, sleep, getContainers, dumpDiagnostics } from "./helpers";
+import { readFileSync } from "node:fs";
+import { exec, execAsUser, sleep, getContainers, dumpDiagnostics, parseJsonl, shim, SHIM_DIR } from "./helpers";
+import { chatStream, CONTRACT_VERBS, expectValidationError, installSkill, mode, owner, readFile, sh } from "./shim-contract";
 
 const containers = getContainers();
 // openclaw lives in the claworc-agent image only. Browser-only images
@@ -174,6 +176,199 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
     expect(config.agents.defaults.model).toEqual({
       primary: "anthropic/claude-sonnet-5",
       fallbacks: ["anthropic/claude-haiku-4-5-20251001"],
+    });
+  });
+
+  // The claworc agent shim (docs/shim.md). The generic contract battery in
+  // shim-contract.ts is not reused wholesale: its config-set check writes
+  // unparseable bytes, which the running gateway would hot-reload.
+  describe("shim", () => {
+    const CONFIG = "/home/claworc/.openclaw/openclaw.json";
+    const readConfig = () => JSON.parse(readFile(container!, CONFIG));
+
+    it("every verb entrypoint is a bash script backed by the canonical shimlib", () => {
+      for (const verb of [...CONTRACT_VERBS, "control-ui-auth"]) {
+        expect(readFile(container!, `${SHIM_DIR}/${verb}`).split("\n")[0], verb).toBe("#!/usr/bin/env bash");
+        expect(mode(container!, `${SHIM_DIR}/${verb}`), verb).toBe("755");
+      }
+      const canonical = readFileSync(new URL("../template/shim/lib/shimlib.sh", import.meta.url), "utf-8");
+      expect(readFile(container!, `${SHIM_DIR}/lib/shimlib.sh`)).toBe(canonical);
+    });
+
+    it("config-set round-trips openclaw.json byte-for-byte, claworc-owned 0600", () => {
+      const before = shim(container!, "config-get").stdout;
+      const next = JSON.stringify({ ...JSON.parse(before) }, null, 2) + "\n";
+      try {
+        expect(shim(container!, "config-set", [], next).exitCode).toBe(0);
+        expect(shim(container!, "config-get").stdout).toBe(next);
+        expect(owner(container!, CONFIG)).toBe("claworc:claworc");
+        expect(mode(container!, CONFIG)).toBe("600");
+      } finally {
+        expect(shim(container!, "config-set", [], before).exitCode).toBe(0);
+      }
+      expect(shim(container!, "config-set", ["--id", "bogus"], before).exitCode).toBe(2);
+    });
+
+    it("meta declares chat.stream and the gateway-served control UI", () => {
+      const meta = JSON.parse(shim(container!, "meta").stdout);
+      expect(meta.capabilities).toEqual(expect.arrayContaining(["chat.stream", "control-ui"]));
+      expect(meta.control_ui.port).toBe(18789);
+      const id = exec(container!, ["cat", "/run/s6/container_environment/CLAWORC_INSTANCE_ID"]).stdout.trim();
+      expect(meta.control_ui.base_path).toBe(id ? `/openclaw/${id}/` : "/openclaw/");
+    });
+
+    it("control-ui-auth prints the gateway token and loopback Origin", () => {
+      const r = shim(container!, "control-ui-auth");
+      expect(r.exitCode, r.stderr).toBe(0);
+      const doc = JSON.parse(r.stdout);
+      expect(doc.headers).toEqual({ Origin: "http://localhost:18789" });
+      const token = readConfig().gateway?.auth?.token;
+      if (token) expect(doc.query).toEqual({ token });
+      else expect(doc.query).toBeUndefined();
+      expect(shim(container!, "control-ui-auth", ["--bogus"]).exitCode).toBe(2);
+    });
+
+    describe("chat-stream", () => {
+      it("prints ready after the gateway handshake and exits 0 on EOF", () => {
+        const r = chatStream(container!, "vitest-stream", "true");
+        expect(r.exitCode, r.stderr).toBe(0);
+        expect(parseJsonl(r.stdout)).toEqual([{ v: 1, event: "ready" }]);
+      });
+
+      it("serializes two turns over one connection, each ended exactly once", { timeout: 200_000 }, () => {
+        const r = chatStream(
+          container!,
+          "vitest-stream-2",
+          "stream_send t-1 'say one'; stream_send t-2 'say two'; sleep 90",
+          180_000,
+        );
+        expect(r.exitCode, r.stderr).toBe(0);
+        const events = parseJsonl(r.stdout);
+        expect(events[0]).toEqual({ v: 1, event: "ready" });
+        const own = events.filter((e) => e.turn === "t-1" || e.turn === "t-2");
+        const order = own.filter((e) => e.event === "start" || e.event === "end").map((e) => `${e.event}:${e.turn}`);
+        // t-2 starts only after t-1 ended (or both were cut by EOF: t-1 aborted, t-2 never sent).
+        expect(order.slice(0, 2)).toEqual(["start:t-1", "end:t-1"]);
+        if (order.length > 2) expect(order).toEqual(["start:t-1", "end:t-1", "start:t-2", "end:t-2"]);
+        // Nothing from other sessions leaks in: every turn is ours or unsolicited (u-*).
+        for (const e of events.slice(1)) expect(String(e.turn)).toMatch(/^(t-1|t-2|u-.+)$/);
+      });
+
+      it("abort ends the in-flight turn with stop_reason aborted", { timeout: 300_000 }, () => {
+        // Route the LLM to a local server that accepts and never answers, so
+        // the turn is still in flight when abort arrives (with no LLM
+        // configured it would fail before the abort).
+        exec(container!, ["bash", "-c", `node -e 'require("net").createServer(() => {}).listen(40009, "127.0.0.1")' >/dev/null 2>&1 &`]);
+        const routing = {
+          proxy_url: "http://127.0.0.1:40009",
+          style: "openai",
+          default_model: "anthropic/claude-sonnet-4-5",
+          fallback_models: [],
+          providers: [{ key: "anthropic", api_key: "claworc-vk-x", api_type: "anthropic-messages", models: [{ id: "anthropic/claude-sonnet-4-5" }] }],
+        };
+        const cfg = shim(container!, "configure-llm", [], JSON.stringify(routing), 240_000);
+        expect(cfg.exitCode, cfg.stdout + cfg.stderr).toBe(0);
+        // configure-llm restarts the gateway; wait until it accepts connections again.
+        exec(container!, ["bash", "-c", "for i in $(seq 1 60); do (exec 3<>/dev/tcp/127.0.0.1/18789) 2>/dev/null && exit 0; sleep 1; done; exit 1"]);
+
+        const r = chatStream(container!, "vitest-stream-abort", "stream_send t-a hello; sleep 3; echo abort; sleep 4");
+        expect(r.exitCode, r.stderr).toBe(0);
+        const ends = parseJsonl(r.stdout).filter((e) => e.event === "end");
+        expect(ends).toEqual([expect.objectContaining({ turn: "t-a", stop_reason: "aborted" })]);
+      });
+
+      it("persists one claworc-owned device identity across connections", () => {
+        const file = "/home/claworc/.claworc/shim/gateway-device.json";
+        const first = exec(container!, ["cat", file]);
+        expect(first.exitCode, first.stderr).toBe(0);
+        const device = JSON.parse(first.stdout);
+        expect(device.deviceId).toMatch(/^[0-9a-f]{64}$/);
+        expect(exec(container!, ["stat", "-c", "%U %a", file]).stdout.trim()).toBe("claworc 600");
+        // A fresh connection reuses the paired identity rather than minting a new one.
+        expect(chatStream(container!, "vitest-stream-device", "true").exitCode).toBe(0);
+        expect(JSON.parse(exec(container!, ["cat", file]).stdout).deviceId).toBe(device.deviceId);
+      });
+    });
+
+    describe("configure-llm", () => {
+      const doc = {
+        proxy_url: "http://127.0.0.1:40001",
+        style: "openai",
+        default_model: "anthropic/claude-sonnet-4-5",
+        fallback_models: ["openai/gpt-5"],
+        providers: [
+          {
+            key: "anthropic",
+            api_key: "claworc-vk-anthropic",
+            api_type: "anthropic-messages",
+            models: [{ id: "anthropic/claude-sonnet-4-5" }],
+          },
+          {
+            key: "openai",
+            api_key: "claworc-vk-openai",
+            api_type: "openai-codex-responses",
+            models: [{ id: "openai/gpt-5" }],
+          },
+        ],
+      };
+
+      it("writes providers, the default model and the allowlist", { timeout: 300_000 }, () => {
+        const r = shim(container!, "configure-llm", [], JSON.stringify(doc), 240_000);
+        expect(r.exitCode, r.stdout + r.stderr).toBe(0);
+        const cfg = readConfig();
+        expect(cfg.models.providers.anthropic).toMatchObject({
+          baseUrl: doc.proxy_url,
+          api: "anthropic-messages",
+          apiKey: "claworc-vk-anthropic",
+          models: [{ id: "claude-sonnet-4-5", name: "claude-sonnet-4-5" }],
+        });
+        // Codex providers are declared as openai-responses to OpenClaw.
+        expect(cfg.models.providers.openai.api).toBe("openai-responses");
+        expect(cfg.agents.defaults.model).toEqual({
+          primary: "anthropic/claude-sonnet-4-5",
+          fallbacks: ["openai/gpt-5"],
+        });
+        expect(Object.keys(cfg.agents.defaults.models).sort()).toEqual([
+          "anthropic/claude-sonnet-4-5",
+          "openai/gpt-5",
+        ]);
+        expect(owner(container!, CONFIG)).toBe("claworc:claworc");
+      });
+
+      it("is idempotent: a repeat run leaves openclaw.json byte-identical", { timeout: 300_000 }, () => {
+        expect(shim(container!, "configure-llm", [], JSON.stringify(doc), 240_000).exitCode).toBe(0);
+        const first = readFile(container!, CONFIG);
+        expect(shim(container!, "configure-llm", [], JSON.stringify(doc), 240_000).exitCode).toBe(0);
+        expect(readFile(container!, CONFIG)).toBe(first);
+      });
+
+      it("rejects bad input with exit 2/6 and leaves config untouched", () => {
+        const before = readFile(container!, CONFIG);
+        expect(shim(container!, "configure-llm", ["--bogus"], "{}").exitCode).toBe(2);
+        expectValidationError(shim(container!, "configure-llm", [], "not json"));
+        expectValidationError(shim(container!, "configure-llm", [], JSON.stringify({ ...doc, style: "anthropic" })));
+        expect(readFile(container!, CONFIG)).toBe(before);
+      });
+    });
+
+    it("skill-install / skill-remove manage ~/.openclaw/skills/<name>", () => {
+      const src = "/tmp/vitest-openclaw-skill";
+      const dir = "/home/claworc/.openclaw/skills/vitest-skill";
+      try {
+        expect(sh(container!, `rm -rf ${src} && mkdir -p ${src} && echo hi > ${src}/SKILL.md`).exitCode).toBe(0);
+        const r = installSkill(container!, "vitest-skill", `tar -C ${src} -cf - .`);
+        expect(r.exitCode, r.stdout + r.stderr).toBe(0);
+        expect(readFile(container!, `${dir}/SKILL.md`)).toBe("hi\n");
+        expect(owner(container!, dir)).toBe("claworc:claworc");
+        expectValidationError(
+          installSkill(container!, "vitest-skill", `ln -sf /etc/passwd ${src}/l && tar -C ${src} -cf - .`),
+        );
+        expect(readFile(container!, `${dir}/SKILL.md`)).toBe("hi\n");
+      } finally {
+        expect(shim(container!, "skill-remove", ["--name", "vitest-skill"]).exitCode).toBe(0);
+      }
+      expect(exec(container!, ["test", "-e", dir]).exitCode).not.toBe(0);
+      expect(shim(container!, "skill-remove", ["--name", "vitest-skill"]).exitCode).toBe(0);
     });
   });
 

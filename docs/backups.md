@@ -1,6 +1,6 @@
 # Backups
 
-Claworc provides full backup and restore functionality for OpenClaw instances. Backups capture specified directories from the container filesystem as compressed tar archives stored on the control plane's local filesystem. The feature is admin-only.
+Claworc provides full backup and restore functionality for agent instances. Backups capture specified directories from the container filesystem as compressed tar archives stored on the control plane's local filesystem. The feature is admin-only.
 
 ## Overview
 

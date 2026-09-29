@@ -1,4 +1,8 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # chat-abort --session <key> — abort the in-flight turn for the session.
-# Exit 0 also when nothing was running (docs/shim.md).
-exec /usr/bin/node /opt/claworc/shim/lib/gateway-bridge.mjs abort "$@"
+# Exit 0 also when nothing was running.
+# Thin wrapper over the shared gateway bridge in lib/ (docs/shim.md).
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+exec /usr/bin/node "$SHIM_DIR/lib/gateway-bridge.mjs" abort "$@"

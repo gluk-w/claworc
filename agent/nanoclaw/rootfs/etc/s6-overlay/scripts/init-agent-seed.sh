@@ -12,8 +12,15 @@
 set -e
 
 WORKSPACE=/home/claworc/workspace
+SKILLS_DIR=/home/claworc/.claude/skills
 
 mkdir -p "$WORKSPACE"
+
+# Claworc skills sync target (shim meta skills_dir): user-level Claude Code
+# skills, discovered via the runner's settingSources ["project","user","local"]
+# with HOME=/home/claworc.
+mkdir -p "$SKILLS_DIR"
+chown claworc:claworc /home/claworc/.claude "$SKILLS_DIR"
 
 # Per-agent-group config read by the agent-runner at startup
 # (container/agent-runner/src/config.ts in the NanoClaw repo).

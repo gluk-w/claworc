@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # restart — restart the agent service (docs/shim.md). This image runs Hermes
 # per chat turn (no svc-agent daemon), so restart is a contract-legal no-op
 # success. If a long-running `hermes gateway` service is ever added as

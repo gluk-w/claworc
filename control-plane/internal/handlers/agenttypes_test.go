@@ -2,11 +2,14 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
@@ -262,6 +265,7 @@ func TestControlProxy_NoControlUIType(t *testing.T) {
 		t.Fatalf("create instance: %v", err)
 	}
 	user := createTestUser(t, "admin")
+	withControlUIClient(t, &fakeControlUIClient{err: agentshim.ErrControlUIUnsupported})
 
 	req := buildRequest(t, "GET", fmt.Sprintf("/openclaw/%d/", inst.ID), user,
 		map[string]string{"id": fmt.Sprintf("%d", inst.ID), "*": ""})
@@ -277,6 +281,87 @@ func TestControlProxy_NoControlUIType(t *testing.T) {
 	}
 }
 
+// fakeControlUIClient serves a fixed ControlUISpec (or error).
+type fakeControlUIClient struct {
+	agentshim.Client
+	spec  agentshim.ControlUISpec
+	err   error
+	calls int
+}
+
+func (f *fakeControlUIClient) ControlUI(context.Context) (agentshim.ControlUISpec, error) {
+	f.calls++
+	return f.spec, f.err
+}
+
+// withControlUIClient points the agent client seam at c and clears the
+// ControlUISpec cache (instance IDs repeat across per-test databases).
+func withControlUIClient(t *testing.T, c agentshim.Client) {
+	t.Helper()
+	orig := agentClientFor
+	agentClientFor = func(context.Context, uint) (agentshim.Client, error) { return c, nil }
+	controlUISpecCache = sync.Map{}
+	t.Cleanup(func() {
+		agentClientFor = orig
+		controlUISpecCache = sync.Map{}
+	})
+}
+
+// TestControlProxy_UsesAgentSpec: the upstream port, base path and the
+// WebSocket-only auth query/headers all come from the agent's ControlUISpec.
+func TestControlProxy_UsesAgentSpec(t *testing.T) {
+	setupAgentTypesTestDB(t)
+	inst := database.Instance{Name: "bot-ui", DisplayName: "UI", Status: "running", AgentType: "custom"}
+	if err := database.DB.Create(&inst).Error; err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	user := createTestUser(t, "admin")
+
+	var gotPath, gotQuery string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, "ok")
+	}))
+	defer upstream.Close()
+	upstreamPort := upstream.Listener.Addr().(*net.TCPAddr).Port
+
+	fake := &fakeControlUIClient{spec: agentshim.ControlUISpec{
+		Port: 9999, BasePath: "/ui/base/",
+		Query: map[string]string{"token": "secret"},
+	}}
+	withControlUIClient(t, fake)
+	origTunnel := controlUITunnelPort
+	var tunnelRemote int
+	controlUITunnelPort = func(_ context.Context, _ uint, remotePort int) (int, error) {
+		tunnelRemote = remotePort
+		return upstreamPort, nil
+	}
+	defer func() { controlUITunnelPort = origTunnel }()
+
+	for i := 0; i < 2; i++ {
+		req := buildRequest(t, "GET", fmt.Sprintf("/openclaw/%d/app.js", inst.ID), user,
+			map[string]string{"id": fmt.Sprintf("%d", inst.ID), "*": "app.js"})
+		w := httptest.NewRecorder()
+		ControlProxy(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+		}
+	}
+	if tunnelRemote != 9999 {
+		t.Errorf("tunnel remote port = %d, want 9999", tunnelRemote)
+	}
+	if gotPath != "/ui/base/app.js" {
+		t.Errorf("upstream path = %q, want /ui/base/app.js", gotPath)
+	}
+	if strings.Contains(gotQuery, "secret") {
+		t.Errorf("auth query must only be injected into WebSocket upgrades, got %q", gotQuery)
+	}
+	if fake.calls != 1 {
+		t.Errorf("ControlUI resolved %d times, want 1 (cached)", fake.calls)
+	}
+}
+
 func TestReservedEnvVarNames_IncludeShimContractVars(t *testing.T) {
 	t.Parallel()
 	want := []string{
@@ -285,7 +370,7 @@ func TestReservedEnvVarNames_IncludeShimContractVars(t *testing.T) {
 		"CLAWORC_AGENT_TOKEN", "CLAWORC_INITIAL_LLM_CONFIG", "CLAWORC_LLM_PROXY_URL",
 	}
 	have := map[string]bool{}
-	for _, n := range ReservedEnvVarNames {
+	for _, n := range ReservedEnvVarNames() {
 		have[n] = true
 	}
 	for _, n := range want {

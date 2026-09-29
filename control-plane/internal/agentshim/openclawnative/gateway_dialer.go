@@ -1,4 +1,4 @@
-package sshproxy
+package openclawnative
 
 import (
 	"context"
@@ -24,10 +24,9 @@ const (
 // completes the connect handshake. The returned conn is ready for chat.send /
 // sessions.reset / chat.abort frames.
 //
-// This helper has no claworc-internal dependencies (database, utils,
-// handlers, etc.) so it can be reused safely from both HTTP handlers and the
-// moderator service. Callers are responsible for tunnel port lookup and
-// gateway token decryption.
+// Only the legacy native adapter speaks the gateway protocol; shim images
+// bridge it inside the container (gateway-bridge.mjs). Callers are
+// responsible for tunnel port lookup and gateway token decryption.
 func DialGateway(ctx context.Context, localPort int, gatewayToken string) (*websocket.Conn, error) {
 	gwURL := fmt.Sprintf("ws://127.0.0.1:%d/gateway", localPort)
 	if gatewayToken != "" {

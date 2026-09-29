@@ -1,5 +1,12 @@
 # On-demand browser sessions (provider-pluggable, with K8s + Docker first)
 
+> **Status note (2026-09):** this design doc predates Hermes/NanoClaw support and describes
+> the OpenClaw rollout. The browser pod and control-plane plumbing are agent-agnostic, but
+> an agent can only reach CDP at `127.0.0.1:9222` if its image's sshd allows that reverse
+> listener (`PermitListen` in `rootfs/etc/ssh/sshd_config.d/claworc.conf`). Today only
+> `agent/openclaw` does; `agent/hermes`, `agent/nanoclaw` and `agent/template` allow just
+> the internal proxy port. The OpenClaw `browser` config notes below are OpenClaw-specific.
+
 ## Context
 
 Today every agent pod runs Chromium + Xvfb + TigerVNC + noVNC alongside OpenClaw, even when the user is not driving the browser. This wastes RAM and CPU on idle instances and ties the browser variant to the agent image. The user wants to:

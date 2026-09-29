@@ -8,6 +8,8 @@
  *   - the CLAWORC_INITIAL_LLM_CONFIG boot path (init-agent-seed →
  *     configure-llm) landed in config.yaml's claworc-managed block,
  *   - every shim verb per docs/shim.md, including validation and idempotency,
+ *   - configure-llm's OpenAI-client routing (/v1, bare model id, the key of
+ *     the provider the model names),
  *   - the chat JSONL contract with no LLM reachable (port 40001 is closed).
  *
  * Ordering matters: boot-state assertions first, mutating verbs after, and
@@ -24,12 +26,13 @@ import {
   shim,
   waitFor,
 } from "./helpers";
-import { llmConfigFor, hermesManagedBlock, hermesMeta, PROXY_URL, DEFAULT_MODEL } from "./fixtures";
+import { llmConfigFor, hermesManagedBlock, hermesMeta, hermesModelConfig, PROXY_URL } from "./fixtures";
 import {
   expectValidationError,
   owner,
   mode,
   readFile,
+  chatStream,
   runShimSelftest,
   shimContractTests,
 } from "./shim-contract";
@@ -153,12 +156,15 @@ describe.skipIf(!container)("hermes image", { timeout: 120_000 }, () => {
       expect(countLines(text, "# END claworc-managed")).toBe(1);
       const cfg = parseYaml(text);
       expect(cfg.security.tirith_enabled).toBe(false);
+      // OpenAI-client routing: /v1 on the proxy URL and the bare upstream
+      // model id — "anthropic/claude-sonnet-4-5" 404s upstream.
       expect(cfg.model).toEqual({
         provider: "custom",
-        base_url: PROXY_URL,
+        base_url: `${PROXY_URL}/v1`,
         api_key: BOOT_KEY,
-        default: DEFAULT_MODEL,
+        default: "claude-sonnet-4-5",
       });
+      expect(cfg.model).toEqual(hermesModelConfig(BOOT_DOC));
     });
 
     it("config.yaml managed block is byte-exact", () => {
@@ -175,6 +181,7 @@ describe.skipIf(!container)("hermes image", { timeout: 120_000 }, () => {
     // Same read as agent/hermes/shim/meta.
     versionCommand: "head -n1 /opt/hermes/VERSION | tr -d '\"\\\\'",
     executableExtras: ["lib/ensure-seed.sh"],
+    readOnlyFiles: ["lib/chat-send.py", "lib/configure-llm.py"],
   });
 
   it("config-get --id env returns .env bytes", () => {
@@ -209,21 +216,18 @@ describe.skipIf(!container)("hermes image", { timeout: 120_000 }, () => {
       expect(mode(container!, CONFIG)).toBe("644");
     });
 
-    it("rejects invalid YAML with exit 6 and leaves the file untouched", () => {
-      const r = shim(container!, "config-set", [], "foo: [unclosed\n");
-      expectValidationError(r);
-      expect(JSON.parse(r.stdout).error).toMatch(/^invalid YAML/);
-      expect(readFile(container!, CONFIG)).toBe(configSnapshot);
+    it("writes config.yaml verbatim even when it is not valid YAML", () => {
+      // The shim no longer validates — the frontend does, by meta's language.
+      const raw = "foo: [unclosed\n";
+      expect(shim(container!, "config-set", [], raw).exitCode).toBe(0);
+      expect(readFile(container!, CONFIG)).toBe(raw);
     });
 
-    it("round-trips .env and rejects non KEY=VALUE lines", () => {
-      const next = envSnapshot + "FOO=bar\nexport BAZ=qux\n";
+    it("round-trips .env verbatim, including non KEY=VALUE lines", () => {
+      const next = envSnapshot + "FOO=bar\nexport BAZ=qux\nthis is not kv\n";
       expect(shim(container!, "config-set", ["--id", "env"], next).exitCode).toBe(0);
       expect(readFile(container!, ENV_FILE)).toBe(next);
-
-      const bad = shim(container!, "config-set", ["--id", "env"], "this is not kv\n");
-      expectValidationError(bad);
-      expect(readFile(container!, ENV_FILE)).toBe(next);
+      expect(owner(container!, ENV_FILE)).toBe("claworc:claworc");
     });
   });
 
@@ -236,10 +240,16 @@ describe.skipIf(!container)("hermes image", { timeout: 120_000 }, () => {
       expect(shim(container!, "config-set", [], configSnapshot).exitCode).toBe(0);
     });
 
+    // The provider named by default_model's prefix is listed second: the
+    // shim must route with ITS key, not providers[0]'s.
     const newDoc = {
       ...BOOT_DOC,
+      proxy_url: `${PROXY_URL}/`,
       default_model: "openai/gpt-5",
-      providers: [{ key: "openai", api_key: "claworc-vk-rotated", api_type: "openai-completions" }],
+      providers: [
+        { key: "anthropic", api_key: "claworc-vk-other", api_type: "anthropic-messages" },
+        { key: "openai", api_key: "claworc-vk-rotated", api_type: "openai-completions" },
+      ],
     };
 
     it("rewrites only the managed block and is idempotent", () => {
@@ -256,12 +266,28 @@ describe.skipIf(!container)("hermes image", { timeout: 120_000 }, () => {
       expect(countLines(afterFirst, "# END claworc-managed")).toBe(1);
       const cfg = parseYaml(afterFirst);
       expect(cfg.security.tirith_enabled).toBe(false);
-      expect(cfg.model.default).toBe("openai/gpt-5");
-      expect(cfg.model.api_key).toBe("claworc-vk-rotated");
+      expect(cfg.model).toEqual({
+        provider: "custom",
+        base_url: `${PROXY_URL}/v1`,
+        api_key: "claworc-vk-rotated",
+        default: "gpt-5",
+      });
       expect(owner(container!, CONFIG)).toBe("claworc:claworc");
 
       expect(shim(container!, "configure-llm", [], JSON.stringify(newDoc)).exitCode).toBe(0);
       expect(readFile(container!, CONFIG)).toBe(afterFirst);
+    });
+
+    it("falls back to the first provider when no key matches the model prefix", () => {
+      const doc = {
+        ...BOOT_DOC,
+        default_model: "custom-model",
+        providers: [{ key: "zai", api_key: "claworc-vk-zai" }, { key: "openai", api_key: "claworc-vk-openai" }],
+      };
+      expect(shim(container!, "configure-llm", [], JSON.stringify(doc)).exitCode).toBe(0);
+      const cfg = parseYaml(readFile(container!, CONFIG));
+      expect(cfg.model.api_key).toBe("claworc-vk-zai");
+      expect(cfg.model.default).toBe("custom-model");
     });
 
     it("rejects the anthropic dialect with exit 6 and leaves config untouched", () => {
@@ -283,6 +309,21 @@ describe.skipIf(!container)("hermes image", { timeout: 120_000 }, () => {
       expect(events[1].code).toBe("empty_message");
       expect(events[1].fatal).toBe(true);
       expect(events[2].stop_reason).toBe("error");
+    });
+
+    it("chat-stream runs queued turns in order over one stream", () => {
+      const r = chatStream(container!, SESSION, "stream_send t-e1 '   '; stream_send t-e2 ''; sleep 3");
+      expect(r.exitCode, r.stderr).toBe(0);
+      const events = parseJsonl(r.stdout);
+      expect(events.map((e) => [e.event, e.turn ?? null, e.code ?? e.stop_reason ?? null])).toEqual([
+        ["ready", null, null],
+        ["start", "t-e1", null],
+        ["error", "t-e1", "empty_message"],
+        ["end", "t-e1", "error"],
+        ["start", "t-e2", null],
+        ["error", "t-e2", "empty_message"],
+        ["end", "t-e2", "error"],
+      ]);
     });
 
     it("streams a well-formed turn even when the LLM proxy is unreachable", { timeout: 330_000 }, () => {

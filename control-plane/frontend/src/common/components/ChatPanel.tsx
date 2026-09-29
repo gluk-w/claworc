@@ -28,6 +28,10 @@ interface ChatPanelProps {
   onSend: (content: string) => void;
   onStop: () => void;
   onNewChat: () => void;
+  /** Agent supports aborting a response; hides the Stop button when false. */
+  canStop?: boolean;
+  /** Agent supports resetting its history; hides "New chat" when false. */
+  canNewChat?: boolean;
   onReconnect: () => void;
   viewMode?: "chat-browser" | "chat-only";
   onViewModeChange?: (mode: "chat-browser" | "chat-only") => void;
@@ -154,6 +158,8 @@ export default function ChatPanel({
   onSend,
   onStop,
   onNewChat,
+  canStop = true,
+  canNewChat = true,
   onReconnect,
   viewMode,
   onViewModeChange,
@@ -194,13 +200,15 @@ export default function ChatPanel({
       {/* Header bar — fixed h-9 + h-6 buttons to match the VNC panel toolbar
           and stay stable as buttons swap in/out. */}
       <div className="flex items-center gap-2 px-3 h-9 bg-gray-800 border-b border-gray-700">
-        <button
-          onClick={onNewChat}
-          className="flex items-center gap-1 h-6 px-1.5 text-xs text-gray-400 hover:text-white rounded"
-          title="New chat"
-        >
-          <Plus size={14} /> New chat
-        </button>
+        {canNewChat && (
+          <button
+            onClick={onNewChat}
+            className="flex items-center gap-1 h-6 px-1.5 text-xs text-gray-400 hover:text-white rounded"
+            title="New chat"
+          >
+            <Plus size={14} /> New chat
+          </button>
+        )}
         {onViewModeChange && (
           <button
             onClick={() => onViewModeChange(viewMode === "chat-browser" ? "chat-only" : "chat-browser")}
@@ -229,7 +237,7 @@ export default function ChatPanel({
           <div className="text-gray-500 text-sm">
             {connectionState === "connected"
               ? "Send a message to start chatting..."
-              : "Connecting to gateway..."}
+              : "Connecting to agent..."}
           </div>
         ) : (
           messages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)
@@ -257,7 +265,7 @@ export default function ChatPanel({
           disabled={connectionState !== "connected"}
           className="flex-1 bg-gray-700 text-gray-200 text-sm rounded px-3 py-1.5 outline-none placeholder-gray-500 disabled:opacity-50 resize-none overflow-y-auto leading-5 max-h-40"
         />
-        {thinkingLabel && connectionState === "connected" ? (
+        {canStop && thinkingLabel && connectionState === "connected" ? (
           <button
             type="button"
             onClick={onStop}

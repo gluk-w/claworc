@@ -206,11 +206,9 @@ func (s *session) runTurn(message string) {
 	argv := []string{verbPath("chat-send"), "--session", s.key}
 	h, err := s.c.runner.Start(s.ctx, argv, strings.NewReader(message))
 	if err != nil {
-		s.emit(agentshim.Event{
-			V: 1, Kind: agentshim.EventError, Code: "shim_exec_failed",
-			Text: "chat-send: " + err.Error(), Fatal: true,
-		})
-		s.emit(agentshim.Event{V: 1, Kind: agentshim.EventEnd, StopReason: agentshim.StopError})
+		for _, ev := range execFailureEvents("", "chat-send: "+err.Error()) {
+			s.emit(ev)
+		}
 		return
 	}
 	s.setHandle(h)
@@ -269,19 +267,29 @@ func (s *session) runTurn(message string) {
 	// The exec ended without emitting an end event: the shim/transport
 	// itself failed. Synthesize a fatal error plus an error end so consumers
 	// always see a terminated turn.
-	text := fmt.Sprintf("chat-send exited (code %d) without an end event", code)
-	if werr != nil {
-		text = fmt.Sprintf("chat-send failed: %v", werr)
+	text := exitFailureText("chat-send", code, werr, h.StderrTail())
+	for _, ev := range execFailureEvents(lastTurn, text) {
+		s.emit(ev)
 	}
-	if detail := strings.TrimSpace(h.StderrTail()); detail != "" {
+}
+
+// execFailureEvents is the synthetic fatal error + error end reported for a
+// turn whose shim exec died without emitting an end event.
+func execFailureEvents(turn, text string) []agentshim.Event {
+	return []agentshim.Event{
+		{V: 1, Kind: agentshim.EventError, Turn: turn, Code: "shim_exec_failed", Text: text, Fatal: true},
+		{V: 1, Kind: agentshim.EventEnd, Turn: turn, StopReason: agentshim.StopError},
+	}
+}
+
+// exitFailureText describes a shim exec that ended without an end event.
+func exitFailureText(verb string, code int, werr error, stderrTail string) string {
+	text := fmt.Sprintf("%s exited (code %d) without an end event", verb, code)
+	if werr != nil {
+		text = fmt.Sprintf("%s failed: %v", verb, werr)
+	}
+	if detail := strings.TrimSpace(stderrTail); detail != "" {
 		text += ": " + capString(detail, stderrTailCap)
 	}
-	s.emit(agentshim.Event{
-		V: 1, Kind: agentshim.EventError, Turn: lastTurn,
-		Code: "shim_exec_failed", Text: text, Fatal: true,
-	})
-	s.emit(agentshim.Event{
-		V: 1, Kind: agentshim.EventEnd, Turn: lastTurn,
-		StopReason: agentshim.StopError,
-	})
+	return text
 }

@@ -430,7 +430,7 @@ func TestPublicWebhookTrigger_HappyMultipart(t *testing.T) {
 
 func TestPublicWebhookTrigger_BridgeError(t *testing.T) {
 	call := setupWebhookTest(t)
-	call.err = fmt.Errorf("dial gateway: connection refused")
+	call.err = fmt.Errorf("open agent session: connection refused")
 
 	inst := createTestInstanceWithUUID(t, "uuid-bridge-err")
 	keyRaw := "err-key-zzzz9999"
@@ -451,7 +451,7 @@ func TestPublicWebhookTrigger_BridgeError(t *testing.T) {
 	if log.StatusCode != http.StatusBadGateway {
 		t.Fatalf("log status = %d, want 502", log.StatusCode)
 	}
-	if !strings.Contains(log.ErrorMessage, "dial gateway") {
+	if !strings.Contains(log.ErrorMessage, "open agent session") {
 		t.Fatalf("log error = %q", log.ErrorMessage)
 	}
 }

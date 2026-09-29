@@ -236,13 +236,11 @@ describe.skipIf(!container)("nanoclaw image", { timeout: 120_000 }, () => {
       expect(mode(container!, CONFIG)).toBe("644");
     });
 
-    it("rejects invalid JSON with a parseable exit-6 error and leaves the file untouched", () => {
-      // Bun's error message contains quotes; config-set builds its {"error"}
-      // with printf + tr, so this guards that the result is still valid JSON.
-      const r = shim(container!, "config-set", [], '{"a": "b}\n');
-      expectValidationError(r);
-      expect(JSON.parse(r.stdout).error).toMatch(/^invalid JSON/);
-      expect(readFile(container!, CONFIG)).toBe(snapshot);
+    it("writes container.json verbatim even when it is not valid JSON", () => {
+      // The shim no longer validates — the frontend does, by meta's language.
+      const raw = '{"a": "b}\n';
+      expect(shim(container!, "config-set", [], raw).exitCode).toBe(0);
+      expect(readFile(container!, CONFIG)).toBe(raw);
     });
   });
 

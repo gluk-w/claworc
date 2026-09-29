@@ -6,25 +6,43 @@
 // ws://127.0.0.1:18789/gateway and translates gateway event frames into the
 // normalized Claworc chat JSONL on stdout.
 //
-// The connect handshake replicates the control plane's Go client
-// (control-plane/internal/sshproxy/gateway_dialer.go) frame-for-frame:
-//   1. token as ?token= query parameter + Origin header,
-//   2. read one challenge frame,
-//   3. send a `connect` req (minProtocol 3, maxProtocol 4, role operator,
-//      scopes ["operator.admin"], auth.token),
+// Connect handshake (a local backend client, not the browser Control UI):
+//   1. token as ?token= query parameter, no Origin header,
+//   2. read the connect.challenge frame (carries a nonce),
+//   3. send a `connect` req (client gateway-client/backend, minProtocol 3,
+//      maxProtocol 4, role operator, scopes ["operator.admin"], auth.token)
+//      plus a device identity signing the nonce. The Ed25519 key persists in
+//      DEVICE_FILE; the gateway pairs loopback devices silently.
 //   4. wait for the res frame, skipping event frames; ok=false => auth failure.
 //
-// Usage: gateway-bridge.mjs <send|abort|reset> --session <key> [--turn <id>]
+// Usage: gateway-bridge.mjs <send|abort|reset|stream> --session <key> [--turn <id>]
 // Node >= 22 only (relies on the built-in WebSocket global); no npm deps.
+//
+// `stream` backs the persistent chat-stream verb: one gateway connection for
+// the whole session, commands on stdin (`send <turn> <base64>`, `abort`,
+// `reset`), JSONL events on stdout — including turns the agent starts on its
+// own (cron, heartbeats) for this session key.
 
-import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import crypto, { randomUUID } from "node:crypto";
+import fs, { readFileSync } from "node:fs";
+import path from "node:path";
+import readline from "node:readline";
 import net from "node:net";
 import process from "node:process";
 
 const GATEWAY_PORT = Number(process.env.OPENCLAW_GATEWAY_PORT || 18789);
-const GATEWAY_ORIGIN = `http://127.0.0.1:${GATEWAY_PORT}`;
 const CONNECT_TIMEOUT_MS = 10_000;
+// Persistent gateway device identity (Ed25519), on the claworc volume so the
+// paired device survives restarts and image updates.
+const DEVICE_FILE = process.env.CLAWORC_SHIM_DEVICE_FILE || "/home/claworc/.claworc/shim/gateway-device.json";
+// SPKI DER of an Ed25519 public key = 12-byte header + 32-byte raw key.
+const ED25519_SPKI_HEADER_LEN = 12;
+// A local backend client (not the browser Control UI, which the gateway ties
+// to a browser Origin and a matching UI build id), authenticated by the
+// shared token plus its own paired device identity.
+const CLIENT = { id: "gateway-client", displayName: "claworc-shim", version: "1.0.0", platform: "linux", mode: "backend" };
+const ROLE = "operator";
+const SCOPES = ["operator.admin"];
 // Idle gap tolerated between gateway frames during a chat turn. Re-armed on
 // every frame, so an actively streaming agent is never cut off.
 const IDLE_TIMEOUT_MS = Number(process.env.CLAWORC_SHIM_CHAT_IDLE_MS || 300_000);
@@ -44,24 +62,23 @@ function die(code, msg) {
 }
 
 function resolveToken() {
-  if (process.env.OPENCLAW_GATEWAY_TOKEN) return process.env.OPENCLAW_GATEWAY_TOKEN;
-  if (process.env.CLAWORC_AGENT_TOKEN) return process.env.CLAWORC_AGENT_TOKEN;
-  // Fallback: read the token straight out of the agent config so the verbs
-  // work even in exec contexts that did not inherit the container env.
+  // The gateway authenticates against its own config, so that token wins;
+  // the env (which svc-agent/run copies into the config at boot) is only a
+  // fallback for a missing or unreadable config.
   try {
     const cfg = JSON.parse(readFileSync("/home/claworc/.openclaw/openclaw.json", "utf8"));
     const t = cfg?.gateway?.auth?.token;
     if (typeof t === "string" && t !== "") return t;
   } catch {
-    /* config missing/unreadable — proceed tokenless */
+    /* config missing/unreadable — fall back to the env */
   }
-  return "";
+  return process.env.OPENCLAW_GATEWAY_TOKEN || process.env.CLAWORC_AGENT_TOKEN || "";
 }
 
 function parseArgs(argv) {
   const cmd = argv[0];
-  if (!["send", "abort", "reset"].includes(cmd)) {
-    die(EXIT_USAGE, `usage: gateway-bridge.mjs <send|abort|reset> --session <key> [--turn <id>]`);
+  if (!["send", "abort", "reset", "stream"].includes(cmd)) {
+    die(EXIT_USAGE, `usage: gateway-bridge.mjs <send|abort|reset|stream> --session <key> [--turn <id>]`);
   }
   let session = "";
   let turn = "";
@@ -80,6 +97,72 @@ function parseArgs(argv) {
   if (!session) die(EXIT_USAGE, "--session is required");
   if (!turn) turn = `t-${randomUUID().slice(0, 8)}`;
   return { cmd, session, turn };
+}
+
+// chownToHomeOwner gives p to the owner of /home/claworc when running as
+// root, so the identity stays readable by the agent user.
+function chownToHomeOwner(p) {
+  if (typeof process.getuid !== "function" || process.getuid() !== 0) return;
+  try {
+    const st = fs.statSync("/home/claworc");
+    fs.chownSync(p, st.uid, st.gid);
+  } catch {
+    /* best effort */
+  }
+}
+
+// loadOrCreateDevice returns {deviceId, publicKeyPem, privateKeyPem}. The id
+// is sha256(raw public key) in hex, as the gateway derives it. Creation is
+// race-safe: the file is written to a temp name and hard-linked into place,
+// so concurrent verbs converge on whichever identity landed first.
+function loadOrCreateDevice() {
+  try {
+    const d = JSON.parse(readFileSync(DEVICE_FILE, "utf8"));
+    if (d?.deviceId && d?.publicKeyPem && d?.privateKeyPem) return d;
+  } catch {
+    /* missing or corrupt — create below */
+  }
+  const dir = path.dirname(DEVICE_FILE);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chownToHomeOwner(dir);
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+  const raw = publicKey.export({ type: "spki", format: "der" }).subarray(ED25519_SPKI_HEADER_LEN);
+  const device = {
+    deviceId: crypto.createHash("sha256").update(raw).digest("hex"),
+    publicKeyPem: publicKey.export({ type: "spki", format: "pem" }),
+    privateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }),
+  };
+  const tmp = `${DEVICE_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(device), { mode: 0o600 });
+  chownToHomeOwner(tmp);
+  try {
+    fs.linkSync(tmp, DEVICE_FILE);
+  } catch (err) {
+    if (err.code !== "EEXIST") throw err;
+    fs.unlinkSync(tmp);
+    return JSON.parse(readFileSync(DEVICE_FILE, "utf8"));
+  }
+  fs.unlinkSync(tmp);
+  return device;
+}
+
+// deviceProof signs the gateway's v3 device-auth payload:
+// v3|deviceId|clientId|clientMode|role|scopes|signedAtMs|token|nonce|platform|deviceFamily
+function deviceProof(device, nonce, token) {
+  const signedAt = Date.now();
+  const payload = [
+    "v3", device.deviceId, CLIENT.id, CLIENT.mode, ROLE, SCOPES.join(","),
+    String(signedAt), token || "", nonce, CLIENT.platform.trim().toLowerCase(), "",
+  ].join("|");
+  const signature = crypto
+    .sign(null, Buffer.from(payload, "utf8"), crypto.createPrivateKey(device.privateKeyPem))
+    .toString("base64url");
+  const publicKey = crypto
+    .createPublicKey(device.publicKeyPem)
+    .export({ type: "spki", format: "der" })
+    .subarray(ED25519_SPKI_HEADER_LEN)
+    .toString("base64url");
+  return { id: device.deviceId, publicKey, signature, signedAt, nonce };
 }
 
 // Quick TCP probe so "agent still booting" (exit 4) is distinguishable from
@@ -173,14 +256,8 @@ async function dialGateway(token) {
   let url = `ws://127.0.0.1:${GATEWAY_PORT}/gateway`;
   if (token) url += `?token=${encodeURIComponent(token)}`;
 
-  let ws;
-  try {
-    // Node's undici WebSocket accepts a non-standard `headers` option; the
-    // gateway expects a loopback Origin (mirrors gateway_dialer.go).
-    ws = new WebSocket(url, { headers: { Origin: GATEWAY_ORIGIN } });
-  } catch {
-    ws = new WebSocket(url);
-  }
+  // No Origin header: the bridge is a local non-browser client.
+  const ws = new WebSocket(url);
 
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -200,10 +277,13 @@ async function dialGateway(token) {
 
   const gw = new Gateway(ws);
 
-  // Phase 1: the gateway sends a connect.challenge frame first.
-  await gw.next(CONNECT_TIMEOUT_MS);
+  // Phase 1: the gateway sends a connect.challenge frame first; its nonce is
+  // signed into the device proof.
+  const challenge = await gw.next(CONNECT_TIMEOUT_MS);
+  if (challenge === null) throw new Error("gateway closed before the connect challenge");
+  const nonce = String(challenge?.payload?.nonce ?? "").trim();
 
-  // Phase 2: connect request — same frame shape as gateway_dialer.go.
+  // Phase 2: connect request — gateway_dialer.go plus the device proof.
   gw.send({
     type: "req",
     id: `connect-${Date.now()}`,
@@ -211,18 +291,13 @@ async function dialGateway(token) {
     params: {
       minProtocol: 3,
       maxProtocol: 4,
-      // The gateway validates client.id against an allowlist of known
-      // clients, so this must stay byte-identical to the control plane's
-      // dialer ("claworc-shim" gets rejected with "invalid connect params").
-      client: {
-        id: "openclaw-control-ui",
-        version: "1.0.0",
-        platform: "linux",
-        mode: "webchat",
-      },
-      role: "operator",
-      scopes: ["operator.admin"],
+      // client.id must be one of the gateway's known client ids
+      // ("claworc-shim" is rejected with "invalid connect params").
+      client: CLIENT,
+      role: ROLE,
+      scopes: SCOPES,
       auth: { token },
+      ...(nonce ? { device: deviceProof(loadOrCreateDevice(), nonce, token) } : {}),
     },
   });
 
@@ -462,11 +537,306 @@ async function cmdReset(session) {
   process.exit(EXIT_OK);
 }
 
+
+// ---------------------------------------------------------------------------
+// stream
+// ---------------------------------------------------------------------------
+
+// The gateway may report a canonicalized session key (e.g. "agent:main:<key>").
+function sessionMatches(eventKey, session) {
+  if (typeof eventKey !== "string" || eventKey === "") return false;
+  const a = eventKey.toLowerCase();
+  const b = session.toLowerCase();
+  return a === b || a.endsWith(`:${b}`);
+}
+
+// One turn's output state: start/assistant/tool/end lines with snapshot
+// throttling. Used for both our own turns and unsolicited ones.
+class Turn {
+  constructor(out, session, turn, runId) {
+    this.out = out;
+    this.session = session;
+    this.turn = turn;
+    this.runId = runId;
+    this.started = false;
+    this.ended = false;
+    this.lastText = "";
+    this.pending = null;
+    this.lastEmit = 0;
+    this.flushTimer = null;
+    this.idleTimer = null;
+  }
+
+  ensureStart() {
+    if (this.started) return;
+    this.started = true;
+    this.out({ v: 1, event: "start", session: this.session, turn: this.turn });
+  }
+
+  flush() {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    if (!this.pending) return;
+    this.ensureStart();
+    this.out({ v: 1, event: "assistant", turn: this.turn, message_id: this.pending.messageId, text: this.pending.text });
+    this.lastEmit = Date.now();
+    this.pending = null;
+  }
+
+  snapshot(messageId, text) {
+    this.lastText = text;
+    if (this.pending && this.pending.messageId !== messageId) this.flush();
+    this.pending = { messageId, text };
+    const wait = SNAPSHOT_THROTTLE_MS - (Date.now() - this.lastEmit);
+    if (wait <= 0) this.flush();
+    else if (!this.flushTimer) this.flushTimer = setTimeout(() => this.flush(), wait);
+  }
+
+  tool(data) {
+    this.flush();
+    this.ensureStart();
+    const ev = { v: 1, event: "tool", turn: this.turn, name: "tool", detail: data };
+    if (typeof data.name === "string" && data.name !== "") ev.name = data.name;
+    else if (typeof data.tool === "string" && data.tool !== "") ev.name = data.tool;
+    if (typeof data.phase === "string" && data.phase !== "") ev.phase = data.phase;
+    this.out(ev);
+  }
+
+  error(code, text) {
+    this.flush();
+    this.ensureStart();
+    this.out({ v: 1, event: "error", turn: this.turn, code: String(code), text: String(text), fatal: true });
+  }
+
+  finish(stopReason) {
+    if (this.ended) return;
+    this.ended = true;
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.flush();
+    this.ensureStart();
+    this.out({ v: 1, event: "end", turn: this.turn, stop_reason: stopReason, text: this.lastText });
+  }
+}
+
+async function cmdStream(session) {
+  if (!(await probePort(GATEWAY_PORT))) {
+    die(EXIT_NOT_READY, `gateway port ${GATEWAY_PORT} is not accepting connections (agent still booting?)`);
+  }
+  let gw;
+  try {
+    gw = await dialGateway(resolveToken());
+  } catch (err) {
+    die(err.timeout ? EXIT_TIMEOUT : EXIT_INTERNAL, `gateway handshake failed: ${err.message}`);
+  }
+
+  const out = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
+  out({ v: 1, event: "ready" });
+
+  const queue = []; // {kind: "send", turn, message} | {kind: "reset"}
+  const runs = new Map(); // runId -> Turn (own and unsolicited, until end)
+  const dropped = new Set(); // runIds of aborted own turns: ignore late frames
+  const resets = new Map(); // reqId -> resolve(res frame)
+  let active = null; // our own in-flight Turn
+  let busy = false; // a queued command (send or reset) is in progress
+  let seq = 0;
+
+  const send = (frame) => {
+    try {
+      gw.send(frame);
+    } catch {
+      /* socket closing — handled by the close path */
+    }
+  };
+
+  const armIdle = (t) => {
+    if (t.idleTimer) clearTimeout(t.idleTimer);
+    t.idleTimer = setTimeout(() => {
+      t.error("idle_timeout", `no gateway events for ${IDLE_TIMEOUT_MS}ms`);
+      endTurn(t, "error");
+    }, IDLE_TIMEOUT_MS);
+  };
+
+  const endTurn = (t, stopReason) => {
+    t.finish(stopReason);
+    runs.delete(t.runId);
+    if (t === active) {
+      active = null;
+      busy = false;
+      pump();
+    }
+  };
+
+  const pump = () => {
+    if (busy || queue.length === 0) return;
+    const item = queue.shift();
+    busy = true;
+    if (item.kind === "reset") {
+      const reqId = `reset-${++seq}`;
+      const timer = setTimeout(() => finishReset({ ok: false, error: { message: "timed out" } }), CONNECT_TIMEOUT_MS);
+      const finishReset = (res) => {
+        clearTimeout(timer);
+        if (!resets.delete(reqId)) return;
+        if (res && res.ok === false) {
+          const msg = String(res?.error?.message || "rejected");
+          if (!/not found|unknown|no such|missing/i.test(msg)) {
+            out({ v: 1, event: "error", code: "reset_failed", text: `sessions.reset failed: ${msg}`, fatal: false });
+          }
+        }
+        busy = false;
+        pump();
+      };
+      resets.set(reqId, finishReset);
+      send({ type: "req", id: reqId, method: "sessions.reset", params: { key: session } });
+      return;
+    }
+    const runId = randomUUID();
+    const t = new Turn(out, session, item.turn, runId);
+    t.reqId = `chat-${++seq}`;
+    active = t;
+    runs.set(runId, t);
+    t.ensureStart();
+    armIdle(t);
+    send({
+      type: "req",
+      id: t.reqId,
+      method: "chat.send",
+      params: { sessionKey: session, message: item.message, idempotencyKey: runId },
+    });
+  };
+
+  const abortActive = () => {
+    if (!active) return;
+    const t = active;
+    send({ type: "req", id: `abort-${++seq}`, method: "chat.abort", params: { sessionKey: session } });
+    dropped.add(t.runId);
+    endTurn(t, "aborted");
+  };
+
+  const shutdown = (code) => {
+    gw.close();
+    process.exit(code);
+  };
+
+  // Commands on stdin.
+  const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+  rl.on("line", (line) => {
+    const [cmd = "", turn = "", b64 = ""] = line.trim().split(/\s+/);
+    switch (cmd) {
+      case "send":
+        if (!turn) {
+          process.stderr.write("chat-stream: send without a turn id\n");
+          return;
+        }
+        queue.push({ kind: "send", turn, message: Buffer.from(b64, "base64").toString("utf8") });
+        pump();
+        break;
+      case "reset":
+        queue.push({ kind: "reset" });
+        pump();
+        break;
+      case "abort":
+        abortActive();
+        break;
+      case "":
+        break;
+      default:
+        process.stderr.write(`chat-stream: unknown command: ${cmd}\n`);
+    }
+  });
+  rl.on("close", () => {
+    // stdin EOF: drop queued commands, abort the in-flight turn, exit 0.
+    queue.length = 0;
+    abortActive();
+    shutdown(EXIT_OK);
+  });
+  const onSignal = () => {
+    queue.length = 0;
+    abortActive();
+    shutdown(EXIT_OK);
+  };
+  process.on("SIGTERM", onSignal);
+  process.on("SIGINT", onSignal);
+  process.on("SIGHUP", onSignal);
+
+  // Gateway frames.
+  for (;;) {
+    const frame = await gw.next(24 * 3600 * 1000).catch(() => undefined);
+    if (frame === undefined) continue; // no traffic for a day: keep waiting
+    if (frame === null) {
+      for (const t of runs.values()) {
+        t.error("gateway_closed", "gateway connection closed mid-turn");
+        t.finish("error");
+      }
+      process.stderr.write("gateway connection closed\n");
+      process.exit(EXIT_INTERNAL);
+    }
+
+    if (frame.type === "res") {
+      const r = resets.get(frame.id);
+      if (r) {
+        r(frame);
+        continue;
+      }
+      if (active && frame.id === active.reqId && frame.ok === false) {
+        const t = active;
+        t.error(frame?.error?.code || "gateway_error", frame?.error?.message || "chat.send rejected");
+        endTurn(t, "error");
+      }
+      continue;
+    }
+    if (frame.type !== "event") continue;
+    const payload = frame.payload;
+    if (!payload || typeof payload !== "object") continue;
+    const runId = String(payload.runId ?? "");
+    if (!runId || dropped.has(runId)) continue;
+    const data = payload.data && typeof payload.data === "object" ? payload.data : {};
+
+    let t = runs.get(runId);
+    if (!t) {
+      // Not one of ours: only turns the agent runs for this session key, and
+      // only from their start (a mid-run frame has no turn to attach to).
+      if (!sessionMatches(payload.sessionKey, session)) continue;
+      if (payload.stream !== "lifecycle" || data.phase !== "start") continue;
+      t = new Turn(out, session, `u-${runId.slice(0, 12)}`, runId);
+      runs.set(runId, t);
+    }
+    if (t === active) armIdle(t);
+
+    switch (payload.stream) {
+      case "assistant":
+        if (typeof data.text === "string" && data.text !== "") {
+          t.snapshot(String(runId), data.text);
+        }
+        break;
+      case "tool":
+        t.tool(data);
+        break;
+      case "lifecycle":
+        if (data.phase === "start") t.ensureStart();
+        else if (data.phase === "end") endTurn(t, "complete");
+        else if (data.phase === "error") {
+          t.error("agent_failed", data.error || data.message || "agent run failed");
+          endTurn(t, "error");
+        }
+        break;
+      default:
+        break;
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 
 const { cmd, session, turn } = parseArgs(process.argv.slice(2));
 
-const run = { send: () => cmdSend(session, turn), abort: () => cmdAbort(session), reset: () => cmdReset(session) }[cmd];
+const run = {
+  send: () => cmdSend(session, turn),
+  abort: () => cmdAbort(session),
+  reset: () => cmdReset(session),
+  stream: () => cmdStream(session),
+}[cmd];
 
 run().catch((err) => {
   die(err.timeout ? EXIT_TIMEOUT : EXIT_INTERNAL, `gateway-bridge ${cmd}: ${err.message}`);

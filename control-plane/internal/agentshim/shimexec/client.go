@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -39,6 +40,13 @@ type Meta struct {
 	LLM                LLMMeta                `json:"llm"`
 	SessionPersistence string                 `json:"session_persistence"`
 	ChatEndDetection   string                 `json:"chat_end_detection,omitempty"`
+	ControlUI          *ControlUIMeta         `json:"control_ui,omitempty"`
+}
+
+// ControlUIMeta is the control_ui block of the shim meta document.
+type ControlUIMeta struct {
+	Port     int    `json:"port"`
+	BasePath string `json:"base_path"`
 }
 
 // Has reports whether the meta document declares the given capability string.
@@ -56,6 +64,7 @@ func (m *Meta) Has(capability string) bool {
 func (m *Meta) capabilities() agentshim.Capabilities {
 	return agentshim.Capabilities{
 		Chat:         m.Has("chat"),
+		ChatStream:   m.Has("chat.stream"),
 		ChatAbort:    m.Has("chat.abort"),
 		SessionReset: m.Has("session.reset"),
 		Config:       m.Has("config"),
@@ -324,8 +333,9 @@ func (c *Client) ConfigureLLM(ctx context.Context, routing agentshim.LLMRouting)
 }
 
 // OpenSession implements agentshim.Client. It validates the shim probe (meta
-// must parse and declare chat) and returns a Session whose turns each run
-// one streaming `chat-send` exec.
+// must parse and declare chat) and returns a Session backed by one
+// long-lived `chat-stream` exec when the shim declares chat.stream, or by
+// one streaming `chat-send` exec per turn otherwise.
 func (c *Client) OpenSession(ctx context.Context, sessionKey string) (agentshim.Session, error) {
 	caps, err := c.Capabilities(ctx)
 	if err != nil {
@@ -334,5 +344,40 @@ func (c *Client) OpenSession(ctx context.Context, sessionKey string) (agentshim.
 	if !caps.Chat {
 		return nil, fmt.Errorf("open session: %w", ErrUnsupported)
 	}
+	if caps.ChatStream {
+		return newStreamSession(c, sessionKey), nil
+	}
 	return newSession(c, sessionKey), nil
+}
+
+// ControlUI implements agentshim.Client: the port/base path come from the
+// meta `control_ui` block, the auth query/headers from the optional
+// `control-ui-auth` verb (exit 3 or an empty document means none).
+func (c *Client) ControlUI(ctx context.Context) (agentshim.ControlUISpec, error) {
+	m, err := c.getMeta(ctx)
+	if err != nil {
+		return agentshim.ControlUISpec{}, err
+	}
+	if !m.Has("control-ui") || m.ControlUI == nil || m.ControlUI.Port <= 0 {
+		return agentshim.ControlUISpec{}, agentshim.ErrControlUIUnsupported
+	}
+	spec := agentshim.ControlUISpec{Port: m.ControlUI.Port, BasePath: m.ControlUI.BasePath}
+	out, err := c.run(ctx, nil, "control-ui-auth")
+	if err != nil {
+		if errors.Is(err, ErrUnsupported) {
+			return spec, nil
+		}
+		return agentshim.ControlUISpec{}, err
+	}
+	if strings.TrimSpace(out) != "" {
+		var auth struct {
+			Query   map[string]string `json:"query"`
+			Headers map[string]string `json:"headers"`
+		}
+		if err := json.Unmarshal([]byte(out), &auth); err != nil {
+			return agentshim.ControlUISpec{}, fmt.Errorf("control-ui-auth: parse: %w", err)
+		}
+		spec.Query, spec.Headers = auth.Query, auth.Headers
+	}
+	return spec, nil
 }

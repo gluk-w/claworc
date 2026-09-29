@@ -1,23 +1,9 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # config-get [--id <file-id>] — raw config file bytes on stdout (docs/shim.md).
-set -eu
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
 
-SHIM_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ENV_FILE=${CLAWORC_SHIM_ENV_FILE:-$SHIM_DIR/agent.env}
 
-ID=main
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --id) ID="$2"; shift 2 ;;
-        *) echo "unknown argument: $1" >&2; exit 2 ;;
-    esac
-done
-if [ "$ID" != "main" ]; then
-    echo "unknown config file id: $ID" >&2
-    exit 2
-fi
-if [ ! -f "$ENV_FILE" ]; then
-    echo "config file not found: $ENV_FILE" >&2
-    exit 1
-fi
-exec cat "$ENV_FILE"
+parse_id_arg main main -- "$@"
+cat_file "$ENV_FILE"

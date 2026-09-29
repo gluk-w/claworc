@@ -106,10 +106,11 @@ type fakeStream struct {
 	code int
 }
 
-func (h *fakeStream) Stdout() io.Reader  { return h.r }
-func (h *fakeStream) StderrTail() string { return h.tail }
-func (h *fakeStream) Terminate() error   { return nil }
-func (h *fakeStream) Wait() (int, error) { return h.code, nil }
+func (h *fakeStream) Stdin() io.WriteCloser { return nil }
+func (h *fakeStream) Stdout() io.Reader     { return h.r }
+func (h *fakeStream) StderrTail() string    { return h.tail }
+func (h *fakeStream) Terminate() error      { return nil }
+func (h *fakeStream) Wait() (int, error)    { return h.code, nil }
 
 const validMetaDoc = `{
   "contract": 1,

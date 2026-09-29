@@ -1,10 +1,11 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # health — exit 0 when the agent can take a chat turn, 4 while booting,
 # 1 when broken (docs/shim.md). The template has no daemon; "healthy" means
 # the configured CHAT_CMD executable resolves.
-set -u
+set -uo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
 
-SHIM_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+parse_no_args "$@"
 ENV_FILE=${CLAWORC_SHIM_ENV_FILE:-$SHIM_DIR/agent.env}
 
 if [ ! -f "$ENV_FILE" ]; then

@@ -87,7 +87,7 @@ func RunWebhookBridge(ctx context.Context, instanceID uint, sessionName, message
 	sess, err := webhookOpenSession(dialCtx, instanceID, webhookSessionPrefix+sessionName)
 	cancel()
 	if err != nil {
-		return "", fmt.Errorf("dial gateway: %w", err)
+		return "", fmt.Errorf("open agent session: %w", err)
 	}
 	defer sess.Close()
 
@@ -117,7 +117,7 @@ func RunWebhookBridge(ctx context.Context, instanceID uint, sessionName, message
 			if readCtx.Err() == context.DeadlineExceeded {
 				return "", fmt.Errorf("agent idle timeout: no events for %s", idle)
 			}
-			return "", fmt.Errorf("gateway read: %w", err)
+			return "", fmt.Errorf("agent read: %w", err)
 		}
 		switch ev.Kind {
 		case agentshim.EventAssistant:

@@ -7,7 +7,7 @@
 
 ## Overview
 
-When an OpenClaw instance needs to call a real LLM provider (Anthropic, OpenAI, Ollama, etc.),
+When an agent instance (OpenClaw, Hermes, NanoClaw, …) needs to call a real LLM provider (Anthropic, OpenAI, Ollama, etc.),
 it does not receive the raw provider API key. Instead, the control plane issues each instance a
 **virtual key** — a short-lived, per-instance, per-provider credential with the `claworc-vk-*` prefix.
 
@@ -26,8 +26,8 @@ Benefits:
 ## Architecture
 
 ```
-OpenClaw container
- └─ openclaw (uses claworc-vk-* token via Bearer / x-api-key / x-goog-api-key depending on SDK)
+Agent container
+ └─ agent (OpenClaw / Hermes / NanoClaw; uses claworc-vk-* token via Bearer / x-api-key / x-goog-api-key depending on SDK)
      │
      │  HTTP POST http://127.0.0.1:<port>/...
      │
@@ -96,70 +96,62 @@ return ""  // no key found — request will be rejected by provider
 The key is stored Fernet-encrypted at rest in the global settings table.
 
 
-## How OpenClaw Receives the Config
+## How the Agent Receives the Config
 
-All proxied models are configured as "custom" in OpenClaw as described on
-https://docs.openclaw.ai/concepts/model-providers#local-proxies-lm-studio-vllm-litellm-etc, even well known, 
-like Anthropic and OpenAI.
-
-When a provider is enabled for an instance, `ConfigureInstance` pushes two things into the
-container via SSH exec (running as the `claworc` user):
-
-### 1. Model config
-
-```
-openclaw config set agents.defaults.model '{"primary":"<model>","fallbacks":[...]}'
-```
-
-Sets the primary model and fallback list for default agents.
-
-### 2. LLM proxy providers → `models.providers`
-
-```
-openclaw config set models.providers '...' --json
-```
-
-Each enabled provider produces an entry like:
+The control plane never writes agent-specific model config itself. `ConfigureInstance`
+(`control-plane/internal/handlers/instances.go`) builds one agent-agnostic **routing
+document** (`buildLLMRouting` → `agentshim.LLMRouting`) and hands it to the instance's
+agent `Client` via the agentshim factory:
 
 ```json
 {
-  "anthropic": {
-    "baseUrl": "http://127.0.0.1:40001",
-    "api":     "anthropic-messages",
-    "apiKey":  "claworc-vk-<token>",
-    "models": [
-      {
-        "id": "claude-sonnet-4-6",
-        "name": "Claude Sonnet 4.6",
-        "contextWindow": 200000,
-        "maxTokens": 64000,
-        "cost": {"input": 3.0, "output": 15.0, "cacheRead": 0.3, "cacheWrite": 3.75}
-      }
-    ]
-  }
+  "proxy_url": "http://127.0.0.1:40001",
+  "default_model": "anthropic/claude-sonnet-4-6",
+  "fallback_models": [],
+  "providers": [
+    {"key": "anthropic", "api_key": "claworc-vk-<token>", "api_type": "anthropic-messages",
+     "models": [{"id": "anthropic/claude-sonnet-4-6"}]}
+  ]
 }
 ```
 
-- `api` matches the provider's `api_type` field (e.g. `anthropic-messages`, `openai-completions`)
-- `models` contains only the models enabled for this specific instance, with full metadata
-- `apiKey` is the virtual key (`claworc-vk-*`) — the real key never leaves the control plane
+- `api_key` is the virtual key (`claworc-vk-*`) — the real key never leaves the control plane.
+- `providers[].models` contains only the models enabled for this specific instance.
+- `api_type` is the provider's `api_type` field (see below); shims that don't need it ignore it.
 
-**Note on model discovery:** Because all Claworc-managed providers point to the local LLM proxy
-(`http://127.0.0.1:<port>`) rather than a first-party upstream URL, OpenClaw treats every configured
-provider as a **custom provider**. OpenClaw only discovers models for custom providers from the
-`models` array in the provider config — it does not perform catalog discovery for them. Therefore
-the `models` array is always populated with the full definition (id, name, cost, context window,
-reasoning, etc.) for each model enabled on the instance.
+The document reaches the agent two ways:
 
-After writing the config, `openclaw gateway stop` is called so OpenClaw picks up the new settings.
+1. **At first boot** — as the `CLAWORC_INITIAL_LLM_CONFIG` env var, which the image's
+   startup script pipes into its own `configure-llm` before starting the agent.
+2. **On change** (provider/model edits) — `Client.ConfigureLLM` runs the shim's
+   `configure-llm` verb over SSH with the document on stdin.
 
-Source: `control-plane/internal/handlers/instances.go` — `ConfigureInstance`.
+Each image's shim translates it into the agent's native config (contract:
+[shim.md § `configure-llm`](shim.md#configure-llm)):
+
+| Agent | Where the routing lands |
+|---|---|
+| OpenClaw | `models.providers` (one entry per provider, `baseUrl` = proxy, `api` = `api_type`, full model metadata) and `agents.defaults.model{,s}` via `openclaw config set` — `agent/openclaw/shim/lib/configure-llm.cjs` |
+| Hermes | Managed `model:` block in `~/.hermes/config.yaml` (`provider: custom`, `base_url` = proxy + `/v1`) — `agent/hermes/shim/lib/configure-llm.py` |
+| NanoClaw | Managed `llm.json` state file; `svc-agent` injects `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` into each agent-runner, default model written to the group's `container.json` (Anthropic dialect only) — `agent/nanoclaw/shim/lib/configure-llm.mjs` |
+| Legacy (pre-shim) OpenClaw images | `openclawnative` adapter runs `openclaw config set …` directly, then `openclaw gateway stop` so the gateway reloads — `control-plane/internal/agentshim/openclawnative/client.go` |
+
+**OpenClaw note on model discovery:** because every provider points at the local proxy
+rather than a first-party upstream URL, OpenClaw treats them all as **custom providers**
+([docs](https://docs.openclaw.ai/concepts/model-providers#local-proxies-lm-studio-vllm-litellm-etc))
+and only knows the models listed in each provider's `models` array. The OpenClaw shim
+therefore writes the full model definition (id, name, cost, context window, …) for each
+enabled model.
+
+**Single-endpoint agents** (OpenAI-client dialect, e.g. Hermes) must pick the virtual key
+of the provider named by `default_model`'s prefix, strip the `<provider>/` prefix from
+the model id, and append `/v1` to `proxy_url` — see `shim.md`.
 
 
 ## Supported API Types
 
-The `api_type` field on an `LLMProvider` controls how the LLM proxy forwards auth and how OpenClaw
-calls the provider.
+The `api_type` field on an `LLMProvider` controls how the LLM proxy forwards auth and, for dialect-aware
+agents such as OpenClaw, which client library the agent uses to call the provider.
 
 | `api_type` | Client lib (OpenClaw) | Auth sent to proxy | Base URL format | Example base URL |
 |---|---|---|---|---|
@@ -316,5 +308,7 @@ Rates come from the `cost` field of the matching model in the provider's `Models
 | `control-plane/internal/handlers/providers.go` | REST CRUD for `LLMProvider`, `GET /api/v1/usage-logs` |
 | `control-plane/internal/handlers/instances.go` | `resolveLLMProviders`, `enabled_providers` field handling |
 | `control-plane/internal/sshproxy/tunnel.go` | `CreateAgentListenerTunnel`, `TunnelTypeAgentListener` |
-| `control-plane/internal/database/models.go` | `LLMProvider`, `LLMProxyKey`, `LLMRequestLog` structs |
-| `control-plane/internal/config/openclaw.go` | `ConfigureInstance` — pushes `models.providers` into the container |
+| `control-plane/internal/database/models/models.go` | `LLMProvider`, `LLMProxyKey`, `LLMRequestLog` structs |
+| `control-plane/internal/handlers/instances.go` | `ConfigureInstance`, `buildLLMRouting`, `applyReservedAgentEnv` (`CLAWORC_INITIAL_LLM_CONFIG`) |
+| `control-plane/internal/agentshim/shimexec/client.go` | `ConfigureLLM` — runs the shim's `configure-llm` verb |
+| `agent/<agent>/shim/configure-llm` | Per-agent translation into native config |

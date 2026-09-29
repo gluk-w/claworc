@@ -15,7 +15,29 @@ package agentshim
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 )
+
+// ErrSkillsUnsupported is returned by Client.DeploySkill/RemoveSkill when the
+// agent does not declare the skills capability.
+var ErrSkillsUnsupported = errors.New("agent does not support skills")
+
+// SkillPathSafe reports whether a skill name or slash-separated relative file
+// path is safe to join beneath a skills directory: non-empty, relative, and
+// free of "."/".." segments. Adapters reject unsafe paths before any remote
+// operation.
+func SkillPathSafe(p string) bool {
+	if p == "" || strings.HasPrefix(p, "/") {
+		return false
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
+}
 
 // ConfigFile describes one agent config file exposed in the Config tab.
 type ConfigFile struct {
@@ -36,6 +58,7 @@ type LogFile struct {
 // the `meta` document of the shim contract (docs/shim.md).
 type Capabilities struct {
 	Chat         bool
+	ChatStream   bool // persistent `chat-stream` verb (docs/shim.md)
 	ChatAbort    bool
 	SessionReset bool
 	Config       bool
@@ -89,9 +112,37 @@ type Client interface {
 	Restart(ctx context.Context) error
 	// ConfigureLLM routes the agent's LLM traffic per the routing document.
 	ConfigureLLM(ctx context.Context, routing LLMRouting) error
+	// DeploySkill syncs one skill's files into <skills_dir>/<name>/ inside
+	// the container (files keys are slash-separated relative paths). Returns
+	// ErrSkillsUnsupported when the agent lacks the skills capability.
+	DeploySkill(ctx context.Context, name string, files map[string][]byte) error
+	// RemoveSkill deletes <skills_dir>/<name>. Removing a skill that was
+	// never deployed is not an error. Returns ErrSkillsUnsupported when the
+	// agent lacks the skills capability.
+	RemoveSkill(ctx context.Context, name string) error
 	// OpenSession opens a chat session for the opaque Claworc-chosen session
 	// key (e.g. "browser", "claworc-webhook-<name>").
 	OpenSession(ctx context.Context, sessionKey string) (Session, error)
+	// ControlUI describes how to reverse-proxy the agent's own web UI.
+	// Returns ErrUnsupported-wrapping errors when the agent has none.
+	ControlUI(ctx context.Context) (ControlUISpec, error)
+}
+
+// ErrControlUIUnsupported is returned by Client.ControlUI when the agent does
+// not declare the control-ui capability.
+var ErrControlUIUnsupported = errors.New("agent does not serve a control UI")
+
+// ControlUISpec tells the control plane how to reach and authenticate to the
+// agent's own web UI (meta `control_ui` plus the `control-ui-auth` verb).
+type ControlUISpec struct {
+	// Port is the container-local TCP port the UI listens on.
+	Port int `json:"port"`
+	// BasePath is the path prefix the UI is served under (e.g. "/openclaw/").
+	BasePath string `json:"base_path"`
+	// Query parameters to add to every proxied request (e.g. an auth token).
+	Query map[string]string `json:"query,omitempty"`
+	// Headers to set on every proxied request (e.g. Origin).
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // Session is one open chat channel to the agent. Sessions are not safe for
@@ -112,6 +163,9 @@ type Session interface {
 
 // Event kinds, per the chat event JSONL schema in docs/shim.md.
 const (
+	// EventReady is the first line of `chat-stream`; internal to the adapter
+	// and never forwarded to consumers.
+	EventReady     = "ready"
 	EventStart     = "start"
 	EventAssistant = "assistant"
 	EventTool      = "tool"

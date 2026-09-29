@@ -1,5 +1,5 @@
 // Package moderator implements an automated dispatcher and runner for
-// Kanban-style tasks targeting OpenClaw instances. It is intentionally
+// Kanban-style tasks targeting agent instances. It is intentionally
 // dependency-inverted: it imports only stdlib and defines narrow interfaces
 // (ports) for everything it needs from the rest of claworc. Adapters wiring
 // these ports to sshproxy / database / internalproxy live OUTSIDE this package
@@ -71,21 +71,39 @@ type FileEntry struct {
 
 // ---- Ports -------------------------------------------------------------
 
-// GatewayDialer opens an authenticated connection to an OpenClaw instance's
-// gateway WebSocket and returns it ready for chat.send / lifecycle frames.
-type GatewayDialer interface {
-	Dial(ctx context.Context, instanceID uint, sessionKey string) (GatewayConn, error)
+// AgentEvent is one normalized chat event from the agent (mirrors the shim
+// contract's chat event schema, docs/shim.md). Assistant Text is a
+// cumulative snapshot of the message identified by MessageID.
+type AgentEvent struct {
+	Kind       string // start | assistant | tool | error | end
+	Turn       string
+	MessageID  string
+	Text       string
+	Name       string // tool events
+	Phase      string // tool events
+	Detail     string // tool events: raw JSON detail, may be empty
+	Code       string // error events
+	Fatal      bool
+	StopReason string // end events: complete | aborted | error
 }
 
-// GatewayConn is a thin abstraction over a JSON WebSocket so the runner can
-// be tested with a fake.
-type GatewayConn interface {
-	Send(ctx context.Context, frame []byte) error
-	Recv(ctx context.Context) ([]byte, error)
+// AgentSession is an open chat session with an instance's agent.
+type AgentSession interface {
+	Send(ctx context.Context, message string) error
+	Recv(ctx context.Context) (AgentEvent, error)
 	Close() error
 }
 
-// WorkspaceFS reads and writes files inside an OpenClaw instance's workspace
+// Agents reaches instances' agents through the agent-agnostic shim layer.
+type Agents interface {
+	// OpenSession opens a chat session for the given session key.
+	OpenSession(ctx context.Context, instanceID uint, sessionKey string) (AgentSession, error)
+	// WorkspaceDir returns the agent's workspace directory, or "" when the
+	// agent does not declare one.
+	WorkspaceDir(ctx context.Context, instanceID uint) string
+}
+
+// WorkspaceFS reads and writes files inside an instance's workspace
 // via whatever channel the host wires up (typically SSH exec).
 type WorkspaceFS interface {
 	List(ctx context.Context, instanceID uint, dir string) ([]FileEntry, error)
@@ -96,7 +114,7 @@ type WorkspaceFS interface {
 }
 
 // LLMClient is the moderator's own LLM call path (for ranking, summarizing,
-// and evaluating). It is independent from whatever model the OpenClaw run
+// and evaluating). It is independent from whatever model the agent run
 // itself uses.
 type LLMClient interface {
 	Complete(ctx context.Context, providerKey, model, prompt string) (string, error)
@@ -127,7 +145,7 @@ type Settings interface {
 	SummaryInterval() time.Duration
 	ArtifactMaxBytes() int64
 	ArtifactStorageDir() string
-	WorkspaceDir() string   // e.g. "/home/claworc/.openclaw/workspace"
+	WorkspaceDir() string   // fallback when the agent declares no workspace_dir
 	TaskOutcomeDir() string // base dir on instance for task outputs, default "/home/claworc/tasks"
 }
 

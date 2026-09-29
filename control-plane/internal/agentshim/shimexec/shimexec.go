@@ -64,9 +64,11 @@ type Runner interface {
 	// returns the process exit code. A non-nil error means the transport
 	// itself failed (the exit code is then meaningless).
 	Run(ctx context.Context, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error)
-	// Start begins a streaming command (chat-send) and returns a handle to
-	// its stdio. The command's lifetime is bound to ctx: cancellation
-	// terminates it with SIGTERM semantics.
+	// Start begins a streaming command (chat-send, chat-stream) and returns
+	// a handle to its stdio. The command's lifetime is bound to ctx:
+	// cancellation terminates it with SIGTERM semantics. A nil stdin makes
+	// the command interactive: StreamHandle.Stdin then returns a writer
+	// whose Close delivers EOF to the command.
 	Start(ctx context.Context, argv []string, stdin io.Reader) (StreamHandle, error)
 	// ReadFile reads a remote file (agent.txt / agent.svg identity files).
 	ReadFile(ctx context.Context, path string) ([]byte, error)
@@ -74,6 +76,9 @@ type Runner interface {
 
 // StreamHandle is a running streaming command started by Runner.Start.
 type StreamHandle interface {
+	// Stdin is the command's writable stdin when Start was called with a
+	// nil stdin reader; nil otherwise.
+	Stdin() io.WriteCloser
 	// Stdout streams the command's stdout. It reaches EOF when the command
 	// exits (or is terminated).
 	Stdout() io.Reader

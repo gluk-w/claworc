@@ -1,16 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Eye, EyeOff, Trash2 } from "lucide-react";
+import { useReservedEnvVarNames } from "@common/hooks/useReservedEnvVarNames";
 
-// Keep in sync with ReservedEnvVarNames in control-plane/internal/handlers/envvars.go.
-const RESERVED = new Set([
-  "OPENCLAW_GATEWAY_TOKEN",
-  "CLAWORC_INSTANCE_ID",
-  "OPENCLAW_INITIAL_MODELS",
-  "OPENCLAW_INITIAL_PROVIDERS",
-  "CLAWORC_AGENT_TOKEN",
-  "CLAWORC_INITIAL_LLM_CONFIG",
-  "CLAWORC_LLM_PROXY_URL",
-]);
 
 const NAME_REGEX = /^[A-Z_][A-Z0-9_]*$/;
 
@@ -91,6 +82,7 @@ export default function EnvVarsEditor({
   const [showValues, setShowValues] = useState(false);
   const [showInheritedValues, setShowInheritedValues] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const reserved = useReservedEnvVarNames();
 
   // In inline mode, report the current valid map upward whenever rows change.
   // We keep the previous emit in a ref to avoid pushing identical updates that
@@ -102,7 +94,7 @@ export default function EnvVarsEditor({
     for (const r of rows) {
       if (r.name === "" && r.value === "") continue;
       if (!NAME_REGEX.test(r.name)) continue;
-      if (RESERVED.has(r.name)) continue;
+      if (reserved.has(r.name)) continue;
       if (map[r.name] !== undefined) continue; // duplicate; skip
       map[r.name] = r.value;
     }
@@ -111,7 +103,7 @@ export default function EnvVarsEditor({
       lastEmitRef.current = serialized;
       onChange(map);
     }
-  }, [rows, inline, onChange]);
+  }, [rows, inline, onChange, reserved]);
 
   const beginEdit = () => {
     setRows(buildInitialRows(values));
@@ -169,7 +161,7 @@ export default function EnvVarsEditor({
       if (!NAME_REGEX.test(row.name)) {
         return { errorMessage: `Invalid name "${row.name}": must match [A-Z_][A-Z0-9_]*.` };
       }
-      if (RESERVED.has(row.name)) {
+      if (reserved.has(row.name)) {
         return { errorMessage: `"${row.name}" is reserved for internal use.` };
       }
       if (seenNames.has(row.name)) {

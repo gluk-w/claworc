@@ -128,14 +128,22 @@ func (r *SSHRunner) Start(ctx context.Context, argv []string, stdin io.Reader) (
 	}
 	tail := newTailBuffer(stderrTailCap)
 	sess.Stderr = tail
-	sess.Stdin = stdin
+	var stdinW io.WriteCloser
+	if stdin == nil {
+		if stdinW, err = sess.StdinPipe(); err != nil {
+			sess.Close()
+			return nil, &agentshim.TransportError{Err: err}
+		}
+	} else {
+		sess.Stdin = stdin
+	}
 
 	if err := sess.Start(shellJoin(argv)); err != nil {
 		sess.Close()
 		return nil, &agentshim.TransportError{Err: err}
 	}
 
-	h := &sshStream{sess: sess, stdout: stdout, tail: tail, done: make(chan struct{})}
+	h := &sshStream{sess: sess, stdin: stdinW, stdout: stdout, tail: tail, done: make(chan struct{})}
 	go func() {
 		werr := sess.Wait()
 		h.mu.Lock()
@@ -172,6 +180,7 @@ func (r *SSHRunner) ReadFile(ctx context.Context, path string) ([]byte, error) {
 // sshStream is the StreamHandle for one streaming SSH exec.
 type sshStream struct {
 	sess   *gossh.Session
+	stdin  io.WriteCloser
 	stdout io.Reader
 	tail   *tailBuffer
 
@@ -184,8 +193,9 @@ type sshStream struct {
 	termOnce sync.Once
 }
 
-func (h *sshStream) Stdout() io.Reader  { return h.stdout }
-func (h *sshStream) StderrTail() string { return h.tail.String() }
+func (h *sshStream) Stdin() io.WriteCloser { return h.stdin }
+func (h *sshStream) Stdout() io.Reader     { return h.stdout }
+func (h *sshStream) StderrTail() string    { return h.tail.String() }
 
 // Terminate sends a best-effort SIGTERM and tears the exec channel down.
 // Channel teardown is the contract's documented abort path ("on SIGTERM (or

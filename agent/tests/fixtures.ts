@@ -66,21 +66,41 @@ export const CONFIG_LANGUAGES = ["json", "yaml", "toml", "ini", "shell", "plaint
 // ── Hermes ──────────────────────────────────────────────────────────────
 
 /**
- * The managed block agent/hermes/shim/configure-llm writes into
+ * What agent/hermes/shim/lib/configure-llm.py derives from a routing
+ * document: Hermes' "custom" provider is an OpenAI client, so base_url gets
+ * /v1, the model loses its "<provider>/" prefix, and the virtual key comes
+ * from the provider that prefix names (first provider as fallback).
+ */
+export function hermesModelConfig(doc: LlmRoutingDoc) {
+  const prefix = doc.default_model.includes("/") ? doc.default_model.split("/")[0] : "";
+  const provider = doc.providers.find((p) => prefix && p.key === prefix) ?? doc.providers[0];
+  const key = provider?.key ?? "";
+  const model =
+    key && doc.default_model.startsWith(`${key}/`) ? doc.default_model.slice(key.length + 1) : doc.default_model;
+  return {
+    provider: "custom",
+    base_url: doc.proxy_url ? `${doc.proxy_url.replace(/\/+$/, "")}/v1` : "",
+    api_key: provider?.api_key ?? "",
+    default: model,
+  };
+}
+
+/**
+ * The managed block agent/hermes/shim/lib/configure-llm.py writes into
  * ~/.hermes/config.yaml. Values are json.dumps'd (valid YAML double-quoted
  * scalars), so mirror that with JSON.stringify.
  */
 export function hermesManagedBlock(doc: LlmRoutingDoc): string[] {
-  const apiKey = doc.providers[0]?.api_key ?? "";
+  const m = hermesModelConfig(doc);
   return [
     "# BEGIN claworc-managed",
     "# Managed by the Claworc shim configure-llm verb - do not edit inside this block.",
     "# Routes all Hermes LLM traffic to the Claworc LLM proxy with a virtual key.",
     "model:",
     '  provider: "custom"',
-    `  base_url: ${JSON.stringify(doc.proxy_url)}`,
-    `  api_key: ${JSON.stringify(apiKey)}`,
-    `  default: ${JSON.stringify(doc.default_model)}`,
+    `  base_url: ${JSON.stringify(m.base_url)}`,
+    `  api_key: ${JSON.stringify(m.api_key)}`,
+    `  default: ${JSON.stringify(m.default)}`,
     "# END claworc-managed",
   ];
 }
@@ -91,7 +111,7 @@ export function hermesMeta(version: string) {
     contract: 1,
     shim_version: "0.1.0",
     agent: { name: "hermes", version },
-    capabilities: ["chat", "chat.abort", "session.reset", "config", "configure-llm", "restart", "skills"],
+    capabilities: ["chat", "chat.stream", "chat.abort", "session.reset", "config", "configure-llm", "restart", "skills"],
     config_files: [
       {
         id: "config",
@@ -143,7 +163,7 @@ export function nanoclawMeta(version: string) {
     contract: 1,
     shim_version: "0.1.0",
     agent: { name: "nanoclaw", version },
-    capabilities: ["chat", "chat.abort", "session.reset", "config", "configure-llm", "restart"],
+    capabilities: ["chat", "chat.stream", "chat.abort", "session.reset", "config", "configure-llm", "restart", "skills"],
     config_files: [
       {
         id: "main",
@@ -154,6 +174,7 @@ export function nanoclawMeta(version: string) {
       },
     ],
     workspace_dir: "/home/claworc/workspace",
+    skills_dir: "/home/claworc/.claude/skills",
     log_files: [{ path: "/var/log/claworc/agent.log", label: "Agent" }],
     llm: { styles: ["anthropic"] },
     session_persistence: "native",

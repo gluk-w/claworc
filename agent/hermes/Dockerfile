@@ -85,15 +85,21 @@ COPY shim/ /opt/claworc/shim/
 RUN chmod 0755 /opt/claworc/shim/meta \
                /opt/claworc/shim/health \
                /opt/claworc/shim/chat-send \
+               /opt/claworc/shim/chat-stream \
                /opt/claworc/shim/chat-abort \
                /opt/claworc/shim/session-reset \
                /opt/claworc/shim/config-get \
                /opt/claworc/shim/config-set \
                /opt/claworc/shim/configure-llm \
                /opt/claworc/shim/restart \
+               /opt/claworc/shim/skill-install \
+               /opt/claworc/shim/skill-remove \
                /opt/claworc/shim/shim-selftest \
                /opt/claworc/shim/lib/ensure-seed.sh && \
-    chmod 0644 /opt/claworc/shim/agent.txt /opt/claworc/shim/agent.svg
+    chmod 0644 /opt/claworc/shim/agent.txt /opt/claworc/shim/agent.svg \
+               /opt/claworc/shim/lib/shimlib.sh \
+               /opt/claworc/shim/lib/chat-send.py \
+               /opt/claworc/shim/lib/configure-llm.py
 
 RUN chmod +x /etc/s6-overlay/s6-rc.d/init-setup/up \
              /etc/s6-overlay/s6-rc.d/init-agent-seed/up \

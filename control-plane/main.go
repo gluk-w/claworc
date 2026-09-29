@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
 	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/auth"
 	"github.com/gluk-w/claworc/control-plane/internal/backup"
@@ -85,15 +86,26 @@ func main() {
 	handlers.SSHMgr = sshMgr
 	tunnelMgr := sshproxy.NewTunnelManager(sshMgr)
 	handlers.TunnelMgr = tunnelMgr
-	// The OpenClaw gateway WS tunnel only makes sense for the "openclaw"
-	// agent type; other agents don't run the gateway. The LLM gateway
-	// agent-listener tunnel stays for ALL types (not gated here).
+	// The OpenClaw gateway WS tunnel is only used by the legacy native
+	// OpenClaw adapter (pre-shim images: chat, health and the Kanban
+	// moderator dial the gateway through it). Shim images reach everything
+	// through shim verbs; their control UI gets an on-demand tunnel. The LLM
+	// gateway agent-listener tunnel stays for ALL types (not gated here).
 	tunnelMgr.SetGatewayTunnelPredicate(func(instanceID uint) bool {
 		var inst database.Instance
 		if err := database.DB.First(&inst, instanceID).Error; err != nil {
 			return true // fail open — behave as before when the row is unreadable
 		}
-		return inst.EffectiveAgentType() == database.AgentTypeOpenClaw
+		if inst.EffectiveAgentType() != database.AgentTypeOpenClaw {
+			return false
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		client, err := agentshim.DefaultFactory().ForInstance(ctx, instanceID)
+		if err != nil {
+			return true
+		}
+		return client.Type() != agentshim.ShimAdapterType
 	})
 	log.Printf("SSH manager initialized (public key: %d bytes)", len(sshPublicKey))
 
@@ -218,20 +230,6 @@ func main() {
 		}
 	}
 
-	// Build InstanceFactory: resolves an active SSH connection by instance name.
-	instanceFactory := func(fctx context.Context, name string) (sshproxy.Instance, error) {
-		var inst database.Instance
-		if err := database.DB.Where("name = ?", name).First(&inst).Error; err != nil {
-			return nil, fmt.Errorf("instance not found: %s", name)
-		}
-		client, err := sshMgr.WaitForSSH(fctx, inst.ID, 120*time.Second)
-		if err != nil {
-			return nil, err
-		}
-		return sshproxy.NewSSHInstance(client), nil
-	}
-	orchestrator.SetInstanceFactory(instanceFactory)
-
 	// On-demand browser bridge. Wired before the tunnel reconciler so the CDP
 	// dial provider returns a usable closure for non-legacy instances during
 	// the very first reconcile pass.
@@ -301,7 +299,7 @@ func main() {
 		_ = os.MkdirAll(artifactsDir, 0o755)
 		modSettings := &modwiring.Settings{DB: database.DB, DefaultDir: artifactsDir}
 		handlers.ModeratorSvc = moderator.New(moderator.Options{
-			Dialer:    &modwiring.GatewayDialer{DB: database.DB, Tunnels: tunnelMgr},
+			Agents:    &modwiring.Agents{},
 			Workspace: &modwiring.WorkspaceFS{DB: database.DB, SSH: sshMgr},
 			LLM:       &modwiring.LLMClient{DB: database.DB},
 			Store:     &modwiring.Store{DB: database.DB},
@@ -372,6 +370,7 @@ func main() {
 
 			// Agent types (static registry + resolved default images)
 			r.Get("/agent-types", handlers.ListAgentTypes)
+			r.Get("/env-vars/reserved", handlers.ListReservedEnvVars)
 
 			// Instances (ListInstances filters by role internally)
 			r.Get("/instances", handlers.ListInstances)

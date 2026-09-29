@@ -23,9 +23,6 @@ func TestRegistry_TypesOrdered(t *testing.T) {
 		if entries[i].DisplayName == "" {
 			t.Errorf("Types()[%d] (%s) has empty DisplayName", i, entries[i].Type)
 		}
-		if entries[i].LogPath == "" {
-			t.Errorf("Types()[%d] (%s) has empty LogPath", i, entries[i].Type)
-		}
 		if !entries[i].StaticCapabilities.Chat {
 			t.Errorf("Types()[%d] (%s) must declare the chat capability", i, entries[i].Type)
 		}

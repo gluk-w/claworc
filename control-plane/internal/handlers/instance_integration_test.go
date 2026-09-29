@@ -183,17 +183,6 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 		})
 	}
 
-	orchestrator.SetInstanceFactory(func(fctx context.Context, name string) (sshproxy.Instance, error) {
-		var inst database.Instance
-		if err := database.DB.Where("name = ?", name).First(&inst).Error; err != nil {
-			return nil, fmt.Errorf("instance not found: %s", name)
-		}
-		client, err := sshMgr.WaitForSSH(fctx, inst.ID, 120*time.Second)
-		if err != nil {
-			return nil, err
-		}
-		return sshproxy.NewSSHInstance(client), nil
-	})
 
 	if orch := orchestrator.Get(); orch != nil {
 		tunnelMgr.StartBackgroundManager(ctx, func(bctx context.Context) ([]uint, error) {

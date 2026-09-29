@@ -3,6 +3,7 @@ import { formatDistanceToNow } from "date-fns";
 import { GripVertical } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import ActionButtons from "./ActionButtons";
+import AgentTypeIcon from "./AgentTypeIcon";
 import { useSSHStatus } from "@common/hooks/useSSHStatus";
 import { buildSSHTooltip } from "@common/utils/sshTooltip";
 import type { Instance } from "@common/types/instance";
@@ -50,6 +51,11 @@ export default function AgentRow({
       </td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-2">
+          <AgentTypeIcon
+            agentType={instance.agent_type}
+            title={instance.agent_display_name || instance.agent_type}
+            className="w-4 h-4"
+          />
           <Link
             data-testid={`instance-link-${instance.id}`}
             to={`/instances/${instance.id}`}
@@ -57,11 +63,6 @@ export default function AgentRow({
           >
             {instance.display_name}
           </Link>
-          {instance.agent_display_name && (
-            <span className="px-1.5 py-0.5 text-xs font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-full">
-              {instance.agent_display_name}
-            </span>
-          )}
         </div>
       </td>
       <td className="px-4 py-3">

@@ -119,6 +119,10 @@ type TunnelManager struct {
 	// meaningless for non-OpenClaw agent types. nil means every instance gets
 	// one (backward compatible).
 	gatewayTunnelPredicate GatewayTunnelPredicate
+
+	// ensureMu serializes EnsureReverseTunnel so concurrent callers for the
+	// same port share one tunnel.
+	ensureMu sync.Mutex
 }
 
 // CDPDialProvider is the hook used by the reconciler to discover non-legacy
@@ -306,6 +310,36 @@ func (tm *TunnelManager) CreateReverseTunnel(ctx context.Context, instanceID uin
 	go tm.acceptLoop(tunnelCtx, tunnel, listener, client, remotePort, instanceID)
 
 	return boundPort, nil
+}
+
+// EnsureReverseTunnel returns the local port of an active reverse tunnel to
+// remotePort on the instance, creating one (with the given label) on demand.
+// Any existing active reverse tunnel to the same remote port is reused,
+// whatever its label (e.g. the legacy "Gateway" tunnel on 18789). Tunnels
+// created here are torn down with the instance's other tunnels and simply
+// recreated by the next call.
+func (tm *TunnelManager) EnsureReverseTunnel(ctx context.Context, instanceID uint, label string, remotePort int) (int, error) {
+	tm.ensureMu.Lock()
+	defer tm.ensureMu.Unlock()
+
+	tm.mu.RLock()
+	for _, t := range tm.tunnels[instanceID] {
+		if t.Config.Type == TunnelTypeReverse && t.Config.RemotePort == remotePort && t.Status == "active" {
+			port := t.LocalPort
+			tm.mu.RUnlock()
+			return port, nil
+		}
+	}
+	tm.mu.RUnlock()
+
+	// Detached from the request ctx: the tunnel outlives the request that
+	// created it (StopTunnelsForInstance cancels it).
+	port, err := tm.CreateReverseTunnel(context.WithoutCancel(ctx), instanceID, label, remotePort, 0)
+	if err != nil {
+		return 0, fmt.Errorf("create %s tunnel for instance %d: %w", label, instanceID, err)
+	}
+	log.Printf("%s tunnel for instance %d: localhost:%d -> agent:%d", label, instanceID, port, remotePort)
+	return port, nil
 }
 
 // CreateTunnelForVNC creates a reverse tunnel for the agent's VNC/Selkies service (port 3000),

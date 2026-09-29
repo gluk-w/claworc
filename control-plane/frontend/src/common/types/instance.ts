@@ -25,7 +25,8 @@ export interface Instance {
   agent_display_name: string;
   /** Whether this agent type serves a web control UI. */
   has_control_ui: boolean;
-  /** Static registry capabilities. Only present on the detail response. */
+  /** Agent capabilities: live from the agent's shim when reachable, else the
+   * static registry placeholder. Only present on the detail response. */
   agent_capabilities?: AgentCapabilities;
   status: "creating" | "running" | "restarting" | "stopping" | "stopped" | "error";
   status_message?: string;

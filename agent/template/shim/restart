@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # restart — restart the agent service (docs/shim.md). The template has no
 # long-running agent daemon (CHAT_CMD is spawned per turn), so this is a
 # no-op success. If you add an s6 service for your agent (conventionally

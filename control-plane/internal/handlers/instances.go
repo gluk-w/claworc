@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
-	"github.com/gluk-w/claworc/control-plane/internal/agentshim/openclawnative"
 	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
@@ -156,8 +155,9 @@ type instanceResponse struct {
 	AgentDisplayName string `json:"agent_display_name"`
 	// HasControlUI reports whether this agent type serves a web control UI.
 	HasControlUI bool `json:"has_control_ui"`
-	// AgentCapabilities carries the static registry capabilities. Only set on
-	// the single-instance GET response — list responses stay cheap (no
+	// AgentCapabilities carries the agent's capabilities: live from the
+	// shim's meta when reachable, else the static registry placeholder. Only
+	// set on the single-instance GET response — list responses stay cheap (no
 	// per-instance capability payloads, and never live SSH probing).
 	AgentCapabilities         *agentCapabilitiesResponse `json:"agent_capabilities,omitempty"`
 	Status                    string                     `json:"status"`
@@ -702,6 +702,9 @@ func restartInstanceAsyncWithToast(inst database.Instance, userID uint, title, m
 		title, message,
 		func(ctx context.Context) {
 			params := buildCreateParams(inst)
+			// A restart re-creates the container, possibly from a re-pulled
+			// image: re-probe the agent afterwards.
+			defer invalidateAgentCaches(inst.ID)
 			if err := orch.RestartInstance(ctx, inst.Name, params); err != nil {
 				log.Printf("Failed to restart instance %d: %v", inst.ID, err)
 				setStatusMessage(inst.ID, fmt.Sprintf("Failed: %v", err))
@@ -769,9 +772,9 @@ func instancePlacementParams(inst database.Instance) instancePlacementFields {
 // CLAWORC_INSTANCE_ID, CLAWORC_AGENT_TOKEN (the same secret that has always
 // served as the OpenClaw gateway token), CLAWORC_LLM_PROXY_URL, and
 // CLAWORC_INITIAL_LLM_CONFIG (the agentshim.LLMRouting JSON applied by the
-// image's configure-llm at first boot). The OpenClaw type additionally keeps
-// the legacy OPENCLAW_GATEWAY_TOKEN / OPENCLAW_INITIAL_MODELS /
-// OPENCLAW_INITIAL_PROVIDERS variables for backward compatibility.
+// image's configure-llm at first boot). Adapters may register extra legacy
+// variables via agentshim.RegisterLegacyEnv (OpenClaw keeps
+// OPENCLAW_GATEWAY_TOKEN / OPENCLAW_INITIAL_* for pre-shim images).
 func applyReservedAgentEnv(envVars map[string]string, inst database.Instance, agentTokenPlain string) {
 	envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
 	injectConnectionSecret(envVars, inst.ID)
@@ -787,16 +790,10 @@ func applyReservedAgentEnv(envVars map[string]string, inst database.Instance, ag
 		envVars["CLAWORC_INITIAL_LLM_CONFIG"] = string(b)
 	}
 
-	if inst.EffectiveAgentType() == agentshim.TypeOpenClaw {
-		if agentTokenPlain != "" {
-			envVars["OPENCLAW_GATEWAY_TOKEN"] = agentTokenPlain
-		}
-		if modelsJSON := openclawnative.BuildModelsJSON(routing); modelsJSON != "" {
-			envVars["OPENCLAW_INITIAL_MODELS"] = modelsJSON
-		}
-		if providersJSON, _ := openclawnative.BuildProvidersJSON(routing); providersJSON != "" {
-			envVars["OPENCLAW_INITIAL_PROVIDERS"] = providersJSON
-		}
+	// Adapter-specific backward-compat variables (e.g. OpenClaw's legacy
+	// OPENCLAW_* seeds for pre-shim images), registered by the adapter.
+	for k, v := range agentshim.LegacyEnv(inst.EffectiveAgentType(), routing, agentTokenPlain) {
+		envVars[k] = v
 	}
 }
 
@@ -1222,7 +1219,6 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	models := resolveInstanceModels(inst)
 	gatewayProviders := resolveLLMProviders(inst)
 
-
 	// Launch container creation asynchronously (image pull can take minutes)
 	startInstanceTask(taskmanager.TaskInstanceCreate, inst.ID, callerID(r), inst.DisplayName,
 		fmt.Sprintf("Creating instance %s", inst.DisplayName),
@@ -1289,12 +1285,11 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			// Reconcile models and providers via SSH (handles any config that couldn't
 			// be passed via env vars, and restarts the gateway for a clean state)
 			database.DB.First(&inst, inst.ID)
-			sshClient, err := SSHMgr.WaitForSSH(ctx, inst.ID, 120*time.Second)
-			if err != nil {
+			if _, err := SSHMgr.WaitForSSH(ctx, inst.ID, 120*time.Second); err != nil {
 				log.Printf("Failed to get SSH connection for instance %d during configure: %v", inst.ID, err)
 				return
 			}
-			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), inst.Name, models, gatewayProviders, config.Cfg.InternalProxyPort)
+			ConfigureInstance(ctx, orch, inst.ID, inst.Name, models, gatewayProviders, config.Cfg.InternalProxyPort)
 			deployActiveConnectionSkills(inst.ID)
 		})
 
@@ -1350,8 +1345,13 @@ func GetInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	status := resolveStatus(&inst, orchStatus)
 	resp := instanceToResponse(inst, status)
-	// Static registry capabilities — detail responses only; never live-probed.
-	if entry, ok := agentshim.Get(inst.EffectiveAgentType()); ok {
+	// Agent capabilities — detail responses only. Live (the agent's shim
+	// meta, cached) when the instance is running and reachable; otherwise the
+	// static registry placeholder for its type.
+	if caps, ok := liveAgentCapabilities(r.Context(), inst, status); ok {
+		resp.AgentCapabilities = toAgentCapabilitiesResponse(caps)
+		resp.HasControlUI = caps.ControlUI
+	} else if entry, ok := agentshim.Get(inst.EffectiveAgentType()); ok {
 		resp.AgentCapabilities = toAgentCapabilitiesResponse(entry.StaticCapabilities)
 	}
 	if orch != nil {
@@ -1449,7 +1449,10 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		database.DB.Model(&inst).Update("agent_type", *body.AgentType)
+		if *body.AgentType != inst.EffectiveAgentType() {
+			database.DB.Model(&inst).Update("agent_type", *body.AgentType)
+			invalidateAgentCaches(inst.ID)
+		}
 	}
 
 	// Update Brave API key
@@ -1746,12 +1749,11 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		instName := inst.Name
 		go func() {
 			bgCtx := context.Background()
-			sshClient, err := SSHMgr.WaitForSSH(bgCtx, instID, 30*time.Second)
-			if err != nil {
+			if _, err := SSHMgr.WaitForSSH(bgCtx, instID, 30*time.Second); err != nil {
 				log.Printf("Failed to get SSH connection for instance %d during configure: %v", instID, err)
 				return
 			}
-			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.InternalProxyPort)
+			ConfigureInstance(bgCtx, orch, instID, instName, models, gatewayProviders, config.Cfg.InternalProxyPort)
 			deployActiveConnectionSkills(instID)
 		}()
 	}
@@ -1926,6 +1928,7 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			log.Printf("Image updated successfully for instance %d", instID)
+			invalidateAgentCaches(instID)
 			database.DB.Model(&database.Instance{}).Where("id = ?", instID).Updates(map[string]interface{}{
 				"status":     "running",
 				"updated_at": time.Now().UTC(),
@@ -2000,6 +2003,7 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.ComposioConnection{})
 
 	database.DB.Delete(&inst)
+	invalidateAgentCaches(inst.ID)
 	var remaining int64
 	database.DB.Model(&database.Instance{}).Count(&remaining)
 	analytics.Track(r.Context(), analytics.EventInstanceDeleted, map[string]any{
@@ -2121,6 +2125,7 @@ func RestartInstance(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to restart instance: %v", err))
 			return
 		}
+		invalidateAgentCaches(inst.ID)
 	}
 
 	database.DB.Model(&inst).Updates(map[string]interface{}{
@@ -2453,12 +2458,11 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			database.DB.First(&inst, inst.ID)
 			// Don't carry over gateway keys from source — the clone gets its own instance ID
 			models := resolveInstanceModels(inst)
-			sshClient, err := SSHMgr.WaitForSSH(ctx, inst.ID, 120*time.Second)
-			if err != nil {
+			if _, err := SSHMgr.WaitForSSH(ctx, inst.ID, 120*time.Second); err != nil {
 				log.Printf("Failed to get SSH connection for clone %d during configure: %v", inst.ID, err)
 				return
 			}
-			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.InternalProxyPort)
+			ConfigureInstance(ctx, orch, inst.ID, cloneName, models, nil, config.Cfg.InternalProxyPort)
 		})
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -2582,15 +2586,22 @@ func ReorderInstances(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// agentClientFor resolves the agent Client for an instance. A seam so tests
+// can substitute a fake client.
+var agentClientFor = func(ctx context.Context, instanceID uint) (agentshim.Client, error) {
+	return agentshim.DefaultFactory().ForInstance(ctx, instanceID)
+}
+
 // ConfigureInstance sets the model configuration and gateway providers on a
 // running instance. It builds the agent-agnostic LLM routing document and
-// hands it to the OpenClaw adapter's ConfigureLLM, which applies it via the
-// openclaw CLI over SSH through inst.
+// hands it to the instance's agent Client (via the agentshim factory), which
+// applies it however the agent needs — the shim's `configure-llm` verb, or
+// the openclaw CLI for legacy pre-shim OpenClaw images.
 //
 // gatewayProviders (optional) maps provider key → gateway auth key for routing
 // the agent's LLM traffic through the internal proxy's LLM route.
 // gatewayPort is the port the internal proxy listens on (typically 40001).
-func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, inst sshproxy.Instance, name string, models []string, gatewayProviders map[string]LLMProxyProvider, gatewayPort int) {
+func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, instanceID uint, name string, models []string, gatewayProviders map[string]LLMProxyProvider, gatewayPort int) {
 	if len(models) == 0 && len(gatewayProviders) == 0 {
 		return
 	}
@@ -2602,7 +2613,11 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 	}
 
 	routing := buildLLMRouting(models, gatewayProviders, gatewayPort)
-	client := openclawnative.NewWithExec(inst)
+	client, err := agentClientFor(ctx, instanceID)
+	if err != nil {
+		log.Printf("Failed to resolve agent for %s: %v", utils.SanitizeForLog(name), err)
+		return
+	}
 	if err := client.ConfigureLLM(ctx, routing); err != nil {
 		log.Printf("Failed to configure models/providers for %s: %v", utils.SanitizeForLog(name), err)
 		return

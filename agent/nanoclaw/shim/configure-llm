@@ -1,22 +1,14 @@
-#!/bin/sh
-# configure-llm — Claworc shim verb (docs/shim.md). Thin wrapper: verbs are invoked
-# as root over SSH; agent state must stay claworc-owned, so drop privileges
-# and exec the Bun implementation in lib/. Bun is used because bun:sqlite is
-# the same SQLite driver NanoClaw's own agent-runner uses — no dependency of
-# our own.
-set -eu
+#!/usr/bin/env bash
+# configure-llm — route NanoClaw's LLM traffic through the Claworc LLM proxy
+# (docs/shim.md). Thin wrapper: verbs run as root over SSH but agent state
+# must stay claworc-owned, so drop privileges and exec the Bun implementation
+# in lib/. Bun is used because bun:sqlite is the same SQLite driver
+# NanoClaw's own agent-runner uses — no dependency of our own.
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
 
-SHIM_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 BUN=${CLAWORC_SHIM_BUN:-/usr/local/bin/bun}
 
-# configure-llm takes no arguments — the routing document is stdin. Reject
-# anything else as a usage error (exit 2, docs/shim.md).
-if [ $# -gt 0 ]; then
-    echo "unknown argument: $1" >&2
-    exit 2
-fi
-
-if [ "$(id -u)" = "0" ] && [ -x /command/s6-setuidgid ]; then
-    exec env HOME=/home/claworc /command/s6-setuidgid claworc "$BUN" "$SHIM_DIR/lib/configure-llm.mjs" "$@"
-fi
-exec "$BUN" "$SHIM_DIR/lib/configure-llm.mjs" "$@"
+# The routing document is stdin; there are no arguments.
+parse_no_args "$@"
+run_as_claworc "$BUN" "$SHIM_DIR/lib/configure-llm.mjs" "$@"

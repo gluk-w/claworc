@@ -2,10 +2,11 @@
 
 ## Overview
 
-OpenClaw instances run inside containers managed by the Claworc control plane. The
-control plane sets a fixed set of internal env vars at container start (gateway
-credentials, instance identity, initial model/provider config) and, in addition,
-injects two layers of admin-defined env vars:
+Agent instances (OpenClaw, Hermes, NanoClaw, or any custom image implementing the
+[shim contract](shim.md)) run inside containers managed by the Claworc control plane.
+The control plane sets a fixed set of internal env vars at container start (instance
+identity, agent auth token, initial LLM routing) and, in addition, injects two layers
+of admin-defined env vars:
 
 1. **Global env vars** — admin-defined, applied to every instance.
 2. **Per-instance env vars** — override globals on a per-instance basis when the
@@ -32,23 +33,39 @@ override, the API rejects the request with HTTP 400.
 
 ## Reserved names
 
-Only these four exact names are reserved for internal use and rejected on input:
+Two groups of names are reserved for internal use and rejected on input.
+
+**Shim-contract variables** — injected for every agent type (see
+[shim.md](shim.md#environment-variables-set-by-the-control-plane)):
 
 | Name | Purpose |
 |------|---------|
-| `OPENCLAW_GATEWAY_TOKEN` | Auth token securing the OpenClaw gateway WebSocket; the control plane presents it when proxying chat/control connections. |
-| `CLAWORC_INSTANCE_ID` | Numeric DB id of this instance, surfaced to OpenClaw. |
+| `CLAWORC_INSTANCE_ID` | Numeric DB id of this instance. |
+| `CLAWORC_CONNECTION_SECRET` | Per-instance secret the agent presents to the internal proxy's Connections broker. |
+| `CLAWORC_AGENT_TOKEN` | Secret for intra-container agent auth (e.g. OpenClaw uses it as its gateway token). |
+| `CLAWORC_INITIAL_LLM_CONFIG` | `configure-llm` routing document (JSON) the image applies at first boot. |
+| `CLAWORC_LLM_PROXY_URL` | Internal proxy URL, normally `http://127.0.0.1:40001`. |
+
+**Legacy adapter variables** — registered by an adapter via
+`agentshim.RegisterLegacyEnv` for images that predate the shim contract. Today
+only OpenClaw registers any:
+
+| Name | Purpose |
+|------|---------|
+| `OPENCLAW_GATEWAY_TOKEN` | Same value as `CLAWORC_AGENT_TOKEN`; pre-shim OpenClaw images read it for gateway auth. |
 | `OPENCLAW_INITIAL_MODELS` | JSON seed of primary/fallback models, applied before first run. |
 | `OPENCLAW_INITIAL_PROVIDERS` | JSON seed of providers (base URL, api_type, virtual key, models). |
 
-All other `OPENCLAW_*` and `CLAWORC_*` names are allowed — users often need to
-configure OpenClaw itself or related tooling through env vars that share those
-prefixes (e.g. `OPENCLAW_API_URL`, `CLAWORC_CUSTOM_FLAG`).
+All other `CLAWORC_*` and agent-specific names (`OPENCLAW_*`, `HERMES_*`, …) are
+allowed — users often need to configure the agent itself or related tooling
+through env vars that share those prefixes (e.g. `OPENCLAW_API_URL`,
+`CLAWORC_CUSTOM_FLAG`).
 
-The reserved list lives in exactly one place: `ReservedEnvVarNames` in
-`control-plane/internal/handlers/envvars.go`. The system-env-var injection in
-`CreateInstance` / `buildCreateParams` must iterate the same list so the two
-stay in sync.
+The reserved list is computed in one place: `ReservedEnvVarNames()` in
+`control-plane/internal/handlers/envvars.go` (contract names plus
+`agentshim.LegacyEnvNames()`). The injection itself is `applyReservedAgentEnv`
+in `control-plane/internal/handlers/instances.go`; when adding a contract
+variable, update both.
 
 Name format (enforced server-side and client-side): `^[A-Z_][A-Z0-9_]*$`.
 
@@ -113,13 +130,14 @@ into user-visible places inside the container:
 - **S6 services** — every `run` script uses `#!/command/with-contenv
   bash`, which re-exports vars captured by s6-overlay's `/init` into
   `/run/s6/container_environment/`. Services like `svc-agent` and
-  `svc-desktop` therefore see the vars directly.
+  `svc-cron` therefore see the vars directly.
 - **`docker exec` / `kubectl exec`** — inherit PID 1's environ from
   the container runtime.
 - **SSH sessions** — do **not** inherit sshd's environ. sshd runs the
   user through PAM and `login.defs`, which build a fresh env. To cover
-  this path, the init-setup oneshot
-  (`agent/openclaw/rootfs/etc/s6-overlay/scripts/init-setup.sh`) snapshots PID
+  this path, every Claworc image's init-setup oneshot
+  (`agent/<agent>/rootfs/etc/s6-overlay/scripts/init-setup.sh`, also in
+  `agent/template/`) snapshots PID
   1's env into two files at boot:
   - `/etc/environment` — read by `pam_env.so`, present in
     `/etc/pam.d/sshd`, `cron`, `login`, and `su`.

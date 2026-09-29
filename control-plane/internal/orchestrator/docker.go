@@ -20,7 +20,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
-	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
 
@@ -32,9 +31,8 @@ const (
 var volumeSuffixes = []string{"homebrew", "home"}
 
 type DockerOrchestrator struct {
-	client          *dockerclient.Client
-	available       bool
-	InstanceFactory sshproxy.InstanceFactory
+	client    *dockerclient.Client
+	available bool
 }
 
 func (d *DockerOrchestrator) Initialize(ctx context.Context) error {

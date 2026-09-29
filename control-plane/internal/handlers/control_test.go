@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 )
 
@@ -56,6 +57,7 @@ func TestControlProxy_NoTunnelManager(t *testing.T) {
 
 	inst := createTestInstance(t, "bot-test", "Test")
 	user := createTestUser(t, "admin")
+	withControlUIClient(t, &fakeControlUIClient{spec: agentshim.ControlUISpec{Port: 18789}})
 
 	req := buildRequest(t, "GET", fmt.Sprintf("/openclaw/%d/status", inst.ID), user, map[string]string{
 		"id": fmt.Sprintf("%d", inst.ID),
@@ -71,7 +73,7 @@ func TestControlProxy_NoTunnelManager(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
 		t.Fatalf("expected text/html content type, got %s", ct)
 	}
-	if !strings.Contains(w.Body.String(), "Connecting to OpenClaw") {
+	if !strings.Contains(w.Body.String(), "Connecting to agent UI") {
 		t.Fatalf("expected connecting page HTML, got: %s", w.Body.String())
 	}
 }
@@ -85,6 +87,7 @@ func TestControlProxy_NoActiveTunnel(t *testing.T) {
 
 	inst := createTestInstance(t, "bot-test", "Test")
 	user := createTestUser(t, "admin")
+	withControlUIClient(t, &fakeControlUIClient{spec: agentshim.ControlUISpec{Port: 18789}})
 
 	req := buildRequest(t, "GET", fmt.Sprintf("/openclaw/%d/status", inst.ID), user, map[string]string{
 		"id": fmt.Sprintf("%d", inst.ID),
@@ -100,7 +103,7 @@ func TestControlProxy_NoActiveTunnel(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
 		t.Fatalf("expected text/html content type, got %s", ct)
 	}
-	if !strings.Contains(w.Body.String(), "Connecting to OpenClaw") {
+	if !strings.Contains(w.Body.String(), "Connecting to agent UI") {
 		t.Fatalf("expected connecting page HTML, got: %s", w.Body.String())
 	}
 }
@@ -151,7 +154,11 @@ func TestControlProxy_HTTPProxy(t *testing.T) {
 	TunnelMgr = tm
 	defer func() { TunnelMgr = nil }()
 
-	// Create a gateway tunnel pointing to our backend's port
+	withControlUIClient(t, &fakeControlUIClient{spec: agentshim.ControlUISpec{
+		Port: backendPort, BasePath: fmt.Sprintf("/openclaw/%d/", inst.ID),
+	}})
+
+	// A legacy gateway tunnel to the same port must be reused, not duplicated.
 	gwPort, err := tm.CreateTunnelForGateway(context.Background(), inst.ID, backendPort)
 	if err != nil {
 		t.Fatalf("create gateway tunnel: %v", err)
@@ -181,6 +188,12 @@ func TestControlProxy_HTTPProxy(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("expected Content-Type application/json, got %s", ct)
 	}
+	if want := fmt.Sprintf(`"path":"/openclaw/%d/some/path"`, inst.ID); !strings.Contains(w.Body.String(), want) {
+		t.Errorf("upstream path: want %s in %s", want, w.Body.String())
+	}
+	if n := len(tm.GetTunnelsForInstance(inst.ID)); n != 1 {
+		t.Errorf("expected the gateway tunnel to be reused (1 tunnel), got %d", n)
+	}
 }
 
 // --- ControlProxy WebSocket tests ---
@@ -189,7 +202,9 @@ func TestControlProxy_WebSocketProxy(t *testing.T) {
 	setupTestDB(t)
 
 	// Start a WebSocket echo server simulating the gateway service
+	var gotToken, gotOrigin string
 	echoServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotToken, gotOrigin = r.URL.Query().Get("token"), r.Header.Get("Origin")
 		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 			InsecureSkipVerify: true,
 		})
@@ -245,10 +260,13 @@ func TestControlProxy_WebSocketProxy(t *testing.T) {
 	TunnelMgr = tm
 	defer func() { TunnelMgr = nil }()
 
-	_, err = tm.CreateTunnelForGateway(context.Background(), inst.ID, backendPort)
-	if err != nil {
-		t.Fatalf("create gateway tunnel: %v", err)
-	}
+	// No pre-created tunnel: ControlProxy creates one on demand to the
+	// agent-declared port.
+	withControlUIClient(t, &fakeControlUIClient{spec: agentshim.ControlUISpec{
+		Port:    backendPort,
+		Query:   map[string]string{"token": "tok-1"},
+		Headers: map[string]string{"Origin": "http://localhost:18789"},
+	}})
 
 	user := createTestUser(t, "admin")
 
@@ -294,6 +312,9 @@ func TestControlProxy_WebSocketProxy(t *testing.T) {
 	if string(data) != "gw:test-control" {
 		t.Errorf("expected 'gw:test-control', got '%s'", string(data))
 	}
+	if gotToken != "tok-1" || gotOrigin != "http://localhost:18789" {
+		t.Errorf("upstream auth: token=%q origin=%q", gotToken, gotOrigin)
+	}
 
 	conn.Close(websocket.StatusNormalClosure, "")
 }
@@ -305,6 +326,7 @@ func TestControlProxy_WebSocketNoTunnel(t *testing.T) {
 
 	inst := createTestInstance(t, "bot-test", "Test")
 	user := createTestUser(t, "admin")
+	withControlUIClient(t, &fakeControlUIClient{spec: agentshim.ControlUISpec{Port: 18789}})
 
 	// Create a proxy server
 	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
