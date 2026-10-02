@@ -18,13 +18,13 @@ import (
 )
 
 // sessionNamePattern restricts session_name to Latin letters, digits,
-// dashes, underscores, and dots so it is safe to use as the OpenClaw
-// sessionKey, log column value, and attachment path component without
+// dashes, underscores, and dots so it is safe to use as the agent
+// session key, log column value, and attachment path component without
 // escaping.
 var sessionNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-// runWebhookBridge is the call-out into the OpenClaw gateway bridge. It is
-// a package-level var so unit tests can stub the SSH+gateway round-trip.
+// runWebhookBridge is the call-out into the agent chat bridge. It is a
+// package-level var so unit tests can stub the SSH + agent round-trip.
 var runWebhookBridge = RunWebhookBridge
 
 // contextWithChi returns a context that carries the supplied chi route

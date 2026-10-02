@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# session-reset --session <key> — clear conversation history for the key by
+# removing its transcript; the next chat-send starts fresh. Idempotent
+# (docs/shim.md).
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+STATE_DIR=${CLAWORC_SHIM_STATE_DIR:-/home/claworc/.claworc/shim}
+
+parse_session_args "$@"
+rm -f "$STATE_DIR/sessions/$SHIM_SESSION_SLUG.log"

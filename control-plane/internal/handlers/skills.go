@@ -5,22 +5,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
 	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
-	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/taskmanager"
 	"github.com/go-chi/chi/v5"
 	"gopkg.in/yaml.v3"
@@ -791,6 +791,10 @@ type deploySkillResult struct {
 	Status         string   `json:"status"`
 	Error          string   `json:"error,omitempty"`
 	MissingEnvVars []string `json:"missing_env_vars,omitempty"`
+	// Unsupported marks the agent-lacks-skills-capability case so callers
+	// that fan out over instances (Composio reconnect redeploys) can skip
+	// logging it as a failure.
+	Unsupported bool `json:"-"`
 }
 
 func DeploySkill(w http.ResponseWriter, r *http.Request) {
@@ -856,7 +860,7 @@ func DeploySkill(w http.ResponseWriter, r *http.Request) {
 			wg.Add(1)
 			go func(idx int, instanceID uint) {
 				defer wg.Done()
-				result := deployToInstance(instanceID, slug, fileMap)
+				result := deployToInstance(r.Context(), instanceID, slug, fileMap)
 				result.MissingEnvVars = computeMissingEnvVars(instanceID, requiredEnvVars, globalEnvNames)
 				results[idx] = result
 			}(i, instID)
@@ -885,7 +889,7 @@ func DeploySkill(w http.ResponseWriter, r *http.Request) {
 			Title:        fmt.Sprintf("Deploying %s to %s", slug, instanceLabel),
 			Run: func(ctx context.Context, h *taskmanager.Handle) error {
 				h.UpdateMessage("uploading skill files")
-				result := deployToInstance(instanceID, slug, fileMap)
+				result := deployToInstance(ctx, instanceID, slug, fileMap)
 				if result.Status != "ok" {
 					if result.Error != "" {
 						return fmt.Errorf("%s", result.Error)
@@ -1015,40 +1019,34 @@ func buildSkillFileMap(ctx context.Context, slug, source, version string) (map[s
 	return fileMap, nil
 }
 
-func deployToInstance(instanceID uint, slug string, fileMap map[string][]byte) deploySkillResult {
+// deployToInstance syncs a skill's files into the instance's agent-declared
+// skills directory through the agentshim layer (live meta for shim images,
+// static values for legacy OpenClaw). The agent shim decides the destination
+// — e.g. ~/.openclaw/skills for OpenClaw, ~/.hermes/skills for Hermes — and
+// refuses agents that don't declare the skills capability.
+func deployToInstance(ctx context.Context, instanceID uint, slug string, fileMap map[string][]byte) deploySkillResult {
 	result := deploySkillResult{InstanceID: instanceID}
 
-	client, ok := SSHMgr.GetConnection(instanceID)
-	if !ok {
+	client, err := agentshim.DefaultFactory().ForInstance(ctx, instanceID)
+	if err != nil {
 		result.Status = "error"
-		result.Error = "SSH not connected"
+		result.Error = "Agent unavailable: " + err.Error()
 		return result
 	}
 
-	// Use path (not filepath) for remote Unix paths
-	remoteBase := "/home/claworc/.openclaw/skills/" + slug
-
-	if err := sshproxy.CreateDirectory(client, remoteBase); err != nil {
+	if err := client.DeploySkill(ctx, slug, fileMap); err != nil {
 		result.Status = "error"
-		result.Error = "Failed to create skill directory: " + err.Error()
+		var te *agentshim.TransportError
+		switch {
+		case errors.Is(err, agentshim.ErrSkillsUnsupported):
+			result.Error = "Agent does not support skills"
+			result.Unsupported = true
+		case errors.As(err, &te):
+			result.Error = "SSH not connected: " + te.Err.Error()
+		default:
+			result.Error = "Failed to deploy skill: " + err.Error()
+		}
 		return result
-	}
-
-	for name, data := range fileMap {
-		remotePath := path.Join(remoteBase, name)
-		parentDir := path.Dir(remotePath)
-		if parentDir != remoteBase {
-			if err := sshproxy.CreateDirectory(client, parentDir); err != nil {
-				result.Status = "error"
-				result.Error = "Failed to create directory " + parentDir + ": " + err.Error()
-				return result
-			}
-		}
-		if err := sshproxy.WriteFile(client, remotePath, data); err != nil {
-			result.Status = "error"
-			result.Error = "Failed to write " + name + ": " + err.Error()
-			return result
-		}
 	}
 
 	result.Status = "ok"

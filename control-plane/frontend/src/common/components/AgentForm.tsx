@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useQueries } from "@tanstack/react-query";
 import { useSettings } from "@common/hooks/useSettings";
+import { useAgentTypes } from "@common/hooks/useAgentTypes";
 import { useProviders } from "@common/hooks/useProviders";
 import { useAuth } from "@common/contexts/AuthContext";
 import { useHealth } from "@common/hooks/useHealth";
@@ -15,8 +16,39 @@ import AffinityEditor from "@common/components/AffinityEditor";
 import PortsEditor from "@common/components/PortsEditor";
 import StickyActionBar from "@common/components/StickyActionBar";
 import ConfirmDialog from "@common/components/ConfirmDialog";
+import AgentTypeIcon from "@common/components/AgentTypeIcon";
 import type { InstanceCreatePayload, PortSpec, Toleration } from "@common/types/instance";
 import type { UserTeamMembership } from "@common/types/auth";
+
+const AGENT_TYPE_STORAGE_KEY = "claworc.create.agentType";
+const CUSTOM_IMAGE_STORAGE_KEY = "claworc.create.customImage";
+
+// Mirrors the registry order served by /api/v1/agent-types; used to render
+// the picker before the request resolves and to validate the stored value.
+const FALLBACK_AGENT_TYPES: { type: string; display_name: string }[] = [
+  { type: "openclaw", display_name: "OpenClaw" },
+  { type: "hermes", display_name: "Hermes" },
+  { type: "nanoclaw", display_name: "NanoClaw" },
+  { type: "custom", display_name: "Custom" },
+];
+
+function readStoredAgentType(): string {
+  try {
+    const v = localStorage.getItem(AGENT_TYPE_STORAGE_KEY);
+    if (v && FALLBACK_AGENT_TYPES.some((t) => t.type === v)) return v;
+  } catch {
+    // localStorage unavailable
+  }
+  return "openclaw";
+}
+
+function readStoredCustomImage(): string {
+  try {
+    return localStorage.getItem(CUSTOM_IMAGE_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
 
 interface AgentFormProps {
   onSubmit: (payload: InstanceCreatePayload) => void;
@@ -44,7 +76,10 @@ export default function AgentForm({
   const [storageHome, setStorageHome] = useState("");
   const [resourcesSeeded, setResourcesSeeded] = useState(false);
 
-  const [containerImage, setContainerImage] = useState("");
+  const [agentType, setAgentType] = useState(readStoredAgentType);
+  const [containerImage, setContainerImage] = useState(() =>
+    readStoredAgentType() === "custom" ? readStoredCustomImage() : ""
+  );
   const [timezone, setTimezone] = useState("");
 
   const [browserImage, setBrowserImage] = useState("");
@@ -63,6 +98,41 @@ export default function AgentForm({
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const { data: settings } = useSettings();
+  const { data: agentTypes = [] } = useAgentTypes();
+  const pickerTypes = agentTypes.length > 0 ? agentTypes : FALLBACK_AGENT_TYPES;
+
+  // Remember the picker choice across visits. The custom image is persisted
+  // only while Custom is selected — switching to a known type clears the
+  // containerImage state, and the guard keeps that from wiping the saved name.
+  useEffect(() => {
+    try {
+      localStorage.setItem(AGENT_TYPE_STORAGE_KEY, agentType);
+    } catch {
+      // localStorage unavailable
+    }
+  }, [agentType]);
+  useEffect(() => {
+    if (agentType !== "custom") return;
+    try {
+      localStorage.setItem(CUSTOM_IMAGE_STORAGE_KEY, containerImage);
+    } catch {
+      // localStorage unavailable
+    }
+  }, [agentType, containerImage]);
+
+  const selectAgentType = (type: string) => {
+    if (type === agentType) return;
+    setAgentType(type);
+    // Known types always run their configured default image; only Custom
+    // takes an explicit image (seeded from the last used one, then the
+    // admin-configured custom default).
+    if (type === "custom") {
+      const customDefault = agentTypes.find((t) => t.type === "custom")?.default_image ?? "";
+      setContainerImage(readStoredCustomImage() || customDefault);
+    } else {
+      setContainerImage("");
+    }
+  };
   const { data: allProviders = [] } = useProviders();
   const { isAdmin } = useAuth();
   const { data: health } = useHealth();
@@ -129,8 +199,12 @@ export default function AgentForm({
 
   const [showNoModelsWarning, setShowNoModelsWarning] = useState(false);
 
+  // Custom agents run whatever image the user names, so it can't be empty —
+  // the backend has no default to fall back to for the custom type.
+  const customImageMissing = agentType === "custom" && !containerImage.trim();
+
   const buildPayload = (): InstanceCreatePayload | null => {
-    if (!displayName.trim()) return null;
+    if (!displayName.trim() || customImageMissing) return null;
 
     // Build provider-prefixed extra models.
     // Skip providers with stored models (custom providers) — their models are
@@ -144,6 +218,7 @@ export default function AgentForm({
 
     const payload: InstanceCreatePayload = {
       display_name: displayName.trim(),
+      agent_type: agentType,
       team_id: teamId ?? undefined,
       cpu_request: cpuRequest,
       cpu_limit: cpuLimit,
@@ -152,7 +227,7 @@ export default function AgentForm({
       storage_homebrew: storageHomebrew,
       storage_home: storageHome,
       brave_api_key: braveKey || null,
-      container_image: containerImage || null,
+      container_image: containerImage.trim() || null,
       vnc_resolution: vncResolution || null,
       timezone: timezone || null,
       user_agent: userAgent || null,
@@ -195,7 +270,7 @@ export default function AgentForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!displayName.trim()) return;
+    if (!displayName.trim() || customImageMissing) return;
     if (!hasModelsSelected) {
       setShowNoModelsWarning(true);
       return;
@@ -256,6 +331,50 @@ export default function AgentForm({
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">
+              Agent Type
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {pickerTypes.map((t) => {
+                const selected = agentType === t.type;
+                return (
+                  <button
+                    key={t.type}
+                    type="button"
+                    aria-pressed={selected}
+                    data-testid={`agent-type-${t.type}`}
+                    onClick={() => selectAgentType(t.type)}
+                    className={`flex flex-col items-center gap-2 px-3 py-4 border rounded-lg bg-white transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      selected
+                        ? "border-blue-500 ring-1 ring-blue-500"
+                        : "border-gray-200 hover:border-gray-300"
+                    }`}
+                  >
+                    <AgentTypeIcon agentType={t.type} className="w-12 h-12" />
+                    <span className={`text-sm font-medium ${selected ? "text-blue-700" : "text-gray-700"}`}>
+                      {t.display_name}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          {agentType === "custom" && (
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">
+                Agent Image *
+              </label>
+              <input
+                type="text"
+                value={containerImage}
+                onChange={(e) => setContainerImage(e.target.value)}
+                placeholder="e.g., myregistry/my-agent:latest"
+                required
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          )}
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
               Timezone Override
             </label>
             <input
@@ -314,18 +433,6 @@ export default function AgentForm({
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h3 className="text-sm font-medium text-gray-900 mb-4">Container</h3>
         <div className="space-y-4">
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">
-              Agent Image Override
-            </label>
-            <input
-              type="text"
-              value={containerImage}
-              onChange={(e) => setContainerImage(e.target.value)}
-              placeholder={settings?.default_agent_image ?? "claworc/openclaw:latest"}
-              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
           <div className="grid grid-cols-2 gap-4">
             {[
               { label: "CPU Request", value: cpuRequest, set: setCpuRequest },
@@ -516,7 +623,7 @@ export default function AgentForm({
         <button
           data-testid="create-instance-button"
           type="submit"
-          disabled={loading || !displayName.trim()}
+          disabled={loading || !displayName.trim() || customImageMissing}
           className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {loading ? "Creating..." : "Create"}

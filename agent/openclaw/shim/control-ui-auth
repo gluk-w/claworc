@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# control-ui-auth — how the control plane authenticates to the Control UI
+# served by the OpenClaw gateway (meta control_ui, docs/shim.md): the gateway
+# token as a query parameter plus the loopback Origin the gateway expects.
+# Token resolution matches lib/gateway-bridge.mjs (config, then env).
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+parse_no_args "$@"
+PORT=${OPENCLAW_GATEWAY_PORT:-18789}
+
+exec /usr/bin/node - "$PORT" <<'JS'
+const fs = require("node:fs");
+const port = process.argv[2];
+// Config first: it is what the gateway authenticates against.
+let token = "";
+try {
+  const cfg = JSON.parse(fs.readFileSync("/home/claworc/.openclaw/openclaw.json", "utf8"));
+  const t = cfg?.gateway?.auth?.token;
+  if (typeof t === "string") token = t;
+} catch {
+  /* no config yet: fall back to the env */
+}
+token = token || process.env.OPENCLAW_GATEWAY_TOKEN || process.env.CLAWORC_AGENT_TOKEN || "";
+const doc = { headers: { Origin: `http://localhost:${port}` } };
+if (token) doc.query = { token };
+process.stdout.write(`${JSON.stringify(doc)}\n`);
+JS

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# skill-install --name <skill> — replace <skills_dir>/<skill> with the tar
+# archive on stdin (docs/shim.md). Unsafe archives exit 6.
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+SKILLS_DIR=/home/claworc/.openclaw/skills
+
+parse_name_arg "$@"
+skill_install "$SKILLS_DIR" "$SHIM_NAME"

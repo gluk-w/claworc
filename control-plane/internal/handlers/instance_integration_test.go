@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim/openclawnative"
 	"github.com/gluk-w/claworc/control-plane/internal/auth"
 	"github.com/gluk-w/claworc/control-plane/internal/browserprov"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
@@ -182,17 +183,6 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 		})
 	}
 
-	orchestrator.SetInstanceFactory(func(fctx context.Context, name string) (sshproxy.Instance, error) {
-		var inst database.Instance
-		if err := database.DB.Where("name = ?", name).First(&inst).Error; err != nil {
-			return nil, fmt.Errorf("instance not found: %s", name)
-		}
-		client, err := sshMgr.WaitForSSH(fctx, inst.ID, 120*time.Second)
-		if err != nil {
-			return nil, err
-		}
-		return sshproxy.NewSSHInstance(client), nil
-	})
 
 	if orch := orchestrator.Get(); orch != nil {
 		tunnelMgr.StartBackgroundManager(ctx, func(bctx context.Context) ([]uint, error) {
@@ -462,7 +452,7 @@ func TestIntegration_InstanceLifecycle_ConfiguresOpenclaw(t *testing.T) {
 	deadline = time.Now().Add(90 * time.Second)
 	configured := false
 	for time.Now().Before(deadline) {
-		out, err := exec.Command("docker", "exec", instName, "cat", orchestrator.PathOpenClawConfig).Output()
+		out, err := exec.Command("docker", "exec", instName, "cat", openclawnative.ConfigPath).Output()
 		if err != nil {
 			t.Logf("docker exec cat openclaw.json: %v — retrying", err)
 			time.Sleep(3 * time.Second)

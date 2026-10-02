@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coder/websocket"
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/moderator"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
@@ -25,55 +25,73 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// ---- Gateway dialer ----------------------------------------------------
+// ---- Agents ------------------------------------------------------------
 
-// GatewayDialer wires moderator.GatewayDialer to sshproxy.DialGateway. It
-// looks up the active gateway tunnel for the instance and decrypts the
-// gateway token before dialing.
-type GatewayDialer struct {
-	DB      *gorm.DB
-	Tunnels *sshproxy.TunnelManager
+// Agents wires moderator.Agents to the agentshim factory, so Kanban tasks
+// reach every agent type (OpenClaw, Hermes, NanoClaw, custom) through the
+// same shim contract as the chat page and webhooks.
+type Agents struct {
+	// Factory builds agent clients; nil selects agentshim.DefaultFactory().
+	Factory *agentshim.Factory
 }
 
-func (g *GatewayDialer) Dial(ctx context.Context, instanceID uint, _ string) (moderator.GatewayConn, error) {
-	var inst database.Instance
-	if err := g.DB.First(&inst, instanceID).Error; err != nil {
-		return nil, fmt.Errorf("load instance: %w", err)
+func (a *Agents) factory() *agentshim.Factory {
+	if a.Factory != nil {
+		return a.Factory
 	}
-	tunnels := g.Tunnels.GetTunnelsForInstance(instanceID)
-	port := 0
-	for _, t := range tunnels {
-		if t.Label == "Gateway" && t.Status == "active" {
-			port = t.LocalPort
-			break
-		}
-	}
-	if port == 0 {
-		return nil, fmt.Errorf("no active gateway tunnel for instance %d", instanceID)
-	}
-	var token string
-	if inst.GatewayToken != "" {
-		if tok, err := utils.Decrypt(inst.GatewayToken); err == nil {
-			token = tok
-		}
-	}
-	conn, err := sshproxy.DialGateway(ctx, port, token)
+	return agentshim.DefaultFactory()
+}
+
+func (a *Agents) OpenSession(ctx context.Context, instanceID uint, sessionKey string) (moderator.AgentSession, error) {
+	client, err := a.factory().ForInstance(ctx, instanceID)
 	if err != nil {
 		return nil, err
 	}
-	return &wsConn{c: conn}, nil
+	sess, err := client.OpenSession(ctx, sessionKey)
+	if err != nil {
+		return nil, err
+	}
+	return &agentSession{s: sess}, nil
 }
 
-type wsConn struct{ c *websocket.Conn }
+func (a *Agents) WorkspaceDir(ctx context.Context, instanceID uint) string {
+	client, err := a.factory().ForInstance(ctx, instanceID)
+	if err != nil {
+		return ""
+	}
+	caps, err := client.Capabilities(ctx)
+	if err != nil {
+		return ""
+	}
+	return caps.WorkspaceDir
+}
 
-func (w *wsConn) Send(ctx context.Context, frame []byte) error {
-	return w.c.Write(ctx, websocket.MessageText, frame)
+type agentSession struct{ s agentshim.Session }
+
+func (a *agentSession) Send(ctx context.Context, message string) error {
+	return a.s.Send(ctx, message)
 }
-func (w *wsConn) Recv(ctx context.Context) ([]byte, error) {
-	_, data, err := w.c.Read(ctx)
-	return data, err
+
+func (a *agentSession) Recv(ctx context.Context) (moderator.AgentEvent, error) {
+	ev, err := a.s.Recv(ctx)
+	if err != nil {
+		return moderator.AgentEvent{}, err
+	}
+	return moderator.AgentEvent{
+		Kind:       ev.Kind,
+		Turn:       ev.Turn,
+		MessageID:  ev.MessageID,
+		Text:       ev.Text,
+		Name:       ev.Name,
+		Phase:      ev.Phase,
+		Detail:     string(ev.Detail),
+		Code:       ev.Code,
+		Fatal:      ev.Fatal,
+		StopReason: ev.StopReason,
+	}, nil
 }
-func (w *wsConn) Close() error { return w.c.CloseNow() }
+
+func (a *agentSession) Close() error { return a.s.Close() }
 
 // ---- Workspace FS ------------------------------------------------------
 

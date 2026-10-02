@@ -1,6 +1,6 @@
 # Teams
 
-Teams group OpenClaw instances and users. Every Claworc deployment ships
+Teams group agent instances and users. Every Claworc deployment ships
 with one seeded **Default** team; admins can create additional teams from
 the Instances page or `/teams` admin page.
 

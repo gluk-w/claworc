@@ -1,0 +1,73 @@
+#!/bin/sh
+# Conformance-harness chat-send verb. CHAT_MODE selects the scenario:
+#   echo (default) — start, partial + full cumulative assistant snapshots
+#                    (plus a malformed line and an unknown event kind that
+#                    consumers must skip), end/complete. CHAT_DELAY seconds
+#                    between the snapshots.
+#   fail           — start, then exit 1 with stderr and NO end event
+#                    (consumers must synthesize error + end).
+#   hang           — start, write a pid file, sleep; SIGTERM (from
+#                    chat-abort or Terminate) emits end/aborted and exits 0.
+#   stubborn       — start, sleep with no TERM trap and no pid file: only a
+#                    hard Terminate of the exec ends it (no end event).
+set -u
+
+SESSION=""
+TURN=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --session) SESSION="$2"; shift 2 ;;
+        --turn)    TURN="$2"; shift 2 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+[ -n "$SESSION" ] || { echo "--session is required" >&2; exit 2; }
+[ -n "$TURN" ] || TURN="t-$$"
+
+MSG=$(cat)
+MODE="${CHAT_MODE:-echo}"
+RUN_DIR="${CLAWORC_SHIM_RUN_DIR:-/tmp}"
+mkdir -p "$RUN_DIR" 2>/dev/null || true
+
+# The pid file must exist before the start event is observable: chat-abort
+# may run the moment the consumer sees "start".
+if [ "$MODE" = "hang" ]; then
+    printf '%s\n' "$$" > "$RUN_DIR/chat-$SESSION.pid"
+fi
+
+printf '{"v":1,"event":"start","session":"%s","turn":"%s"}\n' "$SESSION" "$TURN"
+
+case "$MODE" in
+    echo)
+        printf '{"v":1,"event":"assistant","turn":"%s","message_id":"m1","text":"echo:"}\n' "$TURN"
+        printf 'this is not a json event line\n'
+        printf '{"v":1,"event":"weird-future-kind","turn":"%s"}\n' "$TURN"
+        printf '{"v":1,"event":"tool","turn":"%s","name":"exec","phase":"start","detail":{"command":"true"}}\n' "$TURN"
+        [ "${CHAT_DELAY:-0}" != "0" ] && sleep "$CHAT_DELAY"
+        printf '{"v":1,"event":"assistant","turn":"%s","message_id":"m1","text":"echo: %s"}\n' "$TURN" "$MSG"
+        printf '{"v":1,"event":"end","turn":"%s","stop_reason":"complete","text":"echo: %s"}\n' "$TURN" "$MSG"
+        exit 0
+        ;;
+    fail)
+        echo "boom: agent exploded" >&2
+        exit 1
+        ;;
+    hang)
+        sleep 60 >/dev/null 2>&1 &
+        CHILD=$!
+        # shellcheck disable=SC2064
+        trap "kill $CHILD 2>/dev/null; printf '{\"v\":1,\"event\":\"end\",\"turn\":\"%s\",\"stop_reason\":\"aborted\",\"text\":\"\"}\n' '$TURN'; rm -f '$RUN_DIR/chat-$SESSION.pid'; exit 0" TERM INT
+        wait "$CHILD"
+        rm -f "$RUN_DIR/chat-$SESSION.pid"
+        exit 0
+        ;;
+    stubborn)
+        sleep 60 >/dev/null 2>&1 &
+        wait $!
+        exit 0
+        ;;
+    *)
+        echo "unknown CHAT_MODE: $MODE" >&2
+        exit 1
+        ;;
+esac

@@ -6,7 +6,7 @@
 
 ## Overview
 
-**Connections** let an OpenClaw agent use OAuth-backed third-party services
+**Connections** let an agent (OpenClaw, Hermes, NanoClaw, …) use OAuth-backed third-party services
 (Gmail, Google Analytics, and anything else [Composio](https://composio.dev)
 supports) **without the agent ever holding any credential**.
 
@@ -109,7 +109,7 @@ A per-instance secret (`claworc-cs-<48 hex>`) authenticates the agent to the
 ## Proxy contract (agent side)
 
 The broker exposes a narrow allowlist — everything else is rejected. The agent
-(e.g. via a user-authored OpenClaw skill) calls:
+(e.g. via a user-authored agent skill) calls:
 
 ```bash
 # Discover the tools available for this instance's connected toolkits
@@ -134,9 +134,11 @@ skill generator applies.
 
 ## Generated skill
 
-When a connection becomes `ACTIVE`, the control plane auto-generates an OpenClaw
-skill and writes it into the instance at
-`/home/claworc/.openclaw/skills/claworc-<toolkit-slug>/SKILL.md`.
+When a connection becomes `ACTIVE`, the control plane auto-generates a skill and
+deploys it through the agent shim into the agent's declared `skills_dir`
+(docs/shim.md), at `<skills_dir>/claworc-<toolkit-slug>/SKILL.md` — e.g.
+`/home/claworc/.openclaw/skills/...` for OpenClaw, `/home/claworc/.hermes/skills/...`
+for Hermes. Agents without the `skills` capability are skipped.
 
 - **Name** — `claworc-<toolkit-slug>` (e.g. `claworc-gmail`).
 - **Description** — `Integration with <Toolkit Name>. <toolkit description>` (the

@@ -1,15 +1,7 @@
 import { useState } from "react";
 import { Eye, EyeOff, Pencil, Plus, Trash2 } from "lucide-react";
+import { useReservedEnvVarNames } from "@common/hooks/useReservedEnvVarNames";
 
-// Keep in sync with ReservedEnvVarNames in control-plane/internal/handlers/envvars.go.
-// These names are set by the control plane at container start and cannot be
-// overridden by user-defined env vars.
-const RESERVED_ENV_VAR_NAMES = new Set([
-  "OPENCLAW_GATEWAY_TOKEN",
-  "CLAWORC_INSTANCE_ID",
-  "OPENCLAW_INITIAL_MODELS",
-  "OPENCLAW_INITIAL_PROVIDERS",
-]);
 
 const NAME_REGEX = /^[A-Z_][A-Z0-9_]*$/;
 
@@ -28,12 +20,12 @@ interface Props {
   emptyMessage?: string;
 }
 
-function validateName(name: string): string | null {
+function validateName(name: string, reserved: Set<string>): string | null {
   if (name === "") return "Name is required.";
   if (!NAME_REGEX.test(name)) {
     return "Name must match [A-Z_][A-Z0-9_]*.";
   }
-  if (RESERVED_ENV_VAR_NAMES.has(name)) {
+  if (reserved.has(name)) {
     return `"${name}" is reserved for internal use.`;
   }
   return null;
@@ -47,6 +39,7 @@ export default function KeyValueListEditor({
   onUnset,
   emptyMessage = "No variables set.",
 }: Props) {
+  const reserved = useReservedEnvVarNames();
   const [editingName, setEditingName] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
   const [showEditing, setShowEditing] = useState(false);
@@ -77,7 +70,7 @@ export default function KeyValueListEditor({
   };
 
   const commitAdd = () => {
-    const err = validateName(newName);
+    const err = validateName(newName, reserved);
     if (err) {
       setAddError(err);
       return;

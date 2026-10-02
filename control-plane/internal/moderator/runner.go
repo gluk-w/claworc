@@ -13,8 +13,8 @@ import (
 	"strings"
 )
 
-// Run drives a dispatched task to completion: opens a gateway WS with a
-// per-task sessionKey, sends the task description, streams events into
+// Run drives a dispatched task to completion: opens an agent chat session
+// with a per-run sessionKey, sends the task description, streams events into
 // comments, pulls mentioned files as artifacts, and runs the evaluator LLM.
 func (s *Service) Run(ctx context.Context, taskID uint) error {
 	task, err := s.opts.Store.GetTask(ctx, taskID)
@@ -74,27 +74,14 @@ func (s *Service) Run(ctx context.Context, taskID uint) error {
 		return fmt.Errorf("mark in_progress: %w", err)
 	}
 
-	conn, err := s.opts.Dialer.Dial(ctx, instanceID, sessionKey)
+	sess, err := s.opts.Agents.OpenSession(ctx, instanceID, sessionKey)
 	if err != nil {
-		return fmt.Errorf("dial gateway: %w", err)
+		return fmt.Errorf("open agent session: %w", err)
 	}
-	defer conn.Close()
+	defer sess.Close()
 
-	// Send chat.send frame.
-	sendFrame := map[string]any{
-		"type":   "req",
-		"id":     "kanban-send-1",
-		"method": "chat.send",
-		"params": map[string]any{
-			"sessionKey":     sessionKey,
-			"message":        message,
-			"idempotencyKey": sessionKey,
-		},
-	}
-	if data, _ := json.Marshal(sendFrame); true {
-		if err := conn.Send(ctx, data); err != nil {
-			return fmt.Errorf("send chat.send: %w", err)
-		}
+	if err := sess.Send(ctx, message); err != nil {
+		return fmt.Errorf("send task: %w", err)
 	}
 
 	// Insert empty rolling assistant comment.
@@ -109,46 +96,50 @@ func (s *Service) Run(ctx context.Context, taskID uint) error {
 		return fmt.Errorf("insert assistant comment: %w", err)
 	}
 
-	// OpenClaw sends cumulative snapshots in `data.text` for each assistant
-	// event, NOT incremental deltas. We replace the comment body each time.
-	var assistantText string
-
+	// Assistant events carry CUMULATIVE snapshots per message_id, not
+	// deltas: each snapshot replaces its message's text. A turn may contain
+	// several messages (text → tool calls → more text); the comment body is
+	// all of them in order.
+	var (
+		msgOrder      []string
+		msgText       = map[string]string{}
+		assistantText string
+	)
 	for {
-		select {
-		case <-ctx.Done():
-			return ErrStopped
-		default:
-		}
-		raw, err := conn.Recv(ctx)
+		ev, err := sess.Recv(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ErrStopped
 			}
 			return fmt.Errorf("recv: %w", err)
 		}
-		var msg map[string]any
-		if err := json.Unmarshal(raw, &msg); err != nil {
-			continue
-		}
-		if msg["type"] != "event" {
-			continue
-		}
-		payload, _ := msg["payload"].(map[string]any)
-		if payload == nil {
-			continue
-		}
-		stream, _ := payload["stream"].(string)
-		data, _ := payload["data"].(map[string]any)
-
-		switch stream {
-		case "assistant":
-			text, _ := data["text"].(string)
-			if text != "" && text != assistantText {
-				assistantText = text
-				_ = s.opts.Store.SetCommentBody(ctx, assistantID, text)
+		switch ev.Kind {
+		case "start":
+			if ev.Turn != "" {
+				_ = s.opts.Store.UpdateTask(ctx, taskID, map[string]any{"open_claw_run_id": ev.Turn})
 			}
+		case "assistant":
+			if _, seen := msgText[ev.MessageID]; !seen {
+				msgOrder = append(msgOrder, ev.MessageID)
+			}
+			if msgText[ev.MessageID] == ev.Text {
+				continue
+			}
+			msgText[ev.MessageID] = ev.Text
+			parts := make([]string, 0, len(msgOrder))
+			for _, id := range msgOrder {
+				if t := msgText[id]; t != "" {
+					parts = append(parts, t)
+				}
+			}
+			assistantText = strings.Join(parts, "\n\n")
+			_ = s.opts.Store.SetCommentBody(ctx, assistantID, assistantText)
 		case "tool":
-			body, _ := json.Marshal(data)
+			body, _ := json.Marshal(map[string]any{
+				"name":   ev.Name,
+				"phase":  ev.Phase,
+				"detail": json.RawMessage(nonEmptyJSON(ev.Detail)),
+			})
 			_, _ = s.opts.Store.InsertComment(ctx, Comment{
 				TaskID:            taskID,
 				Kind:              "tool",
@@ -156,11 +147,33 @@ func (s *Service) Run(ctx context.Context, taskID uint) error {
 				Body:              string(body),
 				OpenClawSessionID: sessionKey,
 			})
-		case "lifecycle":
-			phase, _ := data["phase"].(string)
-			if phase == "end" {
-				goto done
+		case "error":
+			body := ev.Text
+			if ev.Code != "" {
+				body = ev.Code + ": " + body
 			}
+			_, _ = s.opts.Store.InsertComment(ctx, Comment{
+				TaskID:            taskID,
+				Kind:              "error",
+				Author:            agentAuthor,
+				Body:              body,
+				OpenClawSessionID: sessionKey,
+			})
+		case "end":
+			if ev.Text != "" {
+				// The end event carries the final text of the last message.
+				if assistantText == "" {
+					assistantText = ev.Text
+					_ = s.opts.Store.SetCommentBody(ctx, assistantID, assistantText)
+				}
+			}
+			if ev.StopReason != "" && ev.StopReason != "complete" {
+				_, _ = s.opts.Store.InsertComment(ctx, Comment{
+					TaskID: taskID, Kind: "error", Author: "moderator",
+					Body: "Agent run ended: " + ev.StopReason,
+				})
+			}
+			goto done
 		}
 	}
 done:
@@ -359,7 +372,7 @@ func (s *Service) walkDir(ctx context.Context, instanceID uint, dir string) ([]F
 // collectArtifactsMentionBased is the legacy fallback: scans the agent
 // transcript for explicit file mentions under the workspace dir.
 func (s *Service) collectArtifactsMentionBased(ctx context.Context, taskID, instanceID uint, transcript string) (pulled, skipped []string) {
-	workspace := s.opts.Settings.WorkspaceDir()
+	workspace := s.workspaceDir(ctx, instanceID)
 	maxBytes := s.opts.Settings.ArtifactMaxBytes()
 	storageRoot := filepath.Join(s.opts.Settings.ArtifactStorageDir(), fmt.Sprintf("%d", taskID))
 
@@ -412,7 +425,7 @@ func (s *Service) evaluate(ctx context.Context, task Task, finalText string, art
 	if task.EvaluatorModel != "" {
 		model = task.EvaluatorModel
 	}
-	prompt := "Evaluate whether this OpenClaw run accomplished the user's task.\n\n" +
+	prompt := "Evaluate whether this agent run accomplished the user's task.\n\n" +
 		"TASK:\n" + task.Description + "\n\n" +
 		"AGENT FINAL OUTPUT:\n" + truncate(finalText, 4000) + "\n\n" +
 		"ARTIFACTS PULLED: " + strings.Join(artifacts, ", ") + "\n\n" +
@@ -441,4 +454,23 @@ func randomSuffix(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)[:n]
+}
+
+// workspaceDir is the agent's declared workspace directory, falling back to
+// the kanban_workspace_dir setting.
+func (s *Service) workspaceDir(ctx context.Context, instanceID uint) string {
+	if s.opts.Agents != nil {
+		if d := s.opts.Agents.WorkspaceDir(ctx, instanceID); d != "" {
+			return d
+		}
+	}
+	return s.opts.Settings.WorkspaceDir()
+}
+
+// nonEmptyJSON returns raw as JSON, or null when empty or invalid.
+func nonEmptyJSON(raw string) string {
+	if raw == "" || !json.Valid([]byte(raw)) {
+		return "null"
+	}
+	return raw
 }

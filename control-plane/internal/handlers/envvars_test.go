@@ -61,7 +61,7 @@ func TestValidateEnvVarName_InvalidFormat(t *testing.T) {
 
 func TestValidateEnvVarName_Reserved(t *testing.T) {
 	t.Parallel()
-	for _, name := range ReservedEnvVarNames {
+	for _, name := range ReservedEnvVarNames() {
 		err := ValidateEnvVarName(name)
 		if err == nil {
 			t.Errorf("ValidateEnvVarName(%q) = nil, want reserved error", name)

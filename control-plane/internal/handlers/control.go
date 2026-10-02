@@ -1,15 +1,19 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
-	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -18,7 +22,7 @@ const connectingPageTmpl = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Connecting to OpenClaw...</title>
+<title>Connecting to agent UI...</title>
 <style>
   body { display:flex; justify-content:center; align-items:center; min-height:100vh; margin:0; background:#0f172a; color:#e2e8f0; font-family:system-ui,sans-serif; }
   .box { text-align:center; }
@@ -33,7 +37,7 @@ const connectingPageTmpl = `<!DOCTYPE html>
 <body>
 <div class="box">
   <div class="spinner"></div>
-  <h1>Connecting to OpenClaw&hellip;</h1>
+  <h1>Connecting to agent UI&hellip;</h1>
   <p>The agent is starting up. This page will refresh automatically.</p>
   <a href="/instances/{{.InstanceID}}#logs">View instance logs</a>
 </div>
@@ -54,8 +58,54 @@ func writeConnectingPage(w http.ResponseWriter, instanceID int) {
 	connectingPageTemplate.Execute(w, struct{ InstanceID int }{instanceID})
 }
 
-// ControlProxy proxies HTTP and WebSocket requests to the gateway service
-// running inside the agent container via SSH tunnel.
+// controlUISpecTTL bounds how long a resolved ControlUISpec is reused. The
+// spec (port, base path, auth) only changes with the image or the agent
+// token, but resolving it costs an SSH exec (`control-ui-auth`), which must
+// not run for every proxied asset request.
+const controlUISpecTTL = 30 * time.Second
+
+type controlUISpecEntry struct {
+	spec agentshim.ControlUISpec
+	at   time.Time
+}
+
+var controlUISpecCache sync.Map // uint -> controlUISpecEntry
+
+// resolveControlUISpec returns the instance agent's ControlUISpec, cached for
+// controlUISpecTTL.
+func resolveControlUISpec(ctx context.Context, instanceID uint) (agentshim.ControlUISpec, error) {
+	if v, ok := controlUISpecCache.Load(instanceID); ok {
+		if e := v.(controlUISpecEntry); time.Since(e.at) < controlUISpecTTL {
+			return e.spec, nil
+		}
+	}
+	client, err := agentClientFor(ctx, instanceID)
+	if err != nil {
+		return agentshim.ControlUISpec{}, err
+	}
+	spec, err := client.ControlUI(ctx)
+	if err != nil {
+		return agentshim.ControlUISpec{}, err
+	}
+	controlUISpecCache.Store(instanceID, controlUISpecEntry{spec: spec, at: time.Now()})
+	return spec, nil
+}
+
+// controlUITunnelPort returns the local port of a reverse tunnel to the
+// agent's control UI port, created on demand. A seam for tests.
+var controlUITunnelPort = func(ctx context.Context, instanceID uint, remotePort int) (int, error) {
+	if TunnelMgr == nil {
+		return 0, fmt.Errorf("tunnel manager not initialized")
+	}
+	return TunnelMgr.EnsureReverseTunnel(ctx, instanceID, "ControlUI", remotePort)
+}
+
+// ControlProxy proxies HTTP and WebSocket requests to the web UI the agent
+// serves inside its container (the agent's meta `control_ui`, e.g. the
+// OpenClaw Control UI), via an on-demand SSH tunnel. Everything
+// agent-specific — the port, the upstream path prefix, and the auth
+// query/headers injected into WebSocket upgrades — comes from
+// agentshim.Client.ControlUI.
 func ControlProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
@@ -68,77 +118,88 @@ func ControlProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := getTunnelPortInfo(uint(id), "gateway")
-	if err != nil {
-		// WebSocket clients can't display HTML — return plain error
-		if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+	var inst database.Instance
+	if err := database.DB.First(&inst, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+
+	isWebSocket := strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+	// unavailable reports a not-yet-reachable agent: WebSocket clients can't
+	// display HTML, so they get a plain error; browsers get the auto-refreshing
+	// connecting page.
+	unavailable := func(err error) {
+		if isWebSocket {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
 		writeConnectingPage(w, id)
+	}
+
+	spec, err := resolveControlUISpec(r.Context(), inst.ID)
+	if errors.Is(err, agentshim.ErrControlUIUnsupported) {
+		// A clean 404 rather than an eternally-spinning "connecting" page.
+		writeError(w, http.StatusNotFound, "This agent does not provide a web control UI.")
+		return
+	}
+	if err != nil {
+		unavailable(err)
 		return
 	}
 
-	// Look up gateway token so we can inject it into upstream WebSocket requests
-	var gatewayToken string
-	var inst database.Instance
-	if err := database.DB.First(&inst, id).Error; err == nil && inst.GatewayToken != "" {
-		if tok, err := utils.Decrypt(inst.GatewayToken); err == nil && tok != "" {
-			gatewayToken = tok
-		}
+	localPort, err := controlUITunnelPort(r.Context(), inst.ID, spec.Port)
+	if err != nil {
+		unavailable(err)
+		return
 	}
 
+	// Browser-facing prefix: /openclaw/{id}/ (kept for existing links). The
+	// upstream prefix is the agent's declared base path.
+	basePath := fmt.Sprintf("/openclaw/%d/", id)
 	wildcardPath := chi.URLParam(r, "*")
-	// Forward the full path including the basePath prefix so that the gateway
-	// (when configured with gateway.controlUi.basePath) can match the request.
-	// Old images without basePath configured still work because the gateway
-	// ignores the prefix and serves from root; the <base href> injection
-	// in proxyToLocalPort handles relative asset resolution.
-	fullPath := fmt.Sprintf("openclaw/%d/%s", id, wildcardPath)
+	upstreamBase := strings.TrimPrefix(spec.BasePath, "/")
+	if upstreamBase != "" && !strings.HasSuffix(upstreamBase, "/") {
+		upstreamBase += "/"
+	}
+	fullPath := upstreamBase + wildcardPath
 
-	// Detect WebSocket upgrade and delegate
-	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-		// Set Origin to match the gateway's local address so its origin
-		// check passes. Without this, the gateway sees the random tunnel
-		// port as the origin and rejects the WebSocket handshake.
-		gatewayOrigin := fmt.Sprintf("http://localhost:%d", info.remotePort)
-		headers := http.Header{
-			"Origin": []string{gatewayOrigin},
+	if isWebSocket {
+		headers := http.Header{}
+		for k, v := range spec.Headers {
+			headers.Set(k, v)
 		}
-		// Inject gateway token so the upstream gateway authenticates the connection
-		if gatewayToken != "" {
+		if len(spec.Query) > 0 {
 			q := r.URL.Query()
-			q.Set("token", gatewayToken)
+			for k, v := range spec.Query {
+				q.Set(k, v)
+			}
 			r.URL.RawQuery = q.Encode()
 		}
-		websocketProxyToLocalPort(w, r, info.localPort, fullPath, headers)
+		websocketProxyToLocalPort(w, r, localPort, fullPath, headers)
 		return
 	}
 
-	basePath := fmt.Sprintf("/openclaw/%d/", id)
-
 	// Try the prefixed path first (e.g. openclaw/26/favicon.svg). If the
-	// gateway returns 404, retry with just the resource path (e.g. favicon.svg).
+	// agent returns 404, retry with just the resource path (e.g. favicon.svg).
 	//
 	// Why: when an HTML page is served under /openclaw/{id}/ we inject a
 	// <base href="/openclaw/{id}/"> tag so relative asset URLs resolve under
 	// the proxy prefix. But some resources — notably /favicon.svg, which
 	// browsers request automatically from the document root independent of
-	// the <base> tag — live at the root of the instance and are NOT served
-	// under /openclaw/{id}/. Without this fallback those requests 404.
-	// Retrying with the bare resource path lets the gateway serve them from
-	// its root. The fallback only fires on 404, so correctly-prefixed
-	// responses (200, 304, redirects, etc.) are passed through unchanged.
-	resp, err := doProxyRequest(r, info.localPort, fullPath)
+	// the <base> tag — live at the root of the UI and are NOT served under
+	// the base path. Without this fallback those requests 404. The fallback
+	// only fires on 404, so correctly-prefixed responses (200, 304,
+	// redirects, etc.) are passed through unchanged.
+	resp, err := doProxyRequest(r, localPort, fullPath)
 	if err != nil {
 		writeConnectingPage(w, id)
 		return
 	}
 
-	if resp.StatusCode == http.StatusNotFound && wildcardPath != "" {
-		// Discard the 404 body and retry against the instance root.
+	if resp.StatusCode == http.StatusNotFound && wildcardPath != "" && upstreamBase != "" {
+		// Discard the 404 body and retry against the UI root.
 		resp.Body.Close()
-		fallbackResp, fbErr := doProxyRequest(r, info.localPort, wildcardPath)
+		fallbackResp, fbErr := doProxyRequest(r, localPort, wildcardPath)
 		if fbErr == nil {
 			resp = fallbackResp
 		} else {

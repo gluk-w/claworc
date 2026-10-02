@@ -8,6 +8,7 @@
     <orderEntry type="jdk" jdkName="Python 3.10 virtualenv at ~/Library/Caches/pypoetry/virtualenvs/claworc-0gnG6Dok-py3.10" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="module" module-name="claworc_website" />
+    <orderEntry type="module" module-name="claworc-website" />
   </component>
   <component name="PyDocumentationSettings">
     <option name="format" value="PLAIN" />

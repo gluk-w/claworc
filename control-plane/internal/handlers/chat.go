@@ -3,23 +3,26 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/coder/websocket"
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
-	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
-	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 const chatSessionKey = "browser"
 
+// ChatProxy relays the browser chat WebSocket to the instance's agent via
+// the agentshim. Browser→server frames are unchanged ({type:"chat",
+// content}); server→browser frames are a {"type":"connected"} handshake
+// followed by normalized agentshim events serialized verbatim — the shim
+// event schema (docs/shim.md) is the browser chat protocol.
 func ChatProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
@@ -51,29 +54,26 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get gateway tunnel port
-	port, err := getTunnelPort(uint(id), "gateway")
+	client, err := agentshim.DefaultFactory().ForInstance(ctx, uint(id))
 	if err != nil {
-		log.Printf("[chat] No gateway tunnel for instance %d: %v", id, err)
+		log.Printf("[chat] No agent client for instance %d: %v", id, err)
 		clientConn.Close(4500, truncate(err.Error(), 120))
 		return
 	}
 
-	// Decrypt gateway token
-	var gatewayToken string
-	if inst.GatewayToken != "" {
-		if tok, err := utils.Decrypt(inst.GatewayToken); err == nil && tok != "" {
-			gatewayToken = tok
-		}
-	}
-
-	gwConn, err := sshproxy.DialGateway(ctx, port, gatewayToken)
+	sess, err := client.OpenSession(ctx, chatSessionKey)
 	if err != nil {
-		log.Printf("[chat] Gateway dial/handshake failed for %s: %v", inst.Name, err)
+		var te *agentshim.TransportError
+		if errors.As(err, &te) {
+			log.Printf("[chat] No gateway tunnel for instance %d: %v", id, err)
+			clientConn.Close(4500, truncate(err.Error(), 120))
+			return
+		}
+		log.Printf("[chat] Session open failed for %s: %v", inst.Name, err)
 		clientConn.Close(4502, truncate(err.Error(), 120))
 		return
 	}
-	defer gwConn.CloseNow()
+	defer sess.Close()
 
 	clientConn.SetReadLimit(4 * 1024 * 1024)
 
@@ -81,13 +81,10 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 	connectedMsg, _ := json.Marshal(map[string]string{"type": "connected"})
 	clientConn.Write(ctx, websocket.MessageText, connectedMsg)
 
-	// Bidirectional relay with message translation
 	relayCtx, relayCancel := context.WithCancel(ctx)
 	defer relayCancel()
 
-	var reqCounter int
-
-	// Browser → Gateway (translate chat messages to gateway protocol)
+	// Browser → Agent (translate chat frames to session verbs)
 	go func() {
 		defer relayCancel()
 		for {
@@ -110,68 +107,41 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Translate to gateway protocol
-			reqCounter++
-			var gwFrame map[string]interface{}
-
-			trimmedContent := strings.TrimSpace(content)
-			if trimmedContent == "/new" || trimmedContent == "/reset" {
-				gwFrame = map[string]interface{}{
-					"type":   "req",
-					"id":     fmt.Sprintf("reset-%d", reqCounter),
-					"method": "sessions.reset",
-					"params": map[string]interface{}{
-						"key": chatSessionKey,
-					},
-				}
-			} else if trimmedContent == "/stop" {
-				gwFrame = map[string]interface{}{
-					"type":   "req",
-					"id":     fmt.Sprintf("abort-%d", reqCounter),
-					"method": "chat.abort",
-					"params": map[string]interface{}{
-						"sessionKey": chatSessionKey,
-					},
-				}
-			} else {
-				gwFrame = map[string]interface{}{
-					"type":   "req",
-					"id":     fmt.Sprintf("chat-%d", reqCounter),
-					"method": "chat.send",
-					"params": map[string]interface{}{
-						"sessionKey":     chatSessionKey,
-						"message":        content,
-						"idempotencyKey": uuid.New().String(),
-					},
-				}
+			var verbErr error
+			switch strings.TrimSpace(content) {
+			case "/new", "/reset":
+				verbErr = sess.Reset(relayCtx)
+			case "/stop":
+				verbErr = sess.Abort(relayCtx)
+			default:
+				verbErr = sess.Send(relayCtx, content)
 			}
-
-			gwJSON, _ := json.Marshal(gwFrame)
-			log.Printf("[chat] Browser→Gateway: %s", string(gwJSON))
-			if err := gwConn.Write(relayCtx, websocket.MessageText, gwJSON); err != nil {
+			if verbErr != nil {
 				return
 			}
 		}
 	}()
 
-	// Gateway → Browser (forward all frames, log for debugging)
+	// Agent → Browser (normalized events, serialized verbatim)
 	func() {
 		defer relayCancel()
 		for {
-			msgType, data, err := gwConn.Read(relayCtx)
+			ev, err := sess.Recv(relayCtx)
 			if err != nil {
-				log.Printf("[chat] Gateway read error: %v", err)
+				log.Printf("[chat] Session read error: %v", err)
 				return
 			}
-			log.Printf("[chat] Gateway→Browser: %s", string(data))
-			if err := clientConn.Write(relayCtx, msgType, data); err != nil {
+			evJSON, err := json.Marshal(ev)
+			if err != nil {
+				continue
+			}
+			if err := clientConn.Write(relayCtx, websocket.MessageText, evJSON); err != nil {
 				return
 			}
 		}
 	}()
 
 	clientConn.Close(websocket.StatusNormalClosure, "")
-	gwConn.Close(websocket.StatusNormalClosure, "")
 }
 
 func truncate(s string, maxLen int) string {

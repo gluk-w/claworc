@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# config-get [--id <file-id>] — raw config file bytes on stdout (docs/shim.md).
+# ids: "config" -> ~/.hermes/config.yaml (default), "env" -> ~/.hermes/.env
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+parse_id_arg config config env -- "$@"
+case "$SHIM_ID" in
+    config) FILE=/home/claworc/.hermes/config.yaml ;;
+    env)    FILE=/home/claworc/.hermes/.env ;;
+esac
+
+# Lazily seed ~/.hermes when the s6 boot sequence has not run.
+[[ -d /home/claworc/.hermes ]] || "$SHIM_DIR/lib/ensure-seed.sh" || true
+cat_file "$FILE"

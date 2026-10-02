@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# configure-llm — route all OpenClaw LLM traffic through the Claworc LLM proxy
+# using virtual keys (docs/shim.md). lib/configure-llm.cjs reads the routing
+# document on stdin and applies it with `openclaw config set/unset`.
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+parse_no_args "$@"
+exec /usr/bin/node "$SHIM_DIR/lib/configure-llm.cjs"

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# configure-llm — route Hermes' LLM traffic through the Claworc LLM proxy
+# (docs/shim.md). lib/configure-llm.py parses the routing document on stdin
+# and rewrites the claworc-managed `model:` block in ~/.hermes/config.yaml.
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+parse_no_args "$@"
+# Lazily seed ~/.hermes when the s6 boot sequence has not run.
+[[ -d /home/claworc/.hermes ]] || "$SHIM_DIR/lib/ensure-seed.sh" || true
+exec python3 "$SHIM_DIR/lib/configure-llm.py"

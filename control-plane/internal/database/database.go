@@ -161,7 +161,12 @@ func seedDefaults() error {
 		// On-demand browser pod defaults. New instances created from now on use
 		// the slim agent image; the browser variant is launched lazily as a
 		// separate pod/container by the configured provider.
-		"default_agent_image":           "claworc/openclaw:latest",
+		"default_agent_image": "claworc/openclaw:latest",
+		// Per-agent-type default images for non-OpenClaw agents. OpenClaw keeps
+		// the legacy default_agent_image key above. JSON map agent type → image;
+		// "custom" is intentionally empty (custom images must be specified per
+		// instance or configured here by the admin).
+		"default_agent_images":          `{"hermes":"claworc/hermes:latest","nanoclaw":"claworc/nanoclaw:latest","custom":""}`,
 		"default_browser_image":         "claworc/chromium-browser:latest",
 		"default_browser_provider":      "auto",
 		"default_browser_idle_minutes":  "15",

@@ -57,6 +57,9 @@ func (s *mockStore) UpdateTask(_ context.Context, id uint, fields map[string]any
 	if v, ok := fields["open_claw_session_id"]; ok {
 		t.OpenClawSessionID = v.(string)
 	}
+	if v, ok := fields["open_claw_run_id"]; ok {
+		t.OpenClawRunID = v.(string)
+	}
 	s.tasks[id] = t
 	return nil
 }
@@ -151,12 +154,12 @@ func (m *mockLLM) Complete(_ context.Context, _, _, _ string) (string, error) {
 
 type mockSettings struct{}
 
-func (m *mockSettings) ModeratorProvider() (string, string)  { return "test-key", "test-model" }
-func (m *mockSettings) SummaryInterval() time.Duration       { return time.Minute }
-func (m *mockSettings) ArtifactMaxBytes() int64              { return 5 * 1024 * 1024 }
-func (m *mockSettings) ArtifactStorageDir() string           { return "/tmp/test-artifacts" }
-func (m *mockSettings) WorkspaceDir() string                 { return "/home/claworc/.openclaw/workspace" }
-func (m *mockSettings) TaskOutcomeDir() string               { return "/home/claworc/tasks" }
+func (m *mockSettings) ModeratorProvider() (string, string) { return "test-key", "test-model" }
+func (m *mockSettings) SummaryInterval() time.Duration      { return time.Minute }
+func (m *mockSettings) ArtifactMaxBytes() int64             { return 5 * 1024 * 1024 }
+func (m *mockSettings) ArtifactStorageDir() string          { return "/tmp/test-artifacts" }
+func (m *mockSettings) WorkspaceDir() string                { return "/home/claworc/.openclaw/workspace" }
+func (m *mockSettings) TaskOutcomeDir() string              { return "/home/claworc/tasks" }
 
 type mockInstances struct {
 	ids   []uint
@@ -174,39 +177,53 @@ func (m *mockInstances) InstanceName(_ context.Context, id uint) (string, error)
 	return "", fmt.Errorf("not found")
 }
 
-type mockDialer struct {
-	err error
+// mockAgents is an Agents port whose sessions replay scripted events.
+type mockAgents struct {
+	err       error
+	events    []AgentEvent
+	workspace string
+
+	mu   sync.Mutex
+	sent []string
+	keys []string
 }
 
-func (m *mockDialer) Dial(_ context.Context, _ uint, _ string) (GatewayConn, error) {
+func (m *mockAgents) OpenSession(_ context.Context, _ uint, key string) (AgentSession, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	return &mockConn{}, nil
+	m.mu.Lock()
+	m.keys = append(m.keys, key)
+	m.mu.Unlock()
+	ch := make(chan AgentEvent, len(m.events))
+	for _, ev := range m.events {
+		ch <- ev
+	}
+	return &mockAgentSession{a: m, ch: ch}, nil
 }
 
-type mockConn struct {
-	sent   [][]byte
-	recvCh chan []byte
+func (m *mockAgents) WorkspaceDir(_ context.Context, _ uint) string { return m.workspace }
+
+type mockAgentSession struct {
+	a  *mockAgents
+	ch chan AgentEvent
 }
 
-func (m *mockConn) Send(_ context.Context, frame []byte) error {
-	m.sent = append(m.sent, frame)
+func (m *mockAgentSession) Send(_ context.Context, msg string) error {
+	m.a.mu.Lock()
+	m.a.sent = append(m.a.sent, msg)
+	m.a.mu.Unlock()
 	return nil
 }
-func (m *mockConn) Recv(ctx context.Context) ([]byte, error) {
-	if m.recvCh == nil {
-		<-ctx.Done()
-		return nil, ctx.Err()
-	}
+func (m *mockAgentSession) Recv(ctx context.Context) (AgentEvent, error) {
 	select {
+	case ev := <-m.ch:
+		return ev, nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
-	case data := <-m.recvCh:
-		return data, nil
+		return AgentEvent{}, ctx.Err()
 	}
 }
-func (m *mockConn) Close() error { return nil }
+func (m *mockAgentSession) Close() error { return nil }
 
 type mockWorkspaceFS struct{}
 
@@ -218,13 +235,13 @@ func (m *mockWorkspaceFS) Read(_ context.Context, _ uint, _ string) ([]byte, err
 }
 func (m *mockWorkspaceFS) Write(_ context.Context, _ uint, _ string, _ []byte) error { return nil }
 func (m *mockWorkspaceFS) MkdirAll(_ context.Context, _ uint, _ string) error        { return nil }
-func (m *mockWorkspaceFS) RemoveAll(_ context.Context, _ uint, _ string) error        { return nil }
+func (m *mockWorkspaceFS) RemoveAll(_ context.Context, _ uint, _ string) error       { return nil }
 
 // ---- Tests ----------------------------------------------------------------
 
 func newTestService(store *mockStore) *Service {
 	return New(Options{
-		Dialer:    &mockDialer{},
+		Agents:    &mockAgents{},
 		Workspace: &mockWorkspaceFS{},
 		LLM:       &mockLLM{},
 		Store:     store,
@@ -377,7 +394,7 @@ func TestDispatch_MultipleInstances_LLMPick(t *testing.T) {
 	store.souls[2] = Soul{InstanceID: 2, Summary: "Go expert"}
 
 	svc := New(Options{
-		Dialer:    &mockDialer{},
+		Agents:    &mockAgents{},
 		Workspace: &mockWorkspaceFS{},
 		LLM:       &mockLLM{response: `{"instance_id": 2, "reason": "Go expert is better for this task"}`},
 		Store:     store,
@@ -402,7 +419,7 @@ func TestDispatch_LLMFailure_FallsBackToFirst(t *testing.T) {
 	store.boards[1] = Board{ID: 1, EligibleInstances: []uint{1, 2}}
 
 	svc := New(Options{
-		Dialer:    &mockDialer{},
+		Agents:    &mockAgents{},
 		Workspace: &mockWorkspaceFS{},
 		LLM:       &mockLLM{err: errors.New("API error")},
 		Store:     store,
@@ -440,7 +457,7 @@ func TestDispatch_LLMGarbageResponse_FallsBack(t *testing.T) {
 	store.boards[1] = Board{ID: 1, EligibleInstances: []uint{1, 2}}
 
 	svc := New(Options{
-		Dialer:    &mockDialer{},
+		Agents:    &mockAgents{},
 		Workspace: &mockWorkspaceFS{},
 		LLM:       &mockLLM{response: "I'm not sure, maybe instance 2?"},
 		Store:     store,
@@ -463,10 +480,10 @@ func TestDispatch_LLMGarbageResponse_FallsBack(t *testing.T) {
 func TestParseRankReply(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name     string
-		input    string
-		wantID   uint
-		wantOK   bool
+		name   string
+		input  string
+		wantID uint
+		wantOK bool
 	}{
 		{"valid json", `{"instance_id": 5, "reason": "best fit"}`, 5, true},
 		{"json in text", `Sure! {"instance_id": 3, "reason": "because"} ok?`, 3, true},
@@ -549,7 +566,7 @@ func TestEnqueueTask_StopDuringDispatch_MarksAsTodo(t *testing.T) {
 	// Use an LLM that blocks forever (simulating slow dispatch).
 	blockingLLM := &blockingMockLLM{ch: make(chan struct{})}
 	svc := New(Options{
-		Dialer:    &mockDialer{},
+		Agents:    &mockAgents{},
 		Workspace: &mockWorkspaceFS{},
 		LLM:       blockingLLM,
 		Store:     store,
@@ -601,7 +618,7 @@ func TestDispatch_ContextCanceled_RankFallsBack(t *testing.T) {
 	store.boards[1] = Board{ID: 1, EligibleInstances: []uint{1, 2}}
 
 	svc := New(Options{
-		Dialer:    &mockDialer{},
+		Agents:    &mockAgents{},
 		Workspace: &mockWorkspaceFS{},
 		LLM:       &mockLLM{err: context.Canceled},
 		Store:     store,
@@ -634,7 +651,7 @@ func TestDispatch_UsesTaskEvaluatorOverride(t *testing.T) {
 
 	captureLLM := &capturingMockLLM{}
 	svc := New(Options{
-		Dialer:    &mockDialer{},
+		Agents:    &mockAgents{},
 		Workspace: &mockWorkspaceFS{},
 		LLM:       captureLLM,
 		Store:     store,
@@ -673,7 +690,7 @@ func TestDispatch_LLMPicksInvalidID_FallsBack(t *testing.T) {
 
 	// LLM picks instance 99 which is not in eligible list.
 	svc := New(Options{
-		Dialer:    &mockDialer{},
+		Agents:    &mockAgents{},
 		Workspace: &mockWorkspaceFS{},
 		LLM:       &mockLLM{response: `{"instance_id": 99, "reason": "I like 99"}`},
 		Store:     store,
@@ -735,7 +752,7 @@ func TestRank_BuildsPromptWithSouls(t *testing.T) {
 	captureLLM := &promptCapturingLLM{}
 
 	svc := New(Options{
-		Dialer:    &mockDialer{},
+		Agents:    &mockAgents{},
 		Workspace: &mockWorkspaceFS{},
 		LLM:       captureLLM,
 		Store:     store,

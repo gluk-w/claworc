@@ -3,24 +3,33 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"reflect"
 	"regexp"
 	"sort"
 
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
 
-// ReservedEnvVarNames are set by the control plane at container-create time and
-// must not be shadowed by user-defined env vars. Every other OPENCLAW_* or
-// CLAWORC_* name is allowed (users often need to configure OpenClaw itself or
-// related tooling through them).
-var ReservedEnvVarNames = []string{
-	"OPENCLAW_GATEWAY_TOKEN",
+// contractEnvVarNames are the universal agent shim contract variables
+// (docs/shim.md), injected for every agent type at container create/restart.
+var contractEnvVarNames = []string{
 	"CLAWORC_INSTANCE_ID",
 	"CLAWORC_CONNECTION_SECRET",
-	"OPENCLAW_INITIAL_MODELS",
-	"OPENCLAW_INITIAL_PROVIDERS",
+	"CLAWORC_AGENT_TOKEN",
+	"CLAWORC_INITIAL_LLM_CONFIG",
+	"CLAWORC_LLM_PROXY_URL",
+}
+
+// ReservedEnvVarNames returns the names set by the control plane at
+// container-create time, which must not be shadowed by user-defined env vars:
+// the contract variables plus any adapter-registered legacy variables
+// (agentshim.RegisterLegacyEnv). Every other CLAWORC_* or agent-specific name
+// is allowed (users often need to configure the agent itself through them).
+func ReservedEnvVarNames() []string {
+	return append(append([]string{}, contractEnvVarNames...), agentshim.LegacyEnvNames()...)
 }
 
 var envVarNameRegex = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
@@ -31,7 +40,7 @@ func ValidateEnvVarName(name string) error {
 	if !envVarNameRegex.MatchString(name) {
 		return fmt.Errorf("invalid env var name %q: must match [A-Z_][A-Z0-9_]*", name)
 	}
-	for _, reserved := range ReservedEnvVarNames {
+	for _, reserved := range ReservedEnvVarNames() {
 		if name == reserved {
 			return fmt.Errorf("env var name %q is reserved for internal use", name)
 		}
@@ -194,4 +203,13 @@ func UpsertEncryptedEnvVarsJSON(existing string, set map[string]string, unset []
 // endpoints surface these as-is; values are only ever encrypted at rest.
 func EnvVarsForResponse(storedJSON string) map[string]string {
 	return decryptEnvVars(decodeEncryptedEnvVarsJSON(storedJSON))
+}
+
+// ListReservedEnvVars serves GET /api/v1/env-vars/reserved: the env var names
+// users may not define (see ReservedEnvVarNames), so the frontend validates
+// against the same list the backend enforces.
+func ListReservedEnvVars(w http.ResponseWriter, _ *http.Request) {
+	names := ReservedEnvVarNames()
+	sort.Strings(names)
+	writeJSON(w, http.StatusOK, map[string][]string{"names": names})
 }

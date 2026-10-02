@@ -1,8 +1,8 @@
-# Kanban Board with Auto-Routed OpenClaw Tasks
+# Kanban Board with Auto-Routed Agent Tasks
 
 ## Context
 
-Claworc manages multiple OpenClaw instances but offers no built-in way to organize work *across* them. The Kanban feature lets users create tasks on a global board, and a **moderator** component automatically picks the best-fit instance based on each agent's "soul" (an LLM summary of its workspace markdown) and skill set, dispatches the task, streams results back as comments, pulls artifacts, and runs an LLM evaluator.
+Claworc manages multiple agent instances (OpenClaw, Hermes, NanoClaw, …) but offers no built-in way to organize work *across* them. The Kanban feature lets users create tasks on a global board, and a **moderator** component automatically picks the best-fit instance based on each agent's "soul" (an LLM summary of its workspace markdown) and skill set, dispatches the task, streams results back as comments, pulls artifacts, and runs an LLM evaluator.
 
 ---
 
@@ -10,27 +10,27 @@ Claworc manages multiple OpenClaw instances but offers no built-in way to organi
 
 ```
 ┌─────────────┐    ┌──────────────────────────────────┐    ┌──────────────┐
-│  Frontend   │    │       Control-Plane              │    │  OpenClaw    │
+│  Frontend   │    │       Control-Plane              │    │  Agent       │
 │  KanbanPage │◄──►│  ┌────────────────────────────┐  │    │  Instance    │
 │  (polling)  │    │  │  HTTP handlers (CRUD)      │  │    │              │
-└─────────────┘    │  └────────────────────────────┘  │    │  Gateway WS  │
-                   │  ┌────────────────────────────┐  │SSH │  ws://.../   │
-                   │  │  Moderator service         │──┼───►│  gateway     │
-                   │  │  - dispatcher              │  │tun │              │
-                   │  │  - workspace summarizer    │  │nel │              │
-                   │  │  - WS run client per task  │◄─┼────┤  events      │
-                   │  │  - artifact collector      │  │exec│  workspace/  │
+└─────────────┘    │  └────────────────────────────┘  │    │  shim verbs  │
+                   │  ┌────────────────────────────┐  │SSH │  chat-stream │
+                   │  │  Moderator service         │──┼───►│  / chat-send │
+                   │  │  - dispatcher              │  │exec│              │
+                   │  │  - workspace summarizer    │  │    │              │
+                   │  │  - agent session per task  │◄─┼────┤  JSONL events│
+                   │  │  - artifact collector      │  │sftp│  workspace/  │
                    │  └────────────────────────────┘  │    │              │
                    └──────────────────────────────────┘    └──────────────┘
 ```
 
-Result delivery uses the **existing chat WebSocket protocol** (same `DialGateway` helper that `handlers/chat.go` uses), driven from a Go-side moderator goroutine with a unique `sessionKey` per task. No custom OpenClaw skill, no outbound webhook.
+Result delivery uses the **same agent chat session as the chat page and webhooks**: the moderator opens an `agentshim.Session` (see [shim.md](shim.md)) with a unique session key per task, driven from a Go-side moderator goroutine. Any agent whose shim declares the `chat` capability can receive Kanban tasks. No custom agent skill, no outbound webhook.
 
 ---
 
 ## Data Model
 
-GORM models in `control-plane/internal/database/models.go`, registered in `database.go` AutoMigrate.
+GORM models in `control-plane/internal/database/models/models.go`, registered in `database.go` AutoMigrate.
 
 ```go
 type KanbanBoard struct {
@@ -45,10 +45,10 @@ type KanbanTask struct {
     ID                   uint
     BoardID              uint      // FK → KanbanBoard
     Title                string    // auto-generated from first line of description
-    Description          string    // user-provided prompt sent to OpenClaw
+    Description          string    // user-provided prompt sent to the agent
     Status               string    // draft → todo → dispatching → in_progress → done|failed|archived
     AssignedInstanceID   *uint     // chosen by moderator dispatcher
-    OpenClawSessionID    string    // per-task gateway sessionKey
+    OpenClawSessionID    string    // per-task agent session key (name predates the shim; used for every agent type)
     OpenClawRunID        string
     EvaluatorProviderKey string    // global provider chosen on task form
     EvaluatorModel       string
@@ -108,13 +108,14 @@ All external dependencies are expressed as narrow interfaces (ports). Adapters w
 ### Ports (`moderator/ports.go`)
 
 ```go
-type GatewayDialer interface {
-    Dial(ctx context.Context, instanceID uint, sessionKey string) (GatewayConn, error)
+type Agents interface {
+    OpenSession(ctx context.Context, instanceID uint, sessionKey string) (AgentSession, error)
+    WorkspaceDir(ctx context.Context, instanceID uint) string // shim-declared, "" if none
 }
 
-type GatewayConn interface {
-    Send(ctx context.Context, frame []byte) error
-    Recv(ctx context.Context) ([]byte, error)
+type AgentSession interface {
+    Send(ctx context.Context, message string) error
+    Recv(ctx context.Context) (AgentEvent, error) // normalized shim chat event
     Close() error
 }
 
@@ -163,13 +164,13 @@ type InstanceLister interface {
 - **`ports.go`** — interface definitions + plain DTO structs (`Task`, `Comment`, `Board`, `Soul`, `Artifact`, `FileEntry`).
 - **`moderator.go`** — `Service` struct with per-task cancel context map. Methods: `EnqueueTask`, `Stop`, `Reopen`, `markStopped`, `markFailed`.
 - **`dispatcher.go`** — `Dispatch(ctx, taskID)`: loads board → eligible instances → cached souls → LLM ranking → routing comment with instance display name → sets status to `dispatching`.
-- **`runner.go`** — `Run(ctx, taskID)`: injects prior artifacts, builds comment history, opens gateway WS, sends structured prompt, streams events, collects outcomes, cleans up instance files, runs evaluator.
+- **`runner.go`** — `Run(ctx, taskID)`: injects prior artifacts, builds comment history, opens an agent session, sends structured prompt, streams events, collects outcomes, cleans up instance files, runs evaluator.
 - **`summarizer.go`** — background goroutine refreshing `InstanceSoul` per instance at `kanban_summary_interval`.
 - **`mentions.go`** — regex-based path extractor for mention-driven artifact collection (legacy fallback).
 
 ### Key behaviors
 
-**Cumulative text handling.** OpenClaw gateway `assistant` stream events send the *full cumulative text* in `data.text`, not incremental deltas. The runner replaces the assistant comment body via `SetCommentBody` each time (not append). This prevents the duplication bug where appended chunks repeat earlier text.
+**Cumulative text handling.** Shim `assistant` events carry the *full cumulative text* (`shim.md` § Chat event schema), not incremental deltas. The runner replaces the assistant comment body via `SetCommentBody` each time (not append). This prevents the duplication bug where appended chunks repeat earlier text.
 
 **Per-task cancellation.** `Service` maintains a `sync.Mutex`-guarded `map[uint]context.CancelFunc`. `EnqueueTask` creates a cancellable context per task. `Stop(taskID)` cancels it. Both the Dispatch and Run phases check for cancellation — stopped tasks are moved to `todo` (not `failed`) with a "Task stopped." moderator comment.
 
@@ -181,7 +182,7 @@ type InstanceLister interface {
 
 | Adapter | Satisfies | Implementation |
 |---|---|---|
-| `GatewayDialer` | `moderator.GatewayDialer` | Looks up tunnel port + decrypts gateway token → calls `sshproxy.DialGateway` → wraps `*websocket.Conn` in `GatewayConn` |
+| `Agents` | `moderator.Agents` | Wraps the agentshim factory: `OpenSession` → `Client.OpenSession`; `WorkspaceDir` → the shim's declared `workspace_dir` (from `meta`) |
 | `WorkspaceFS` | `moderator.WorkspaceFS` | Calls `SSHManager.EnsureConnectedWithIPCheck` → `sshproxy.ListDirectory`/`ReadFile`/`WriteFile`/`CreateDirectory`/`DeletePath` |
 | `LLMClient` | `moderator.LLMClient` | Direct HTTP call to provider BaseURL. Switches on `prov.APIType`: `anthropic-messages` uses `/v1/messages` with `x-api-key`, default uses OpenAI-compat `/v1/chat/completions` with Bearer auth |
 | `Store` | `moderator.Store` | GORM adapter translating between `database.*` models and moderator DTOs |
@@ -301,7 +302,7 @@ Read on-demand from the settings table by the `modwiring.Settings` adapter. Defa
 | `kanban_summary_interval` | How often the summarizer refreshes InstanceSoul | `10m` |
 | `kanban_artifacts_max_bytes` | Per-file size cap for artifact download | `5242880` (5 MB) |
 | `kanban_artifacts_dir` | Storage root for downloaded artifacts | `${CLAWORC_DATA_PATH}/kanban/artifacts` |
-| `kanban_workspace_dir` | Agent workspace path to scan for markdown/artifacts | `/home/claworc/.openclaw/workspace` |
+| `kanban_workspace_dir` | Fallback workspace path when the agent's shim `meta` declares no `workspace_dir` | `/home/claworc/.openclaw/workspace` |
 | `kanban_task_outcome_dir` | Base dir on instance for task output files | `/home/claworc/tasks` |
 
 The per-task `EvaluatorProviderKey`/`EvaluatorModel` (selected in the task creation form) overrides the global default for that task's ranking and evaluation LLM calls. The task-form dropdown shows global providers only (not per-instance).
@@ -404,11 +405,11 @@ Shown when task is `in_progress` or `dispatching`. Displays:
    - Build comment history (empty on first run) via `buildCommentHistory`.
    - Compose structured prompt with artifacts listing + history + task description + instructions + user feedback.
    - Generate per-task `sessionKey` → set status `in_progress`.
-   - Open gateway WS via `sshproxy.DialGateway` → send `chat.send` frame.
+   - Open an agent session via `Agents.OpenSession` → `Send` the prompt.
    - Stream events:
-     - `assistant` events: replace rolling comment body with cumulative `data.text` snapshot.
+     - `assistant` events: replace rolling comment body with the cumulative text snapshot.
      - `tool` events: insert separate `tool` comment with raw JSON body.
-     - `lifecycle` with `phase=end`: break loop.
+     - `end` event: break loop.
 4. **Artifact collection**: `collectOutcomes` → try `~/tasks/<id>/` directory on instance → fallback to mention-based scanning → store locally → insert artifact rows → insert moderator comment with pull report.
 5. **Instance cleanup**: delete `~/tasks/<id>/` from the instance.
 6. **Evaluation**: call moderator LLM with task + agent output + artifact list → insert `evaluation` comment with verdict (success|partial|failed) → set status `done`.
@@ -447,7 +448,7 @@ Shown when task is `in_progress` or `dispatching`. Displays:
 ### Failure
 
 - Dispatch errors (no eligible instances, LLM failure, etc.): `markFailed` inserts error comment + sets status `failed`.
-- Run errors (gateway connection drop, recv failure): same `markFailed`.
+- Run errors (agent session drop, recv failure): same `markFailed`.
 - Evaluator failure: inserts error comment but task still moves to `done` (evaluation is non-blocking for task completion).
 
 ---

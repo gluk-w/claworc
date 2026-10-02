@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
 	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
@@ -103,6 +105,7 @@ type modelsConfig struct {
 
 type instanceCreateRequest struct {
 	DisplayName        string            `json:"display_name"`
+	AgentType          string            `json:"agent_type"` // "" defaults to "openclaw"; validated via agentshim registry
 	CPURequest         string            `json:"cpu_request"`
 	CPULimit           string            `json:"cpu_limit"`
 	MemoryRequest      string            `json:"memory_request"`
@@ -143,54 +146,65 @@ type modelsResponse struct {
 }
 
 type instanceResponse struct {
-	ID                        uint                      `json:"id"`
-	Name                      string                    `json:"name"`
-	DisplayName               string                    `json:"display_name"`
-	Status                    string                    `json:"status"`
-	CPURequest                string                    `json:"cpu_request"`
-	CPULimit                  string                    `json:"cpu_limit"`
-	MemoryRequest             string                    `json:"memory_request"`
-	MemoryLimit               string                    `json:"memory_limit"`
-	StorageHomebrew           string                    `json:"storage_homebrew"`
-	StorageHome               string                    `json:"storage_home"`
-	HasBraveOverride          bool                      `json:"has_brave_override"`
-	Models                    *modelsResponse           `json:"models"`
-	DefaultModel              string                    `json:"default_model"`
-	ContainerImage            *string                   `json:"container_image"`
-	HasImageOverride          bool                      `json:"has_image_override"`
-	VNCResolution             *string                   `json:"vnc_resolution"`
-	HasResolutionOverride     bool                      `json:"has_resolution_override"`
-	Timezone                  *string                   `json:"timezone"`
-	HasTimezoneOverride       bool                      `json:"has_timezone_override"`
-	UserAgent                 *string                   `json:"user_agent"`
-	HasUserAgentOverride      bool                      `json:"has_user_agent_override"`
-	EnvVars                   map[string]string         `json:"env_vars"`
-	HasEnvOverride            bool                      `json:"has_env_override"`
-	RequiresRestart           bool                      `json:"requires_restart,omitempty"`
-	Restarting                bool                      `json:"restarting,omitempty"`
-	LiveImageInfo             *string                   `json:"live_image_info,omitempty"`
-	StatusMessage             string                    `json:"status_message,omitempty"`
-	AllowedSourceIPs          string                    `json:"allowed_source_ips"`
-	EnabledProviders          []uint                    `json:"enabled_providers"`
-	InstanceProviders         []providerResp            `json:"instance_providers"`
-	ControlURL                string                    `json:"control_url"`
-	GatewayToken              string                    `json:"gateway_token"`
-	SortOrder                 int                       `json:"sort_order"`
-	CreatedAt                 string                    `json:"created_at"`
-	UpdatedAt                 string                    `json:"updated_at"`
-	IsLegacyEmbedded          bool                      `json:"is_legacy_embedded"`
-	BrowserProvider           string                    `json:"browser_provider,omitempty"`
-	BrowserImage              string                    `json:"browser_image,omitempty"`
-	BrowserIdleMinutes        *int                      `json:"browser_idle_minutes,omitempty"`
-	BrowserStorage            string                    `json:"browser_storage,omitempty"`
-	BrowserActive             bool                      `json:"browser_active"`
-	TeamID                    uint                      `json:"team_id"`
-	PodAnnotations            map[string]string         `json:"pod_annotations"`
-	NodeSelector              map[string]string         `json:"node_selector"`
-	Tolerations               []orchestrator.Toleration `json:"tolerations"`
-	Affinity                  string                    `json:"affinity"`
-	ServiceAccountAnnotations map[string]string         `json:"service_account_annotations"`
-	Ports                     []orchestrator.PortSpec   `json:"ports"`
+	ID          uint   `json:"id"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	// AgentType is the effective agent type ("openclaw" for pre-shim rows).
+	AgentType string `json:"agent_type"`
+	// AgentDisplayName is the registry display name for AgentType.
+	AgentDisplayName string `json:"agent_display_name"`
+	// HasControlUI reports whether this agent type serves a web control UI.
+	HasControlUI bool `json:"has_control_ui"`
+	// AgentCapabilities carries the agent's capabilities: live from the
+	// shim's meta when reachable, else the static registry placeholder. Only
+	// set on the single-instance GET response — list responses stay cheap (no
+	// per-instance capability payloads, and never live SSH probing).
+	AgentCapabilities         *agentCapabilitiesResponse `json:"agent_capabilities,omitempty"`
+	Status                    string                     `json:"status"`
+	CPURequest                string                     `json:"cpu_request"`
+	CPULimit                  string                     `json:"cpu_limit"`
+	MemoryRequest             string                     `json:"memory_request"`
+	MemoryLimit               string                     `json:"memory_limit"`
+	StorageHomebrew           string                     `json:"storage_homebrew"`
+	StorageHome               string                     `json:"storage_home"`
+	HasBraveOverride          bool                       `json:"has_brave_override"`
+	Models                    *modelsResponse            `json:"models"`
+	DefaultModel              string                     `json:"default_model"`
+	ContainerImage            *string                    `json:"container_image"`
+	HasImageOverride          bool                       `json:"has_image_override"`
+	VNCResolution             *string                    `json:"vnc_resolution"`
+	HasResolutionOverride     bool                       `json:"has_resolution_override"`
+	Timezone                  *string                    `json:"timezone"`
+	HasTimezoneOverride       bool                       `json:"has_timezone_override"`
+	UserAgent                 *string                    `json:"user_agent"`
+	HasUserAgentOverride      bool                       `json:"has_user_agent_override"`
+	EnvVars                   map[string]string          `json:"env_vars"`
+	HasEnvOverride            bool                       `json:"has_env_override"`
+	RequiresRestart           bool                       `json:"requires_restart,omitempty"`
+	Restarting                bool                       `json:"restarting,omitempty"`
+	LiveImageInfo             *string                    `json:"live_image_info,omitempty"`
+	StatusMessage             string                     `json:"status_message,omitempty"`
+	AllowedSourceIPs          string                     `json:"allowed_source_ips"`
+	EnabledProviders          []uint                     `json:"enabled_providers"`
+	InstanceProviders         []providerResp             `json:"instance_providers"`
+	ControlURL                string                     `json:"control_url"`
+	GatewayToken              string                     `json:"gateway_token"`
+	SortOrder                 int                        `json:"sort_order"`
+	CreatedAt                 string                     `json:"created_at"`
+	UpdatedAt                 string                     `json:"updated_at"`
+	IsLegacyEmbedded          bool                       `json:"is_legacy_embedded"`
+	BrowserProvider           string                     `json:"browser_provider,omitempty"`
+	BrowserImage              string                     `json:"browser_image,omitempty"`
+	BrowserIdleMinutes        *int                       `json:"browser_idle_minutes,omitempty"`
+	BrowserStorage            string                     `json:"browser_storage,omitempty"`
+	BrowserActive             bool                       `json:"browser_active"`
+	TeamID                    uint                       `json:"team_id"`
+	PodAnnotations            map[string]string          `json:"pod_annotations"`
+	NodeSelector              map[string]string          `json:"node_selector"`
+	Tolerations               []orchestrator.Toleration  `json:"tolerations"`
+	Affinity                  string                     `json:"affinity"`
+	ServiceAccountAnnotations map[string]string          `json:"service_account_annotations"`
+	Ports                     []orchestrator.PortSpec    `json:"ports"`
 }
 
 func generateName(displayName string) string {
@@ -266,19 +280,26 @@ type LLMProxyProvider struct {
 	CatalogKey string // non-empty for catalog-backed providers (e.g. "openai", "anthropic")
 }
 
-// openclawProviderCfg is the JSON shape expected by OpenClaw's models.providers config.
-type openclawProviderCfg struct {
-	BaseURL string                   `json:"baseUrl"`
-	API     string                   `json:"api"`
-	APIKey  string                   `json:"apiKey"`
-	Models  []database.ProviderModel `json:"models"`
-}
+// buildLLMRouting translates the resolved effective models + gateway
+// providers into the agent-agnostic LLM routing document (docs/shim.md).
+// Catalog providers are filtered to only the selected models; agent-specific
+// config shapes (e.g. OpenClaw's models.providers JSON) are produced from
+// this document by the agent adapter (see agentshim/openclawnative).
+func buildLLMRouting(models []string, gatewayProviders map[string]LLMProxyProvider, gatewayPort int) agentshim.LLMRouting {
+	routing := agentshim.LLMRouting{
+		Style:          "openai",
+		FallbackModels: []string{},
+	}
+	if gatewayPort > 0 {
+		routing.ProxyURL = fmt.Sprintf("http://127.0.0.1:%d", gatewayPort)
+	}
+	if len(models) > 0 {
+		routing.DefaultModel = models[0]
+		routing.FallbackModels = models[1:]
+	}
 
-// buildOpenClawProvidersJSON builds the models.providers JSON for OpenClaw config.
-// It filters catalog providers to only the selected models.
-func buildOpenClawProvidersJSON(models []string, gatewayProviders map[string]LLMProxyProvider, gatewayPort int) (string, error) {
-	if len(gatewayProviders) == 0 || gatewayPort <= 0 {
-		return "", nil
+	if len(gatewayProviders) == 0 || routing.ProxyURL == "" {
+		return routing
 	}
 
 	effectiveSet := make(map[string]struct{}, len(models))
@@ -286,12 +307,7 @@ func buildOpenClawProvidersJSON(models []string, gatewayProviders map[string]LLM
 		effectiveSet[m] = struct{}{}
 	}
 
-	providers := make(map[string]openclawProviderCfg, len(gatewayProviders))
 	for providerKey, gp := range gatewayProviders {
-		apiType := gp.APIType
-		if apiType == "" {
-			apiType = "openai-completions"
-		}
 		var gpModels []database.ProviderModel
 		if gp.CatalogKey != "" {
 			var allModels []database.ProviderModel
@@ -308,29 +324,21 @@ func buildOpenClawProvidersJSON(models []string, gatewayProviders map[string]LLM
 		} else if len(gp.Models) > 0 {
 			gpModels = gp.Models
 		}
-		if gpModels == nil {
-			gpModels = []database.ProviderModel{}
+		refs := make([]agentshim.ModelRef, 0, len(gpModels))
+		for _, m := range gpModels {
+			refs = append(refs, agentshim.ModelRef{
+				ID:      m.ID,
+				Default: providerKey+"/"+m.ID == routing.DefaultModel,
+			})
 		}
-		// Codex declares openai-responses to OpenClaw so pi-ai skips its
-		// client-side JWT decode of apiKey. The LLM proxy translates path/auth/SSE
-		// upstream. The DB record keeps the codex apiType for proxy routing.
-		declaredAPI := apiType
-		if declaredAPI == internalproxy.APITypeOpenAICodexResponses {
-			declaredAPI = "openai-responses"
-		}
-		providers[providerKey] = openclawProviderCfg{
-			BaseURL: fmt.Sprintf("http://127.0.0.1:%d", gatewayPort),
-			API:     declaredAPI,
+		routing.Providers = append(routing.Providers, agentshim.ProviderRoute{
+			Key:     providerKey,
 			APIKey:  gp.Key,
-			Models:  gpModels,
-		}
+			APIType: gp.APIType,
+			Models:  refs,
+		})
 	}
-
-	b, err := json.Marshal(providers)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return routing
 }
 
 // resolveLLMProviders builds the providerKey→LLMProxyProvider map for an instance's enabled
@@ -512,10 +520,19 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		ports = []orchestrator.PortSpec{}
 	}
 
+	agentType := inst.EffectiveAgentType()
+	agentEntry, agentKnown := agentshim.Get(agentType)
+	if !agentKnown {
+		agentEntry.DisplayName = agentType // surface the raw type rather than ""
+	}
+
 	return instanceResponse{
 		ID:                        inst.ID,
 		Name:                      inst.Name,
 		DisplayName:               inst.DisplayName,
+		AgentType:                 agentType,
+		AgentDisplayName:          agentEntry.DisplayName,
+		HasControlUI:              agentEntry.HasControlUI,
 		Status:                    status,
 		StatusMessage:             getStatusMessage(inst.ID),
 		CPURequest:                inst.CPURequest,
@@ -685,6 +702,9 @@ func restartInstanceAsyncWithToast(inst database.Instance, userID uint, title, m
 		title, message,
 		func(ctx context.Context) {
 			params := buildCreateParams(inst)
+			// A restart re-creates the container, possibly from a re-pulled
+			// image: re-probe the agent afterwards.
+			defer invalidateAgentCaches(inst.ID)
 			if err := orch.RestartInstance(ctx, inst.Name, params); err != nil {
 				log.Printf("Failed to restart instance %d: %v", inst.ID, err)
 				setStatusMessage(inst.ID, fmt.Sprintf("Failed: %v", err))
@@ -744,6 +764,52 @@ func instancePlacementParams(inst database.Instance) instancePlacementFields {
 	return f
 }
 
+// applyReservedAgentEnv injects the reserved system env vars for the
+// instance's agent type into envVars. Applied after user env vars so they can
+// never be shadowed (see ReservedEnvVarNames).
+//
+// Every agent type gets the shim-contract variables (docs/shim.md):
+// CLAWORC_INSTANCE_ID, CLAWORC_AGENT_TOKEN (the same secret that has always
+// served as the OpenClaw gateway token), CLAWORC_LLM_PROXY_URL, and
+// CLAWORC_INITIAL_LLM_CONFIG (the agentshim.LLMRouting JSON applied by the
+// image's configure-llm at first boot). Adapters may register extra legacy
+// variables via agentshim.RegisterLegacyEnv (OpenClaw keeps
+// OPENCLAW_GATEWAY_TOKEN / OPENCLAW_INITIAL_* for pre-shim images).
+func applyReservedAgentEnv(envVars map[string]string, inst database.Instance, agentTokenPlain string) {
+	envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
+	injectConnectionSecret(envVars, inst.ID)
+	if agentTokenPlain != "" {
+		envVars["CLAWORC_AGENT_TOKEN"] = agentTokenPlain
+	}
+	if config.Cfg.InternalProxyPort > 0 {
+		envVars["CLAWORC_LLM_PROXY_URL"] = fmt.Sprintf("http://127.0.0.1:%d", config.Cfg.InternalProxyPort)
+	}
+
+	routing := buildLLMRouting(resolveInstanceModels(inst), resolveLLMProviders(inst), config.Cfg.InternalProxyPort)
+	if b, err := json.Marshal(routing); err == nil {
+		envVars["CLAWORC_INITIAL_LLM_CONFIG"] = string(b)
+	}
+
+	// Adapter-specific backward-compat variables (e.g. OpenClaw's legacy
+	// OPENCLAW_* seeds for pre-shim images), registered by the adapter.
+	for k, v := range agentshim.LegacyEnv(inst.EffectiveAgentType(), routing, agentTokenPlain) {
+		envVars[k] = v
+	}
+}
+
+// decryptedGatewayToken returns the instance's decrypted agent auth token,
+// or "" when unset/undecryptable.
+func decryptedGatewayToken(inst database.Instance) string {
+	if inst.GatewayToken == "" {
+		return ""
+	}
+	plain, err := utils.Decrypt(inst.GatewayToken)
+	if err != nil {
+		return ""
+	}
+	return plain
+}
+
 // buildCreateParams constructs orchestrator.CreateParams from a database Instance.
 func buildCreateParams(inst database.Instance) orchestrator.CreateParams {
 	envVars := map[string]string{}
@@ -752,13 +818,7 @@ func buildCreateParams(inst database.Instance) orchestrator.CreateParams {
 	MergeUserEnvVars(envVars, LoadGlobalEnvVars(), LoadInstanceEnvVars(inst))
 
 	// System env vars — applied last so they cannot be shadowed
-	if inst.GatewayToken != "" {
-		if plain, err := utils.Decrypt(inst.GatewayToken); err == nil {
-			envVars["OPENCLAW_GATEWAY_TOKEN"] = plain
-		}
-	}
-	envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
-	injectConnectionSecret(envVars, inst.ID)
+	applyReservedAgentEnv(envVars, inst, decryptedGatewayToken(inst))
 
 	placement := instancePlacementParams(inst)
 
@@ -907,6 +967,15 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Agent type: default "openclaw", validated against the static registry.
+	if body.AgentType == "" {
+		body.AgentType = agentshim.TypeOpenClaw
+	}
+	if err := agentshim.Validate(body.AgentType); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	// Target team must be specified. Non-admins must be a manager of it.
 	caller := middleware.GetUser(r)
 	var teamID uint
@@ -992,15 +1061,13 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	if body.ContainerImage != nil {
 		containerImage = *body.ContainerImage
 	}
-	// Populate the new slim agent image as the default for newly-created
-	// instances. Existing rows with empty ContainerImage keep resolving via
+	// Image resolution: explicit image → the selected agent type's default
+	// (openclaw → legacy default_agent_image; others → default_agent_images
+	// map). Existing rows with empty ContainerImage keep resolving via
 	// default_container_image (which seeds to the legacy combined image), but
-	// any instance created from now on opts into the on-demand browser-pod
-	// layout unless the caller passes an explicit container_image override.
+	// any instance created from now on stores the resolved default explicitly.
 	if containerImage == "" {
-		if def, err := database.GetSetting("default_agent_image"); err == nil && def != "" {
-			containerImage = def
-		}
+		containerImage = agentshim.DefaultImage(body.AgentType, database.GetSetting)
 	}
 	var vncResolution string
 	if body.VNCResolution != nil {
@@ -1093,6 +1160,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	inst := database.Instance{
 		Name:                      name,
 		DisplayName:               body.DisplayName,
+		AgentType:                 body.AgentType,
 		Status:                    "creating",
 		CPURequest:                body.CPURequest,
 		CPULimit:                  body.CPULimit,
@@ -1151,21 +1219,6 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	models := resolveInstanceModels(inst)
 	gatewayProviders := resolveLLMProviders(inst)
 
-	// Build initial OpenClaw config env vars so the gateway starts with providers already configured
-	initialModelsJSON := ""
-	if len(models) > 0 {
-		modelConfig := map[string]interface{}{"primary": models[0]}
-		if len(models) > 1 {
-			modelConfig["fallbacks"] = models[1:]
-		} else {
-			modelConfig["fallbacks"] = []string{}
-		}
-		if b, err := json.Marshal(modelConfig); err == nil {
-			initialModelsJSON = string(b)
-		}
-	}
-	initialProvidersJSON, _ := buildOpenClawProvidersJSON(models, gatewayProviders, config.Cfg.InternalProxyPort)
-
 	// Launch container creation asynchronously (image pull can take minutes)
 	startInstanceTask(taskmanager.TaskInstanceCreate, inst.ID, callerID(r), inst.DisplayName,
 		fmt.Sprintf("Creating instance %s", inst.DisplayName),
@@ -1183,18 +1236,10 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			// Applied first so reserved system names below can never be shadowed.
 			MergeUserEnvVars(envVars, LoadGlobalEnvVars(), LoadInstanceEnvVars(inst))
 
-			// System env vars — reserved, always win over user values
-			if gatewayTokenPlain != "" {
-				envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
-			}
-			envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
-			injectConnectionSecret(envVars, inst.ID)
-			if initialModelsJSON != "" {
-				envVars["OPENCLAW_INITIAL_MODELS"] = initialModelsJSON
-			}
-			if initialProvidersJSON != "" {
-				envVars["OPENCLAW_INITIAL_PROVIDERS"] = initialProvidersJSON
-			}
+			// System env vars — reserved, always win over user values. Includes
+			// the initial LLM routing config so the agent boots with providers
+			// already configured (no race with early messages).
+			applyReservedAgentEnv(envVars, inst, gatewayTokenPlain)
 
 			// inst was just Create()'d above with PodAnnotations/NodeSelector/
 			// Tolerations/Affinity/ServiceAccountAnnotations/Ports already
@@ -1240,12 +1285,11 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 			// Reconcile models and providers via SSH (handles any config that couldn't
 			// be passed via env vars, and restarts the gateway for a clean state)
 			database.DB.First(&inst, inst.ID)
-			sshClient, err := SSHMgr.WaitForSSH(ctx, inst.ID, 120*time.Second)
-			if err != nil {
+			if _, err := SSHMgr.WaitForSSH(ctx, inst.ID, 120*time.Second); err != nil {
 				log.Printf("Failed to get SSH connection for instance %d during configure: %v", inst.ID, err)
 				return
 			}
-			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), inst.Name, models, gatewayProviders, config.Cfg.InternalProxyPort)
+			ConfigureInstance(ctx, orch, inst.ID, inst.Name, models, gatewayProviders, config.Cfg.InternalProxyPort)
 			deployActiveConnectionSkills(inst.ID)
 		})
 
@@ -1301,6 +1345,15 @@ func GetInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	status := resolveStatus(&inst, orchStatus)
 	resp := instanceToResponse(inst, status)
+	// Agent capabilities — detail responses only. Live (the agent's shim
+	// meta, cached) when the instance is running and reachable; otherwise the
+	// static registry placeholder for its type.
+	if caps, ok := liveAgentCapabilities(r.Context(), inst, status); ok {
+		resp.AgentCapabilities = toAgentCapabilitiesResponse(caps)
+		resp.HasControlUI = caps.ControlUI
+	} else if entry, ok := agentshim.Get(inst.EffectiveAgentType()); ok {
+		resp.AgentCapabilities = toAgentCapabilitiesResponse(entry.StaticCapabilities)
+	}
 	if orch != nil {
 		if info, err := orch.GetInstanceImageInfo(r.Context(), inst.Name); err == nil && info != "" {
 			resp.LiveImageInfo = &info
@@ -1310,6 +1363,7 @@ func GetInstance(w http.ResponseWriter, r *http.Request) {
 }
 
 type instanceUpdateRequest struct {
+	AgentType                 *string                    `json:"agent_type"` // validated via agentshim registry
 	BraveAPIKey               *string                    `json:"brave_api_key"`
 	Models                    *modelsConfig              `json:"models"`
 	DefaultModel              *string                    `json:"default_model"`
@@ -1386,6 +1440,19 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		inst.TeamID = newTeamID
+	}
+
+	// Update agent type (validated against the static registry). Takes effect
+	// on the next restart/image update — the running container is untouched.
+	if body.AgentType != nil && *body.AgentType != "" {
+		if err := agentshim.Validate(*body.AgentType); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if *body.AgentType != inst.EffectiveAgentType() {
+			database.DB.Model(&inst).Update("agent_type", *body.AgentType)
+			invalidateAgentCaches(inst.ID)
+		}
 	}
 
 	// Update Brave API key
@@ -1682,12 +1749,11 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 		instName := inst.Name
 		go func() {
 			bgCtx := context.Background()
-			sshClient, err := SSHMgr.WaitForSSH(bgCtx, instID, 30*time.Second)
-			if err != nil {
+			if _, err := SSHMgr.WaitForSSH(bgCtx, instID, 30*time.Second); err != nil {
 				log.Printf("Failed to get SSH connection for instance %d during configure: %v", instID, err)
 				return
 			}
-			ConfigureInstance(bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName, models, gatewayProviders, config.Cfg.InternalProxyPort)
+			ConfigureInstance(bgCtx, orch, instID, instName, models, gatewayProviders, config.Cfg.InternalProxyPort)
 			deployActiveConnectionSkills(instID)
 		}()
 	}
@@ -1815,15 +1881,9 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 	effectiveTimezone := getEffectiveTimezone(inst)
 	effectiveUserAgent := getEffectiveUserAgent(inst)
 
-	// Decrypt gateway token for env vars
+	// Reserved system env vars (shim-contract + OpenClaw legacy set)
 	envVars := map[string]string{}
-	if inst.GatewayToken != "" {
-		if plain, err := utils.Decrypt(inst.GatewayToken); err == nil {
-			envVars["OPENCLAW_GATEWAY_TOKEN"] = plain
-		}
-	}
-	envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
-	injectConnectionSecret(envVars, inst.ID)
+	applyReservedAgentEnv(envVars, inst, decryptedGatewayToken(inst))
 
 	instID := inst.ID
 	instName := inst.Name
@@ -1868,6 +1928,7 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			log.Printf("Image updated successfully for instance %d", instID)
+			invalidateAgentCaches(instID)
 			database.DB.Model(&database.Instance{}).Where("id = ?", instID).Updates(map[string]interface{}{
 				"status":     "running",
 				"updated_at": time.Now().UTC(),
@@ -1942,6 +2003,7 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 	database.DB.Where("instance_id = ?", inst.ID).Delete(&database.ComposioConnection{})
 
 	database.DB.Delete(&inst)
+	invalidateAgentCaches(inst.ID)
 	var remaining int64
 	database.DB.Model(&database.Instance{}).Count(&remaining)
 	analytics.Track(r.Context(), analytics.EventInstanceDeleted, map[string]any{
@@ -2063,6 +2125,7 @@ func RestartInstance(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to restart instance: %v", err))
 			return
 		}
+		invalidateAgentCaches(inst.ID)
 	}
 
 	database.DB.Model(&inst).Updates(map[string]interface{}{
@@ -2101,20 +2164,25 @@ func GetInstanceConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, err := SSHMgr.EnsureConnectedWithIPCheck(r.Context(), inst.ID, orch, inst.AllowedSourceIPs)
+	client, err := agentshim.DefaultFactory().ForInstance(r.Context(), inst.ID)
 	if err != nil {
-		log.Printf("Failed to get SSH connection for instance %d: %v", inst.ID, err)
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("SSH connection failed: %v", err))
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to resolve agent client: %v", err))
 		return
 	}
 
-	content, err := sshproxy.ReadFile(client, orchestrator.PathOpenClawConfig)
+	content, language, err := client.GetConfig(r.Context(), "")
 	if err != nil {
+		var te *agentshim.TransportError
+		if errors.As(err, &te) {
+			log.Printf("Failed to get SSH connection for instance %d: %v", inst.ID, err)
+			writeError(w, http.StatusBadGateway, fmt.Sprintf("SSH connection failed: %v", te.Err))
+			return
+		}
 		writeError(w, http.StatusServiceUnavailable, "Instance must be running to read config")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"config": string(content)})
+	writeJSON(w, http.StatusOK, map[string]string{"config": content, "language": language})
 }
 
 func UpdateInstanceConfig(w http.ResponseWriter, r *http.Request) {
@@ -2160,26 +2228,43 @@ func UpdateInstanceConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, err := SSHMgr.EnsureConnectedWithIPCheck(r.Context(), inst.ID, orch, inst.AllowedSourceIPs)
+	client, err := agentshim.DefaultFactory().ForInstance(r.Context(), inst.ID)
 	if err != nil {
-		log.Printf("Failed to get SSH connection for instance %d: %v", inst.ID, err)
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("SSH connection failed: %v", err))
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to resolve agent client: %v", err))
 		return
 	}
 
-	if err := sshproxy.WriteFile(client, orchestrator.PathOpenClawConfig, []byte(body.Config)); err != nil {
+	if err := client.SetConfig(r.Context(), "", body.Config); err != nil {
+		var te *agentshim.TransportError
+		if errors.As(err, &te) {
+			log.Printf("Failed to get SSH connection for instance %d: %v", inst.ID, err)
+			writeError(w, http.StatusBadGateway, fmt.Sprintf("SSH connection failed: %v", te.Err))
+			return
+		}
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to write config: %v", err))
 		return
 	}
 
-	instanceConn := sshproxy.NewSSHInstance(client)
-	if _, stderr, code, err := instanceConn.ExecOpenclaw(r.Context(), "gateway", "stop"); err != nil || code != 0 {
-		log.Printf("Failed to restart gateway for instance %d: %v %s", inst.ID, err, stderr)
+	// Restart the agent when the config file declares it (best-effort,
+	// matching historical behavior).
+	restarted := false
+	language := ""
+	if caps, capErr := client.Capabilities(r.Context()); capErr == nil {
+		if file := caps.FindConfigFile(""); file != nil {
+			language = file.Language
+			if file.RestartRequired {
+				if rerr := client.Restart(r.Context()); rerr != nil {
+					log.Printf("Failed to restart agent for instance %d: %v", inst.ID, rerr)
+				}
+				restarted = true
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"config":    body.Config,
-		"restarted": true,
+		"restarted": restarted,
+		"language":  language,
 	})
 }
 
@@ -2226,6 +2311,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 	inst := database.Instance{
 		Name:            cloneName,
 		DisplayName:     cloneDisplayName,
+		AgentType:       src.AgentType,
 		Status:          "creating",
 		CPURequest:      src.CPURequest,
 		CPULimit:        src.CPULimit,
@@ -2312,11 +2398,7 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			effectiveUserAgent := getEffectiveUserAgent(inst)
 
 			envVars := map[string]string{}
-			if gatewayTokenPlain != "" {
-				envVars["OPENCLAW_GATEWAY_TOKEN"] = gatewayTokenPlain
-			}
-			envVars["CLAWORC_INSTANCE_ID"] = fmt.Sprintf("%d", inst.ID)
-			injectConnectionSecret(envVars, inst.ID)
+			applyReservedAgentEnv(envVars, inst, gatewayTokenPlain)
 
 			placement := instancePlacementParams(inst)
 
@@ -2376,12 +2458,11 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			database.DB.First(&inst, inst.ID)
 			// Don't carry over gateway keys from source — the clone gets its own instance ID
 			models := resolveInstanceModels(inst)
-			sshClient, err := SSHMgr.WaitForSSH(ctx, inst.ID, 120*time.Second)
-			if err != nil {
+			if _, err := SSHMgr.WaitForSSH(ctx, inst.ID, 120*time.Second); err != nil {
 				log.Printf("Failed to get SSH connection for clone %d during configure: %v", inst.ID, err)
 				return
 			}
-			ConfigureInstance(ctx, orch, sshproxy.NewSSHInstance(sshClient), cloneName, models, nil, config.Cfg.InternalProxyPort)
+			ConfigureInstance(ctx, orch, inst.ID, cloneName, models, nil, config.Cfg.InternalProxyPort)
 		})
 
 	writeJSON(w, http.StatusCreated, instanceToResponse(inst, "creating"))
@@ -2505,13 +2586,22 @@ func ReorderInstances(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ConfigureInstance sets the model configuration and gateway providers on a running instance
-// via openclaw CLI over SSH through inst.
+// agentClientFor resolves the agent Client for an instance. A seam so tests
+// can substitute a fake client.
+var agentClientFor = func(ctx context.Context, instanceID uint) (agentshim.Client, error) {
+	return agentshim.DefaultFactory().ForInstance(ctx, instanceID)
+}
+
+// ConfigureInstance sets the model configuration and gateway providers on a
+// running instance. It builds the agent-agnostic LLM routing document and
+// hands it to the instance's agent Client (via the agentshim factory), which
+// applies it however the agent needs — the shim's `configure-llm` verb, or
+// the openclaw CLI for legacy pre-shim OpenClaw images.
 //
-// gatewayProviders (optional) maps provider key → gateway auth key for configuring
-// models.providers in OpenClaw to route through the internal proxy's LLM route.
+// gatewayProviders (optional) maps provider key → gateway auth key for routing
+// the agent's LLM traffic through the internal proxy's LLM route.
 // gatewayPort is the port the internal proxy listens on (typically 40001).
-func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, inst sshproxy.Instance, name string, models []string, gatewayProviders map[string]LLMProxyProvider, gatewayPort int) {
+func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrator, instanceID uint, name string, models []string, gatewayProviders map[string]LLMProxyProvider, gatewayPort int) {
 	if len(models) == 0 && len(gatewayProviders) == 0 {
 		return
 	}
@@ -2522,80 +2612,14 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 		return
 	}
 
-	// Set model config via openclaw config set
-	if len(models) > 0 {
-		modelConfig := map[string]interface{}{
-			"primary": models[0],
-		}
-		if len(models) > 1 {
-			modelConfig["fallbacks"] = models[1:]
-		} else {
-			modelConfig["fallbacks"] = []string{}
-		}
-		modelJSON, err := json.Marshal(modelConfig)
-		if err != nil {
-			log.Printf("Error marshaling model config for %s: %v", utils.SanitizeForLog(name), err)
-			return
-		}
-		_, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "agents.defaults.model", string(modelJSON), "--json")
-		if err != nil {
-			log.Printf("Error setting model config for %s: %v", utils.SanitizeForLog(name), err)
-			return
-		}
-		if code != 0 {
-			log.Printf("Failed to set model config for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(stderr))
-			// continue — providers must still be configured even if model config failed
-		}
-
-		// Set models allowlist to restrict the UI dropdown to only configured models
-		modelsMap := make(map[string]interface{}, len(models))
-		for _, m := range models {
-			modelsMap[m] = map[string]interface{}{}
-		}
-		modelsMapJSON, err := json.Marshal(modelsMap)
-		if err != nil {
-			log.Printf("Error marshaling models allowlist for %s: %v", utils.SanitizeForLog(name), err)
-		} else {
-			// `openclaw config set` deep-merges into existing map values, so a
-			// previously-selected model that the admin de-selected would linger.
-			// Clear the path before writing the new allowlist.
-			_, _, _, _ = inst.ExecOpenclaw(ctx, "config", "unset", "agents.defaults.models")
-			_, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "agents.defaults.models", string(modelsMapJSON), "--json")
-			if err != nil {
-				log.Printf("Error setting models allowlist for %s: %v", utils.SanitizeForLog(name), err)
-			} else if code != 0 {
-				log.Printf("Failed to set models allowlist for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(stderr))
-			}
-		}
-	}
-
-	// Set gateway providers via openclaw CLI.
-	if len(gatewayProviders) > 0 && gatewayPort > 0 {
-		providersJSON, err := buildOpenClawProvidersJSON(models, gatewayProviders, gatewayPort)
-		if err != nil {
-			log.Printf("Error marshaling gateway providers for %s: %v", utils.SanitizeForLog(name), err)
-		} else if providersJSON != "" {
-			// Clear the providers map first so de-selected providers are removed
-			// instead of being deep-merged with the previous config.
-			_, _, _, _ = inst.ExecOpenclaw(ctx, "config", "unset", "models.providers")
-			stdout, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "models.providers", providersJSON, "--json")
-			if err != nil {
-				log.Printf("Error setting gateway providers for %s: %v", utils.SanitizeForLog(name), err)
-			} else if code != 0 {
-				log.Printf("Failed to set gateway providers for %s: stdout=%q stderr=%q",
-					utils.SanitizeForLog(name), utils.SanitizeForLog(stdout), utils.SanitizeForLog(stderr))
-			}
-		}
-	}
-
-	// Restart gateway so it picks up new env vars and config
-	stdout, stderr, code, err := inst.ExecOpenclaw(ctx, "gateway", "stop")
+	routing := buildLLMRouting(models, gatewayProviders, gatewayPort)
+	client, err := agentClientFor(ctx, instanceID)
 	if err != nil {
-		log.Printf("Error restarting gateway for %s: %v", utils.SanitizeForLog(name), err)
+		log.Printf("Failed to resolve agent for %s: %v", utils.SanitizeForLog(name), err)
 		return
 	}
-	if code != 0 {
-		log.Printf("Failed to restart gateway for %s: stdout=%q stderr=%q", utils.SanitizeForLog(name), utils.SanitizeForLog(stdout), utils.SanitizeForLog(stderr))
+	if err := client.ConfigureLLM(ctx, routing); err != nil {
+		log.Printf("Failed to configure models/providers for %s: %v", utils.SanitizeForLog(name), err)
 		return
 	}
 	log.Printf("Models and providers configured for %s", utils.SanitizeForLog(name))

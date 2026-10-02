@@ -2,129 +2,94 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/coder/websocket"
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 )
 
-// fakeGatewayFunc runs a minimal OpenClaw gateway over WebSocket. It completes
-// the DialGateway handshake, reads the chat.send frame, and then hands control
-// to afterSend, which decides what events (if any) to stream back. The gateway's
-// request context is passed through so afterSend can observe client disconnect.
-func fakeGatewayFunc(t *testing.T, afterSend func(ctx context.Context, conn *websocket.Conn, params map[string]any)) *httptest.Server {
-	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
-		if err != nil {
-			t.Logf("ws accept: %v", err)
-			return
-		}
-		defer conn.CloseNow()
-		ctx := r.Context()
-
-		// Phase 1: send connect.challenge
-		challenge, _ := json.Marshal(map[string]any{"type": "event", "payload": map[string]any{"stream": "connect.challenge"}})
-		if err := conn.Write(ctx, websocket.MessageText, challenge); err != nil {
-			t.Logf("write challenge: %v", err)
-			return
-		}
-
-		// Phase 2: read connect frame (discard)
-		if _, _, err := conn.Read(ctx); err != nil {
-			t.Logf("read connect: %v", err)
-			return
-		}
-
-		// Phase 3: send hello-ok
-		helloOK, _ := json.Marshal(map[string]any{"type": "res", "ok": true})
-		if err := conn.Write(ctx, websocket.MessageText, helloOK); err != nil {
-			t.Logf("write hello-ok: %v", err)
-			return
-		}
-
-		// Phase 4: read chat.send frame
-		_, data, err := conn.Read(ctx)
-		if err != nil {
-			t.Logf("read chat.send: %v", err)
-			return
-		}
-		var frame map[string]any
-		if err := json.Unmarshal(data, &frame); err != nil {
-			t.Logf("unmarshal frame: %v", err)
-			return
-		}
-		params, _ := frame["params"].(map[string]any)
-
-		afterSend(ctx, conn, params)
-	}))
+// scriptStep is one Recv result of a fakeSession: after delay, ev is
+// returned. Steps past the end of the script block until ctx is done
+// (simulating a silent agent).
+type scriptStep struct {
+	delay time.Duration
+	ev    agentshim.Event
 }
 
-// fakeGateway is the default gateway: it captures the chat.send params and
-// immediately sends a lifecycle/end event so RunWebhookBridge returns.
-func fakeGateway(t *testing.T) (srv *httptest.Server, paramsCh <-chan map[string]any) {
-	t.Helper()
-	ch := make(chan map[string]any, 1)
-	srv = fakeGatewayFunc(t, func(ctx context.Context, conn *websocket.Conn, params map[string]any) {
-		ch <- params
-		conn.Write(ctx, websocket.MessageText, lifecycleEndEvent()) //nolint:errcheck
-	})
-	return srv, ch
+// fakeSession is an in-memory agentshim.Session: Send records messages,
+// Recv replays a script of events.
+type fakeSession struct {
+	mu     sync.Mutex
+	idx    int
+	script []scriptStep
+	sent   []string
+	closed bool
 }
 
-// assistantEvent builds an OpenClaw assistant event carrying a cumulative
-// snapshot in data.text.
-func assistantEvent(text string) []byte {
-	b, _ := json.Marshal(map[string]any{
-		"type": "event",
-		"payload": map[string]any{
-			"stream": "assistant",
-			"data":   map[string]any{"text": text},
-		},
-	})
-	return b
+func (f *fakeSession) Send(_ context.Context, message string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sent = append(f.sent, message)
+	return nil
 }
 
-// lifecycleEndEvent builds the lifecycle/end event that signals completion.
-func lifecycleEndEvent() []byte {
-	b, _ := json.Marshal(map[string]any{
-		"type": "event",
-		"payload": map[string]any{
-			"stream": "lifecycle",
-			"data":   map[string]any{"phase": "end"},
-		},
-	})
-	return b
-}
-
-// gatewayPort extracts the listening port from a fake gateway test server.
-func gatewayPort(t *testing.T, srv *httptest.Server) int {
-	t.Helper()
-	addr := srv.Listener.Addr().String()
-	portStr := addr[strings.LastIndex(addr, ":")+1:]
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		t.Fatalf("parse port %q: %v", portStr, err)
+func (f *fakeSession) Recv(ctx context.Context) (agentshim.Event, error) {
+	f.mu.Lock()
+	if f.idx >= len(f.script) {
+		f.mu.Unlock()
+		// Deliberate silence: block until the caller's deadline fires.
+		<-ctx.Done()
+		return agentshim.Event{}, ctx.Err()
 	}
-	return port
+	step := f.script[f.idx]
+	f.idx++
+	f.mu.Unlock()
+
+	if step.delay > 0 {
+		select {
+		case <-ctx.Done():
+			return agentshim.Event{}, ctx.Err()
+		case <-time.After(step.delay):
+		}
+	}
+	return step.ev, nil
 }
 
-// pointTunnelTo overrides webhookGetTunnelPort to resolve to srv's port for the
-// duration of the test.
-func pointTunnelTo(t *testing.T, srv *httptest.Server) {
+func (f *fakeSession) Abort(context.Context) error { return nil }
+func (f *fakeSession) Reset(context.Context) error { return nil }
+func (f *fakeSession) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = true
+	return nil
+}
+
+func assistantSnapshot(text string) agentshim.Event {
+	return agentshim.Event{V: 1, Kind: agentshim.EventAssistant, Text: text}
+}
+
+func endEvent(text string) agentshim.Event {
+	return agentshim.Event{V: 1, Kind: agentshim.EventEnd, StopReason: agentshim.StopComplete, Text: text}
+}
+
+// pointSessionTo overrides webhookOpenSession to hand out sess and records
+// the session key the bridge requested.
+func pointSessionTo(t *testing.T, sess agentshim.Session) (sessionKey *string) {
 	t.Helper()
-	port := gatewayPort(t, srv)
-	orig := webhookGetTunnelPort
-	webhookGetTunnelPort = func(_ uint, _ string) (int, error) { return port, nil }
-	t.Cleanup(func() { webhookGetTunnelPort = orig })
+	var key string
+	orig := webhookOpenSession
+	webhookOpenSession = func(_ context.Context, _ uint, sessionKey string) (agentshim.Session, error) {
+		key = sessionKey
+		return sess, nil
+	}
+	t.Cleanup(func() { webhookOpenSession = orig })
+	return &key
 }
 
 // setBridgeIdleTimeout sets the webhook idle timeout for the test and restores
@@ -156,101 +121,64 @@ func newBridgeInstance(t *testing.T, uuid string) database.Instance {
 
 func TestRunWebhookBridge_SessionKeyHasPrefix(t *testing.T) {
 	setupTestDB(t)
-	if err := database.DB.AutoMigrate(&database.WebhookApiKey{}, &database.WebhookLog{}); err != nil {
-		t.Fatalf("automigrate: %v", err)
-	}
+	inst := newBridgeInstance(t, "bridge-prefix-test")
 
-	inst := database.Instance{
-		UUID:        "bridge-prefix-test",
-		Name:        "bot-bridge-prefix-test",
-		DisplayName: "Bridge Prefix Test",
-		Status:      "running",
-	}
-	if err := database.DB.Create(&inst).Error; err != nil {
-		t.Fatalf("create instance: %v", err)
-	}
-
-	srv, paramsCh := fakeGateway(t)
-	defer srv.Close()
-
-	// Derive the port from the test server URL.
-	addr := srv.Listener.Addr().String()
-	portStr := addr[strings.LastIndex(addr, ":")+1:]
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		t.Fatalf("parse port %q: %v", portStr, err)
-	}
-
-	origGetTunnelPort := webhookGetTunnelPort
-	webhookGetTunnelPort = func(_ uint, _ string) (int, error) { return port, nil }
-	t.Cleanup(func() { webhookGetTunnelPort = origGetTunnelPort })
+	sess := &fakeSession{script: []scriptStep{{ev: endEvent("")}}}
+	key := pointSessionTo(t, sess)
 
 	_, bridgeErr := RunWebhookBridge(context.Background(), inst.ID, "my-task", "hello", nil)
 	if bridgeErr != nil {
 		t.Fatalf("RunWebhookBridge: %v", bridgeErr)
 	}
 
-	params := <-paramsCh
-	sessionKey, _ := params["sessionKey"].(string)
-	if sessionKey != "claworc-webhook-my-task" {
-		t.Fatalf("sessionKey = %q, want %q", sessionKey, "claworc-webhook-my-task")
+	if *key != "claworc-webhook-my-task" {
+		t.Fatalf("sessionKey = %q, want %q", *key, "claworc-webhook-my-task")
 	}
-	idempotencyKey, _ := params["idempotencyKey"].(string)
-	if !strings.HasPrefix(idempotencyKey, "claworc-webhook-my-task-") {
-		t.Fatalf("idempotencyKey = %q, want prefix %q", idempotencyKey, "claworc-webhook-my-task-")
+	if len(sess.sent) != 1 || sess.sent[0] != "hello" {
+		t.Fatalf("sent = %v, want exactly [hello]", sess.sent)
+	}
+	if !sess.closed {
+		t.Fatal("session was not closed")
 	}
 }
 
-// TestRunWebhookBridge_IdleTimeout: a gateway that sends one event then goes
+// TestRunWebhookBridge_IdleTimeout: a session that yields one event then goes
 // silent must trip the idle timeout rather than blocking forever.
 func TestRunWebhookBridge_IdleTimeout(t *testing.T) {
 	setupTestDB(t)
 	inst := newBridgeInstance(t, "bridge-idle-test")
 	setBridgeIdleTimeout(t, 200*time.Millisecond)
 
-	srv := fakeGatewayFunc(t, func(ctx context.Context, conn *websocket.Conn, _ map[string]any) {
-		// One event, then deliberate silence (never sends lifecycle/end).
-		conn.Write(ctx, websocket.MessageText, assistantEvent("working...")) //nolint:errcheck
-		<-ctx.Done()
-	})
-	defer srv.Close()
-	pointTunnelTo(t, srv)
+	// One assistant event, then deliberate silence (never sends "end").
+	sess := &fakeSession{script: []scriptStep{{ev: assistantSnapshot("working...")}}}
+	pointSessionTo(t, sess)
 
 	_, err := RunWebhookBridge(context.Background(), inst.ID, "idle-task", "hello", nil)
 	if err == nil {
 		t.Fatalf("expected idle timeout error, got nil")
 	}
-	if !strings.Contains(err.Error(), "openclaw idle timeout") {
+	if !strings.Contains(err.Error(), "agent idle timeout") {
 		t.Fatalf("error = %q, want idle timeout", err.Error())
 	}
 }
 
-// TestRunWebhookBridge_HeartbeatKeepsAlive: a gateway streaming events at an
+// TestRunWebhookBridge_HeartbeatKeepsAlive: a session streaming events at an
 // interval shorter than the idle window — but for far longer than that window
-// in total — must NOT be cut off, proving the deadline re-arms per frame.
+// in total — must NOT be cut off, proving the deadline re-arms per event.
 func TestRunWebhookBridge_HeartbeatKeepsAlive(t *testing.T) {
 	setupTestDB(t)
 	inst := newBridgeInstance(t, "bridge-heartbeat-test")
 	setBridgeIdleTimeout(t, 200*time.Millisecond)
 
-	srv := fakeGatewayFunc(t, func(ctx context.Context, conn *websocket.Conn, _ map[string]any) {
-		// 12 events @ 50ms = ~600ms total, well past the 200ms idle window,
-		// but each gap (50ms) stays under it. Last snapshot is the reply.
-		for i := 0; i < 12; i++ {
-			text := "chunk-" + strconv.Itoa(i)
-			if err := conn.Write(ctx, websocket.MessageText, assistantEvent(text)); err != nil {
-				return
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(50 * time.Millisecond):
-			}
-		}
-		conn.Write(ctx, websocket.MessageText, lifecycleEndEvent()) //nolint:errcheck
-	})
-	defer srv.Close()
-	pointTunnelTo(t, srv)
+	// 12 events @ 50ms = ~600ms total, well past the 200ms idle window,
+	// but each gap (50ms) stays under it. Last snapshot is the reply.
+	var script []scriptStep
+	for i := 0; i < 12; i++ {
+		script = append(script, scriptStep{delay: 50 * time.Millisecond, ev: assistantSnapshot("chunk-" + strconv.Itoa(i))})
+	}
+	script = append(script, scriptStep{ev: endEvent("")})
+	sess := &fakeSession{script: script}
+	pointSessionTo(t, sess)
 
 	reply, err := RunWebhookBridge(context.Background(), inst.ID, "hb-task", "hello", nil)
 	if err != nil {
@@ -261,6 +189,27 @@ func TestRunWebhookBridge_HeartbeatKeepsAlive(t *testing.T) {
 	}
 }
 
+// TestRunWebhookBridge_EndTextWins: when the end event carries text (the
+// normalized schema's end.text), it is the authoritative reply.
+func TestRunWebhookBridge_EndTextWins(t *testing.T) {
+	setupTestDB(t)
+	inst := newBridgeInstance(t, "bridge-endtext-test")
+
+	sess := &fakeSession{script: []scriptStep{
+		{ev: assistantSnapshot("partial")},
+		{ev: endEvent("final answer")},
+	}}
+	pointSessionTo(t, sess)
+
+	reply, err := RunWebhookBridge(context.Background(), inst.ID, "end-task", "hello", nil)
+	if err != nil {
+		t.Fatalf("RunWebhookBridge: %v", err)
+	}
+	if reply != "final answer" {
+		t.Fatalf("reply = %q, want %q", reply, "final answer")
+	}
+}
+
 // TestRunWebhookBridge_ClientDisconnect: cancelling the request context mid-
 // stream returns context.Canceled, not the idle-timeout error.
 func TestRunWebhookBridge_ClientDisconnect(t *testing.T) {
@@ -268,17 +217,9 @@ func TestRunWebhookBridge_ClientDisconnect(t *testing.T) {
 	inst := newBridgeInstance(t, "bridge-disconnect-test")
 	setBridgeIdleTimeout(t, 5*time.Second) // generous, so idle never fires first
 
-	started := make(chan struct{}, 1)
-	srv := fakeGatewayFunc(t, func(ctx context.Context, conn *websocket.Conn, _ map[string]any) {
-		conn.Write(ctx, websocket.MessageText, assistantEvent("working...")) //nolint:errcheck
-		select {
-		case started <- struct{}{}:
-		default:
-		}
-		<-ctx.Done()
-	})
-	defer srv.Close()
-	pointTunnelTo(t, srv)
+	// One assistant event, then silence until the caller cancels.
+	sess := &fakeSession{script: []scriptStep{{ev: assistantSnapshot("working...")}}}
+	pointSessionTo(t, sess)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -291,7 +232,17 @@ func TestRunWebhookBridge_ClientDisconnect(t *testing.T) {
 		resCh <- result{err}
 	}()
 
-	<-started
+	// Wait until the first event has been consumed, then cancel.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		sess.mu.Lock()
+		consumed := sess.idx >= 1
+		sess.mu.Unlock()
+		if consumed || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	cancel()
 
 	select {

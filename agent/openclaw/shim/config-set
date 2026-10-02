@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# config-set [--id <file-id>] — replace openclaw.json with stdin, byte for
+# byte (docs/shim.md). No validation (the frontend validates by meta's
+# `language`); does NOT restart the agent — the control plane calls the
+# restart verb afterwards.
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+parse_id_arg main main -- "$@"
+atomic_write /home/claworc/.openclaw/openclaw.json 0600

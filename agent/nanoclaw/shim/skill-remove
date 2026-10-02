@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# skill-remove --name <skill> — delete <skills_dir>/<skill>. Idempotent
+# (docs/shim.md).
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+SKILLS_DIR=/home/claworc/.claude/skills
+
+parse_name_arg "$@"
+skill_remove "$SKILLS_DIR" "$SHIM_NAME"

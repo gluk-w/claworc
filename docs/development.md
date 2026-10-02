@@ -43,8 +43,11 @@ npm run build    # Production build
 ```bash
 make dashboard-build    # Build dashboard image
 make dashboard-push     # Push to registry
-make agent-build        # Build agent (bot instance) image
-make agent-push         # Push agent image
+make agent-build        # Build all agent images (openclaw, hermes, nanoclaw) + browser images locally
+make agent-test         # Run agent/tests suites against the locally built images
+make agent-instance-test # Build + test only claworc/openclaw (PR gate)
+make agent-shim-test    # Build + test claworc/hermes and claworc/nanoclaw (PR gate)
+make agent-push         # Multi-arch build and push of all agent + browser images
 make helm-install       # Install Helm chart
 make helm-upgrade       # Upgrade deployment
 make helm-template      # Render templates (debug)
@@ -55,8 +58,10 @@ make helm-template      # Render templates (debug)
 All settings use the `CLAWORC_` prefix:
 - `CLAWORC_DATA_PATH` - Data directory for SQLite database and SSH keys (default: `/app/data`)
 - `CLAWORC_K8S_NAMESPACE` - Kubernetes namespace (default: `claworc`)
-- `CLAWORC_NODE_IP` - Node IP for VNC URLs (default: `192.168.1.104`)
-- `CLAWORC_PORT_START` / `CLAWORC_PORT_END` - Port range (default: 30100-30199)
+- `CLAWORC_PORT` - HTTP listen port (default: `8000`)
+- `CLAWORC_DOCKER_HOST` - Docker daemon URL override (default: auto-detect)
+
+The full list lives in `control-plane/internal/config/config.go` and the root `CLAUDE.md`.
 
 ## SSH Proxy Package (`internal/sshproxy`)
 

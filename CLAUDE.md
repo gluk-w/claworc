@@ -1,19 +1,20 @@
 # Claworc
 
-OpenClaw Orchestrator (Claworc) manages multiple OpenClaw instances in Kubernetes or Docker.
-Each instance runs in its own container/pod and allows users easy access to a Chromium browser & terminal 
-for collaboration with the agent.
+AI Agent Orchestrator to control a fleet of instances in Kubernetes or Docker. Supports OpenClaw, Hermes and NanoClaw.
+Each instance runs in its own container/pod and allows users easy access to a Chromium browser, terminal, file manager 
+and logs for collaboration with the agent.
 
 The project consists of the following components:
 * Control Plane (Golang backend and React frontend) with dashboard, VNC client for Chromium, Terminal, Logs and other useful stuff.
-* Agent image with OpenClaw installed. It is compatible with both ARM64 and AMD64 architectures.
+* Agent images (`claworc/openclaw`, `claworc/hermes`, `claworc/nanoclaw`, plus a copy-me template). Compatible with both ARM64 and AMD64 architectures.
 * Helm chart for deployment to Kubernetes.
 
 ## Repository Structure
 
 - `agent/` - Docker images
     - `browser/` - Images with various browsers `claworc/<browser>-browser`
-    - `instance/` - Base Docker image with OpenClaw instance (`claworc/openclaw`) and all necessary tools
+    - `openclaw/`, `hermes/`, `nanoclaw/` - Agent images (`claworc/openclaw`, `claworc/hermes`, `claworc/nanoclaw`)
+    - `template/` - Copy-me starting point for custom agent images implementing the shim contract
     - `tests/` - Tests for the OpenClaw image
 - `control-plane/` - Main application (Go backend + React frontend)
     - `main.go` - Entry point, Chi router, embedded SPA serving
@@ -34,34 +35,28 @@ SPA middleware for client-side routing.
 health at `/health`. Logs are streamed via SSE. WebSocket proxying for chat and VNC.
 
 **Internal Proxy** (`internal/internalproxy/`): A single internal-only HTTP server (`127.0.0.1`, default
-port `40001`, `CLAWORC_INTERNAL_PROXY_PORT`) that lets instances reach external services without ever
-holding real credentials. Each request carries a Claworc-issued token; the proxy validates it, injects the
-real upstream credential, and forwards. It serves several routes: the LLM virtual-key proxy (`/`, swaps
-`claworc-vk-*` virtual keys for the real, globally configured provider API tokens and records usage stats in
-a separate SQLite database), the Composio connections broker (`/connections/`), and the inter-agent webhook
-trigger (`/webhooks/`). See `docs/internal-proxy.md` (LLM route details in `docs/virtual-keys.md`).
+port `40001`, `CLAWORC_INTERNAL_PROXY_PORT` env) that lets instances reach external services without ever
+holding real credentials. It serves several routes: 
+* the LLM virtual-key proxy
+* the Composio connections broker
+* the inter-agent webhook trigger. 
+See `docs/internal-proxy.md` .
+
+**Agent Shim** (`internal/agentshim/`): The universal interface between the control plane and the AI agent
+running inside an instance container (OpenClaw, Hermes, NanoClaw, custom). The control plane is
+agent-agnostic: everything it does with an agent — chat, webhooks, config editing, LLM routing, skills,
+logs, the agent's own web UI (Control UI), restart — goes through the `Client`/`Session` interfaces and is
+driven by the image's shim. See `docs/shim.md`.
 
 **Orchestrator** (`internal/orchestrator/`): Thin abstraction over the underlying container runtime
-(Kubernetes or Docker). Its job is generic container primitives only — instance lifecycle, exec, file
-streaming, SSH address, resource updates, image updates, volume cloning. It does NOT own browser-pod,
-terminal, or other feature-specific orchestration; those live in their own packages
-(e.g. `browserprov/` for the on-demand browser pod) and depend on the orchestrator only through small
+(Kubernetes `internal/orchestrator/kubernetes.go` or Docker `internal/orchestrator/docker.go`). Its job is generic 
+container primitives only — instance lifecycle, exec, file streaming, SSH address, resource updates, image updates, 
+volume cloning. It does NOT own browser-pod, terminal, or other feature-specific orchestration; those live in their
+own packages (e.g. `browserprov/` for the on-demand browser pod) and depend on the orchestrator only through small
 purpose-specific backend interfaces.
-
-**K8s integration** (`internal/orchestrator/kubernetes.go`): Uses the official Go `client-go` library. 
-Tries in-cluster config first, falls back to kubeconfig for local dev.
-
-**Docker integration** (`internal/orchestrator/docker.go`): Alternative orchestrator backend using the Docker API 
-for local development.
 
 **Crypto** (`internal/crypto/crypto.go`): API keys encrypted at rest in SQLite using Fernet. The Fernet key is 
 auto-generated on first run and stored in the `settings` table.
-
-**Database migrations** (`internal/database/migrations/`): Goose v3 invoked as a library, embedded in the binary, 
-applied at startup from `database.Init()`. New migrations are versioned Go files in the `migrations` subpackage
-that use the GORM Migrator interface; model types live in `internal/database/models/` and are re-exported by
-the `database` package via type aliases for backward compat. See `docs/migrations.md` for the full spec, 
-including the `make migration` workflow that delegates to the `migration-author` subagent.
 
 **SSH Proxy** (`internal/sshproxy/`): Unified package consolidating SSH key management, connection management, 
 tunnel management, health monitoring, automatic reconnection, connection state tracking, and connection event logging. 
@@ -89,7 +84,7 @@ Backend settings use `envconfig` with `CLAWORC_` env prefix (see `internal/confi
 - `CLAWORC_TERMINAL_RECORDING_DIR` - Directory for audit recordings (default: empty, disabled)
 - `CLAWORC_TERMINAL_SESSION_TIMEOUT` - Idle detached session timeout (default: `30m`)
 - `CLAWORC_ALLOWED_HOST_MOUNTS` - Comma-separated allowlist of host path prefixes within which shared folders may be backed by a host bind mount. Empty (default) disables host-backed shared folders entirely. See `docs/shared-folders.md`.
-- `CLAWORC_WEBHOOK_IDLE_TIMEOUT` - Idle gap the synchronous webhook bridge tolerates between events from OpenClaw before giving up (default: `120s`). The deadline re-arms on every event, so an actively-streaming agent is never cut off; only a genuine stall trips it.
+- `CLAWORC_WEBHOOK_IDLE_TIMEOUT` - Idle gap the synchronous webhook bridge tolerates between events from the agent before giving up (default: `120s`). The deadline re-arms on every event, so an actively-streaming agent is never cut off; only a genuine stall trips it.
 - `CLAWORC_SSH_GATEWAY_ENABLED` / `CLAWORC_SSH_GATEWAY_PORT` / `CLAWORC_SSH_GATEWAY_PUBLIC_HOST` - Inbound SSH gateway (`ssh <user>+<instance>@host`, default port `2222`). See `docs/ssh-gateway.md`.
 
 ## Terminology
@@ -106,3 +101,5 @@ Backend settings use `envconfig` with `CLAWORC_` env prefix (see `internal/confi
 - SSH connections and tunnels are keyed by instance ID (uint), not name — this ensures stability across 
   renames and avoids name-to-ID mapping overhead
 - User Experience is very important - ensure elements are consistently formatted (see `docs/style-guide.md`) and properly labeled. 
+- Always check if a database migration needs to be created if GORM models change. See `docs/migrations.md`
+

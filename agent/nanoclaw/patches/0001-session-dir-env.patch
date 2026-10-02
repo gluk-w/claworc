@@ -1,0 +1,100 @@
+CLAWORC PATCH — parametrize the NanoClaw agent-runner session directory
+=======================================================================
+
+Upstream NanoClaw (nanocoai/nanoclaw) runs one Docker container per agent
+session; the host bind-mounts each session's directory (inbound.db /
+outbound.db / .heartbeat / outbox) at the fixed path /workspace inside the
+container, so the agent-runner hardcodes that path.
+
+The Claworc instance container IS the sandbox — there is no Docker inside it.
+The Claworc shim runs the agent-runner as a plain child process, one per
+Claworc chat session, so the fixed /workspace mount point is replaced by a
+NANOCLAW_SESSION_DIR environment variable (default: /workspace, i.e. behavior
+is unchanged for upstream's containerized use).
+
+Four files are touched, all in container/agent-runner/src/:
+  db/connection.ts   inbound.db / outbound.db / .heartbeat paths
+  cli/ncl.ts         same two DB paths for the in-session `ncl` CLI
+  mcp-tools/core.ts  the per-message outbox directory
+  index.ts           propagate the variable to the nanoclaw MCP subprocess
+
+The shared agent-group directory (/workspace/agent) is NOT parametrized: the
+image provides it as a real path (a symlink to the persistent
+/home/claworc/workspace), matching upstream's "one group dir shared by all
+sessions" semantics.
+
+Applied at image build time with:  patch -p1 -d /opt/nanoclaw < this-file
+Generated against NANOCLAW_VERSION v2.1.54; regenerate when bumping.
+
+diff --git a/container/agent-runner/src/cli/ncl.ts b/container/agent-runner/src/cli/ncl.ts
+index 2025e3b..ac84e1c 100644
+--- a/container/agent-runner/src/cli/ncl.ts
++++ b/container/agent-runner/src/cli/ncl.ts
+@@ -31,8 +31,11 @@ type ResponseFrame =
+ // Paths
+ // ---------------------------------------------------------------------------
+ 
+-const INBOUND_DB = '/workspace/inbound.db';
+-const OUTBOUND_DB = '/workspace/outbound.db';
++// CLAWORC PATCH: honor the per-session directory override used by the
++// Claworc no-container runner (see db/connection.ts).
++const NCL_SESSION_DIR = process.env.NANOCLAW_SESSION_DIR || '/workspace';
++const INBOUND_DB = `${NCL_SESSION_DIR}/inbound.db`;
++const OUTBOUND_DB = `${NCL_SESSION_DIR}/outbound.db`;
+ 
+ // ---------------------------------------------------------------------------
+ // DB transport
+diff --git a/container/agent-runner/src/db/connection.ts b/container/agent-runner/src/db/connection.ts
+index 00ce0ee..ad306c2 100644
+--- a/container/agent-runner/src/db/connection.ts
++++ b/container/agent-runner/src/db/connection.ts
+@@ -20,9 +20,16 @@
+ import { Database } from 'bun:sqlite';
+ import fs from 'fs';
+ 
+-const DEFAULT_INBOUND_PATH = '/workspace/inbound.db';
+-const DEFAULT_OUTBOUND_PATH = '/workspace/outbound.db';
+-const DEFAULT_HEARTBEAT_PATH = '/workspace/.heartbeat';
++// CLAWORC PATCH (see agent/nanoclaw/patches/ in the claworc repo): the
++// Claworc image runs this agent-runner as a plain child process — one per
++// Claworc chat session — instead of one container per session. The session
++// DB pair therefore cannot live at a fixed mount point; the supervisor
++// passes the per-session directory via NANOCLAW_SESSION_DIR. Behavior is
++// unchanged when the variable is unset (containerized default).
++const SESSION_DIR = process.env.NANOCLAW_SESSION_DIR || '/workspace';
++const DEFAULT_INBOUND_PATH = `${SESSION_DIR}/inbound.db`;
++const DEFAULT_OUTBOUND_PATH = `${SESSION_DIR}/outbound.db`;
++const DEFAULT_HEARTBEAT_PATH = `${SESSION_DIR}/.heartbeat`;
+ 
+ let _inbound: Database | null = null;
+ let _outbound: Database | null = null;
+diff --git a/container/agent-runner/src/index.ts b/container/agent-runner/src/index.ts
+index c85873c..5f39918 100644
+--- a/container/agent-runner/src/index.ts
++++ b/container/agent-runner/src/index.ts
+@@ -88,7 +88,9 @@ async function main(): Promise<void> {
+     nanoclaw: {
+       command: 'bun',
+       args: ['run', mcpServerPath],
+-      env: {},
++      // CLAWORC PATCH: propagate the per-session directory override so the
++      // MCP server subprocess writes to the same session DB pair.
++      env: process.env.NANOCLAW_SESSION_DIR ? { NANOCLAW_SESSION_DIR: process.env.NANOCLAW_SESSION_DIR } : {},
+     },
+   };
+ 
+diff --git a/container/agent-runner/src/mcp-tools/core.ts b/container/agent-runner/src/mcp-tools/core.ts
+index 61bd557..80bf4eb 100644
+--- a/container/agent-runner/src/mcp-tools/core.ts
++++ b/container/agent-runner/src/mcp-tools/core.ts
+@@ -138,7 +138,9 @@ export const sendFile: McpToolDefinition = {
+     const id = generateId();
+     const filename = (args.filename as string) || path.basename(resolvedPath);
+ 
+-    const outboxDir = path.join('/workspace/outbox', id);
++    // CLAWORC PATCH: outbox lives inside the per-session directory when the
++    // runner is executed without a per-session container mount.
++    const outboxDir = path.join(process.env.NANOCLAW_SESSION_DIR || '/workspace', 'outbox', id);
+     fs.mkdirSync(outboxDir, { recursive: true });
+     fs.copyFileSync(resolvedPath, path.join(outboxDir, filename));
+ 

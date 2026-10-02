@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim/openclawnative"
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
-	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 )
 
 // sharedEndpointInstance is created once and reused across all integration_endpoints
@@ -478,7 +478,7 @@ func TestIntegration_LLMProxy(t *testing.T) {
 		var gatewayURL, virtualKey string
 		deadline := time.Now().Add(90 * time.Second)
 		for time.Now().Before(deadline) {
-			out, err := exec.Command("docker", "exec", instName, "cat", orchestrator.PathOpenClawConfig).Output()
+			out, err := exec.Command("docker", "exec", instName, "cat", openclawnative.ConfigPath).Output()
 			if err != nil {
 				time.Sleep(3 * time.Second)
 				continue
@@ -609,7 +609,7 @@ func TestIntegration_GatewayBasePath(t *testing.T) {
 		deadline := time.Now().Add(90 * time.Second)
 		configured := false
 		for time.Now().Before(deadline) {
-			out, err := exec.Command("docker", "exec", instName, "cat", orchestrator.PathOpenClawConfig).Output()
+			out, err := exec.Command("docker", "exec", instName, "cat", openclawnative.ConfigPath).Output()
 			if err != nil {
 				time.Sleep(3 * time.Second)
 				continue

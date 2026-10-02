@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# chat-abort --session <key> — best-effort abort of the in-flight turn:
+# SIGTERM the running chat-send (it kills the hermes child, emits
+# end/aborted, and exits 0). Exit 0 also when nothing was running
+# (docs/shim.md).
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+RUN_DIR=${CLAWORC_SHIM_RUN_DIR:-/run/claworc/shim}
+
+parse_session_args "$@"
+PIDFILE="$RUN_DIR/chat-$SHIM_SESSION_SLUG.pid"
+if [[ -f "$PIDFILE" ]]; then
+    PID=$(cat "$PIDFILE" 2>/dev/null || true)
+    [[ -n "$PID" ]] && kill -TERM "$PID" 2>/dev/null || true
+fi
+exit 0

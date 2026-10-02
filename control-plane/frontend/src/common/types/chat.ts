@@ -7,49 +7,64 @@ export interface ChatMessage {
   timestamp: number;
 }
 
-/** Frames received from the Gateway (via backend proxy) */
-export interface GatewayConnectedFrame {
+/** Handshake frame sent by the backend chat proxy right after the WebSocket opens */
+export interface ConnectedFrame {
   type: "connected";
 }
 
-export interface GatewayChatFrame {
-  type: "chat";
-  role: "agent" | "user";
-  content: string;
+/**
+ * Normalized agent shim chat events (see docs/shim.md, contract v1),
+ * forwarded verbatim by the backend after the "connected" handshake.
+ */
+export interface ShimStartEvent {
+  v: number;
+  event: "start";
+  session?: string;
+  turn?: string;
 }
 
-export interface GatewayAgentFrame {
-  type: "agent";
-  event: string;
-  data?: unknown;
+export interface ShimAssistantEvent {
+  v: number;
+  event: "assistant";
+  turn?: string;
+  message_id: string;
+  /** CUMULATIVE snapshot of the full message text so far (not a delta) */
+  text: string;
 }
 
-export interface GatewayErrorFrame {
-  type: "error";
-  message: string;
+export interface ShimToolEvent {
+  v: number;
+  event: "tool";
+  turn?: string;
+  name?: string;
+  phase?: "start" | "result" | string;
+  detail?: Record<string, unknown>;
 }
 
-/** Raw gateway event frame (forwarded as-is from the gateway) */
-export interface GatewayEventFrame {
-  type: "event";
-  event: string;
-  payload?: Record<string, unknown>;
-  seq?: number;
+export interface ShimErrorEvent {
+  v: number;
+  event: "error";
+  turn?: string;
+  code?: string;
+  text?: string;
+  fatal?: boolean;
 }
 
-/** Raw gateway response frame (ack for chat.send etc.) */
-export interface GatewayResponseFrame {
-  type: "res";
-  id: string;
-  ok: boolean;
-  payload?: Record<string, unknown>;
-  error?: { code?: string; message?: string };
+export interface ShimEndEvent {
+  v: number;
+  event: "end";
+  turn?: string;
+  stop_reason?: "complete" | "aborted" | "error";
+  /** Final text of the last assistant message */
+  text?: string;
 }
 
-export type GatewayFrame =
-  | GatewayConnectedFrame
-  | GatewayChatFrame
-  | GatewayAgentFrame
-  | GatewayErrorFrame
-  | GatewayEventFrame
-  | GatewayResponseFrame;
+export type ShimChatEvent =
+  | ShimStartEvent
+  | ShimAssistantEvent
+  | ShimToolEvent
+  | ShimErrorEvent
+  | ShimEndEvent;
+
+/** Frames received over the instance chat WebSocket */
+export type ChatFrame = ConnectedFrame | ShimChatEvent;

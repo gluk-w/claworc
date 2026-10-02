@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# configure-llm — route NanoClaw's LLM traffic through the Claworc LLM proxy
+# (docs/shim.md). Thin wrapper: verbs run as root over SSH but agent state
+# must stay claworc-owned, so drop privileges and exec the Bun implementation
+# in lib/. Bun is used because bun:sqlite is the same SQLite driver
+# NanoClaw's own agent-runner uses — no dependency of our own.
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+BUN=${CLAWORC_SHIM_BUN:-/usr/local/bin/bun}
+
+# The routing document is stdin; there are no arguments.
+parse_no_args "$@"
+run_as_claworc "$BUN" "$SHIM_DIR/lib/configure-llm.mjs" "$@"

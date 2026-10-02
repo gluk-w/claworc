@@ -4,6 +4,8 @@ include .env.development
 export
 
 AGENT_IMAGE := claworc/openclaw
+HERMES_IMAGE := claworc/hermes
+NANOCLAW_IMAGE := claworc/nanoclaw
 STABLE_IMAGE := glukw/claworc-stable
 STABLE_MIRROR_IMAGE := claworc/openclaw-stable
 STABLE_VERSION_URL := https://isitstable.com/api/v1/openclaw/latest-stable
@@ -25,7 +27,7 @@ KUBECONFIG := ../kubeconfig
 HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
 
-.PHONY: agent agent-ci agent-base agent-base-china agent-build agent-test agent-instance-test agent-push agent-exec agent-stable agent-stable-ci dashboard docker-prune release \
+.PHONY: agent agent-ci agent-base agent-base-china agent-build agent-test agent-instance-test agent-shim-test agent-push agent-exec agent-stable agent-stable-ci dashboard docker-prune release \
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
 	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models test \
@@ -52,10 +54,12 @@ agent-base-china:
 
 agent-build:
 	@echo "Building images locally (agent + browser variants)..."
-	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/instance/Dockerfile --load agent/instance/
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/openclaw/Dockerfile --load agent/openclaw/
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(HERMES_IMAGE):$(TAG) -f agent/hermes/Dockerfile --load agent/hermes/
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(NANOCLAW_IMAGE):$(TAG) -f agent/nanoclaw/Dockerfile --load agent/nanoclaw/
 	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/browser/Dockerfile.chromium --load agent/browser/
 	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/browser/Dockerfile.chrome --load agent/browser/
-	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --load agent/browser/
+	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --load agent/browser/
 
 # PR check: build only the instance image (it is FROM debian directly and does
 # not depend on the pushed browser-base image) and run the OpenClaw suite
@@ -64,11 +68,27 @@ agent-build:
 # retired model ids — before it reaches the nightly publish job.
 agent-instance-test:
 	@echo "Building $(AGENT_IMAGE):$(TAG) for PR verification (no push)..."
-	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/instance/Dockerfile --load agent/instance/
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/openclaw/Dockerfile --load agent/openclaw/
 	cd agent/tests && AGENT_INSTANCE_TEST_IMAGE=$(AGENT_IMAGE):$(TAG) npm run test -- openclaw.test.ts
+
+# PR check for the shim-contract images (docs/shim.md). Both are FROM debian
+# directly (no pushed base image), so they can be built and tested on pull
+# requests without registry access. Runs the per-image suites plus the
+# env-var propagation suite (the shim verbs are exec'd over SSH, so that
+# path matters for them). Kept separate from agent-instance-test so the
+# OpenClaw gate's signal and duration are unchanged.
+agent-shim-test:
+	@echo "Building $(HERMES_IMAGE):$(TAG) and $(NANOCLAW_IMAGE):$(TAG) for PR verification (no push)..."
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(HERMES_IMAGE):$(TAG) -f agent/hermes/Dockerfile --load agent/hermes/
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(NANOCLAW_IMAGE):$(TAG) -f agent/nanoclaw/Dockerfile --load agent/nanoclaw/
+	cd agent/tests && AGENT_HERMES_TEST_IMAGE=$(HERMES_IMAGE):$(TAG) \
+		AGENT_NANOCLAW_TEST_IMAGE=$(NANOCLAW_IMAGE):$(TAG) \
+		npm run test -- hermes.test.ts nanoclaw.test.ts env-vars.test.ts
 
 agent-test:
 	cd agent/tests && AGENT_INSTANCE_TEST_IMAGE=$(AGENT_IMAGE):$(TAG) \
+		AGENT_HERMES_TEST_IMAGE=$(HERMES_IMAGE):$(TAG) \
+		AGENT_NANOCLAW_TEST_IMAGE=$(NANOCLAW_IMAGE):$(TAG) \
 		AGENT_TEST_IMAGE=$(BROWSER_CHROMIUM_IMAGE):$(TAG) \
 		AGENT_CHROME_TEST_IMAGE=$(BROWSER_CHROME_IMAGE):$(TAG) \
 		AGENT_BRAVE_TEST_IMAGE=$(BROWSER_BRAVE_IMAGE):$(TAG) \
@@ -77,11 +97,16 @@ agent-test:
 
 agent-push:
 	@echo "Pushing all agent + browser images in parallel..."
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/instance/Dockerfile --push agent/instance/ & \
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/browser/Dockerfile.chromium --push agent/browser/ & \
-	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/browser/Dockerfile.chrome --push agent/browser/ & \
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --push agent/browser/ & \
-	wait
+	@pids=""; \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/openclaw/Dockerfile --push agent/openclaw/ & pids="$$pids $$!"; \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(HERMES_IMAGE):$(TAG) -f agent/hermes/Dockerfile --push agent/hermes/ & pids="$$pids $$!"; \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(NANOCLAW_IMAGE):$(TAG) -f agent/nanoclaw/Dockerfile --push agent/nanoclaw/ & pids="$$pids $$!"; \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/browser/Dockerfile.chromium --push agent/browser/ & pids="$$pids $$!"; \
+	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/browser/Dockerfile.chrome --push agent/browser/ & pids="$$pids $$!"; \
+	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --push agent/browser/ & pids="$$pids $$!"; \
+	rc=0; for p in $$pids; do wait $$p || rc=1; done; \
+	if [ $$rc -ne 0 ]; then echo "ERROR: at least one image failed to build or push (see log above)" >&2; fi; \
+	exit $$rc
 
 # Nightly stable agent image: same Dockerfile as claworc/openclaw, but pins
 # OpenClaw to the version blessed by isitstable.com. Resolved at build time so
@@ -97,7 +122,7 @@ agent-stable:
 		-t $(STABLE_IMAGE):$(OPENCLAW_VERSION) \
 		-t $(STABLE_MIRROR_IMAGE):$(TAG) \
 		-t $(STABLE_MIRROR_IMAGE):$(OPENCLAW_VERSION) \
-		-f agent/instance/Dockerfile --push agent/instance/
+		-f agent/openclaw/Dockerfile --push agent/openclaw/
 
 # CI variant: build single-arch first and run the OpenClaw test suite against
 # the pinned image, only push multi-arch if tests pass.
@@ -108,7 +133,7 @@ agent-stable-ci:
 	@echo "Building+loading $(STABLE_IMAGE):test (openclaw@$(OPENCLAW_VERSION))..."
 	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) \
 		--build-arg OPENCLAW_VERSION=$(OPENCLAW_VERSION) \
-		-t $(STABLE_IMAGE):test -f agent/instance/Dockerfile --load agent/instance/
+		-t $(STABLE_IMAGE):test -f agent/openclaw/Dockerfile --load agent/openclaw/
 	cd agent/tests && AGENT_INSTANCE_TEST_IMAGE=$(STABLE_IMAGE):test npm run test -- openclaw.test.ts
 	@echo "Pushing multi-arch $(STABLE_IMAGE) + $(STABLE_MIRROR_IMAGE) :$(TAG) and :$(OPENCLAW_VERSION)..."
 	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) \
@@ -117,7 +142,7 @@ agent-stable-ci:
 		-t $(STABLE_IMAGE):$(OPENCLAW_VERSION) \
 		-t $(STABLE_MIRROR_IMAGE):$(TAG) \
 		-t $(STABLE_MIRROR_IMAGE):$(OPENCLAW_VERSION) \
-		-f agent/instance/Dockerfile --push agent/instance/
+		-f agent/openclaw/Dockerfile --push agent/openclaw/
 
 AGENT_CONTAINER := claworc-agent-exec
 AGENT_SSH_PORT := 2222
@@ -191,11 +216,11 @@ dev:
 	CLAWORC_PORT=8173 CLAWORC_AUTH_DISABLED=true CLAWORC_LLM_RESPONSE_LOG=$(CURDIR)/llm-responses.log CLAWORC_ALLOWED_HOST_MOUNTS=/tmp,~/ goreman -set-ports=false start
 
 ssh-integration-test:
-	docker build -f agent/instance/Dockerfile -t claworc-agent:local agent/instance/
+	docker build -f agent/openclaw/Dockerfile -t claworc-agent:local agent/openclaw/
 	cd control-plane && go test -tags docker_integration -v -timeout 300s ./internal/sshproxy/ -run TestIntegration
 
 ssh-file-integration-test:
-	docker build -f agent/instance/Dockerfile -t claworc-agent:local agent/instance/
+	docker build -f agent/openclaw/Dockerfile -t claworc-agent:local agent/openclaw/
 	cd agent/tests && npm run test:ssh -- --testPathPattern file.test
 
 test-integration-backend:
