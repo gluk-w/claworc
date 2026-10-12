@@ -2522,6 +2522,27 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 		return
 	}
 
+	// Set gateway providers via openclaw CLI. This must precede the model
+	// config: openclaw validates agents.defaults.model against the configured
+	// providers' models and rejects refs it can't resolve ("Unknown model").
+	if len(gatewayProviders) > 0 && gatewayPort > 0 {
+		providersJSON, err := buildOpenClawProvidersJSON(models, gatewayProviders, gatewayPort)
+		if err != nil {
+			log.Printf("Error marshaling gateway providers for %s: %v", utils.SanitizeForLog(name), err)
+		} else if providersJSON != "" {
+			// Clear the providers map first so de-selected providers are removed
+			// instead of being deep-merged with the previous config.
+			_, _, _, _ = inst.ExecOpenclaw(ctx, "config", "unset", "models.providers")
+			stdout, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "models.providers", providersJSON, "--json")
+			if err != nil {
+				log.Printf("Error setting gateway providers for %s: %v", utils.SanitizeForLog(name), err)
+			} else if code != 0 {
+				log.Printf("Failed to set gateway providers for %s: stdout=%q stderr=%q",
+					utils.SanitizeForLog(name), utils.SanitizeForLog(stdout), utils.SanitizeForLog(stderr))
+			}
+		}
+	}
+
 	// Set model config via openclaw config set
 	if len(models) > 0 {
 		modelConfig := map[string]interface{}{
@@ -2544,7 +2565,7 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 		}
 		if code != 0 {
 			log.Printf("Failed to set model config for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(stderr))
-			// continue — providers must still be configured even if model config failed
+			// continue — the models allowlist and gateway restart still apply
 		}
 
 		// Set models allowlist to restrict the UI dropdown to only configured models
@@ -2565,25 +2586,6 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 				log.Printf("Error setting models allowlist for %s: %v", utils.SanitizeForLog(name), err)
 			} else if code != 0 {
 				log.Printf("Failed to set models allowlist for %s: %s", utils.SanitizeForLog(name), utils.SanitizeForLog(stderr))
-			}
-		}
-	}
-
-	// Set gateway providers via openclaw CLI.
-	if len(gatewayProviders) > 0 && gatewayPort > 0 {
-		providersJSON, err := buildOpenClawProvidersJSON(models, gatewayProviders, gatewayPort)
-		if err != nil {
-			log.Printf("Error marshaling gateway providers for %s: %v", utils.SanitizeForLog(name), err)
-		} else if providersJSON != "" {
-			// Clear the providers map first so de-selected providers are removed
-			// instead of being deep-merged with the previous config.
-			_, _, _, _ = inst.ExecOpenclaw(ctx, "config", "unset", "models.providers")
-			stdout, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "models.providers", providersJSON, "--json")
-			if err != nil {
-				log.Printf("Error setting gateway providers for %s: %v", utils.SanitizeForLog(name), err)
-			} else if code != 0 {
-				log.Printf("Failed to set gateway providers for %s: stdout=%q stderr=%q",
-					utils.SanitizeForLog(name), utils.SanitizeForLog(stdout), utils.SanitizeForLog(stderr))
 			}
 		}
 	}
