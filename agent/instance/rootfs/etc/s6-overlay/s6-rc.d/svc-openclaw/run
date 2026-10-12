@@ -31,11 +31,13 @@ fi
 # Apply initial model and provider config passed by Claworc at container creation.
 # This ensures the gateway starts with providers already configured, preventing
 # auth failures on messages that arrive before ConfigureInstance runs via SSH.
-if [ -n "$OPENCLAW_INITIAL_MODELS" ]; then
-    s6-setuidgid claworc openclaw config set agents.defaults.model "$OPENCLAW_INITIAL_MODELS" --json
-fi
+# Providers go first: openclaw validates agents.defaults.model against the
+# configured providers' models and rejects ("Unknown model") refs it can't resolve.
 if [ -n "$OPENCLAW_INITIAL_PROVIDERS" ]; then
     s6-setuidgid claworc openclaw config set models.providers "$OPENCLAW_INITIAL_PROVIDERS" --json
+fi
+if [ -n "$OPENCLAW_INITIAL_MODELS" ]; then
+    s6-setuidgid claworc openclaw config set agents.defaults.model "$OPENCLAW_INITIAL_MODELS" --json
 fi
 
 echo "Starting OpenClaw Gateway (foreground) as claworc..."
