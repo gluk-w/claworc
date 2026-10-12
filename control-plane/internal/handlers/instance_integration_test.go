@@ -331,6 +331,7 @@ func TestIntegration_InstanceLifecycle_ConfiguresOpenclaw(t *testing.T) {
 		"name":     "Test OpenAI",
 		"base_url": "https://api.openai.com/v1",
 		"api_type": "openai-completions",
+		"models":   []map[string]interface{}{{"id": "test-model", "name": "Test Model"}},
 	})
 	resp, err := client.Post(baseURL+"/api/v1/llm/providers", "application/json", bytes.NewReader(provBody))
 	if err != nil {
@@ -365,7 +366,9 @@ func TestIntegration_InstanceLifecycle_ConfiguresOpenclaw(t *testing.T) {
 	instBody, _ := json.Marshal(map[string]interface{}{
 		"display_name":      displayName,
 		"team_id":           1,
-		"models":            map[string]interface{}{"extra": []string{"test-model"}},
+		// Model refs must be "<provider>/<model>": current OpenClaw rejects bare
+		// ids in agents.defaults.model and silently leaves the field unset.
+		"models":            map[string]interface{}{"extra": []string{"test-openai/test-model"}},
 		"enabled_providers": []uint{provID},
 	})
 	resp, err = client.Post(baseURL+"/api/v1/instances", "application/json", bytes.NewReader(instBody))
@@ -504,10 +507,16 @@ func TestIntegration_InstanceLifecycle_ConfiguresOpenclaw(t *testing.T) {
 		}
 	}
 
-	// Assert agents.defaults.model.primary == "test-model"
+	// Assert agents.defaults.model.primary == "test-openai/test-model"
+	const wantPrimary = "test-openai/test-model"
 	primary := finalCfg.Agents.Defaults.Model.Primary
-	if primary != "test-model" {
-		t.Errorf("agents.defaults.model.primary = %q, want %q", primary, "test-model")
+	if primary != wantPrimary {
+		t.Errorf("agents.defaults.model.primary = %q, want %q", primary, wantPrimary)
+		// The startup script's `openclaw config set` errors only reach the
+		// container's stdout, so surface them to make the rejection visible.
+		if logs, err := exec.Command("docker", "logs", "--tail", "100", instName).CombinedOutput(); err == nil {
+			t.Logf("container logs:\n%s", logs)
+		}
 	} else {
 		t.Logf("agents.defaults.model.primary = %q ✓", primary)
 	}
