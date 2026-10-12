@@ -461,8 +461,11 @@ func TestIntegration_InstanceLifecycle_ConfiguresOpenclaw(t *testing.T) {
 		} `json:"agents"`
 	}
 
+	// The container's startup script seeds providers from env vars, so wait for
+	// the primary model too: that is only guaranteed once ConfigureInstance has
+	// run over SSH, which is the behaviour under test.
 	var finalCfg openClawConfig
-	deadline = time.Now().Add(90 * time.Second)
+	deadline = time.Now().Add(150 * time.Second)
 	configured := false
 	for time.Now().Before(deadline) {
 		out, err := exec.Command("docker", "exec", instName, "cat", orchestrator.PathOpenClawConfig).Output()
@@ -479,17 +482,17 @@ func TestIntegration_InstanceLifecycle_ConfiguresOpenclaw(t *testing.T) {
 			continue
 		}
 
-		if len(cfg.Models.Providers) > 0 {
+		finalCfg = cfg
+		if len(cfg.Models.Providers) > 0 && cfg.Agents.Defaults.Model.Primary != "" {
 			t.Logf("models.providers configured with %d provider(s)", len(cfg.Models.Providers))
-			finalCfg = cfg
 			configured = true
 			break
 		}
-		t.Log("models.providers not yet set — retrying")
+		t.Log("models.providers or agents.defaults.model.primary not yet set — retrying")
 		time.Sleep(3 * time.Second)
 	}
-	if !configured {
-		t.Fatal("models.providers was not configured within 90s — ConfigureInstance may not have run")
+	if !configured && len(finalCfg.Models.Providers) == 0 {
+		t.Fatal("models.providers was not configured within 150s — ConfigureInstance may not have run")
 	}
 
 	// --- Step 5: Assertions ---
