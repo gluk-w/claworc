@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/coder/websocket"
@@ -24,6 +23,14 @@ const (
 // completes the connect handshake. The returned conn is ready for chat.send /
 // sessions.reset / chat.abort frames.
 //
+// The control plane connects as a local backend client (gateway-client /
+// backend, no Origin header) authenticated by the shared gateway token. It must
+// not pose as the browser Control UI: OpenClaw >= 2026.9.5 rejects any
+// device-less Control UI connect with "control ui requires device identity",
+// and the gateway.controlUi.dangerouslyDisableDeviceAuth escape hatch is
+// retired. A token-authenticated loopback backend client is allowed without a
+// device identity and keeps its requested scopes.
+//
 // This helper has no claworc-internal dependencies (database, utils,
 // handlers, etc.) so it can be reused safely from both HTTP handlers and the
 // moderator service. Callers are responsible for tunnel port lookup and
@@ -33,14 +40,11 @@ func DialGateway(ctx context.Context, localPort int, gatewayToken string) (*webs
 	if gatewayToken != "" {
 		gwURL += "?token=" + gatewayToken
 	}
-	gwOrigin := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(dialCtx, gwURL, &websocket.DialOptions{
-		HTTPHeader: http.Header{"Origin": []string{gwOrigin}},
-	})
+	conn, _, err := websocket.Dial(dialCtx, gwURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("dial gateway: %w", err)
 	}
@@ -64,10 +68,11 @@ func DialGateway(ctx context.Context, localPort int, gatewayToken string) (*webs
 			"minProtocol": GatewayMinProtocol,
 			"maxProtocol": GatewayMaxProtocol,
 			"client": map[string]any{
-				"id":       "openclaw-control-ui",
-				"version":  "1.0.0",
-				"platform": "linux",
-				"mode":     "webchat",
+				"id":          "gateway-client",
+				"displayName": "claworc",
+				"version":     "1.0.0",
+				"platform":    "linux",
+				"mode":        "backend",
 			},
 			"role":   "operator",
 			"scopes": []string{"operator.admin"},
