@@ -165,3 +165,93 @@ func TestDialGatewayHandshakeErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestDialGatewayAdvertisesBackendIdentity pins the two properties that keep the
+// control plane off OpenClaw's operator-UI authentication path. Advertising the
+// Control UI client id, or sending any Origin header, puts the connection into
+// evaluateMissingDeviceIdentity's isControlUi branch, which rejects it with
+// "control ui requires device identity (use HTTPS or localhost secure context)"
+// because the control plane carries no device identity. Webhook and chat delivery
+// then fail with a 502 from the gateway dial.
+func TestDialGatewayAdvertisesBackendIdentity(t *testing.T) {
+	type capture struct {
+		origin string
+		params map[string]any
+	}
+	captured := make(chan capture, 1)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			t.Errorf("accept: %v", err)
+			return
+		}
+		defer conn.CloseNow()
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		challenge, _ := json.Marshal(map[string]any{
+			"type":    "event",
+			"event":   "connect.challenge",
+			"payload": map[string]any{"nonce": "test-nonce"},
+		})
+		if err := conn.Write(ctx, websocket.MessageText, challenge); err != nil {
+			return
+		}
+
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			return
+		}
+		var frame map[string]any
+		if err := json.Unmarshal(data, &frame); err != nil {
+			t.Errorf("connect frame is not JSON: %v", err)
+			return
+		}
+		p, _ := frame["params"].(map[string]any)
+		captured <- capture{origin: origin, params: p}
+
+		respJSON, _ := json.Marshal(map[string]any{"type": "res", "id": frame["id"], "ok": true})
+		conn.Write(ctx, websocket.MessageText, respJSON)
+		<-ctx.Done()
+	}))
+	t.Cleanup(srv.Close)
+
+	_, portStr, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatalf("parse test server URL %q: %v", srv.URL, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("parse test server port %q: %v", portStr, err)
+	}
+
+	conn, err := DialGateway(context.Background(), port, "test-token")
+	if err != nil {
+		t.Fatalf("DialGateway: %v", err)
+	}
+	defer conn.CloseNow()
+
+	got := <-captured
+
+	if got.origin != "" {
+		t.Errorf("Origin header = %q, want it absent: OpenClaw treats any Origin as a browser client", got.origin)
+	}
+
+	client, ok := got.params["client"].(map[string]any)
+	if !ok {
+		t.Fatalf("client missing from connect params: %#v", got.params)
+	}
+	if id, _ := client["id"].(string); id != gatewayClientID {
+		t.Errorf("client.id = %q, want %q", id, gatewayClientID)
+	}
+	if mode, _ := client["mode"].(string); mode != gatewayClientMode {
+		t.Errorf("client.mode = %q, want %q", mode, gatewayClientMode)
+	}
+	if role, _ := got.params["role"].(string); role != "operator" {
+		t.Errorf("role = %q, want \"operator\": the self-pairing branch requires it", role)
+	}
+}
