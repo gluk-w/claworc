@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/coder/websocket"
@@ -17,6 +16,22 @@ import (
 const (
 	GatewayMinProtocol = 3 // OpenClaw <= 2026.5.x
 	GatewayMaxProtocol = 4 // OpenClaw 2026.6.x
+)
+
+// Client identity advertised in the connect handshake. These are OpenClaw's
+// GATEWAY_CLIENT_IDS.GATEWAY_CLIENT / GATEWAY_CLIENT_MODES.BACKEND.
+//
+// The control plane is a backend peer reaching the gateway over a loopback SSH
+// tunnel, not a browser. Advertising the Control UI identity instead puts the
+// connection on OpenClaw's operator-UI path, where evaluateMissingDeviceIdentity
+// rejects it with "control ui requires device identity (use HTTPS or localhost
+// secure context)" unless the client presents a device identity — which the
+// control plane has none of. The backend identity takes the
+// shouldSkipLocalBackendSelfPairing branch instead, which a loopback connection
+// carrying the gateway token satisfies.
+const (
+	gatewayClientID   = "gateway-client"
+	gatewayClientMode = "backend"
 )
 
 // DialGateway opens a WebSocket connection to an OpenClaw gateway via the
@@ -33,14 +48,15 @@ func DialGateway(ctx context.Context, localPort int, gatewayToken string) (*webs
 	if gatewayToken != "" {
 		gwURL += "?token=" + gatewayToken
 	}
-	gwOrigin := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(dialCtx, gwURL, &websocket.DialOptions{
-		HTTPHeader: http.Header{"Origin": []string{gwOrigin}},
-	})
+	// No Origin header on purpose. OpenClaw reads one as hasBrowserOriginHeader,
+	// which disqualifies the connection from both shouldSkipLocalBackendSelfPairing
+	// and the shared-secret loopback locality, leaving only paths that demand a
+	// device identity.
+	conn, _, err := websocket.Dial(dialCtx, gwURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("dial gateway: %w", err)
 	}
@@ -64,10 +80,10 @@ func DialGateway(ctx context.Context, localPort int, gatewayToken string) (*webs
 			"minProtocol": GatewayMinProtocol,
 			"maxProtocol": GatewayMaxProtocol,
 			"client": map[string]any{
-				"id":       "openclaw-control-ui",
+				"id":       gatewayClientID,
 				"version":  "1.0.0",
 				"platform": "linux",
-				"mode":     "webchat",
+				"mode":     gatewayClientMode,
 			},
 			"role":   "operator",
 			"scopes": []string{"operator.admin"},
