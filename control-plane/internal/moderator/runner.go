@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 )
 
 // Run drives a dispatched task to completion: opens a gateway WS with a
@@ -134,7 +136,7 @@ func (s *Service) Run(ctx context.Context, taskID uint) error {
 			continue
 		}
 		payload, _ := msg["payload"].(map[string]any)
-		if payload == nil {
+		if payload == nil || !sshproxy.GatewayEventForSession(payload, sessionKey) {
 			continue
 		}
 		stream, _ := payload["stream"].(string)

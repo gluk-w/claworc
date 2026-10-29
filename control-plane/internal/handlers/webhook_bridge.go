@@ -153,7 +153,7 @@ func RunWebhookBridge(ctx context.Context, instanceID uint, sessionName, message
 			continue
 		}
 		payload, _ := msg["payload"].(map[string]any)
-		if payload == nil {
+		if payload == nil || !sshproxy.GatewayEventForSession(payload, ocSessionKey) {
 			continue
 		}
 		stream, _ := payload["stream"].(string)

@@ -255,3 +255,32 @@ func TestDialGatewayAdvertisesBackendIdentity(t *testing.T) {
 		t.Errorf("role = %q, want \"operator\": the self-pairing branch requires it", role)
 	}
 }
+
+func TestGatewayEventForSession(t *testing.T) {
+	cases := []struct {
+		name string
+		got  any
+		key  string
+		want bool
+	}{
+		{"agent-scoped", "agent:main:claworc-webhook-a", "claworc-webhook-a", true},
+		{"bare", "claworc-webhook-a", "claworc-webhook-a", true},
+		{"case-insensitive", "agent:main:claworc-webhook-abc", "claworc-webhook-ABC", true},
+		{"other session", "agent:main:claworc-webhook-b", "claworc-webhook-a", false},
+		{"key is a suffix of a longer name", "agent:main:x-claworc-webhook-a", "claworc-webhook-a", false},
+		{"slack", "agent:main:slack:channel:c1", "claworc-webhook-a", false},
+		{"missing", nil, "claworc-webhook-a", false},
+		{"empty", "", "claworc-webhook-a", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			payload := map[string]any{}
+			if c.got != nil {
+				payload["sessionKey"] = c.got
+			}
+			if got := GatewayEventForSession(payload, c.key); got != c.want {
+				t.Fatalf("GatewayEventForSession(%v, %q) = %v, want %v", c.got, c.key, got, c.want)
+			}
+		})
+	}
+}

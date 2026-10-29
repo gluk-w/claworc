@@ -75,31 +75,41 @@ func fakeGateway(t *testing.T) (srv *httptest.Server, paramsCh <-chan map[string
 	ch := make(chan map[string]any, 1)
 	srv = fakeGatewayFunc(t, func(ctx context.Context, conn *websocket.Conn, params map[string]any) {
 		ch <- params
-		conn.Write(ctx, websocket.MessageText, lifecycleEndEvent()) //nolint:errcheck
+		conn.Write(ctx, websocket.MessageText, lifecycleEndEvent(scopedKey(params))) //nolint:errcheck
 	})
 	return srv, ch
 }
 
-// assistantEvent builds an OpenClaw assistant event carrying a cumulative
-// snapshot in data.text.
-func assistantEvent(text string) []byte {
+// scopedKey returns the sessionKey the gateway echoes back in events for a
+// chat.send sessionKey: OpenClaw scopes it to the agent.
+func scopedKey(params map[string]any) string {
+	key, _ := params["sessionKey"].(string)
+	return "agent:main:" + key
+}
+
+// assistantEvent builds an OpenClaw assistant event for sessionKey carrying a
+// cumulative snapshot in data.text.
+func assistantEvent(sessionKey, text string) []byte {
 	b, _ := json.Marshal(map[string]any{
 		"type": "event",
 		"payload": map[string]any{
-			"stream": "assistant",
-			"data":   map[string]any{"text": text},
+			"sessionKey": sessionKey,
+			"stream":     "assistant",
+			"data":       map[string]any{"text": text},
 		},
 	})
 	return b
 }
 
-// lifecycleEndEvent builds the lifecycle/end event that signals completion.
-func lifecycleEndEvent() []byte {
+// lifecycleEndEvent builds the lifecycle/end event for sessionKey that
+// signals completion.
+func lifecycleEndEvent(sessionKey string) []byte {
 	b, _ := json.Marshal(map[string]any{
 		"type": "event",
 		"payload": map[string]any{
-			"stream": "lifecycle",
-			"data":   map[string]any{"phase": "end"},
+			"sessionKey": sessionKey,
+			"stream":     "lifecycle",
+			"data":       map[string]any{"phase": "end"},
 		},
 	})
 	return b
@@ -208,9 +218,9 @@ func TestRunWebhookBridge_IdleTimeout(t *testing.T) {
 	inst := newBridgeInstance(t, "bridge-idle-test")
 	setBridgeIdleTimeout(t, 200*time.Millisecond)
 
-	srv := fakeGatewayFunc(t, func(ctx context.Context, conn *websocket.Conn, _ map[string]any) {
+	srv := fakeGatewayFunc(t, func(ctx context.Context, conn *websocket.Conn, params map[string]any) {
 		// One event, then deliberate silence (never sends lifecycle/end).
-		conn.Write(ctx, websocket.MessageText, assistantEvent("working...")) //nolint:errcheck
+		conn.Write(ctx, websocket.MessageText, assistantEvent(scopedKey(params), "working...")) //nolint:errcheck
 		<-ctx.Done()
 	})
 	defer srv.Close()
@@ -233,12 +243,12 @@ func TestRunWebhookBridge_HeartbeatKeepsAlive(t *testing.T) {
 	inst := newBridgeInstance(t, "bridge-heartbeat-test")
 	setBridgeIdleTimeout(t, 200*time.Millisecond)
 
-	srv := fakeGatewayFunc(t, func(ctx context.Context, conn *websocket.Conn, _ map[string]any) {
+	srv := fakeGatewayFunc(t, func(ctx context.Context, conn *websocket.Conn, params map[string]any) {
 		// 12 events @ 50ms = ~600ms total, well past the 200ms idle window,
 		// but each gap (50ms) stays under it. Last snapshot is the reply.
 		for i := 0; i < 12; i++ {
 			text := "chunk-" + strconv.Itoa(i)
-			if err := conn.Write(ctx, websocket.MessageText, assistantEvent(text)); err != nil {
+			if err := conn.Write(ctx, websocket.MessageText, assistantEvent(scopedKey(params), text)); err != nil {
 				return
 			}
 			select {
@@ -247,7 +257,7 @@ func TestRunWebhookBridge_HeartbeatKeepsAlive(t *testing.T) {
 			case <-time.After(50 * time.Millisecond):
 			}
 		}
-		conn.Write(ctx, websocket.MessageText, lifecycleEndEvent()) //nolint:errcheck
+		conn.Write(ctx, websocket.MessageText, lifecycleEndEvent(scopedKey(params))) //nolint:errcheck
 	})
 	defer srv.Close()
 	pointTunnelTo(t, srv)
@@ -261,6 +271,45 @@ func TestRunWebhookBridge_HeartbeatKeepsAlive(t *testing.T) {
 	}
 }
 
+// TestRunWebhookBridge_IgnoresOtherSessions: the gateway broadcasts every
+// session's agent events to every backend client. Events from another session
+// (a concurrent webhook call, a Slack thread) — including its lifecycle/end —
+// must not end this call or leak into its reply.
+func TestRunWebhookBridge_IgnoresOtherSessions(t *testing.T) {
+	setupTestDB(t)
+	inst := newBridgeInstance(t, "bridge-isolation-test")
+	setBridgeIdleTimeout(t, 5*time.Second)
+
+	srv := fakeGatewayFunc(t, func(ctx context.Context, conn *websocket.Conn, params map[string]any) {
+		frames := [][]byte{
+			assistantEvent("agent:main:claworc-webhook-other-task", "reply for other-task"),
+			lifecycleEndEvent("agent:main:claworc-webhook-other-task"),
+			assistantEvent("agent:main:slack:channel:c123", "slack thread reply"),
+			lifecycleEndEvent("agent:main:slack:channel:c123"),
+			assistantEvent("", "unscoped event"),
+			lifecycleEndEvent(""),
+			assistantEvent(scopedKey(params), "reply for my-task"),
+			lifecycleEndEvent(scopedKey(params)),
+		}
+		for _, f := range frames {
+			if err := conn.Write(ctx, websocket.MessageText, f); err != nil {
+				return
+			}
+		}
+		<-ctx.Done()
+	})
+	defer srv.Close()
+	pointTunnelTo(t, srv)
+
+	reply, err := RunWebhookBridge(context.Background(), inst.ID, "my-task", "hello", nil)
+	if err != nil {
+		t.Fatalf("RunWebhookBridge: %v", err)
+	}
+	if reply != "reply for my-task" {
+		t.Fatalf("reply = %q, want %q", reply, "reply for my-task")
+	}
+}
+
 // TestRunWebhookBridge_ClientDisconnect: cancelling the request context mid-
 // stream returns context.Canceled, not the idle-timeout error.
 func TestRunWebhookBridge_ClientDisconnect(t *testing.T) {
@@ -269,8 +318,8 @@ func TestRunWebhookBridge_ClientDisconnect(t *testing.T) {
 	setBridgeIdleTimeout(t, 5*time.Second) // generous, so idle never fires first
 
 	started := make(chan struct{}, 1)
-	srv := fakeGatewayFunc(t, func(ctx context.Context, conn *websocket.Conn, _ map[string]any) {
-		conn.Write(ctx, websocket.MessageText, assistantEvent("working...")) //nolint:errcheck
+	srv := fakeGatewayFunc(t, func(ctx context.Context, conn *websocket.Conn, params map[string]any) {
+		conn.Write(ctx, websocket.MessageText, assistantEvent(scopedKey(params), "working...")) //nolint:errcheck
 		select {
 		case started <- struct{}{}:
 		default:
