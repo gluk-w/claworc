@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -139,4 +140,22 @@ func handshakeError(errObj map[string]any) error {
 		}
 	}
 	return fmt.Errorf("%s", msg)
+}
+
+// GatewayEventForSession reports whether an event payload belongs to the given
+// chat.send sessionKey.
+//
+// The gateway broadcasts agent events for every session to every connected
+// backend client, so a caller that waits for "the" lifecycle/end frame must
+// filter by session or it will return another session's reply (a concurrent
+// webhook call, a Slack thread, a cron run). The gateway scopes the key it
+// echoes back to the agent ("agent:main:<key>"), so match the bare key or that
+// suffix. Events without a sessionKey are never ours.
+func GatewayEventForSession(payload map[string]any, sessionKey string) bool {
+	got, _ := payload["sessionKey"].(string)
+	if got == "" || sessionKey == "" {
+		return false
+	}
+	return strings.EqualFold(got, sessionKey) ||
+		strings.HasSuffix(strings.ToLower(got), ":"+strings.ToLower(sessionKey))
 }
