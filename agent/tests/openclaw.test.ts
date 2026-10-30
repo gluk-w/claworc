@@ -301,7 +301,11 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
             key: "anthropic",
             api_key: "claworc-vk-anthropic",
             api_type: "anthropic-messages",
-            models: [{ id: "anthropic/claude-sonnet-4-5" }],
+            // Optional catalog limits (docs/shim.md) plus an unknown field the
+            // shim must drop — OpenClaw's schema rejects unrecognized keys.
+            models: [
+              { id: "anthropic/claude-sonnet-4-5", context_window: 200000, max_tokens: 64000, future_field: true },
+            ],
           },
           {
             key: "openai",
@@ -320,8 +324,9 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
           baseUrl: doc.proxy_url,
           api: "anthropic-messages",
           apiKey: "claworc-vk-anthropic",
-          models: [{ id: "claude-sonnet-4-5", name: "claude-sonnet-4-5" }],
+          models: [{ id: "claude-sonnet-4-5", name: "claude-sonnet-4-5", contextWindow: 200000, maxTokens: 64000 }],
         });
+        expect(cfg.models.providers.anthropic.models[0]).not.toHaveProperty("future_field");
         // Codex providers are declared as openai-responses to OpenClaw.
         expect(cfg.models.providers.openai.api).toBe("openai-responses");
         expect(cfg.agents.defaults.model).toEqual({

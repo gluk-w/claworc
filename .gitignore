@@ -33,6 +33,8 @@ control-plane/main
 test-results/
 playwright-report/
 e2e/.shared-instance.json
+e2e/.shared-instances.json
+e2e/.runs/
 
 /control-plane/pkg/
 /control-plane/claworc

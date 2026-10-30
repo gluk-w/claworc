@@ -205,10 +205,15 @@ type Event struct {
 	Detail     json.RawMessage `json:"detail,omitempty"`
 }
 
-// ModelRef references one model served by a provider route.
+// ModelRef references one model served by a provider route. ContextWindow
+// and MaxTokens (the model's maximum output tokens) are optional catalog
+// metadata; shims whose agent cannot discover model limits through the proxy
+// use them to size requests.
 type ModelRef struct {
-	ID      string `json:"id"`
-	Default bool   `json:"default,omitempty"`
+	ID            string `json:"id"`
+	Default       bool   `json:"default,omitempty"`
+	ContextWindow int    `json:"context_window,omitempty"`
+	MaxTokens     int    `json:"max_tokens,omitempty"`
 }
 
 // ProviderRoute routes one provider's traffic through the LLM proxy using a
@@ -229,6 +234,21 @@ type LLMRouting struct {
 	DefaultModel   string          `json:"default_model"`
 	FallbackModels []string        `json:"fallback_models"`
 	Providers      []ProviderRoute `json:"providers"`
+}
+
+// PickLLMStyle chooses the routing document's style from the dialects an
+// agent declares (meta llm.styles): "openai" when supported or undeclared,
+// otherwise the agent's first declared style.
+func PickLLMStyle(styles []string) string {
+	if len(styles) == 0 {
+		return "openai"
+	}
+	for _, s := range styles {
+		if s == "openai" {
+			return s
+		}
+	}
+	return styles[0]
 }
 
 // Models returns the effective ordered model list: DefaultModel followed by

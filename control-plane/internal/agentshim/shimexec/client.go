@@ -270,7 +270,8 @@ func (c *Client) Restart(ctx context.Context) error {
 // llmWire mirrors the configure-llm routing document exactly as specified in
 // docs/shim.md. agentshim.LLMRouting's JSON tags happen to match, but we
 // marshal through this local wire struct so the on-the-wire shape is pinned
-// to the contract (nil slices become [], model entries carry only "id")
+// to the contract (nil slices become [], model entries carry "id" plus the
+// optional context_window / max_tokens limits)
 // independently of future changes to the shared types.
 type llmWire struct {
 	ProxyURL       string            `json:"proxy_url"`
@@ -291,7 +292,9 @@ type llmProviderWire struct {
 }
 
 type llmModelWire struct {
-	ID string `json:"id"`
+	ID            string `json:"id"`
+	ContextWindow int    `json:"context_window,omitempty"`
+	MaxTokens     int    `json:"max_tokens,omitempty"`
 }
 
 func buildLLMWire(routing agentshim.LLMRouting) llmWire {
@@ -308,7 +311,7 @@ func buildLLMWire(routing agentshim.LLMRouting) llmWire {
 	for _, p := range routing.Providers {
 		models := make([]llmModelWire, 0, len(p.Models))
 		for _, m := range p.Models {
-			models = append(models, llmModelWire{ID: m.ID})
+			models = append(models, llmModelWire{ID: m.ID, ContextWindow: m.ContextWindow, MaxTokens: m.MaxTokens})
 		}
 		w.Providers = append(w.Providers, llmProviderWire{
 			Key:     p.Key,

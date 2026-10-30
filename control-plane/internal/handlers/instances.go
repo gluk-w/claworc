@@ -326,10 +326,17 @@ func buildLLMRouting(models []string, gatewayProviders map[string]LLMProxyProvid
 		}
 		refs := make([]agentshim.ModelRef, 0, len(gpModels))
 		for _, m := range gpModels {
-			refs = append(refs, agentshim.ModelRef{
+			ref := agentshim.ModelRef{
 				ID:      m.ID,
 				Default: providerKey+"/"+m.ID == routing.DefaultModel,
-			})
+			}
+			if m.ContextWindow != nil {
+				ref.ContextWindow = *m.ContextWindow
+			}
+			if m.MaxTokens != nil {
+				ref.MaxTokens = *m.MaxTokens
+			}
+			refs = append(refs, ref)
 		}
 		routing.Providers = append(routing.Providers, agentshim.ProviderRoute{
 			Key:     providerKey,
@@ -786,6 +793,12 @@ func applyReservedAgentEnv(envVars map[string]string, inst database.Instance, ag
 	}
 
 	routing := buildLLMRouting(resolveInstanceModels(inst), resolveLLMProviders(inst), config.Cfg.InternalProxyPort)
+	// The image can't be probed before it boots, so the first-boot document
+	// uses the registry's static styles; ConfigureInstance re-applies the
+	// routing with the live meta styles once the agent is up.
+	if entry, ok := agentshim.Get(inst.EffectiveAgentType()); ok {
+		routing.Style = agentshim.PickLLMStyle(entry.StaticCapabilities.LLMStyles)
+	}
 	if b, err := json.Marshal(routing); err == nil {
 		envVars["CLAWORC_INITIAL_LLM_CONFIG"] = string(b)
 	}
@@ -2200,12 +2213,6 @@ func UpdateInstanceConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate JSON
-	if !json.Valid([]byte(body.Config)) {
-		writeError(w, http.StatusBadRequest, "Invalid JSON in config")
-		return
-	}
-
 	var inst database.Instance
 	if err := database.DB.First(&inst, id).Error; err != nil {
 		writeError(w, http.StatusNotFound, "Instance not found")
@@ -2234,6 +2241,22 @@ func UpdateInstanceConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The config file's declared language (meta config_files) decides what
+	// can be validated server-side; config-set itself passes bytes through
+	// unchanged, so a YAML (Hermes) or plaintext file must not be JSON-checked.
+	var file *agentshim.ConfigFile
+	if caps, capErr := client.Capabilities(r.Context()); capErr == nil {
+		file = caps.FindConfigFile("")
+	}
+	language := ""
+	if file != nil {
+		language = file.Language
+	}
+	if language == "json" && !json.Valid([]byte(body.Config)) {
+		writeError(w, http.StatusBadRequest, "Invalid JSON in config")
+		return
+	}
+
 	if err := client.SetConfig(r.Context(), "", body.Config); err != nil {
 		var te *agentshim.TransportError
 		if errors.As(err, &te) {
@@ -2248,17 +2271,11 @@ func UpdateInstanceConfig(w http.ResponseWriter, r *http.Request) {
 	// Restart the agent when the config file declares it (best-effort,
 	// matching historical behavior).
 	restarted := false
-	language := ""
-	if caps, capErr := client.Capabilities(r.Context()); capErr == nil {
-		if file := caps.FindConfigFile(""); file != nil {
-			language = file.Language
-			if file.RestartRequired {
-				if rerr := client.Restart(r.Context()); rerr != nil {
-					log.Printf("Failed to restart agent for instance %d: %v", inst.ID, rerr)
-				}
-				restarted = true
-			}
+	if file != nil && file.RestartRequired {
+		if rerr := client.Restart(r.Context()); rerr != nil {
+			log.Printf("Failed to restart agent for instance %d: %v", inst.ID, rerr)
 		}
+		restarted = true
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -2617,6 +2634,11 @@ func ConfigureInstance(ctx context.Context, ops orchestrator.ContainerOrchestrat
 	if err != nil {
 		log.Printf("Failed to resolve agent for %s: %v", utils.SanitizeForLog(name), err)
 		return
+	}
+	// Ask for a dialect the agent actually speaks (meta llm.styles); a shim
+	// that only speaks e.g. the anthropic dialect rejects style "openai".
+	if caps, err := client.Capabilities(ctx); err == nil {
+		routing.Style = agentshim.PickLLMStyle(caps.LLMStyles)
 	}
 	if err := client.ConfigureLLM(ctx, routing); err != nil {
 		log.Printf("Failed to configure models/providers for %s: %v", utils.SanitizeForLog(name), err)

@@ -48,6 +48,8 @@ const RUN_DIR = "/run/claworc/shim";
 const SVC = "/run/service/svc-agent";
 const AGENT_LOG = "/var/log/claworc/agent.log";
 const BOOT_DOC = llmConfigFor("nanoclaw");
+// container.json carries the bare upstream model id (the proxy forwards it unchanged).
+const BARE_DEFAULT_MODEL = DEFAULT_MODEL.slice(DEFAULT_MODEL.indexOf("/") + 1);
 const SESSION = "vitest";
 
 /** `s6-svstat -o <field>` for svc-agent, e.g. field "up" or "pid". */
@@ -165,7 +167,7 @@ describe.skipIf(!container)("nanoclaw image", { timeout: 120_000 }, () => {
       // so the non-managed defaults must have survived alongside the model.
       expect(readJson(CONFIG)).toEqual({
         provider: "claude",
-        model: DEFAULT_MODEL,
+        model: BARE_DEFAULT_MODEL,
         assistantName: "NanoClaw",
         maxMessagesPerPrompt: 10,
         mcpServers: {},
@@ -250,7 +252,7 @@ describe.skipIf(!container)("nanoclaw image", { timeout: 120_000 }, () => {
       // boot routing back so later tests (chat, selftest) see it.
       applyLlm(BOOT_DOC);
       expect(readJson(LLM_JSON)).toEqual(nanoclawLlmJson(BOOT_DOC));
-      expect(readJson(CONFIG).model).toBe(DEFAULT_MODEL);
+      expect(readJson(CONFIG).model).toBe(BARE_DEFAULT_MODEL);
     });
 
     const newDoc = {
@@ -273,7 +275,9 @@ describe.skipIf(!container)("nanoclaw image", { timeout: 120_000 }, () => {
       // Picks the anthropic-dialect provider, not providers[0].
       expect(readJson(LLM_JSON)).toEqual(nanoclawLlmJson(newDoc));
       const cfg = readJson(CONFIG);
-      expect(cfg.model).toBe("anthropic/claude-opus-5");
+      // The proxy forwards the model unchanged, so the agent gets the bare
+      // upstream id without the "<provider-key>/" prefix.
+      expect(cfg.model).toBe("claude-opus-5");
       expect(cfg.provider).toBe("claude");
       expect(cfg.vitestMarker).toBe(1);
       expect(cfg.maxMessagesPerPrompt).toBe(10);

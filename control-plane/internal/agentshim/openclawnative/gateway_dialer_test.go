@@ -16,14 +16,17 @@ import (
 
 // fakeHandshakeGateway serves a minimal OpenClaw gateway handshake: it emits a
 // connect.challenge event, captures the client's connect frame and replies with
-// the caller-supplied response. It returns the local port to dial and a channel
-// carrying the connect params the client advertised.
-func fakeHandshakeGateway(t *testing.T, response map[string]any) (int, <-chan map[string]any) {
+// the caller-supplied response. It returns the local port to dial, a channel
+// carrying the connect params the client advertised and a channel carrying the
+// Origin header of the WebSocket upgrade request.
+func fakeHandshakeGateway(t *testing.T, response map[string]any) (int, <-chan map[string]any, <-chan string) {
 	t.Helper()
 
 	params := make(chan map[string]any, 1)
+	origins := make(chan string, 1)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origins <- r.Header.Get("Origin")
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 		if err != nil {
 			t.Errorf("accept: %v", err)
@@ -75,11 +78,11 @@ func fakeHandshakeGateway(t *testing.T, response map[string]any) (int, <-chan ma
 	if err != nil {
 		t.Fatalf("parse test server port %q: %v", portStr, err)
 	}
-	return port, params
+	return port, params, origins
 }
 
 func TestDialGatewayAdvertisesProtocolRange(t *testing.T) {
-	port, params := fakeHandshakeGateway(t, map[string]any{"ok": true})
+	port, params, _ := fakeHandshakeGateway(t, map[string]any{"ok": true})
 
 	conn, err := DialGateway(context.Background(), port, "test-token")
 	if err != nil {
@@ -108,6 +111,36 @@ func TestDialGatewayAdvertisesProtocolRange(t *testing.T) {
 			t.Errorf("gateway PROTOCOL_VERSION %d rejected by advertised range %d-%d",
 				gatewayVersion, int(minProto), int(maxProto))
 		}
+	}
+}
+
+// OpenClaw >= 2026.9.5 rejects any device-less Control UI connect ("control ui
+// requires device identity"), so the control plane must connect as a local
+// backend client without a browser Origin (issue #228).
+func TestDialGatewayConnectsAsLocalBackendClient(t *testing.T) {
+	port, params, origins := fakeHandshakeGateway(t, map[string]any{"ok": true})
+
+	conn, err := DialGateway(context.Background(), port, "test-token")
+	if err != nil {
+		t.Fatalf("DialGateway: %v", err)
+	}
+	defer conn.CloseNow()
+
+	if origin := <-origins; origin != "" {
+		t.Errorf("upgrade request sent Origin %q, want none (a browser Origin marks the client as a browser)", origin)
+	}
+
+	p := <-params
+	client, _ := p["client"].(map[string]any)
+	if client["id"] != "gateway-client" || client["mode"] != "backend" {
+		t.Errorf("client id/mode = %v/%v, want gateway-client/backend", client["id"], client["mode"])
+	}
+	if p["role"] != "operator" {
+		t.Errorf("role = %v, want operator", p["role"])
+	}
+	auth, _ := p["auth"].(map[string]any)
+	if auth["token"] != "test-token" {
+		t.Errorf("auth.token = %v, want test-token", auth["token"])
 	}
 }
 
@@ -150,7 +183,7 @@ func TestDialGatewayHandshakeErrors(t *testing.T) {
 			if tt.errObj != nil {
 				resp["error"] = tt.errObj
 			}
-			port, _ := fakeHandshakeGateway(t, resp)
+			port, _, _ := fakeHandshakeGateway(t, resp)
 
 			conn, err := DialGateway(context.Background(), port, "test-token")
 			if err == nil {

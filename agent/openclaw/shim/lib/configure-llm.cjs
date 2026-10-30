@@ -122,10 +122,14 @@ for (const p of providers) {
     if (!m || typeof m !== "object" || typeof m.id !== "string" || m.id === "") continue;
     const prefix = `${p.key}/`;
     const id = m.id.startsWith(prefix) ? m.id.slice(prefix.length) : m.id;
-    const entry = { ...m, id };
-    // OpenClaw's provider-model schema requires `name`; routing documents
-    // (docs/shim.md) may carry id-only entries.
-    if (typeof entry.name !== "string" || entry.name === "") entry.name = id;
+    // Build the entry from known fields only: OpenClaw's provider-model
+    // schema rejects unrecognized keys, and routing documents may grow
+    // optional fields (docs/shim.md) that shims must ignore. The schema
+    // requires `name`; the optional catalog limits map to OpenClaw's own
+    // contextWindow / maxTokens.
+    const entry = { id, name: typeof m.name === "string" && m.name !== "" ? m.name : id };
+    if (Number.isInteger(m.context_window) && m.context_window > 0) entry.contextWindow = m.context_window;
+    if (Number.isInteger(m.max_tokens) && m.max_tokens > 0) entry.maxTokens = m.max_tokens;
     models.push(entry);
     prefixedProviderModels.push(`${p.key}/${id}`);
   }

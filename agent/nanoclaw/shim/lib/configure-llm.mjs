@@ -108,9 +108,11 @@ try {
 }
 cfg.provider = 'claude';
 if (defaultModel) {
-  // Model ids are passed through as-is; the Claworc LLM proxy owns the
-  // mapping from routing-document ids to upstream models.
-  cfg.model = defaultModel;
+  // Routing-document ids are "<provider-key>/<model>", but the Claworc LLM
+  // proxy forwards the model unchanged to the provider the virtual key
+  // belongs to (docs/shim.md), so the agent must send the bare upstream id.
+  const prefix = provider?.key ? `${provider.key}/` : '';
+  cfg.model = prefix && defaultModel.startsWith(prefix) ? defaultModel.slice(prefix.length) : defaultModel;
 } else {
   delete cfg.model;
 }

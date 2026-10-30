@@ -313,7 +313,10 @@ func TestConfigureLLMWireFormat(t *testing.T) {
 		Providers: []agentshim.ProviderRoute{{
 			Key:    "anthropic",
 			APIKey: "claworc-vk-abc123",
-			Models: []agentshim.ModelRef{{ID: "anthropic/claude-sonnet-4-5", Default: true}},
+			Models: []agentshim.ModelRef{
+				{ID: "anthropic/claude-sonnet-4-5", Default: true, ContextWindow: 200000, MaxTokens: 64000},
+				{ID: "anthropic/claude-haiku-4-5"},
+			},
 		}},
 	}
 	if err := c.ConfigureLLM(context.Background(), routing); err != nil {
@@ -342,9 +345,17 @@ func TestConfigureLLMWireFormat(t *testing.T) {
 	if m0["id"] != "anthropic/claude-sonnet-4-5" {
 		t.Errorf("model = %v", m0)
 	}
-	// The documented wire schema carries only "id" per model.
+	// The documented wire schema carries "id" plus optional limits per model
+	// — never the default flag.
 	if _, has := m0["default"]; has {
-		t.Errorf("model entry should carry only id: %v", m0)
+		t.Errorf("model entry must not carry default: %v", m0)
+	}
+	if m0["context_window"] != float64(200000) || m0["max_tokens"] != float64(64000) {
+		t.Errorf("model limits = %v, want context_window 200000 / max_tokens 64000", m0)
+	}
+	m1 := p0["models"].([]any)[1].(map[string]any)
+	if len(m1) != 1 {
+		t.Errorf("model without limits should carry only id: %v", m1)
 	}
 }
 

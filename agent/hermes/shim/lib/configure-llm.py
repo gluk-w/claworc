@@ -85,6 +85,23 @@ def main():
         model = model[len(key) + 1:]
     base_url = proxy_url.rstrip("/") + "/v1" if proxy_url else ""
 
+    # Hermes cannot probe model limits through the proxy, so on a "custom"
+    # provider it guesses the output budget (65536) — more than e.g. Claude
+    # Haiku accepts (64000), which fails every call with a 400 that Hermes
+    # reports as "Context length exceeded". Pin both limits from the routing
+    # document's optional model metadata when present. Model ids may be bare
+    # or "<provider-key>/<model>".
+    ref = next(
+        (m for m in (provider or {}).get("models") or []
+         if isinstance(m, dict) and m.get("id") in (model, default_model)),
+        {},
+    )
+    limits = []
+    for src, dst in (("max_tokens", "max_tokens"), ("context_window", "context_length")):
+        v = ref.get(src)
+        if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+            limits.append(f"  {dst}: {v}")
+
     block = [
         BEGIN,
         "# Managed by the Claworc shim configure-llm verb - do not edit inside this block.",
@@ -94,6 +111,7 @@ def main():
         f"  base_url: {json.dumps(base_url)}",
         f"  api_key: {json.dumps(api_key)}",
         f"  default: {json.dumps(model)}",
+        *limits,
         END,
     ]
 

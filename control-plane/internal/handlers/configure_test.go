@@ -107,6 +107,11 @@ type fakeLLMClient struct {
 	agentshim.Client
 	routing *agentshim.LLMRouting
 	err     error
+	styles  []string // meta llm.styles reported by Capabilities
+}
+
+func (f *fakeLLMClient) Capabilities(context.Context) (agentshim.Capabilities, error) {
+	return agentshim.Capabilities{ConfigureLLM: true, LLMStyles: f.styles}, nil
 }
 
 func (f *fakeLLMClient) ConfigureLLM(_ context.Context, r agentshim.LLMRouting) error {
@@ -146,6 +151,29 @@ func TestConfigureInstance_UsesFactoryClient(t *testing.T) {
 	}
 	if len(fake.routing.Providers) != 1 || fake.routing.Providers[0].APIKey != "claworc-vk-1" {
 		t.Errorf("providers = %+v", fake.routing.Providers)
+	}
+}
+
+// TestConfigureInstance_StyleFromMeta: the routing style follows the dialect
+// the agent declares — an anthropic-only shim (NanoClaw) rejects "openai".
+func TestConfigureInstance_StyleFromMeta(t *testing.T) {
+	for _, tc := range []struct {
+		styles []string
+		want   string
+	}{
+		{[]string{"anthropic"}, "anthropic"},
+		{[]string{"openai"}, "openai"},
+		{nil, "openai"},
+	} {
+		fake := &fakeLLMClient{styles: tc.styles}
+		orig := agentClientFor
+		agentClientFor = func(context.Context, uint) (agentshim.Client, error) { return fake, nil }
+		ConfigureInstance(context.Background(), mockOps{}, 1, "test",
+			[]string{"anthropic/claude-haiku-4-5"}, map[string]LLMProxyProvider{"anthropic": {Key: "vk"}}, 40001)
+		agentClientFor = orig
+		if fake.routing == nil || fake.routing.Style != tc.want {
+			t.Errorf("styles %v: routing = %+v, want style %q", tc.styles, fake.routing, tc.want)
+		}
 	}
 }
 

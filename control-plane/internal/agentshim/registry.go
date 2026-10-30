@@ -81,6 +81,7 @@ var registryEntries = []RegistryEntry{
 			Chat:         true,
 			ConfigureLLM: true,
 			Restart:      true,
+			LLMStyles:    []string{"anthropic"},
 		},
 	},
 	{

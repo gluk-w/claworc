@@ -290,6 +290,34 @@ describe.skipIf(!container)("hermes image", { timeout: 120_000 }, () => {
       expect(cfg.model.default).toBe("custom-model");
     });
 
+    // Without pinned limits Hermes guesses a 65536-token output budget for a
+    // custom provider, which Claude Haiku (max 64000) rejects on every call.
+    it("pins the default model's catalog limits when the routing doc carries them", () => {
+      const doc = {
+        ...BOOT_DOC,
+        default_model: "anthropic/claude-haiku-4-5",
+        providers: [
+          {
+            key: "anthropic",
+            api_key: "claworc-vk-haiku",
+            models: [
+              { id: "claude-sonnet-4-6", max_tokens: 1, context_window: 1 },
+              { id: "claude-haiku-4-5", default: true, context_window: 200000, max_tokens: 64000 },
+            ],
+          },
+        ],
+      };
+      expect(shim(container!, "configure-llm", [], JSON.stringify(doc)).exitCode).toBe(0);
+      const cfg = parseYaml(readFile(container!, CONFIG));
+      expect(cfg.model).toMatchObject({ default: "claude-haiku-4-5", max_tokens: 64000, context_length: 200000 });
+
+      // No metadata → no pinned limits (Hermes' own defaults apply).
+      expect(shim(container!, "configure-llm", [], JSON.stringify(newDoc)).exitCode).toBe(0);
+      const plain = parseYaml(readFile(container!, CONFIG));
+      expect(plain.model.max_tokens).toBeUndefined();
+      expect(plain.model.context_length).toBeUndefined();
+    });
+
     it("rejects the anthropic dialect with exit 6 and leaves config untouched", () => {
       const r = shim(container!, "configure-llm", [], JSON.stringify({ ...BOOT_DOC, style: "anthropic" }));
       expectValidationError(r);

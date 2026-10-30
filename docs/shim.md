@@ -224,8 +224,11 @@ Field notes:
   no `config` capability) hides the Config tab. `restart_required: true` makes the
   control plane call `restart` after `config-set`.
 - `llm.styles`: which API dialect(s) the agent will use when calling the LLM proxy —
-  `openai` and/or `anthropic`. The control plane verifies its gateway supports the
-  declared style.
+  `openai` and/or `anthropic`. The control plane sets the routing document's `style`
+  to one the agent declares (`openai` when listed, otherwise the first entry). The
+  first-boot document (`CLAWORC_INITIAL_LLM_CONFIG`) is built before the image can
+  be probed, so it uses the agent type's registry default; the control plane
+  re-applies routing with the live `meta` styles as soon as the agent is up.
 - `skills_dir`: where the agent loads skills from and where `skill-install` unpacks
   them (`<skills_dir>/<skill-name>/`). Informational for the control plane — it only
   talks to the verbs. The control plane does not restart the agent after a skill
@@ -292,7 +295,8 @@ Rules:
   that natively stream deltas accumulate them in the shim (two lines of code); the
   reverse (snapshot→delta) would require diffing. A turn may contain multiple
   `message_id`s (text → tool calls → more text); each snapshot replaces only its own
-  message.
+  message. `message_id` only needs to be unique within its turn — consumers key
+  messages by `turn` + `message_id`, so reusing `m1` in every turn is fine.
 - Shims SHOULD throttle snapshots (≥150 ms apart, or on message boundaries) to bound
   output size on long responses.
 - `end` is required, exactly once, last. `stop_reason` ∈ `complete | aborted | error`.
@@ -387,14 +391,17 @@ stdin is the generic routing document:
   "fallback_models": [],
   "providers": [
     {"key": "anthropic", "api_key": "claworc-vk-abc123", "api_type": "anthropic-messages",
-     "models": [{"id": "anthropic/claude-sonnet-4-5"}]}
+     "models": [{"id": "claude-sonnet-4-5", "context_window": 200000, "max_tokens": 64000}]}
   ]
 }
 ```
 
 `providers[].api_type` is optional metadata for dialect-aware shims (e.g. OpenClaw's
 provider `api` field); shims MUST ignore fields they don't understand. Model entries
-carry only `id`; the default model is `default_model`, never a per-model flag.
+carry `id` plus optional catalog limits — `context_window` and `max_tokens` (the
+model's maximum output tokens) — for agents that cannot discover them through the
+proxy and would otherwise over-request (Hermes pins them as `model.context_length` /
+`model.max_tokens`). The default model is `default_model`, never a per-model flag.
 
 The shim rewrites the agent's native model/provider configuration so requests go to
 `proxy_url` authenticated by the virtual key(s).

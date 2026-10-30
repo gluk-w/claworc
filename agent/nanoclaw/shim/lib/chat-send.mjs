@@ -37,6 +37,12 @@ const RUNNER_GRACE_MS = 120_000;
 // control plane's own idle timeout (CLAWORC_WEBHOOK_IDLE_TIMEOUT / channel
 // teardown) is the real supervisor of turn length.
 const HARD_CAP_MS = 60 * 60 * 1000;
+// NanoClaw acks the inbound message when the agent's first query result
+// finishes. If that result had no <message to="..."> envelope, the runner
+// nudges the agent with a follow-up and the actual reply lands in
+// messages_out *after* the ack. So a completed ack with no reply yet keeps
+// the turn open this long for the follow-up's reply before ending empty.
+const NO_REPLY_GRACE_MS = 90_000;
 
 function usage(msg) {
   process.stderr.write(msg + '\n');
@@ -112,6 +118,7 @@ try {
   let lastSeq = baselineSeq;
   let sawRunner = false;
   let messageCount = 0;
+  let completedAt = null;
 
   for (;;) {
     await sleep(POLL_MS);
@@ -129,8 +136,11 @@ try {
 
     const ack = ackStatus(dir, messageId);
     if (ack === 'completed') {
-      endEvent('complete', lastText);
-      break;
+      completedAt ??= Date.now();
+      if (messageCount > 0 || Date.now() - completedAt > NO_REPLY_GRACE_MS) {
+        endEvent('complete', lastText);
+        break;
+      }
     }
     if (ack === 'failed' || ack === 'script-skip:error') {
       emit({ v: 1, event: 'error', turn, code: 'agent_failed', text: `agent marked the message ${ack}`, fatal: true });

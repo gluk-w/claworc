@@ -130,9 +130,11 @@ export function useChat(
           break;
 
         case "assistant": {
-          const messageId = frame.message_id;
           const text = frame.text;
-          if (!messageId || typeof text !== "string") break;
+          if (!frame.message_id || typeof text !== "string") break;
+          // message_id is only unique within its turn (shims commonly reuse
+          // "m1" every turn), so key messages by turn + message_id.
+          const messageId = `${frame.turn ?? ""}:${frame.message_id}`;
 
           setThinkingLabel(null);
 
