@@ -11,12 +11,15 @@ if [ -z "$CLAWORC_BROWSER_PROXY" ]; then
   exec sleep infinity
 fi
 
-# gost names TLS-wrapped HTTP proxies http+tls; socks5 already resolves
-# hostnames on the proxy side, so socks5h maps onto it.
+# gost names TLS-wrapped HTTP proxies http+tls and, unlike Chromium, skips
+# certificate verification unless secure=true, which would let a MITM read
+# the proxy credentials. socks5 already resolves hostnames on the proxy
+# side, so socks5h maps onto it.
 UPSTREAM="$CLAWORC_BROWSER_PROXY"
 case "$UPSTREAM" in
-  https://*)   UPSTREAM="http+tls://${UPSTREAM#https://}" ;;
+  https://*)   UPSTREAM="http+tls://${UPSTREAM#https://}?secure=true" ;;
   socks5h://*) UPSTREAM="socks5://${UPSTREAM#socks5h://}" ;;
 esac
 
+export HOME=/home/claworc
 exec s6-setuidgid claworc /usr/local/bin/gost -L "http://127.0.0.1:3128" -F "$UPSTREAM"

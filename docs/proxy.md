@@ -86,6 +86,9 @@ no SOCKS5 auth at all. The browser image runs a local forwarder instead:
    Chromium bypasses loopback implicitly, so CDP and noVNC still work.
 
 The credentials never appear in Chromium flags or in the browser profile.
+For an `https://` proxy URL, gost verifies the proxy's TLS certificate
+against the system CA store (`secure=true`). A proxy with a self-signed
+certificate is rejected rather than trusted blindly.
 
 Legacy combined agent+browser images (`IsLegacyEmbedded`) don't run
 `svc-proxy`. Their Chromium is not proxied, but the agent env vars still apply.
