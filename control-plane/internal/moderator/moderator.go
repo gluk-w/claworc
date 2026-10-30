@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log"
 	"sync"
+
+	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
 
 // ErrStopped is returned by Run when the task was canceled via Stop.
@@ -65,7 +67,7 @@ func (s *Service) EnqueueTask(taskID uint) {
 				s.markStopped(taskID)
 				return
 			}
-			log.Printf("[moderator] run task %d: %v", taskID, err)
+			log.Printf("[moderator] run task %d: %s", taskID, utils.SanitizeForLog(err.Error()))
 			s.markFailed(context.Background(), taskID, err)
 		}
 	}()

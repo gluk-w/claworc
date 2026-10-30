@@ -13,6 +13,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
+	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -65,11 +66,11 @@ func ChatProxy(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var te *agentshim.TransportError
 		if errors.As(err, &te) {
-			log.Printf("[chat] No gateway tunnel for instance %d: %v", id, err)
+			log.Printf("[chat] No gateway tunnel for instance %d: %s", id, utils.SanitizeForLog(err.Error()))
 			clientConn.Close(4500, truncate(err.Error(), 120))
 			return
 		}
-		log.Printf("[chat] Session open failed for %s: %v", inst.Name, err)
+		log.Printf("[chat] Session open failed for %s: %s", utils.SanitizeForLog(inst.Name), utils.SanitizeForLog(err.Error()))
 		clientConn.Close(4502, truncate(err.Error(), 120))
 		return
 	}
