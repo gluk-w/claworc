@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
@@ -198,8 +199,23 @@ func (c *Client) Restart(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, stderr, code, err := inst.ExecOpenclaw(ctx, "gateway", "stop"); err != nil || code != 0 {
-		return fmt.Errorf("restart gateway: %v %s", err, stderr)
+	return stopGateway(ctx, inst)
+}
+
+// stopGateway stops the gateway so its s6 supervisor restarts it with fresh
+// config. OpenClaw 2026.9.x refuses a plain `gateway stop` ("This stops the
+// operator's running gateway service ... re-run with --force"); older
+// versions may not know the flag, so --force is only added when asked for.
+func stopGateway(ctx context.Context, inst Instance) error {
+	stdout, stderr, code, err := inst.ExecOpenclaw(ctx, "gateway", "stop")
+	if err == nil && code != 0 && strings.Contains(stdout+stderr, "--force") {
+		stdout, stderr, code, err = inst.ExecOpenclaw(ctx, "gateway", "stop", "--force")
+	}
+	if err != nil {
+		return fmt.Errorf("restart gateway: %w", err)
+	}
+	if code != 0 {
+		return fmt.Errorf("restart gateway: stdout=%q stderr=%q", stdout, stderr)
 	}
 	return nil
 }
@@ -280,14 +296,7 @@ func (c *Client) ConfigureLLM(ctx context.Context, routing agentshim.LLMRouting)
 	}
 
 	// Restart the gateway so it picks up new env vars and config.
-	stdout, stderr, code, err := inst.ExecOpenclaw(ctx, "gateway", "stop")
-	if err != nil {
-		return fmt.Errorf("restart gateway: %w", err)
-	}
-	if code != 0 {
-		return fmt.Errorf("restart gateway: stdout=%q stderr=%q", stdout, stderr)
-	}
-	return nil
+	return stopGateway(ctx, inst)
 }
 
 // providerCfg is the JSON shape expected by OpenClaw's models.providers config.
@@ -299,7 +308,10 @@ type providerCfg struct {
 }
 
 type modelCfg struct {
-	ID string `json:"id"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	ContextWindow int    `json:"contextWindow,omitempty"`
+	MaxTokens     int    `json:"maxTokens,omitempty"`
 }
 
 // BuildProvidersJSON translates the routing document into OpenClaw's
@@ -325,7 +337,9 @@ func BuildProvidersJSON(routing agentshim.LLMRouting) (string, error) {
 		}
 		models := make([]modelCfg, 0, len(p.Models))
 		for _, m := range p.Models {
-			models = append(models, modelCfg{ID: m.ID})
+			// OpenClaw's provider-model schema requires name; the catalog
+			// limits are optional (mirrors the shim's configure-llm).
+			models = append(models, modelCfg{ID: m.ID, Name: m.ID, ContextWindow: m.ContextWindow, MaxTokens: m.MaxTokens})
 		}
 		providers[p.Key] = providerCfg{
 			BaseURL: routing.ProxyURL,

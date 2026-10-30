@@ -109,6 +109,11 @@ func TestBuildProvidersJSON(t *testing.T) {
 		t.Errorf("apiKey = %v", anth["apiKey"])
 	}
 
+	// OpenClaw 2026.9.x rejects provider models without a name.
+	if models, _ := anth["models"].([]any); len(models) != 1 || models[0].(map[string]any)["name"] != "claude-sonnet-4-5" {
+		t.Errorf("anthropic models = %v, want one entry named after its id", anth["models"])
+	}
+
 	custom := providers["custom"]
 	if custom["api"] != "openai-completions" {
 		t.Errorf("default api = %v, want openai-completions", custom["api"])
@@ -218,5 +223,37 @@ func TestEventWireFormat(t *testing.T) {
 		if string(b) != c.want {
 			t.Errorf("wire JSON = %s\n            want %s", b, c.want)
 		}
+	}
+}
+
+// forceExec mimics OpenClaw 2026.9.x: plain `gateway stop` is refused with a
+// hint to re-run with --force.
+type forceExec struct{ mockExec }
+
+func (m *forceExec) ExecOpenclaw(ctx context.Context, args ...string) (string, string, int, error) {
+	m.mockExec.ExecOpenclaw(ctx, args...)
+	if len(args) == 2 && args[0] == "gateway" && args[1] == "stop" {
+		return "", "This stops the operator's running gateway service. Use an isolated dev gateway, or re-run with --force if you really mean it.", 1, nil
+	}
+	return "", "", 0, nil
+}
+
+func TestRestart_RetriesWithForceWhenAsked(t *testing.T) {
+	exec := &forceExec{}
+	if err := NewWithExec(exec).Restart(context.Background()); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	want := [][]string{{"gateway", "stop"}, {"gateway", "stop", "--force"}}
+	if len(exec.calls) != len(want) || strings.Join(exec.calls[1], " ") != "gateway stop --force" {
+		t.Errorf("calls = %v, want %v", exec.calls, want)
+	}
+
+	// Older OpenClaw: plain stop succeeds, --force is never sent.
+	plain := &mockExec{}
+	if err := NewWithExec(plain).Restart(context.Background()); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if len(plain.calls) != 1 {
+		t.Errorf("calls = %v, want a single plain stop", plain.calls)
 	}
 }
