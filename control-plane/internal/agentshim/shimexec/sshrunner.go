@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
-	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	gossh "golang.org/x/crypto/ssh"
 )
 
@@ -32,19 +31,6 @@ var _ Runner = (*SSHRunner)(nil)
 // function (typically a closure over the sshproxy connection manager).
 func NewSSHRunner(resolve func(ctx context.Context) (*gossh.Client, error)) *SSHRunner {
 	return &SSHRunner{resolve: resolve}
-}
-
-// shellJoin quotes each argv element and joins them into one command line
-// for the remote shell.
-func shellJoin(argv []string) (string, error) {
-	if err := checkProgram(argv); err != nil {
-		return "", err
-	}
-	parts := make([]string, len(argv))
-	for i, a := range argv {
-		parts[i] = sshproxy.ShellQuote(a)
-	}
-	return strings.Join(parts, " "), nil
 }
 
 // newSSHSession resolves a connection and opens one exec session on it.
@@ -85,8 +71,7 @@ func mapWaitErr(werr error) (int, error) {
 
 // Run implements Runner over one SSH exec channel.
 func (r *SSHRunner) Run(ctx context.Context, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
-	cmdline, err := shellJoin(argv)
-	if err != nil {
+	if err := checkProgram(argv); err != nil {
 		return -1, err
 	}
 	sess, err := r.newSSHSession(ctx)
@@ -95,11 +80,11 @@ func (r *SSHRunner) Run(ctx context.Context, argv []string, stdin io.Reader, std
 	}
 	defer sess.Close()
 
-	sess.Stdin = stdin
+	sess.Stdin = framedStdin(argv, stdin)
 	sess.Stdout = stdout
 	sess.Stderr = stderr
 
-	if err := sess.Start(cmdline); err != nil {
+	if err := sess.Start(execScript); err != nil {
 		return -1, &agentshim.TransportError{Err: err}
 	}
 
@@ -123,8 +108,7 @@ func (r *SSHRunner) Run(ctx context.Context, argv []string, stdin io.Reader, std
 // Start implements Runner: it begins a streaming exec (chat-send) whose
 // lifetime is bound to ctx.
 func (r *SSHRunner) Start(ctx context.Context, argv []string, stdin io.Reader) (StreamHandle, error) {
-	cmdline, err := shellJoin(argv)
-	if err != nil {
+	if err := checkProgram(argv); err != nil {
 		return nil, err
 	}
 	sess, err := r.newSSHSession(ctx)
@@ -146,12 +130,19 @@ func (r *SSHRunner) Start(ctx context.Context, argv []string, stdin io.Reader) (
 			return nil, &agentshim.TransportError{Err: err}
 		}
 	} else {
-		sess.Stdin = stdin
+		sess.Stdin = framedStdin(argv, stdin)
 	}
 
-	if err := sess.Start(cmdline); err != nil {
+	if err := sess.Start(execScript); err != nil {
 		sess.Close()
 		return nil, &agentshim.TransportError{Err: err}
+	}
+	if stdinW != nil {
+		// Header first, so it precedes anything the caller writes later.
+		if _, err := stdinW.Write(frameArgv(argv)); err != nil {
+			sess.Close()
+			return nil, &agentshim.TransportError{Err: err}
+		}
 	}
 
 	h := &sshStream{sess: sess, stdin: stdinW, stdout: stdout, tail: tail, done: make(chan struct{})}

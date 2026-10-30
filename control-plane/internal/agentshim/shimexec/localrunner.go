@@ -40,13 +40,16 @@ func (r *LocalRunner) mapPath(p string) string {
 	return p
 }
 
-func (r *LocalRunner) command(argv []string) (*exec.Cmd, error) {
+// command builds the fixed `sh -c execScript` process and returns the argv
+// (contract paths mapped into Dir) to frame onto its stdin.
+func (r *LocalRunner) command(argv []string) (*exec.Cmd, []string, error) {
 	if err := checkProgram(argv); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	cmd := exec.Command(r.mapPath(argv[0]), argv[1:]...)
+	mapped := append([]string{r.mapPath(argv[0])}, argv[1:]...)
+	cmd := exec.Command("/bin/sh", "-c", execScript)
 	cmd.Env = append(os.Environ(), r.Env...)
-	return cmd, nil
+	return cmd, mapped, nil
 }
 
 // exitCodeOf maps an os/exec Wait error to (exit code, transport error).
@@ -63,11 +66,11 @@ func exitCodeOf(werr error) (int, error) {
 
 // Run implements Runner.
 func (r *LocalRunner) Run(ctx context.Context, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
-	cmd, err := r.command(argv)
+	cmd, mapped, err := r.command(argv)
 	if err != nil {
 		return -1, err
 	}
-	cmd.Stdin = stdin
+	cmd.Stdin = framedStdin(mapped, stdin)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
@@ -98,7 +101,7 @@ func (r *LocalRunner) Run(ctx context.Context, argv []string, stdin io.Reader, s
 // bound to ctx. Stdout is bridged through an io.Pipe (closed only after Wait
 // returns) so readers always observe EOF exactly at process exit.
 func (r *LocalRunner) Start(ctx context.Context, argv []string, stdin io.Reader) (StreamHandle, error) {
-	cmd, err := r.command(argv)
+	cmd, mapped, err := r.command(argv)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +113,7 @@ func (r *LocalRunner) Start(ctx context.Context, argv []string, stdin io.Reader)
 			return nil, err
 		}
 	} else {
-		cmd.Stdin = stdin
+		cmd.Stdin = framedStdin(mapped, stdin)
 	}
 	cmd.Stdout = pw
 	cmd.Stderr = tail
@@ -118,6 +121,15 @@ func (r *LocalRunner) Start(ctx context.Context, argv []string, stdin io.Reader)
 	if err := cmd.Start(); err != nil {
 		pw.Close()
 		return nil, err
+	}
+	if stdinW != nil {
+		// Header first, so it precedes anything the caller writes later.
+		if _, err := stdinW.Write(frameArgv(mapped)); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			pw.Close()
+			return nil, err
+		}
 	}
 	h := &localStream{cmd: cmd, stdin: stdinW, pr: pr, tail: tail, done: make(chan struct{})}
 	go func() {

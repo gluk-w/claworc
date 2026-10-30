@@ -179,6 +179,12 @@ authoritative checks for the shipped images.
   | 5 | timed out waiting on the agent |
   | 6 | validation failed (bad config / payload); stdout carries `{"error":"..."}` |
 
+- **Invocation.** The control plane never puts arguments in the SSH exec command line.
+  Every verb is launched by the same fixed POSIX `sh` script. The script reads the argv
+  from a stdin header (a decimal count line, then one base64 line per argument), then
+  `exec`s the verb. Verbs see ordinary argv and the rest of stdin, so they need no
+  changes. Images MUST provide a POSIX `sh` login shell and `base64` (coreutils or
+  busybox). A malformed header exits 125 before any verb runs.
 - `configure-llm`, `config-set`, `session-reset`, `skill-install`, `skill-remove`, and
   `restart` MUST be idempotent.
 - Consumers MUST ignore unknown JSON fields and unknown event types (forward

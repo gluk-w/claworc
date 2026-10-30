@@ -6,7 +6,9 @@
 package shimexec
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -101,6 +103,46 @@ func verbPath(verb string) string { return ShimDir + "/" + verb }
 // ShimDir, or cat (Runner.ReadFile). Arguments are always shell-quoted, so
 // pinning the program closes the remaining command-injection surface.
 var programPattern = regexp.MustCompile(`^(/opt/claworc/shim/[a-z][a-z0-9-]*|cat)$`)
+
+// execScript is the one command every Runner execs (the SSH exec request
+// and the local `sh -c`). It is a constant: argv never appears in a command
+// string, so nothing a caller passes can be parsed by a shell. The argv
+// travels on stdin instead (see frameArgv) — a decimal count line, then one
+// base64 line per argument — and the script rebuilds "$@" from it and execs
+// the program, leaving the rest of stdin to the verb. `read` consumes a pipe
+// byte by byte, so it never swallows the verb's input. The trailing "x"
+// keeps $(...) from stripping trailing newlines off an argument.
+const execScript = `IFS= read -r n || exit 125
+case "$n" in ''|*[!0-9]*) exit 125 ;; esac
+set --
+while [ "$n" -gt 0 ]; do
+  IFS= read -r a || exit 125
+  a=$(printf '%s' "$a" | base64 -d && printf x) || exit 125
+  set -- "$@" "${a%x}"
+  n=$((n - 1))
+done
+exec "$@"`
+
+// frameArgv encodes argv as the stdin header execScript reads.
+func frameArgv(argv []string) []byte {
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "%d\n", len(argv))
+	for _, a := range argv {
+		b.WriteString(base64.StdEncoding.EncodeToString([]byte(a)))
+		b.WriteByte('\n')
+	}
+	return b.Bytes()
+}
+
+// framedStdin prefixes the caller's stdin (which may be nil) with the argv
+// header.
+func framedStdin(argv []string, stdin io.Reader) io.Reader {
+	header := bytes.NewReader(frameArgv(argv))
+	if stdin == nil {
+		return header
+	}
+	return io.MultiReader(header, stdin)
+}
 
 // checkProgram rejects an argv whose program isn't a shim verb or cat.
 func checkProgram(argv []string) error {
