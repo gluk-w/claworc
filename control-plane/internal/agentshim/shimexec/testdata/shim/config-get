@@ -1,0 +1,16 @@
+#!/bin/sh
+# Conformance-harness config-get verb: prints the file at TEST_CONFIG_FILE.
+set -eu
+
+ID=main
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --id) ID="$2"; shift 2 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+if [ "$ID" != "main" ]; then
+    echo "unknown config file id: $ID" >&2
+    exit 2
+fi
+exec cat "${TEST_CONFIG_FILE:?TEST_CONFIG_FILE must be set}"

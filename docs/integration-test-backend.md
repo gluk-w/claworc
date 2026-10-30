@@ -11,11 +11,14 @@ verifying end-to-end instance lifecycle behaviour (create → running → config
 make test-integration-backend
 ```
 
-By default the agent container image is whatever is configured as `default_container_image`
-in the database. Override it per-run with:
+By default the agent container image is the seeded default for the OpenClaw agent type.
+`AGENT_TEST_IMAGE` overrides it by setting `default_container_image` before the server starts.
+Slim agent images use a separate on-demand browser pod, so also set `BROWSER_TEST_IMAGE`
+(`default_browser_image`):
 
 ```sh
-AGENT_TEST_IMAGE=glukw/openclaw-vnc-chromium:local make test-integration-backend
+AGENT_TEST_IMAGE=claworc/openclaw:local BROWSER_TEST_IMAGE=claworc/chromium-browser:local \
+  make test-integration-backend
 ```
 
 ## How the server is launched
@@ -57,3 +60,10 @@ func TestIntegration_MyScenario(t *testing.T) {
 
 No setup code is needed — the server is already running when your test executes.
 Tag the file with `//go:build docker_integration` so it is excluded from the standard `go test` run.
+
+## Agent image suites
+
+These tests cover the control plane against one agent image. Image-level behaviour for
+each agent (shim contract conformance, env-var propagation, browser images) is tested
+separately by the vitest suites in `agent/tests/` — see `make agent-test`,
+`make agent-instance-test`, and `make agent-shim-test` in [development.md](development.md).

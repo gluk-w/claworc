@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# chat-send --session <key> [--turn <id>] — one Hermes chat turn as JSONL
+# (docs/shim.md). The streaming logic lives in lib/chat-send.py; exec keeps
+# the PID that it records for chat-abort.
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+exec python3 "$SHIM_DIR/lib/chat-send.py" "$@"

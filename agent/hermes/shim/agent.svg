@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Hermes">
+  <!-- Generic winged-staff (caduceus-inspired) placeholder mark. Original
+       geometry, not trademark artwork. -->
+  <rect width="64" height="64" rx="14" fill="#1b1b2f"/>
+  <g fill="none" stroke="#ffd700" stroke-width="3" stroke-linecap="round">
+    <!-- staff -->
+    <line x1="32" y1="14" x2="32" y2="52"/>
+    <!-- head -->
+    <circle cx="32" cy="11" r="3.5" fill="#ffd700" stroke="none"/>
+    <!-- left wing -->
+    <path d="M29 22 C 21 18, 14 18, 9 23 C 15 24, 18 26, 21 29"/>
+    <path d="M29 27 C 23 25, 17 26, 13 30 C 18 30, 21 32, 24 34"/>
+    <!-- right wing -->
+    <path d="M35 22 C 43 18, 50 18, 55 23 C 49 24, 46 26, 43 29"/>
+    <path d="M35 27 C 41 25, 47 26, 51 30 C 46 30, 43 32, 40 34"/>
+    <!-- entwined curves -->
+    <path d="M26 36 C 26 32, 38 32, 38 37 C 38 42, 26 42, 26 47"/>
+    <path d="M38 36 C 38 32, 26 32, 26 37 C 26 42, 38 42, 38 47"/>
+  </g>
+</svg>

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim/openclawnative"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 )
@@ -54,7 +56,6 @@ func (mockOps) RestartInstance(_ context.Context, _ string, _ orchestrator.Creat
 }
 func (mockOps) GetInstanceStatus(_ context.Context, _ string) (string, error)    { return "running", nil }
 func (mockOps) GetInstanceImageInfo(_ context.Context, _ string) (string, error) { return "", nil }
-func (mockOps) UpdateInstanceConfig(_ context.Context, _ string, _ string) error { return nil }
 func (mockOps) CloneVolumes(_ context.Context, _, _ string) error                { return nil }
 func (mockOps) ConfigureSSHAccess(_ context.Context, _ uint, _ string) error     { return nil }
 func (mockOps) GetSSHAddress(_ context.Context, _ uint) (string, int, error)     { return "", 0, nil }
@@ -76,10 +77,10 @@ func (mockOps) StreamExecInInstance(_ context.Context, _ string, _ []string, _ i
 func (mockOps) UpdatePlacementConfig(_ context.Context, _ string, _ orchestrator.UpdatePlacementParams) error {
 	return nil
 }
-func (mockOps) DeleteSharedVolume(_ context.Context, _ uint) error               { return nil }
-func (mockOps) CloneVolume(_ context.Context, _, _ string) error                 { return nil }
-func (mockOps) VolumeNameFor(name, suffix string) string                         { return name + "-" + suffix }
-func (mockOps) Apply(_ context.Context, _ orchestrator.WorkloadSpec) error       { return nil }
+func (mockOps) DeleteSharedVolume(_ context.Context, _ uint) error         { return nil }
+func (mockOps) CloneVolume(_ context.Context, _, _ string) error           { return nil }
+func (mockOps) VolumeNameFor(name, suffix string) string                   { return name + "-" + suffix }
+func (mockOps) Apply(_ context.Context, _ orchestrator.WorkloadSpec) error { return nil }
 func (mockOps) DeleteWorkload(_ context.Context, _ orchestrator.WorkloadSpec) error {
 	return nil
 }
@@ -88,10 +89,108 @@ func (mockOps) WorkloadSSHAddress(_ context.Context, _ string) (string, int, err
 	return "", 0, nil
 }
 
+// configureViaNative runs ConfigureInstance with the agent client seam pointed
+// at the legacy native OpenClaw adapter over inst, so the tests below exercise
+// routing construction end to end through the openclaw CLI calls it produces.
+func configureViaNative(t *testing.T, inst *mockInstance, models []string, providers map[string]LLMProxyProvider, port int) {
+	t.Helper()
+	orig := agentClientFor
+	agentClientFor = func(context.Context, uint) (agentshim.Client, error) {
+		return openclawnative.NewWithExec(inst), nil
+	}
+	defer func() { agentClientFor = orig }()
+	ConfigureInstance(context.Background(), mockOps{}, 1, "test", models, providers, port)
+}
+
+// fakeLLMClient records the routing handed to ConfigureLLM.
+type fakeLLMClient struct {
+	agentshim.Client
+	routing *agentshim.LLMRouting
+	err     error
+	styles  []string // meta llm.styles reported by Capabilities
+}
+
+func (f *fakeLLMClient) Capabilities(context.Context) (agentshim.Capabilities, error) {
+	return agentshim.Capabilities{ConfigureLLM: true, LLMStyles: f.styles}, nil
+}
+
+func (f *fakeLLMClient) ConfigureLLM(_ context.Context, r agentshim.LLMRouting) error {
+	f.routing = &r
+	return f.err
+}
+
+// TestConfigureInstance_UsesFactoryClient: ConfigureInstance must hand the
+// routing to whatever Client the factory resolves for the instance (the shim
+// adapter for Hermes/NanoClaw/custom/shim OpenClaw), never a hardcoded
+// OpenClaw adapter.
+func TestConfigureInstance_UsesFactoryClient(t *testing.T) {
+	fake := &fakeLLMClient{}
+	var gotID uint
+	orig := agentClientFor
+	agentClientFor = func(_ context.Context, id uint) (agentshim.Client, error) {
+		gotID = id
+		return fake, nil
+	}
+	defer func() { agentClientFor = orig }()
+
+	providers := map[string]LLMProxyProvider{
+		"anthropic": {Key: "claworc-vk-1", APIType: "anthropic-messages",
+			Models: []database.ProviderModel{{ID: "claude-sonnet-4-5"}}},
+	}
+	ConfigureInstance(context.Background(), mockOps{}, 42, "test",
+		[]string{"anthropic/claude-sonnet-4-5"}, providers, 40001)
+
+	if gotID != 42 {
+		t.Errorf("factory resolved instance %d, want 42", gotID)
+	}
+	if fake.routing == nil {
+		t.Fatal("ConfigureLLM not called")
+	}
+	if fake.routing.DefaultModel != "anthropic/claude-sonnet-4-5" {
+		t.Errorf("default model = %q", fake.routing.DefaultModel)
+	}
+	if len(fake.routing.Providers) != 1 || fake.routing.Providers[0].APIKey != "claworc-vk-1" {
+		t.Errorf("providers = %+v", fake.routing.Providers)
+	}
+}
+
+// TestConfigureInstance_StyleFromMeta: the routing style follows the dialect
+// the agent declares — an anthropic-only shim (NanoClaw) rejects "openai".
+func TestConfigureInstance_StyleFromMeta(t *testing.T) {
+	for _, tc := range []struct {
+		styles []string
+		want   string
+	}{
+		{[]string{"anthropic"}, "anthropic"},
+		{[]string{"openai"}, "openai"},
+		{nil, "openai"},
+	} {
+		fake := &fakeLLMClient{styles: tc.styles}
+		orig := agentClientFor
+		agentClientFor = func(context.Context, uint) (agentshim.Client, error) { return fake, nil }
+		ConfigureInstance(context.Background(), mockOps{}, 1, "test",
+			[]string{"anthropic/claude-haiku-4-5"}, map[string]LLMProxyProvider{"anthropic": {Key: "vk"}}, 40001)
+		agentClientFor = orig
+		if fake.routing == nil || fake.routing.Style != tc.want {
+			t.Errorf("styles %v: routing = %+v, want style %q", tc.styles, fake.routing, tc.want)
+		}
+	}
+}
+
+// TestConfigureInstance_FactoryError: a factory failure is logged, not fatal.
+func TestConfigureInstance_FactoryError(t *testing.T) {
+	orig := agentClientFor
+	agentClientFor = func(context.Context, uint) (agentshim.Client, error) {
+		return nil, errors.New("no such instance")
+	}
+	defer func() { agentClientFor = orig }()
+	ConfigureInstance(context.Background(), mockOps{}, 7, "test", []string{"m"}, nil, 0)
+}
+
 func TestConfigureInstance_NoOp(t *testing.T) {
 	inst := &mockInstance{}
 	// Empty models and providers → early return, no calls
-	ConfigureInstance(context.Background(), mockOps{}, inst, "test", nil, nil, 0)
+	configureViaNative(t, inst, nil, nil, 0)
 	if len(inst.calls) != 0 {
 		t.Errorf("expected 0 calls, got %d", len(inst.calls))
 	}
@@ -99,7 +198,7 @@ func TestConfigureInstance_NoOp(t *testing.T) {
 
 func TestConfigureInstance_ModelSet(t *testing.T) {
 	inst := &mockInstance{}
-	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
+	configureViaNative(t, inst,
 		[]string{"claude-3-5-sonnet"}, nil, 0)
 
 	if len(inst.calls) < 4 {
@@ -136,7 +235,7 @@ func TestConfigureInstance_GatewayStop(t *testing.T) {
 	providers := map[string]LLMProxyProvider{
 		"anthropic": {Key: "vk-test", APIType: "openai-completions"},
 	}
-	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
+	configureViaNative(t, inst,
 		nil, providers, 40001)
 
 	if len(inst.calls) < 1 {
@@ -153,7 +252,7 @@ func TestConfigureInstance_ProvidersSet(t *testing.T) {
 	providers := map[string]LLMProxyProvider{
 		"anthropic": {Key: "vk-test", APIType: "openai-completions"},
 	}
-	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
+	configureViaNative(t, inst,
 		nil, providers, 40001)
 
 	// Should have: providers unset + providers set + gateway stop
@@ -175,7 +274,7 @@ func TestConfigureInstance_ProvidersBeforeModel(t *testing.T) {
 	providers := map[string]LLMProxyProvider{
 		"anthropic": {Key: "vk-test", APIType: "openai-completions"},
 	}
-	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
+	configureViaNative(t, inst,
 		[]string{"anthropic/claude-sonnet-5"}, providers, 40001)
 
 	providersIdx, modelIdx := -1, -1
@@ -201,7 +300,7 @@ func TestConfigureInstance_NilModelsEmptySlice(t *testing.T) {
 	providers := map[string]LLMProxyProvider{
 		"openai": {Key: "vk-test2", APIType: "openai-completions"},
 	}
-	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
+	configureViaNative(t, inst,
 		nil, providers, 40001)
 
 	for _, call := range inst.calls {
@@ -221,7 +320,7 @@ func TestConfigureInstance_ModelSetFailure(t *testing.T) {
 		},
 	}
 	// Should log error and return without calling gateway stop
-	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
+	configureViaNative(t, inst,
 		[]string{"model-a"}, nil, 0)
 
 	// Only one call was made (the failed one), gateway stop should not follow
@@ -239,7 +338,7 @@ func TestConfigureInstance_ModelSetNonZeroCode(t *testing.T) {
 	providers := map[string]LLMProxyProvider{
 		"anthropic": {Key: "vk-test", APIType: "openai-completions"},
 	}
-	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
+	configureViaNative(t, inst,
 		[]string{"model-a"}, providers, 40001)
 
 	hasProviders := false
@@ -274,7 +373,7 @@ func TestConfigureInstance_CustomProviderAllModels(t *testing.T) {
 		},
 	}
 	// Effective list only contains sonnet, but custom providers ignore this — both models should appear.
-	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
+	configureViaNative(t, inst,
 		[]string{"anthropic/anthropic/claude-sonnet-4-6"}, providers, 40001)
 
 	var providersJSON string
@@ -323,7 +422,7 @@ func TestConfigureInstance_CatalogProviderModelsFiltered(t *testing.T) {
 	providers := map[string]LLMProxyProvider{
 		"anthropic": {Key: "vk-test", APIType: "anthropic-messages", CatalogKey: "anthropic"},
 	}
-	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
+	configureViaNative(t, inst,
 		[]string{"anthropic/anthropic/claude-sonnet-4-6"}, providers, 40001)
 
 	var providersJSON string
@@ -377,7 +476,7 @@ func TestConfigureInstance_CatalogProviderWithCachedModelsFiltered(t *testing.T)
 		},
 	}
 	// Effective list only contains sonnet.
-	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
+	configureViaNative(t, inst,
 		[]string{"anthropic/anthropic/claude-sonnet-4-6"}, providers, 40001)
 
 	var providersJSON string
@@ -422,7 +521,7 @@ func TestConfigureInstance_CatalogProviderEmptyWhenNoneSelected(t *testing.T) {
 	providers := map[string]LLMProxyProvider{
 		"anthropic": {Key: "vk-test", APIType: "anthropic-messages", CatalogKey: "anthropic"},
 	}
-	ConfigureInstance(context.Background(), mockOps{}, inst, "test",
+	configureViaNative(t, inst,
 		nil, providers, 40001)
 
 	var providersJSON string

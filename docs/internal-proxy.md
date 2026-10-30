@@ -5,7 +5,7 @@
 The **internal proxy** (`control-plane/internal/internalproxy`) is a single HTTP
 server the control plane runs on `127.0.0.1:<port>` (default `40001`,
 `CLAWORC_INTERNAL_PROXY_PORT`; the legacy `CLAWORC_LLM_GATEWAY_PORT` is still honored as a
-fallback). It is **never exposed publicly** — OpenClaw instances
+fallback). It is **never exposed publicly** — agent instances
 reach it only over a per-instance SSH agent-listener tunnel (label
 `InternalProxy`).
 
@@ -16,8 +16,8 @@ and forwards the request. Real provider/API keys stay on the control plane and
 never enter a container, log, or backup that an instance can read.
 
 ```
-OpenClaw container
- └─ openclaw / skills  (Claworc-issued token, never the real key)
+Agent container
+ └─ agent / skills  (Claworc-issued token, never the real key)
      │  SSH agent-listener tunnel  →  127.0.0.1:<port> on the control plane
      ▼
 Control plane — internal proxy (127.0.0.1:40001)

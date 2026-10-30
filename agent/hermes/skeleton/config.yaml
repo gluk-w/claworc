@@ -1,0 +1,28 @@
+# Hermes Agent configuration (Claworc image).
+#
+# This file is seeded to /home/claworc/.hermes/config.yaml on first boot and
+# is editable from the Claworc Config tab. Hermes re-reads it on every chat
+# turn — no restart needed.
+#
+# The block between the claworc-managed markers is rewritten by the Claworc
+# control plane (configure-llm shim verb) to route all LLM traffic through
+# the Claworc LLM proxy with a virtual key. Put your own settings OUTSIDE
+# the block; anything inside it will be overwritten.
+
+# Pre-exec command scanning via the external `tirith` binary is enabled by
+# default in Hermes, but the binary is not installed in this lean image and
+# the resulting "scanner enabled but not available" warning would leak into
+# the machine-readable chat stdout on the first turn. Pattern-based command
+# safety checks remain active.
+security:
+  tirith_enabled: false
+
+# BEGIN claworc-managed
+# Managed by the Claworc shim configure-llm verb - do not edit inside this block.
+# Routes all Hermes LLM traffic to the Claworc LLM proxy with a virtual key.
+model:
+  provider: "custom"
+  base_url: "http://127.0.0.1:40001"
+  api_key: ""
+  default: ""
+# END claworc-managed

@@ -65,6 +65,12 @@ const (
 type LogType string
 
 const (
+	// LogTypeAgent is the primary agent log. Its path comes from the agent
+	// shim's meta `log_files` (see ResolveAgentLogPath); DefaultLogPaths only
+	// holds the fallback.
+	LogTypeAgent LogType = "agent"
+	// LogTypeOpenClaw is the legacy name of LogTypeAgent, still accepted by
+	// the log-streaming API and as a custom log-path override key.
 	LogTypeOpenClaw LogType = "openclaw"
 	LogTypeSSHD     LogType = "sshd"
 	LogTypeSystem   LogType = "system"
@@ -73,7 +79,8 @@ const (
 
 // DefaultLogPaths maps each LogType to its default file path on the agent.
 var DefaultLogPaths = map[LogType]string{
-	LogTypeOpenClaw: LogPathOpenClaw,
+	LogTypeAgent:    LogPathOpenClaw, // fallback when the agent declares no log file
+	LogTypeOpenClaw: LogPathOpenClaw, // legacy alias of "agent"
 	LogTypeSSHD:     LogPathSSHD,
 	LogTypeSystem:   LogPathSyslog,
 	LogTypeAuth:     LogPathAuth,
@@ -81,7 +88,7 @@ var DefaultLogPaths = map[LogType]string{
 
 // AllLogTypes returns the list of supported log types in display order.
 func AllLogTypes() []LogType {
-	return []LogType{LogTypeOpenClaw, LogTypeSystem, LogTypeAuth, LogTypeSSHD}
+	return []LogType{LogTypeAgent, LogTypeSystem, LogTypeAuth, LogTypeSSHD}
 }
 
 // StreamOptions configures how log streaming behaves.
@@ -134,6 +141,22 @@ func ResolveLogPath(logType LogType, customPaths map[LogType]string) string {
 		}
 	}
 	return DefaultLogPaths[logType]
+}
+
+// ResolveAgentLogPath returns the primary agent log path: a custom override
+// keyed "agent" (or the legacy "openclaw" key) wins, then the path the agent
+// declares (agentLogPath, from the shim's meta log_files; may be empty), then
+// the built-in default.
+func ResolveAgentLogPath(agentLogPath string, customPaths map[LogType]string) string {
+	for _, k := range []LogType{LogTypeAgent, LogTypeOpenClaw} {
+		if p, ok := customPaths[k]; ok && p != "" {
+			return p
+		}
+	}
+	if agentLogPath != "" {
+		return agentLogPath
+	}
+	return DefaultLogPaths[LogTypeAgent]
 }
 
 // StreamLogs streams log output from a remote file via SSH using tail.

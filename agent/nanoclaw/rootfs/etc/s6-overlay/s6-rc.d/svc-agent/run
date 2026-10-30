@@ -1,0 +1,16 @@
+#!/command/with-contenv bash
+
+export HOME=/home/claworc
+
+# svc-agent runs the shim's NanoClaw supervisor (see
+# /opt/claworc/shim/lib/host.mjs): it plays the role of upstream NanoClaw's
+# host process, spawning one agent-runner child per Claworc chat session
+# that has pending work in its session-DB pair, and reaping idle ones. LLM
+# routing (ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN for the Claworc LLM
+# proxy) is read from the configure-llm state file at every runner spawn, so
+# `s6-svc -r` (the shim restart verb) picks up config changes and the
+# supervisor's own TERM handler recycles all runner children.
+#
+# Output goes to the contract log path /var/log/claworc/agent.log.
+echo "Starting NanoClaw shim supervisor as claworc..."
+exec s6-setuidgid claworc /usr/local/bin/bun /opt/claworc/shim/lib/host.mjs >> /var/log/claworc/agent.log 2>&1

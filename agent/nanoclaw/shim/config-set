@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# config-set [--id <file-id>] — replace container.json with stdin, byte for
+# byte (docs/shim.md). No validation (the frontend validates by meta's
+# `language`); does NOT restart the agent — the control plane calls restart
+# afterwards (restart_required: true in meta).
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+CONFIG_FILE=${CLAWORC_NANOCLAW_CONFIG_FILE:-/home/claworc/workspace/container.json}
+
+parse_id_arg main main -- "$@"
+atomic_write "$CONFIG_FILE" 0644
+chown_claworc "$(dirname "$CONFIG_FILE")"

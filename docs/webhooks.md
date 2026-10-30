@@ -1,10 +1,11 @@
 # Webhooks
 
 External systems and other AI agents can send a message (and optional file
-attachments) to an OpenClaw instance over HTTP and receive the agent's
-reply synchronously on the same request. Each call is routed through the
-existing OpenClaw chat protocol — webhooks are just a new transport on
-top of it, not a separate runtime.
+attachments) to an agent instance (OpenClaw, Hermes, NanoClaw, …) over HTTP
+and receive the agent's reply synchronously on the same request. Each call
+is routed through the agent's regular chat session via the
+[agent shim](shim.md) — webhooks are just a new transport on top of it, not
+a separate runtime.
 
 Webhook configuration is per-instance and lives under the instance's
 settings page (right after **Enabled models**). There is no separate
@@ -55,13 +56,14 @@ simpler and harder to misconfigure.
 
 `session_name` is any non-empty string of Latin letters, digits, dashes,
 underscores, and dots (regex `^[A-Za-z0-9._-]+$`). The same `session_name`
-across calls reuses the OpenClaw session, so a webhook conversation can
-span multiple HTTP requests.
+across calls reuses the same agent session (key
+`claworc-webhook-<session_name>`), so a webhook conversation can span
+multiple HTTP requests.
 
 ## Response format
 
-The handler holds the HTTP request open until the OpenClaw agent emits
-its `lifecycle/end` frame, then writes the assistant's final reply as
+The handler holds the HTTP request open until the agent's shim emits its
+`end` event, then writes the assistant's final reply as
 `text/plain` (no JSON envelope). The body is the agent's response and
 nothing else — callers can pipe it directly into another tool.
 
@@ -70,7 +72,7 @@ bridge re-arms a deadline on every event the agent streams back, so a
 reply that takes minutes is never cut off as long as the agent keeps
 making progress. If the agent goes silent for longer than
 `CLAWORC_WEBHOOK_IDLE_TIMEOUT` (default `120s`) the request fails with
-`502 Bad Gateway` (`openclaw idle timeout`). The request is otherwise
+`502 Bad Gateway` (`agent idle timeout`). The request is otherwise
 bounded only by the caller's own HTTP client timeout (or by
 `r.Context()` cancellation when the client disconnects); callers should
 size their timeout to the longest reply they expect from the agent.
@@ -84,7 +86,7 @@ instance** at:
 /tmp/webhooks/{session_name}/<original-filename>
 ```
 
-…using the same SSH/SFTP path the file-upload UI uses (`handlers.WriteInstanceFile`). The message body sent to OpenClaw is then
+…using the same SSH/SFTP path the file-upload UI uses (`handlers.WriteInstanceFile`). The message body sent to the agent is then
 prefixed with a short preamble listing each path so the agent can read
 them:
 
@@ -95,27 +97,30 @@ Attached files:
 <original message>
 ```
 
-The OpenClaw chat protocol is unchanged.
+The chat protocol is unchanged.
 
-## Bridge into OpenClaw chat
+## Bridge into agent chat
 
-A single shared helper, `handlers.RunWebhookBridge`, drives both
-entrypoints. It:
+A single shared helper, `handlers.RunWebhookBridge`
+(`internal/handlers/webhook_bridge.go`), drives both entrypoints. It:
 
-1. Dials the per-instance OpenClaw gateway over the existing SSH tunnel
-   (`getTunnelPort(id, "gateway")` + `sshproxy.DialGateway`).
-2. Sends one `chat.send` frame with `sessionKey = session_name` — i.e.
-   the caller-supplied session id becomes the OpenClaw session key, so
-   conversational continuity is preserved across calls with the same id.
-3. Reads gateway events. `payload.stream == "assistant"` events carry a
-   **cumulative** snapshot in `payload.data.text`; the bridge keeps the
-   latest snapshot. The loop exits when `payload.stream == "lifecycle"`
-   with `data.phase == "end"`.
-4. Returns the accumulated assistant text to the HTTP layer, which
-   serializes it as `reply`.
+1. Resolves the instance's agent `Client` via
+   `agentshim.DefaultFactory().ForInstance` and opens a `Session` with key
+   `claworc-webhook-<session_name>` — the prefix makes webhook sessions
+   identifiable in the agent's session list, and reusing the name preserves
+   conversational continuity across calls. For shim images this runs the
+   `chat-stream` (or per-turn `chat-send`) verb over SSH; for legacy
+   pre-shim OpenClaw images the `openclawnative` adapter dials the OpenClaw
+   gateway WebSocket instead.
+2. Sends the (attachment-prefixed) message with `Session.Send`.
+3. Reads normalized chat events (`shim.md` § Chat event schema).
+   `assistant` events carry a **cumulative** snapshot; the bridge keeps the
+   latest one. The loop exits on the `end` event.
+4. Returns the accumulated assistant text to the HTTP layer, which writes
+   it as the `text/plain` response body.
 
-This mirrors the moderator runner (`internal/moderator/runner.go`) —
-look there for any clarifications on the OpenClaw event shape.
+The Kanban moderator (`internal/moderator/runner.go`) consumes the same
+`agentshim.Session` event stream.
 
 ## Data model
 
@@ -171,7 +176,7 @@ index.
 - `internal/database/migrations/migration_00007_backfill_instance_uuid.go`.
 - `internal/handlers/webhooks.go` — CRUD.
 - `internal/handlers/webhook_trigger.go` — public + private entry handlers.
-- `internal/handlers/webhook_bridge.go` — shared OpenClaw chat bridge.
+- `internal/handlers/webhook_bridge.go` — shared agent chat bridge.
 - `internal/handlers/files.go` — `WriteInstanceFile` helper used for attachments.
 - `internal/internalproxy/gateway.go` — `RegisterRoute` hook used to plug
   the private trigger into the internal proxy mux.

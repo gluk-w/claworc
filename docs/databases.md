@@ -106,7 +106,7 @@ all three engines.
 - **MariaDB** — `mysqldump --single-transaction --routines` against the
   configured database.
 
-The `CLAWORC_BACKUPS_PATH` directory is for **instance** backups (per-OpenClaw
+The `CLAWORC_BACKUPS_PATH` directory is for **instance** backups (per-agent
 home/homebrew/data archives), not control-plane database backups. Those two
 concerns are independent — back up the control-plane DB through your normal
 DBA tooling.

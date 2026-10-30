@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# session-reset --session <key> — clear conversation history for the key by
+# dropping its Claworc-key -> Hermes-session-id mapping; the next chat-send
+# starts a fresh Hermes session. Idempotent (docs/shim.md).
+#
+# The old Hermes session rows stay in ~/.hermes SQLite (harmless — they are
+# simply never resumed again), which also preserves Hermes' own cross-session
+# recall features.
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+STATE_DIR=${CLAWORC_SHIM_STATE_DIR:-/home/claworc/.claworc/shim}
+
+parse_session_args "$@"
+rm -f "$STATE_DIR/hermes-sessions/$SHIM_SESSION_SLUG.id"

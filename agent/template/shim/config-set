@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# config-set [--id <file-id>] — replace agent.env with stdin, byte for byte.
+# No validation (the frontend validates by meta's `language`); does NOT
+# restart the agent (docs/shim.md).
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+ENV_FILE=${CLAWORC_SHIM_ENV_FILE:-$SHIM_DIR/agent.env}
+
+parse_id_arg main main -- "$@"
+atomic_write "$ENV_FILE" 0644

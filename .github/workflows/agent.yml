@@ -41,6 +41,13 @@ jobs:
         env:
           CACHE_ARGS: --cache-from type=gha,scope=agent
 
+      # Shim-contract images (Hermes, NanoClaw). Layers are warmed by the
+      # nightly job's --cache-to on the same scope.
+      - name: Build and test shim agent images
+        run: make agent-shim-test
+        env:
+          CACHE_ARGS: --cache-from type=gha,scope=agent
+
   agent:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest

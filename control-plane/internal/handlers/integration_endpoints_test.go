@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim/openclawnative"
 	"github.com/gluk-w/claworc/control-plane/internal/handlers"
-	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
 )
 
 // sharedEndpointInstance is created once and reused across all integration_endpoints
@@ -154,17 +154,7 @@ func TestIntegration_SSHStatus(t *testing.T) {
 		waitForSSHConnected(t, instID, 90*time.Second)
 
 		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Get(fmt.Sprintf("%s/api/v1/instances/%d/ssh-status", sessionURL, instID))
-		if err != nil {
-			t.Fatalf("GET ssh-status: %v", err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			t.Fatalf("GET ssh-status: expected 200, got %d: %s", resp.StatusCode, body)
-		}
-
-		var body struct {
+		type sshStatusBody struct {
 			State   string `json:"state"`
 			Metrics *struct {
 				ConnectedAt      string `json:"connected_at"`
@@ -181,10 +171,37 @@ func TestIntegration_SSHStatus(t *testing.T) {
 				To   string `json:"to"`
 			} `json:"recent_events"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			t.Fatalf("decode ssh-status response: %v", err)
+		fetch := func() sshStatusBody {
+			resp, err := client.Get(fmt.Sprintf("%s/api/v1/instances/%d/ssh-status", sessionURL, instID))
+			if err != nil {
+				t.Fatalf("GET ssh-status: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				b, _ := io.ReadAll(resp.Body)
+				t.Fatalf("GET ssh-status: expected 200, got %d: %s", resp.StatusCode, b)
+			}
+			var body sshStatusBody
+			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+				t.Fatalf("decode ssh-status response: %v", err)
+			}
+			return body
 		}
-		resp.Body.Close()
+
+		// Tunnels are created asynchronously right after SSH connects, so
+		// poll until the expected ones are up instead of racing them.
+		hasTunnels := func(b sshStatusBody) bool {
+			active := map[string]bool{}
+			for _, tun := range b.Tunnels {
+				active[tun.Label] = tun.Status == "active"
+			}
+			return active["CDP"] && active["Gateway"]
+		}
+		body := fetch()
+		for deadline := time.Now().Add(60 * time.Second); !hasTunnels(body) && time.Now().Before(deadline); {
+			time.Sleep(2 * time.Second)
+			body = fetch()
+		}
 
 		// state
 		if body.State != "connected" {
@@ -478,7 +495,7 @@ func TestIntegration_LLMProxy(t *testing.T) {
 		var gatewayURL, virtualKey string
 		deadline := time.Now().Add(90 * time.Second)
 		for time.Now().Before(deadline) {
-			out, err := exec.Command("docker", "exec", instName, "cat", orchestrator.PathOpenClawConfig).Output()
+			out, err := exec.Command("docker", "exec", instName, "cat", openclawnative.ConfigPath).Output()
 			if err != nil {
 				time.Sleep(3 * time.Second)
 				continue
@@ -609,7 +626,7 @@ func TestIntegration_GatewayBasePath(t *testing.T) {
 		deadline := time.Now().Add(90 * time.Second)
 		configured := false
 		for time.Now().Before(deadline) {
-			out, err := exec.Command("docker", "exec", instName, "cat", orchestrator.PathOpenClawConfig).Output()
+			out, err := exec.Command("docker", "exec", instName, "cat", openclawnative.ConfigPath).Output()
 			if err != nil {
 				time.Sleep(3 * time.Second)
 				continue

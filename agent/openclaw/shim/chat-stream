@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# chat-stream --session <key> — persistent chat channel (docs/shim.md). One
+# gateway WebSocket for the whole session; also forwards turns the agent
+# starts on its own (cron, heartbeats) for this session key.
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+exec /usr/bin/node "$SHIM_DIR/lib/gateway-bridge.mjs" stream "$@"

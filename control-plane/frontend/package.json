@@ -33,7 +33,8 @@
     "react-router-dom": "^7.18.2",
     "react-select": "^5.10.2",
     "recharts": "^3.8.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "yaml": "^2.9.1"
   },
   "overrides": {
     "lodash-es": "^4.18.0",

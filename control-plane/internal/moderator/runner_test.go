@@ -159,7 +159,7 @@ func TestInjectPriorArtifacts_WithArtifacts(t *testing.T) {
 
 	writeFS := &trackingWorkspaceFS{}
 	svc := New(Options{
-		Dialer:    &mockDialer{},
+		Agents:    &mockAgents{},
 		Workspace: writeFS,
 		LLM:       &mockLLM{},
 		Store:     store,
@@ -195,7 +195,7 @@ func TestInjectPriorArtifacts_SkipsOversized(t *testing.T) {
 
 	writeFS := &trackingWorkspaceFS{}
 	svc := New(Options{
-		Dialer:    &mockDialer{},
+		Agents:    &mockAgents{},
 		Workspace: writeFS,
 		LLM:       &mockLLM{},
 		Store:     store,
@@ -221,7 +221,7 @@ func TestCollectOutcomes_FallsBackToMentionBased(t *testing.T) {
 	// WorkspaceFS.List returns empty → triggers mention-based fallback.
 	store := newMockStore()
 	svc := New(Options{
-		Dialer:    &mockDialer{},
+		Agents:    &mockAgents{},
 		Workspace: &mockWorkspaceFS{}, // List returns nil
 		LLM:       &mockLLM{},
 		Store:     store,
@@ -254,7 +254,7 @@ func TestCollectOutcomes_DirectoryBased(t *testing.T) {
 	}
 
 	svc := New(Options{
-		Dialer:    &mockDialer{},
+		Agents:    &mockAgents{},
 		Workspace: dirFS,
 		LLM:       &mockLLM{},
 		Store:     store,
@@ -329,7 +329,7 @@ func (f *trackingWorkspaceFS) Write(_ context.Context, _ uint, path string, data
 	}{path, data})
 	return nil
 }
-func (f *trackingWorkspaceFS) MkdirAll(_ context.Context, _ uint, _ string) error { return nil }
+func (f *trackingWorkspaceFS) MkdirAll(_ context.Context, _ uint, _ string) error  { return nil }
 func (f *trackingWorkspaceFS) RemoveAll(_ context.Context, _ uint, _ string) error { return nil }
 
 type dirBasedWorkspaceFS struct {
@@ -354,7 +354,7 @@ func (f *dirBasedWorkspaceFS) Read(_ context.Context, _ uint, path string) ([]by
 func (f *dirBasedWorkspaceFS) Write(_ context.Context, _ uint, _ string, _ []byte) error {
 	return nil
 }
-func (f *dirBasedWorkspaceFS) MkdirAll(_ context.Context, _ uint, _ string) error { return nil }
+func (f *dirBasedWorkspaceFS) MkdirAll(_ context.Context, _ uint, _ string) error  { return nil }
 func (f *dirBasedWorkspaceFS) RemoveAll(_ context.Context, _ uint, _ string) error { return nil }
 
 type mockSettingsWithDir struct {
@@ -363,3 +363,128 @@ type mockSettingsWithDir struct {
 }
 
 func (s *mockSettingsWithDir) ArtifactStorageDir() string { return s.artifactDir }
+
+// ---- Run over an agent session --------------------------------------------
+
+func TestRun_StreamsAgentEventsIntoComments(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	inst := uint(1)
+	store.tasks[1] = Task{ID: 1, Title: "t", Description: "write a report", AssignedInstanceID: &inst}
+	agents := &mockAgents{events: []AgentEvent{
+		{Kind: "start", Turn: "turn-1"},
+		{Kind: "assistant", Turn: "turn-1", MessageID: "m1", Text: "Hello"},
+		{Kind: "assistant", Turn: "turn-1", MessageID: "m1", Text: "Hello world"},
+		{Kind: "tool", Turn: "turn-1", Name: "bash", Phase: "start", Detail: `{"cmd":"ls"}`},
+		{Kind: "assistant", Turn: "turn-1", MessageID: "m2", Text: "Done"},
+		{Kind: "end", Turn: "turn-1", StopReason: "complete", Text: "Done"},
+	}}
+	svc := New(Options{
+		Agents:    agents,
+		Workspace: &mockWorkspaceFS{},
+		LLM:       &mockLLM{response: "VERDICT: success"},
+		Store:     store,
+		Settings:  &mockSettings{},
+		Instances: &mockInstances{ids: []uint{1}, names: map[uint]string{1: "bot"}},
+	})
+
+	if err := svc.Run(context.Background(), 1); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	task := store.tasks[1]
+	if task.Status != "done" || task.OpenClawRunID != "turn-1" {
+		t.Errorf("task = %+v", task)
+	}
+	if len(agents.keys) != 1 || !strings.HasPrefix(agents.keys[0], "kanban-task-1-") || task.OpenClawSessionID != agents.keys[0] {
+		t.Errorf("session keys = %v, task session = %q", agents.keys, task.OpenClawSessionID)
+	}
+	if len(agents.sent) != 1 || !strings.Contains(agents.sent[0], "write a report") {
+		t.Errorf("sent = %q", agents.sent)
+	}
+
+	var assistant, tool, eval []Comment
+	for _, c := range store.comments {
+		switch c.Kind {
+		case "assistant":
+			assistant = append(assistant, c)
+		case "tool":
+			tool = append(tool, c)
+		case "evaluation":
+			eval = append(eval, c)
+		}
+	}
+	if len(assistant) != 1 || assistant[0].Body != "Hello world\n\nDone" {
+		t.Errorf("assistant comments = %+v", assistant)
+	}
+	if len(tool) != 1 || !strings.Contains(tool[0].Body, `"name":"bash"`) || !strings.Contains(tool[0].Body, `"cmd":"ls"`) {
+		t.Errorf("tool comments = %+v", tool)
+	}
+	if len(eval) != 1 {
+		t.Errorf("evaluation comments = %+v", eval)
+	}
+}
+
+func TestRun_ErrorEndIsRecorded(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	inst := uint(1)
+	store.tasks[1] = Task{ID: 1, Description: "x", AssignedInstanceID: &inst}
+	svc := New(Options{
+		Agents: &mockAgents{events: []AgentEvent{
+			{Kind: "error", Code: "shim_exec_failed", Text: "boom", Fatal: true},
+			{Kind: "end", StopReason: "error"},
+		}},
+		Workspace: &mockWorkspaceFS{},
+		LLM:       &mockLLM{},
+		Store:     store,
+		Settings:  &mockSettings{},
+		Instances: &mockInstances{ids: []uint{1}},
+	})
+	if err := svc.Run(context.Background(), 1); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var bodies []string
+	for _, c := range store.comments {
+		if c.Kind == "error" {
+			bodies = append(bodies, c.Body)
+		}
+	}
+	if len(bodies) != 2 || bodies[0] != "shim_exec_failed: boom" || !strings.Contains(bodies[1], "error") {
+		t.Errorf("error comments = %q", bodies)
+	}
+}
+
+func TestRun_OpenSessionFailure(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	inst := uint(1)
+	store.tasks[1] = Task{ID: 1, Description: "x", AssignedInstanceID: &inst}
+	svc := New(Options{
+		Agents:    &mockAgents{err: fmt.Errorf("no shim")},
+		Workspace: &mockWorkspaceFS{},
+		LLM:       &mockLLM{},
+		Store:     store,
+		Settings:  &mockSettings{},
+		Instances: &mockInstances{ids: []uint{1}},
+	})
+	if err := svc.Run(context.Background(), 1); err == nil || !strings.Contains(err.Error(), "no shim") {
+		t.Fatalf("Run err = %v", err)
+	}
+}
+
+func TestWorkspaceDir_PrefersAgentDeclaration(t *testing.T) {
+	t.Parallel()
+
+	svc := New(Options{Agents: &mockAgents{workspace: "/home/claworc/.hermes"}, Settings: &mockSettings{}})
+	if got := svc.workspaceDir(context.Background(), 1); got != "/home/claworc/.hermes" {
+		t.Errorf("workspaceDir = %q", got)
+	}
+	svc = New(Options{Agents: &mockAgents{}, Settings: &mockSettings{}})
+	if got := svc.workspaceDir(context.Background(), 1); got != (&mockSettings{}).WorkspaceDir() {
+		t.Errorf("fallback workspaceDir = %q", got)
+	}
+}

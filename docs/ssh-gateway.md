@@ -1,7 +1,7 @@
 # Inbound SSH Gateway
 
 The SSH gateway (`control-plane/internal/sshgateway/`) lets users connect to
-their OpenClaw instances with a plain SSH client:
+their agent instances with a plain SSH client:
 
 ```
 ssh -i ~/.ssh/claworc_stan.pem -p 2222 stan.my-agent@claworc.example.com

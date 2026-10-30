@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# config-get [--id <file-id>] — raw config file bytes on stdout (docs/shim.md).
+# The single exposed file is NanoClaw's per-agent-group container.json.
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+CONFIG_FILE=${CLAWORC_NANOCLAW_CONFIG_FILE:-/home/claworc/workspace/container.json}
+
+parse_id_arg main main -- "$@"
+# First boot before init-agent-seed / configure-llm ran: serve the baked
+# default so the Config tab is never a hard error.
+if [[ ! -f "$CONFIG_FILE" && -f /defaults/container.json ]]; then
+    CONFIG_FILE=/defaults/container.json
+fi
+cat_file "$CONFIG_FILE"

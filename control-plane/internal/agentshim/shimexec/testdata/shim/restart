@@ -1,0 +1,5 @@
+#!/bin/sh
+# Conformance-harness restart verb: records the restart in a marker file.
+set -eu
+touch "${TEST_RESTART_MARKER:?TEST_RESTART_MARKER must be set}"
+exit 0

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# config-get [--id <file-id>] — raw config file bytes on stdout (docs/shim.md).
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+ENV_FILE=${CLAWORC_SHIM_ENV_FILE:-$SHIM_DIR/agent.env}
+
+parse_id_arg main main -- "$@"
+cat_file "$ENV_FILE"

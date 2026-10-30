@@ -1,0 +1,27 @@
+#!/bin/sh
+# Conformance-harness config-set verb: writes stdin to TEST_CONFIG_FILE.
+# Content containing the INVALID marker fails validation: exit 6 with the
+# contract's {"error":...} document on stdout.
+set -eu
+
+ID=main
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --id) ID="$2"; shift 2 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+if [ "$ID" != "main" ]; then
+    echo "unknown config file id: $ID" >&2
+    exit 2
+fi
+
+TMP="${TEST_CONFIG_FILE:?TEST_CONFIG_FILE must be set}.tmp.$$"
+cat > "$TMP"
+if grep -q INVALID "$TMP"; then
+    rm -f "$TMP"
+    printf '{"error":"config contains the INVALID marker"}\n'
+    exit 6
+fi
+mv -f "$TMP" "$TEST_CONFIG_FILE"
+exit 0

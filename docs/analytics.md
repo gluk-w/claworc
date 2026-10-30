@@ -82,7 +82,7 @@ serialized `props`. Doubles: `ts`.
 
 ## What is *not* collected
 
-- API keys, gateway tokens, encrypted secrets
+- API keys, agent/gateway tokens, encrypted secrets
 - Env-var names or values (only counts)
 - Instance display names, container images, prompts, conversation content
 - File paths beyond `within_data_dir: bool`

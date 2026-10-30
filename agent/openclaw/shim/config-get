@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# config-get [--id <file-id>] — raw config file bytes on stdout (docs/shim.md).
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+parse_id_arg main main -- "$@"
+cat_file /home/claworc/.openclaw/openclaw.json

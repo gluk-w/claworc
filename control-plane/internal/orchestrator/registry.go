@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
-	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 )
 
 // BackendAttempt records one backend's init result for diagnostics.
@@ -172,17 +171,5 @@ func Set(o ContainerOrchestrator) {
 		status = InitStatus{Backend: o.BackendName(), Available: true, LastAttempt: time.Now()}
 	} else {
 		status = InitStatus{Backend: "none", Available: false, LastAttempt: time.Now()}
-	}
-}
-
-// SetInstanceFactory configures the InstanceFactory on the active orchestrator.
-func SetInstanceFactory(factory sshproxy.InstanceFactory) {
-	mu.RLock()
-	defer mu.RUnlock()
-	switch o := current.(type) {
-	case *DockerOrchestrator:
-		o.InstanceFactory = factory
-	case *KubernetesOrchestrator:
-		o.InstanceFactory = factory
 	}
 }

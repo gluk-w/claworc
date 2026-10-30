@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -11,10 +12,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/internalproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
-	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
 
@@ -313,7 +314,7 @@ func deployConnectionSkill(inst database.Instance, toolkitSlug, toolkitName stri
 		log.Printf("connection skill: generate for toolkit %s: %v", utils.SanitizeForLog(toolkitSlug), err)
 		return
 	}
-	if result := deployToInstance(inst.ID, skillName, files); result.Status != "ok" {
+	if result := deployToInstance(context.Background(), inst.ID, skillName, files); result.Status != "ok" && !result.Unsupported {
 		log.Printf("connection skill: deploy %s to instance %d: %s", utils.SanitizeForLog(skillName), inst.ID, utils.SanitizeForLog(result.Error))
 	}
 }
@@ -329,13 +330,15 @@ func removeConnectionSkill(instanceID uint, toolkitSlug string) {
 	if remaining > 0 {
 		return
 	}
-	client, ok := SSHMgr.GetConnection(instanceID)
-	if !ok {
+	ctx := context.Background()
+	client, err := agentshim.DefaultFactory().ForInstance(ctx, instanceID)
+	if err != nil {
+		log.Printf("connection skill: instance %d unavailable for skill removal: %v", instanceID, err)
 		return
 	}
-	skillDir := "/home/claworc/.openclaw/skills/" + internalproxy.ConnectionSkillName(toolkitSlug)
-	if err := sshproxy.DeletePath(client, skillDir); err != nil {
-		log.Printf("connection skill: remove %s from instance %d: %v", utils.SanitizeForLog(skillDir), instanceID, err)
+	skillName := internalproxy.ConnectionSkillName(toolkitSlug)
+	if err := client.RemoveSkill(ctx, skillName); err != nil && !errors.Is(err, agentshim.ErrSkillsUnsupported) {
+		log.Printf("connection skill: remove %s from instance %d: %v", utils.SanitizeForLog(skillName), instanceID, err)
 	}
 }
 

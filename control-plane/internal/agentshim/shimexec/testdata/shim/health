@@ -1,0 +1,6 @@
+#!/bin/sh
+# Conformance-harness health verb: exit code driven by HEALTH_EXIT.
+if [ "${HEALTH_EXIT:-0}" -ne 0 ]; then
+    echo "health detail on stderr" >&2
+fi
+exit "${HEALTH_EXIT:-0}"

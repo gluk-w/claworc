@@ -601,6 +601,23 @@ func TestResolveLogPath_UnknownType(t *testing.T) {
 	}
 }
 
+func TestResolveAgentLogPath(t *testing.T) {
+	if got := ResolveAgentLogPath("", nil); got != LogPathOpenClaw {
+		t.Errorf("default = %q", got)
+	}
+	if got := ResolveAgentLogPath("/var/log/claworc/agent.log", nil); got != "/var/log/claworc/agent.log" {
+		t.Errorf("declared = %q", got)
+	}
+	legacy := map[LogType]string{LogTypeOpenClaw: "/legacy.log"}
+	if got := ResolveAgentLogPath("/declared.log", legacy); got != "/legacy.log" {
+		t.Errorf("legacy override = %q", got)
+	}
+	both := map[LogType]string{LogTypeOpenClaw: "/legacy.log", LogTypeAgent: "/agent.log"}
+	if got := ResolveAgentLogPath("/declared.log", both); got != "/agent.log" {
+		t.Errorf("agent override = %q", got)
+	}
+}
+
 func TestAllLogTypes(t *testing.T) {
 	types := AllLogTypes()
 	if len(types) != 4 {

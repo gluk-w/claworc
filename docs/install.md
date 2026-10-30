@@ -1,12 +1,14 @@
 # Installation Guide
 
-Claworc can be installed in four ways:
+Claworc can be installed in three ways:
 
 1. [**Installer script**](#1-installer-script) — interactive setup for Docker or Kubernetes (recommended)
    - [Linux / macOS](#linux--macos)
    - [Windows](#windows)
 2. [**Helm chart**](#2-manual-installation-with-helm) — manual deployment to a Kubernetes cluster
 3. [**Docker Compose**](#3-manual-installation-with-docker-compose) — manual deployment on a single machine
+
+After installing, see [Networking & Security](#networking--security) for ports, NetworkPolicies, and pod security requirements.
 
 ---
 
@@ -103,10 +105,15 @@ You can override any value in `helm/values.yaml` with `--set` flags or a custom 
 
 | Value | Description | Default |
 |-------|-------------|---------|
-| `config.databasePath` | SQLite database path inside the pod | `/app/data/claworc.db` |
+| `config.dataPath` | Data directory inside the pod (SQLite DB, SSH keys) | `/app/data` |
+| `config.k8sNamespace` | Namespace agent pods are created in | `claworc` |
+| `database.url` / `database.existingSecret` | External PostgreSQL/MariaDB instead of SQLite (see [databases.md](databases.md)) | — |
 | `service.nodePort` | NodePort for the dashboard itself | `30000` |
-| `persistence.enabled` | Enable persistent storage for the database | `true` |
+| `sshGateway.enabled` | Inbound SSH gateway (see [ssh-gateway.md](ssh-gateway.md)) | `true` |
+| `persistence.enabled` | Enable persistent storage for the data directory | `true` |
 | `persistence.size` | PVC size | `1Gi` |
+| `instanceIngress.enabled` | Allow ingress to agent pods from an Ingress controller namespace | `false` |
+| `extraEnv` | Extra `CLAWORC_*` env vars for the control plane | `{}` |
 
 ### Upgrade
 
@@ -139,33 +146,22 @@ git clone https://github.com/gluk-w/claworc.git
 cd claworc
 ```
 
-Create a data directory for the database and agent configs:
-
-```bash
-mkdir -p ~/.claworc/data/configs
-```
-
 Start the services:
 
 ```bash
-CLAWORC_DATA_DIR=~/.claworc/data docker compose up -d
+docker compose up -d
 ```
 
-The dashboard is now available at **http://localhost:8000**.
+The dashboard is now available at **http://localhost:8000**, and the inbound SSH
+gateway on port **2222**.
 
 ### Configuration
 
-The `docker-compose.yml` is configured through environment variables. You can set them inline, export them in your shell, or create a `.env` file in the repo root:
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `CLAWORC_DATA_DIR` | Host directory for database and configs (required) | — |
-
-Example `.env` file:
-
-```
-CLAWORC_DATA_DIR=/home/user/.claworc/data
-```
+`docker-compose.yml` is an example: it mounts the Docker socket, stores all state in
+the named volume `claworc-data` (mounted at `/app/data`), and attaches the control
+plane to a Docker network named `claworc`. Add further `CLAWORC_*` variables under
+`environment:` — see the Configuration section of the root `CLAUDE.md` or
+`control-plane/internal/config/config.go` for the full list.
 
 ### Useful commands
 
@@ -173,7 +169,7 @@ CLAWORC_DATA_DIR=/home/user/.claworc/data
 docker compose logs -f        # View logs
 docker compose down            # Stop
 docker compose up -d           # Start again
-docker compose down -v         # Stop and remove volumes
+docker compose down -v         # Stop and remove volumes (deletes DB and SSH keys!)
 ```
 
 ### Uninstall
@@ -182,9 +178,78 @@ docker compose down -v         # Stop and remove volumes
 docker compose down
 # Remove agent containers (named bot-*)
 docker ps -a --filter "name=bot-" --format '{{.Names}}' | xargs -r docker rm -f
-# Remove data (optional)
-rm -rf ~/.claworc/data
+# Remove data (optional; deletes the claworc-data volume)
+docker compose down -v
 ```
+
+---
+
+## Networking & Security
+
+### Data directory
+
+All control-plane state lives in one directory (`CLAWORC_DATA_PATH`, default `/app/data`):
+
+```
+/app/data/
+├── claworc.db       # SQLite database (unless database.url points elsewhere)
+├── ssh_key          # control plane's ED25519 private key (0600)
+├── ssh_key.pub      # its public key
+└── backups/         # instance backups, unless CLAWORC_BACKUPS_PATH is set
+```
+
+The key pair is generated on first start. Losing the volume (`docker compose down -v`,
+deleting the PVC, or `persistence.enabled: false` on Helm, which uses an `emptyDir`)
+loses the database and keys; new keys are generated on the next start and re-installed
+into agents automatically.
+
+### How the control plane reaches agents
+
+Every agent image (OpenClaw, Hermes, NanoClaw, custom) runs `sshd` on port 22. The control
+plane writes its public key into the agent's `/root/.ssh/authorized_keys` via
+`docker exec` / `kubectl exec` before connecting, then does everything else over SSH:
+shim verbs, terminal, file browser, logs, and tunnels (including the reverse tunnel
+that exposes the internal proxy on `127.0.0.1:40001` inside the agent). On-demand
+browser pods also expose only sshd.
+
+| From | To | Port | Purpose |
+|---|---|---|---|
+| Control plane | Agent and browser pods/containers | 22/TCP | SSH, exec, tunnels |
+| Control plane | Kubernetes API server | 443/TCP | Orchestration (Kubernetes only) |
+| Users | Control plane | 8000 (Docker) / 30000 NodePort (Helm) | Dashboard |
+| Users | Control plane | 2222 | Inbound SSH gateway (optional) |
+
+Agent sshd is hardened: key-only auth, `PermitRootLogin prohibit-password`,
+`MaxAuthTries 3`, no X11 or agent forwarding, and `PermitListen` limited to the ports
+Claworc uses (see `agent/<agent>/rootfs/etc/ssh/sshd_config.d/claworc.conf`).
+
+**Docker:** the control plane needs the Docker socket to create sibling containers and
+exec into them. Agents join the `claworc` Docker network, so no agent ports are
+published on the host.
+
+**Kubernetes:** the chart ships NetworkPolicies that only admit the control-plane pod on
+port 22: `bot-instance-isolation` for agent pods (`managed-by: claworc`) and
+`bot-browser-isolation` for browser pods (`claworc-role: browser`). If you enforce
+egress policies, also allow the control plane egress to those pods on 22, to the API
+server on 443, and DNS. RBAC (`helm/templates/rbac.yaml`) is namespace-scoped and
+includes `pods/exec`, which key installation requires.
+
+### Pod security
+
+The agent container runs unprivileged (`privileged: false`,
+`allowPrivilegeEscalation: false`, `fsGroup: 1000`). Agent pods do include a
+**privileged init container** (`fix-home-selinux`) that relabels the home volume on
+SELinux nodes, so the agent namespace must allow the `privileged` Pod Security
+Standard. The control-plane pod
+itself needs no privileges.
+
+### Monitoring
+
+- `GET /health` reports the orchestrator backend (`docker` or `kubernetes`) and is used
+  by the Helm liveness/readiness probes.
+- Per-instance SSH connection state is shown in the UI; history is at
+  `GET /api/v1/instances/{id}/ssh-events`, and the admin audit trail at
+  `GET /api/v1/audit-logs`.
 
 ---
 
@@ -212,7 +277,7 @@ bash install.sh
 **Docker (standalone container):**
 
 ```bash
-docker logs -f claworc-dashboard
+docker logs -f claworc
 ```
 
 **Docker Compose:**
@@ -257,7 +322,7 @@ curl http://localhost:8000/health
 **Docker:** Make sure the container is running and the port is correct:
 
 ```bash
-docker ps --filter "name=claworc-dashboard"
+docker ps --filter "name=claworc"
 ```
 
 **Kubernetes:** Check that the pod is ready and the NodePort service exists:
@@ -274,7 +339,7 @@ Agents are created by the dashboard through the Docker socket or the Kubernetes 
 **Docker:** The dashboard container needs access to the Docker socket. Verify the volume mount:
 
 ```bash
-docker inspect claworc-dashboard --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'
+docker inspect claworc --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'
 ```
 
 You should see `/var/run/docker.sock -> /var/run/docker.sock`.
@@ -293,9 +358,12 @@ To start fresh without uninstalling:
 **Docker:**
 
 ```bash
-docker rm -f claworc-dashboard
+# Installer script (host data dir, default ~/.claworc/data):
+docker rm -f claworc
 rm -f ~/.claworc/data/claworc.db
-# Re-run install.sh or docker compose up
+# Docker Compose (named volume):
+docker compose down -v
+# Then re-run install.sh or docker compose up -d
 ```
 
 **Kubernetes:**
@@ -304,3 +372,18 @@ rm -f ~/.claworc/data/claworc.db
 kubectl delete pvc claworc-data -n claworc
 kubectl rollout restart deploy/claworc -n claworc
 ```
+
+### SSH connection to an agent fails
+
+The connection indicator on the agent stays red or the dashboard logs show SSH errors.
+
+1. Check the agent is running: `docker ps --filter "name=bot-"` or
+   `kubectl get pods -n claworc -l managed-by=claworc`.
+2. Check the key was installed:
+   `docker exec bot-<name> cat /root/.ssh/authorized_keys` or
+   `kubectl exec -n claworc deploy/bot-<name> -- cat /root/.ssh/authorized_keys`.
+3. Check reachability from the control plane:
+   `kubectl exec -n claworc deploy/claworc -- nc -zv <agent-pod-ip> 22`. A timeout on
+   Kubernetes usually means a NetworkPolicy is blocking port 22.
+4. Check sshd's log inside the agent: `docker exec bot-<name> cat /var/log/claworc/sshd.log`
+   (Kubernetes: `kubectl exec -n claworc deploy/bot-<name> -- cat /var/log/claworc/sshd.log`).

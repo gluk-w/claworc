@@ -6,14 +6,36 @@
  */
 import { execFileSync } from "node:child_process";
 import type { ContainerMap } from "./helpers";
+import { llmConfigFor } from "./fixtures";
 
 const IMAGES: Record<string, string> = {
   // Instance image: OpenClaw + sshd + cron, no browser. openclaw / cron /
   // sharp / libvips test suites run against this one.
   agent: process.env.AGENT_INSTANCE_TEST_IMAGE ?? "claworc-agent:test",
+  // Shim-contract instance images (docs/shim.md): sshd + the agent shim, no
+  // browser, no cron. hermes.test.ts / nanoclaw.test.ts run against these.
+  hermes: process.env.AGENT_HERMES_TEST_IMAGE ?? "claworc-hermes:test",
+  nanoclaw: process.env.AGENT_NANOCLAW_TEST_IMAGE ?? "claworc-nanoclaw:test",
   chromium: process.env.AGENT_TEST_IMAGE ?? "openclaw-vnc-chromium:test",
   chrome: process.env.AGENT_CHROME_TEST_IMAGE ?? "openclaw-vnc-chrome:test",
   brave: process.env.AGENT_BRAVE_TEST_IMAGE ?? "openclaw-vnc-brave:test",
+};
+
+// Non-browser instance images, keyed by role: the command that must be on
+// PATH once s6 has finished booting. Roles absent from this map are browser
+// images (pgrep the browser + wait for CDP).
+const INSTANCE_PROBES: Record<string, string> = {
+  agent: "openclaw",
+  hermes: "hermes",
+  nanoclaw: "bun",
+};
+
+// Extra `docker run` args per role. The shim images consume
+// CLAWORC_INITIAL_LLM_CONFIG at first boot (docs/shim.md) — their suites
+// assert the resulting config against the same fixture document.
+const ROLE_RUN_ARGS: Record<string, string[]> = {
+  hermes: ["-e", `CLAWORC_INITIAL_LLM_CONFIG=${JSON.stringify(llmConfigFor("hermes"))}`],
+  nanoclaw: ["-e", `CLAWORC_INITIAL_LLM_CONFIG=${JSON.stringify(llmConfigFor("nanoclaw"))}`],
 };
 
 // CI builds multi-arch images and standardises tests on linux/amd64 to match
@@ -157,8 +179,8 @@ export async function setup(): Promise<void> {
   }
 
   // Launch containers
-  for (const [browser, image] of available) {
-    const name = `agent-test-${browser}-${process.pid}`;
+  for (const [role, image] of available) {
+    const name = `agent-test-${role}-${process.pid}`;
     try {
       execFileSync("docker", ["rm", "-f", name], { stdio: "ignore" });
     } catch {
@@ -174,49 +196,52 @@ export async function setup(): Promise<void> {
       "-e", "TEST_ENV_PLAIN=plain_value",
       "-e", "TEST_ENV_SPACED=has spaces in it",
       "-e", "TEST_ENV_SPECIAL=a!b#c$d",
+      ...(ROLE_RUN_ARGS[role] ?? []),
       "--name", name, image,
     ];
     execFileSync("docker", runArgs, { encoding: "utf-8" });
-    launched[browser] = { name, image };
-    console.log(`[global-setup] Started ${browser} container: ${name}`);
+    launched[role] = { name, image };
+    console.log(`[global-setup] Started ${role} container: ${name}`);
   }
 
   // Wait for readiness in parallel
-  const readinessPromises = Object.entries(launched).map(async ([browser, { name }]) => {
-    if (browser === "agent") {
-      // Instance image has no browser and no CDP listener — it's the
-      // OpenClaw gateway + sshd + cron only. We can't pgrep for `/init`
-      // because s6-overlay's /init execs into s6-svscan once setup is done,
-      // so the cmdline no longer contains `/init` after the brief boot
-      // phase. Wait for s6-svscan instead (the long-running PID 1 once s6
-      // has handed off), then verify openclaw is on PATH. Sshd readiness
-      // (waitForSSHD below) is the final gate before tests run.
+  const readinessPromises = Object.entries(launched).map(async ([role, { name }]) => {
+    const probe = INSTANCE_PROBES[role];
+    if (probe) {
+      // Instance images have no browser and no CDP listener — just the agent
+      // (or its shim) + sshd. We can't pgrep for `/init` because
+      // s6-overlay's /init execs into s6-svscan once setup is done, so the
+      // cmdline no longer contains `/init` after the brief boot phase. Wait
+      // for s6-svscan instead (the long-running PID 1 once s6 has handed
+      // off), then verify the agent binary is on PATH. Sshd readiness
+      // (waitForSSHD below) is the final gate before tests run; each suite
+      // then waits for its own agent (gateway / seed / shim health).
       const ready = await waitForProcess(name, "s6-svscan", 300_000);
       if (!ready) {
         dumpDiagnostics(name);
-        throw new Error(`[global-setup] agent s6-svscan did not start within 300s`);
+        throw new Error(`[global-setup] ${role} s6-svscan did not start within 300s`);
       }
-      const cmd = exec(name, ["sh", "-c", "command -v openclaw"]);
+      const cmd = exec(name, ["sh", "-c", `command -v ${probe}`]);
       if (cmd.exitCode !== 0) {
         dumpDiagnostics(name);
-        throw new Error(`[global-setup] openclaw not on PATH in agent container`);
+        throw new Error(`[global-setup] ${probe} not on PATH in ${role} container`);
       }
     } else {
-      const pattern = BROWSER_PROCESS_PATTERNS[browser] ?? browser;
+      const pattern = BROWSER_PROCESS_PATTERNS[role] ?? role;
 
       // Wait for browser process.
       // Generous timeouts because multiple containers under QEMU compete for CPU.
       const browserOk = await waitForProcess(name, pattern, 300_000);
       if (!browserOk) {
         dumpDiagnostics(name);
-        throw new Error(`[global-setup] ${browser} process did not start within 300s`);
+        throw new Error(`[global-setup] ${role} process did not start within 300s`);
       }
 
       // Wait for CDP port 9222
       const cdpOk = await waitForCDP(name, 180_000);
       if (!cdpOk) {
         dumpDiagnostics(name);
-        throw new Error(`[global-setup] CDP port 9222 not ready for ${browser} within 180s`);
+        throw new Error(`[global-setup] CDP port 9222 not ready for ${role} within 180s`);
       }
     }
 
@@ -232,7 +257,7 @@ export async function setup(): Promise<void> {
     provisionRootSSHKey(name);
     await waitForSSHD(name, 60_000);
 
-    console.log(`[global-setup] ${browser} container ready`);
+    console.log(`[global-setup] ${role} container ready`);
   });
 
   await Promise.all(readinessPromises);
@@ -242,10 +267,10 @@ export async function setup(): Promise<void> {
 }
 
 export async function teardown(): Promise<void> {
-  for (const [browser, { name }] of Object.entries(launched)) {
+  for (const [role, { name }] of Object.entries(launched)) {
     try {
       execFileSync("docker", ["rm", "-f", name], { stdio: "ignore" });
-      console.log(`[global-setup] Removed ${browser} container: ${name}`);
+      console.log(`[global-setup] Removed ${role} container: ${name}`);
     } catch {
       // ignore
     }

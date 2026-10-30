@@ -1,0 +1,6 @@
+#!/bin/sh
+# Conformance-harness configure-llm verb: captures the routing document into
+# TEST_LLM_FILE (full overwrite — trivially idempotent).
+set -eu
+cat > "${TEST_LLM_FILE:?TEST_LLM_FILE must be set}"
+exit 0

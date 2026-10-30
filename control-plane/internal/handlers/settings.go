@@ -7,6 +7,7 @@ import (
 
 	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
+	"github.com/gluk-w/claworc/control-plane/internal/outboundproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 )
 
@@ -96,6 +97,22 @@ func settingsToResponse(raw map[string]string) map[string]interface{} {
 	// admin-only surface; masking offers no real confidentiality here and the
 	// edit flow needs the live value to diff against.
 	result["default_env_vars"] = EnvVarsForResponse(raw["default_env_vars"])
+
+	// Global outbound proxy — stored encrypted, password masked on the way out.
+	result[outboundproxy.SettingKey] = outboundproxy.MaskEncrypted(raw[outboundproxy.SettingKey])
+
+	// Per-agent-type default images (non-OpenClaw types; OpenClaw keeps the
+	// plain default_agent_image setting above).
+	{
+		var m map[string]string
+		if raw["default_agent_images"] != "" {
+			json.Unmarshal([]byte(raw["default_agent_images"]), &m)
+		}
+		if m == nil {
+			m = map[string]string{}
+		}
+		result["default_agent_images"] = m
+	}
 
 	// Global pod placement settings
 	for _, k := range []string{"default_pod_annotations", "default_node_selector", "default_service_account_annotations"} {
@@ -233,10 +250,31 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Handle pod placement + service/port settings (stored as JSON strings)
+	// Handle default_proxy_url (encrypted). Echoing back the masked value is a
+	// no-op; a real change restarts every running instance that inherits it.
+	proxyChanged := false
+	if v, ok := raw[outboundproxy.SettingKey]; ok {
+		strVal, _ := v.(string)
+		existing, _ := database.GetSetting(outboundproxy.SettingKey)
+		enc, changed, err := outboundproxy.PrepareUpdate(strVal, existing)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if changed {
+			if err := database.SetSetting(outboundproxy.SettingKey, enc); err != nil {
+				writeError(w, http.StatusInternalServerError, "Failed to save proxy setting")
+				return
+			}
+			proxyChanged = true
+		}
+	}
+
+	// Handle pod placement + service/port settings and the per-agent-type
+	// default image map (stored as JSON strings)
 	for _, key := range []string{
 		"default_pod_annotations", "default_node_selector", "default_tolerations",
-		"default_service_account_annotations", "default_ports",
+		"default_service_account_annotations", "default_ports", "default_agent_images",
 	} {
 		if v, ok := raw[key]; ok {
 			b, err := json.Marshal(v)
@@ -250,11 +288,12 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Handle remaining plain settings
 	for key, val := range raw {
-		if key == "default_models" || key == "brave_api_key" || key == "composio_api_key" || key == "env_vars_set" || key == "env_vars_unset" {
+		if key == "default_models" || key == "brave_api_key" || key == "composio_api_key" || key == "env_vars_set" || key == "env_vars_unset" ||
+			key == outboundproxy.SettingKey {
 			continue
 		}
 		if key == "default_pod_annotations" || key == "default_node_selector" || key == "default_tolerations" ||
-			key == "default_service_account_annotations" || key == "default_ports" {
+			key == "default_service_account_annotations" || key == "default_ports" || key == "default_agent_images" {
 			continue // handled above
 		}
 		// installation_id is read-only; never accept it on update.
@@ -285,10 +324,18 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	// take effect. The container only injects env vars on (re)create, so without
 	// this the DB and the live containers silently diverge.
 	var restartingInstances []restartTarget
-	if envVarsChanged {
+	if envVarsChanged || proxyChanged {
 		var running []database.Instance
 		database.DB.Where("status = ?", "running").Find(&running)
 		for i := range running {
+			// A proxy change only affects instances that inherit it.
+			inherits := proxyModeOrDefault(running[i].ProxyMode) == outboundproxy.ModeInherit
+			if !envVarsChanged && !inherits {
+				continue
+			}
+			if proxyChanged && inherits {
+				stopBrowserSessionAsync(running[i].ID)
+			}
 			restartInstanceAsync(running[i], callerID(r))
 			restartingInstances = append(restartingInstances, restartTarget{
 				ID:          running[i].ID,

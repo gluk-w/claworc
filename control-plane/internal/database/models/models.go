@@ -28,6 +28,21 @@ func (i *Instance) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
+// AgentTypeOpenClaw is the agent type every pre-shim instance runs. It is
+// the implicit value of an empty Instance.AgentType (see EffectiveAgentType).
+const AgentTypeOpenClaw = "openclaw"
+
+// EffectiveAgentType returns the instance's agent type, treating the empty
+// string as "openclaw". Mirrors the IsLegacyEmbedded philosophy: rows that
+// pre-date the column store "" and must keep behaving exactly as before the
+// upgrade. All code MUST read this accessor, never the raw AgentType field.
+func (i *Instance) EffectiveAgentType() string {
+	if i.AgentType == "" {
+		return AgentTypeOpenClaw
+	}
+	return i.AgentType
+}
+
 // IsLegacyEmbedded reports whether the given container image refers to the
 // legacy combined agent+browser image. Legacy instances run Chromium and VNC
 // inside the same container as OpenClaw and use the agent's reverse VNC tunnel
@@ -60,9 +75,15 @@ type Instance struct {
 	// UUID is a stable, non-enumerable identifier used in webhook URLs and
 	// any other surface that should not leak the sequential ID. Auto-filled
 	// by BeforeCreate; backfilled for pre-existing rows by migration 00007.
-	UUID            string `gorm:"uniqueIndex" json:"uuid"`
-	Name            string `gorm:"uniqueIndex;not null" json:"name"`
-	DisplayName     string `gorm:"not null" json:"display_name"`
+	UUID        string `gorm:"uniqueIndex" json:"uuid"`
+	Name        string `gorm:"uniqueIndex;not null" json:"name"`
+	DisplayName string `gorm:"not null" json:"display_name"`
+	// AgentType identifies which agent implementation the instance's image
+	// runs ("openclaw", "hermes", "nanoclaw", "custom" — see
+	// agentshim.Types()). Empty means "openclaw" (pre-shim rows); always read
+	// via EffectiveAgentType(), never the raw field. Backfilled to "openclaw"
+	// for pre-existing rows by migration 00013.
+	AgentType       string `gorm:"default:''" json:"agent_type"`
 	Status          string `gorm:"not null;default:creating" json:"status"`
 	CPURequest      string `gorm:"default:500m" json:"cpu_request"`
 	CPULimit        string `gorm:"default:2000m" json:"cpu_limit"`
@@ -93,6 +114,11 @@ type Instance struct {
 	NodeSelector         string `gorm:"type:text;default:'{}'" json:"node_selector"`   // JSON map[string]string
 	Tolerations          string `gorm:"type:text;default:'[]'" json:"tolerations"`     // JSON []Toleration
 	Affinity             string `gorm:"type:text;default:''"   json:"affinity"`        // JSON corev1.Affinity or ""
+	// Outbound proxy (see internal/outboundproxy, docs/proxy.md). ProxyMode is
+	// "inherit" (global default_proxy_url), "custom" (ProxyURL) or "off".
+	// ProxyURL is a Fernet-encrypted scheme://user:pass@host:port.
+	ProxyMode string `gorm:"default:''" json:"-"`
+	ProxyURL  string `gorm:"default:''" json:"-"`
 	// ServiceAccountAnnotations are applied to the per-instance ServiceAccount
 	// claworc creates and mounts into the pod (e.g. for external secret-store
 	// auth methods keyed off SA identity). The SA name itself is derived from

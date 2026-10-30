@@ -313,3 +313,56 @@ func TestUpdateSettings_EnvVars_NoOpSetSkipsRestart(t *testing.T) {
 		t.Errorf("no-op save must not restart anyone: %v", resp["restarting_instances"])
 	}
 }
+
+// TestUpdateSettings_Proxy_EncryptsMasksAndRestartsInheritors checks the
+// global outbound proxy: stored encrypted, masked in the response, masked
+// echo is a no-op, and only running instances that inherit it restart.
+func TestUpdateSettings_Proxy_EncryptsMasksAndRestartsInheritors(t *testing.T) {
+	setupSettingsTest(t)
+	database.DB.Create(&database.Instance{Name: "bot-inherit", DisplayName: "Inherit", Status: "running"})
+	database.DB.Create(&database.Instance{Name: "bot-off", DisplayName: "Off", Status: "running", ProxyMode: "off"})
+
+	w := httptest.NewRecorder()
+	UpdateSettings(w, postJSON("/api/v1/settings", map[string]string{
+		"default_proxy_url": "http://user:secret@proxy.example.com:9000",
+	}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	stored, _ := database.GetSetting("default_proxy_url")
+	if plain, err := utils.Decrypt(stored); err != nil || plain != "http://user:secret@proxy.example.com:9000" {
+		t.Fatalf("stored proxy = %q (%v)", plain, err)
+	}
+
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if got := resp["default_proxy_url"]; got != "http://user:****@proxy.example.com:9000" {
+		t.Errorf("response proxy = %v, want masked", got)
+	}
+	restarting, _ := resp["restarting_instances"].([]interface{})
+	if len(restarting) != 1 || restarting[0].(map[string]interface{})["name"] != "bot-inherit" {
+		t.Errorf("restarting_instances = %v, want only bot-inherit", restarting)
+	}
+
+	// Echoing the masked value back changes nothing and restarts nothing.
+	w = httptest.NewRecorder()
+	UpdateSettings(w, postJSON("/api/v1/settings", map[string]string{
+		"default_proxy_url": "http://user:****@proxy.example.com:9000",
+	}))
+	resp = map[string]interface{}{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if _, ok := resp["restarting_instances"]; ok {
+		t.Error("masked echo triggered a restart")
+	}
+	if after, _ := database.GetSetting("default_proxy_url"); after != stored {
+		t.Error("masked echo overwrote the stored proxy")
+	}
+
+	// Invalid URLs are rejected.
+	w = httptest.NewRecorder()
+	UpdateSettings(w, postJSON("/api/v1/settings", map[string]string{"default_proxy_url": "proxy.example.com"}))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("invalid proxy status = %d, want 400", w.Code)
+	}
+}

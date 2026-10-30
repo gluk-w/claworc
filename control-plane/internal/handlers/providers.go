@@ -23,7 +23,6 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/internalproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
-	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
 	"github.com/go-chi/chi/v5"
 )
@@ -636,13 +635,12 @@ func pushProviderUpdateToInstances(providerID uint) {
 		instName := inst.Name
 		go func() {
 			bgCtx := context.Background()
-			sshClient, err := SSHMgr.WaitForSSH(bgCtx, instID, 30*time.Second)
-			if err != nil {
+			if _, err := SSHMgr.WaitForSSH(bgCtx, instID, 30*time.Second); err != nil {
 				log.Printf("Failed to get SSH connection for instance %d during provider update: %s", instID, utils.SanitizeForLog(err.Error()))
 				return
 			}
 			ConfigureInstance(
-				bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName,
+				bgCtx, orch, instID, instName,
 				models, gatewayProviders,
 				config.Cfg.InternalProxyPort,
 			)
@@ -675,13 +673,12 @@ func reconfigureInstanceAsync(instID uint) {
 	safeID := inst.ID
 	go func() {
 		bgCtx := context.Background()
-		sshClient, err := SSHMgr.WaitForSSH(bgCtx, safeID, 30*time.Second)
-		if err != nil {
+		if _, err := SSHMgr.WaitForSSH(bgCtx, safeID, 30*time.Second); err != nil {
 			log.Printf("Failed to get SSH connection for instance %d during reconfigure: %s", safeID, utils.SanitizeForLog(err.Error()))
 			return
 		}
 		ConfigureInstance(
-			bgCtx, orch, sshproxy.NewSSHInstance(sshClient), instName,
+			bgCtx, orch, safeID, instName,
 			models, gatewayProviders,
 			config.Cfg.InternalProxyPort,
 		)

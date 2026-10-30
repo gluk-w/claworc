@@ -96,7 +96,7 @@ func (s *Service) rank(ctx context.Context, task Task, candidates []uint, souls 
 	}
 
 	var b strings.Builder
-	b.WriteString("You are routing a task to the best-fit OpenClaw agent.\n\n")
+	b.WriteString("You are routing a task to the best-fit agent.\n\n")
 	b.WriteString("TASK:\n")
 	b.WriteString("Title: " + task.Title + "\n")
 	b.WriteString("Description: " + task.Description + "\n\n")

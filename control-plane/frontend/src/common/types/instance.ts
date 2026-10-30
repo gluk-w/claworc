@@ -4,10 +4,30 @@ export interface InstanceModels {
   extra: string[];
 }
 
+export interface AgentCapabilities {
+  chat: boolean;
+  chat_abort: boolean;
+  session_reset: boolean;
+  config: boolean;
+  configure_llm: boolean;
+  restart: boolean;
+  control_ui: boolean;
+  skills: boolean;
+}
+
 export interface Instance {
   id: number;
   name: string;
   display_name: string;
+  /** Effective agent type ("openclaw" for pre-shim rows). */
+  agent_type: string;
+  /** Registry display name for agent_type (e.g. "OpenClaw"). */
+  agent_display_name: string;
+  /** Whether this agent type serves a web control UI. */
+  has_control_ui: boolean;
+  /** Agent capabilities: live from the agent's shim when reachable, else the
+   * static registry placeholder. Only present on the detail response. */
+  agent_capabilities?: AgentCapabilities;
   status: "creating" | "running" | "restarting" | "stopping" | "stopped" | "error";
   status_message?: string;
   cpu_request: string;
@@ -27,6 +47,10 @@ export interface Instance {
   has_timezone_override: boolean;
   user_agent: string | null;
   has_user_agent_override: boolean;
+  /** Outbound proxy: "inherit" uses the global default, "off" connects directly. */
+  proxy_mode: ProxyMode;
+  /** Custom proxy URL with the password masked; "" unless proxy_mode is "custom". */
+  proxy_url: string;
   /** Per-instance env var overrides. Values are masked (e.g. "****abcd"). */
   env_vars: Record<string, string>;
   has_env_override: boolean;
@@ -72,6 +96,8 @@ export type InstanceDetail = Instance;
 
 export interface InstanceCreatePayload {
   display_name: string;
+  /** Agent type ("openclaw" | "hermes" | "nanoclaw" | "custom"); defaults to "openclaw". */
+  agent_type?: string;
   cpu_request?: string;
   cpu_limit?: string;
   memory_request?: string;
@@ -85,6 +111,8 @@ export interface InstanceCreatePayload {
   vnc_resolution?: string | null;
   timezone?: string | null;
   user_agent?: string | null;
+  proxy_mode?: ProxyMode;
+  proxy_url?: string;
   enabled_providers?: number[];
   env_vars_set?: Record<string, string>;
   browser_provider?: string;
@@ -108,12 +136,17 @@ export interface Toleration {
   tolerationSeconds?: number;
 }
 
+export type ProxyMode = "inherit" | "custom" | "off";
+
 export interface InstanceUpdatePayload {
   brave_api_key?: string;
   models?: { disabled: string[]; extra: string[] };
   default_model?: string;
   timezone?: string;
   user_agent?: string;
+  proxy_mode?: ProxyMode;
+  /** Echoing the masked value back leaves the stored URL unchanged. */
+  proxy_url?: string;
   allowed_source_ips?: string;
   enabled_providers?: number[];
   display_name?: string;
@@ -180,9 +213,12 @@ export interface LLMProvider {
 
 export interface InstanceConfig {
   config: string;
+  /** Monaco editor language for the config file (json | yaml | toml | ini | shell | plaintext). */
+  language?: string;
 }
 
 export interface InstanceConfigUpdate {
   config: string;
   restarted: boolean;
+  language?: string;
 }

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# chat-stream --session <key> — persistent chat channel (docs/shim.md):
+# commands on stdin, JSONL events on stdout. The generic shimlib loop runs
+# this image's chat-send / chat-abort / session-reset verbs.
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+parse_session_args "$@"
+chat_stream_loop

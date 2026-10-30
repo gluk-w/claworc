@@ -6,6 +6,7 @@ ARG USE_CHINA_MIRRORS=false
 ARG INCLUDE_CJK_FONTS=false
 ARG NOVNC_VERSION=1.4.0
 ARG WEBSOCKIFY_VERSION=0.12.0
+ARG GOST_VERSION=3.3.2
 
 # Browser-only base image: Xvfb + TigerVNC + noVNC + openbox + stealth
 # extension + sshd. NO OpenClaw, NO cron — those live in claworc/openclaw.
@@ -58,6 +59,13 @@ RUN mkdir -p /opt/novnc /opt/novnc/utils/websockify && \
     DEBIAN_FRONTEND=noninteractive apt-get purge -y --auto-remove xz-utils && \
     rm -rf /var/lib/apt/lists/*
 
+# gost: local forwarder for the outbound proxy (svc-proxy). Chromium's
+# --proxy-server can't carry credentials, so Chromium talks to an
+# unauthenticated 127.0.0.1:3128 and gost authenticates upstream.
+RUN curl -fsSL "https://github.com/go-gost/gost/releases/download/v${GOST_VERSION}/gost_${GOST_VERSION}_linux_${TARGETARCH}.tar.gz" \
+      | tar -xz -C /usr/local/bin gost && \
+    chmod 755 /usr/local/bin/gost
+
 COPY stealth-extension/ /opt/stealth-extension/
 COPY rootfs/ /
 
@@ -66,6 +74,7 @@ RUN chmod +x /etc/s6-overlay/s6-rc.d/init-setup/up \
              /etc/s6-overlay/s6-rc.d/svc-xvnc/run \
              /etc/s6-overlay/s6-rc.d/svc-novnc/run \
              /etc/s6-overlay/s6-rc.d/svc-desktop/run \
+             /etc/s6-overlay/s6-rc.d/svc-proxy/run \
              /etc/s6-overlay/s6-rc.d/svc-window-fit/run \
              /etc/s6-overlay/s6-rc.d/svc-sshd/run
 

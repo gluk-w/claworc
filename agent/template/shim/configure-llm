@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# configure-llm — route the agent's LLM traffic through the Claworc LLM proxy
+# (docs/shim.md). The routing document on stdin is parsed by
+# lib/configure-llm.py, which rewrites the managed block in agent.env.
+set -euo pipefail
+source "$(dirname "$0")/lib/shimlib.sh"
+
+parse_no_args "$@"
+export ENV_FILE=${CLAWORC_SHIM_ENV_FILE:-$SHIM_DIR/agent.env}
+
+python3 "$SHIM_DIR/lib/configure-llm.py"
+chown_claworc "$ENV_FILE"

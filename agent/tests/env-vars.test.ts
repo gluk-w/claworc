@@ -201,23 +201,34 @@ describe.skipIf(entries.length === 0).each(entries)(
     // ────────────────────────────────────────────────────────────────────
     // Path 6: s6 services — run scripts start with `#!/command/with-contenv
     // bash`, which re-exports vars captured by s6-overlay's /init into
-    // /run/s6/container_environment/. We verify by checking the openclaw
-    // service's live environ via /proc.
+    // /run/s6/container_environment/. We verify by running a command under
+    // with-contenv ourselves (exactly what a run script gets), scrubbing the
+    // docker-exec environment first so the value can only come from s6.
+    //
+    // Why not read a service's /proc/<pid>/environ: sshd rewrites its
+    // process title, which on Linux clobbers that region, and `pgrep -f`
+    // from inside a `bash -c` matches the bash process itself (its cmdline
+    // contains the pattern), silently reading docker-exec's environ. The
+    // OpenClaw gateway's own environ is checked in openclaw.test.ts, which
+    // waits for the gateway to be up first.
     // ────────────────────────────────────────────────────────────────────
     describe("s6 services (with-contenv)", () => {
-      it("openclaw process sees user-defined env vars", () => {
-        // pgrep for the gateway process and read its environ. `tr` converts
-        // nul-separated entries to newlines so grep can match per-line.
-        const result = exec(container, [
-          "bash",
-          "-c",
-          `pid=$(pgrep -f 'openclaw gateway' | head -n1); test -n "$pid" && tr '\\0' '\\n' < /proc/$pid/environ`,
-        ]);
-        expect(result.exitCode).toBe(0);
-        expect(result.stdout).toContain("TEST_ENV_PLAIN=plain_value");
-        expect(result.stdout).toContain("TEST_ENV_SPACED=has spaces in it");
-        expect(result.stdout).toContain("TEST_ENV_SPECIAL=a!b#c$d");
-      });
+      it.each(Object.entries(USER_VARS))(
+        "with-contenv exposes %s as %j",
+        (name, expected) => {
+          const result = exec(container, [
+            "env",
+            "-i",
+            "PATH=/command:/usr/bin:/bin",
+            "/command/with-contenv",
+            "sh",
+            "-c",
+            `printf '%s' "$${name}"`,
+          ]);
+          expect(result.exitCode).toBe(0);
+          expect(result.stdout).toBe(expected);
+        },
+      );
     });
 
     // ────────────────────────────────────────────────────────────────────
