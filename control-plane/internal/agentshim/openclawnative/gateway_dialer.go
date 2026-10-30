@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -16,6 +17,22 @@ import (
 const (
 	GatewayMinProtocol = 3 // OpenClaw <= 2026.5.x
 	GatewayMaxProtocol = 4 // OpenClaw 2026.6.x
+)
+
+// Client identity advertised in the connect handshake. These are OpenClaw's
+// GATEWAY_CLIENT_IDS.GATEWAY_CLIENT / GATEWAY_CLIENT_MODES.BACKEND.
+//
+// The control plane is a backend peer reaching the gateway over a loopback SSH
+// tunnel, not a browser. Advertising the Control UI identity instead puts the
+// connection on OpenClaw's operator-UI path, where evaluateMissingDeviceIdentity
+// rejects it with "control ui requires device identity (use HTTPS or localhost
+// secure context)" unless the client presents a device identity — which the
+// control plane has none of. The backend identity takes the
+// shouldSkipLocalBackendSelfPairing branch instead, which a loopback connection
+// carrying the gateway token satisfies.
+const (
+	gatewayClientID   = "gateway-client"
+	gatewayClientMode = "backend"
 )
 
 // DialGateway opens a WebSocket connection to an OpenClaw gateway via the
@@ -43,6 +60,10 @@ func DialGateway(ctx context.Context, localPort int, gatewayToken string) (*webs
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
+	// No Origin header on purpose. OpenClaw reads one as hasBrowserOriginHeader,
+	// which disqualifies the connection from both shouldSkipLocalBackendSelfPairing
+	// and the shared-secret loopback locality, leaving only paths that demand a
+	// device identity.
 	conn, _, err := websocket.Dial(dialCtx, gwURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("dial gateway: %w", err)
@@ -67,11 +88,11 @@ func DialGateway(ctx context.Context, localPort int, gatewayToken string) (*webs
 			"minProtocol": GatewayMinProtocol,
 			"maxProtocol": GatewayMaxProtocol,
 			"client": map[string]any{
-				"id":          "gateway-client",
+				"id":          gatewayClientID,
 				"displayName": "claworc",
 				"version":     "1.0.0",
 				"platform":    "linux",
-				"mode":        "backend",
+				"mode":        gatewayClientMode,
 			},
 			"role":   "operator",
 			"scopes": []string{"operator.admin"},
@@ -127,4 +148,22 @@ func handshakeError(errObj map[string]any) error {
 		}
 	}
 	return fmt.Errorf("%s", msg)
+}
+
+// GatewayEventForSession reports whether an event payload belongs to the given
+// chat.send sessionKey.
+//
+// The gateway broadcasts agent events for every session to every connected
+// backend client, so a caller that waits for "the" lifecycle/end frame must
+// filter by session or it will return another session's reply (a concurrent
+// webhook call, a Slack thread, a cron run). The gateway scopes the key it
+// echoes back to the agent ("agent:main:<key>"), so match the bare key or that
+// suffix. Events without a sessionKey are never ours.
+func GatewayEventForSession(payload map[string]any, sessionKey string) bool {
+	got, _ := payload["sessionKey"].(string)
+	if got == "" || sessionKey == "" {
+		return false
+	}
+	return strings.EqualFold(got, sessionKey) ||
+		strings.HasSuffix(strings.ToLower(got), ":"+strings.ToLower(sessionKey))
 }

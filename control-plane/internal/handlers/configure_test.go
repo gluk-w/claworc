@@ -267,6 +267,33 @@ func TestConfigureInstance_ProvidersSet(t *testing.T) {
 	}
 }
 
+// openclaw rejects agents.defaults.model refs whose provider/model it can't
+// resolve, so providers must be configured before the model.
+func TestConfigureInstance_ProvidersBeforeModel(t *testing.T) {
+	inst := &mockInstance{}
+	providers := map[string]LLMProxyProvider{
+		"anthropic": {Key: "vk-test", APIType: "openai-completions"},
+	}
+	configureViaNative(t, inst,
+		[]string{"anthropic/claude-sonnet-5"}, providers, 40001)
+
+	providersIdx, modelIdx := -1, -1
+	for i, c := range inst.calls {
+		if c[0] == "config" && c[1] == "set" && c[2] == "models.providers" && providersIdx < 0 {
+			providersIdx = i
+		}
+		if c[0] == "config" && c[1] == "set" && c[2] == "agents.defaults.model" && modelIdx < 0 {
+			modelIdx = i
+		}
+	}
+	if providersIdx < 0 || modelIdx < 0 {
+		t.Fatalf("expected both providers and model set calls, got %v", inst.calls)
+	}
+	if providersIdx > modelIdx {
+		t.Errorf("models.providers set at call %d, after agents.defaults.model at call %d", providersIdx, modelIdx)
+	}
+}
+
 func TestConfigureInstance_NilModelsEmptySlice(t *testing.T) {
 	inst := &mockInstance{}
 	// Nil models but with gateway providers → skip model set and allowlist, set providers, stop gateway
