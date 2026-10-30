@@ -135,6 +135,7 @@ func (s *session) Close() error {
 //	    "complete", Text = last assistant snapshot for that run
 //	type=="res" ok==false                           → error (non-fatal)
 //	tick / presence / health / res-ok               → skipped
+//	events for another sessionKey                   → skipped
 func (s *session) translate(raw []byte) (agentshim.Event, bool) {
 	var msg map[string]any
 	if err := json.Unmarshal(raw, &msg); err != nil {
@@ -160,8 +161,11 @@ func (s *session) translate(raw []byte) (agentshim.Event, bool) {
 		}, true
 
 	case "event":
+		// The gateway broadcasts every session's events to every backend
+		// client; only this session's belong to the caller (see
+		// GatewayEventForSession).
 		payload, _ := msg["payload"].(map[string]any)
-		if payload == nil {
+		if payload == nil || !GatewayEventForSession(payload, s.key) {
 			return agentshim.Event{}, false
 		}
 		stream, _ := payload["stream"].(string)

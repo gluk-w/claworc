@@ -160,6 +160,15 @@ try {
   /* no valid state cache — apply below */
 }
 
+// Providers go first: OpenClaw validates agents.defaults.model against the
+// configured providers' models and rejects refs it can't resolve ("Unknown model").
+if (Object.keys(providersMap).length > 0) {
+  // Clear the providers map first so de-selected providers are removed
+  // instead of being deep-merged with the previous config.
+  openclaw(["config", "unset", "models.providers"], { ignoreFailure: true });
+  openclaw(["config", "set", "models.providers", JSON.stringify(providersMap), "--json"]);
+}
+
 // --- default_model/fallback_models -> agents.defaults.model + allowlist ---
 if (defaultModel !== "") {
   const modelConfig = { primary: defaultModel, fallbacks: fallbackModels };
@@ -170,13 +179,6 @@ if (defaultModel !== "") {
   // existing map values), then set the full prefixed set.
   openclaw(["config", "unset", "agents.defaults.models"], { ignoreFailure: true });
   openclaw(["config", "set", "agents.defaults.models", JSON.stringify(allowlist), "--json"]);
-}
-
-if (Object.keys(providersMap).length > 0) {
-  // Clear the providers map first so de-selected providers are removed
-  // instead of being deep-merged with the previous config.
-  openclaw(["config", "unset", "models.providers"], { ignoreFailure: true });
-  openclaw(["config", "set", "models.providers", JSON.stringify(providersMap), "--json"]);
 }
 
 // Record what was applied (and the resulting config fingerprint) so the next

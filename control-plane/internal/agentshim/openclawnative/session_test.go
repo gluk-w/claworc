@@ -17,8 +17,16 @@ import (
 )
 
 // gwFrame builds a raw OpenClaw gateway event frame.
+// testSessionKey is the key the test sessions open with; the gateway echoes
+// it back agent-scoped on every event.
+const testSessionKey = "browser"
+
 func gwFrame(stream, runID string, data map[string]any) []byte {
-	payload := map[string]any{"stream": stream, "data": data}
+	return gwFrameFor("agent:main:"+testSessionKey, stream, runID, data)
+}
+
+func gwFrameFor(sessionKey, stream, runID string, data map[string]any) []byte {
+	payload := map[string]any{"stream": stream, "data": data, "sessionKey": sessionKey}
 	if runID != "" {
 		payload["runId"] = runID
 	}
@@ -41,7 +49,7 @@ func resFrame(ok bool, errMsg string) []byte {
 // sequence through the translator and asserts the exact normalized event
 // sequence, guarding the cumulative-text and lifecycle-end semantics.
 func TestTranslate_GoldenSequence(t *testing.T) {
-	s := newSession(nil, "browser")
+	s := newSession(nil, testSessionKey)
 
 	frames := [][]byte{
 		gwFrame("lifecycle", "r1", map[string]any{"phase": "start"}),
@@ -99,7 +107,7 @@ func TestTranslate_GoldenSequence(t *testing.T) {
 // not match the assistant frames' (or both are absent), end.text still
 // carries the last assistant snapshot.
 func TestTranslate_EndTextFallsBackAcrossRuns(t *testing.T) {
-	s := newSession(nil, "k")
+	s := newSession(nil, testSessionKey)
 
 	if _, ok := s.translate(gwFrame("assistant", "run-a", map[string]any{"text": "the reply"})); !ok {
 		t.Fatal("assistant frame not translated")
@@ -116,7 +124,7 @@ func TestTranslate_EndTextFallsBackAcrossRuns(t *testing.T) {
 // TestTranslate_MultipleMessageIDsPerTurn: each snapshot replaces only its
 // own message; end carries the LAST assistant snapshot.
 func TestTranslate_LastSnapshotPerRunWins(t *testing.T) {
-	s := newSession(nil, "k")
+	s := newSession(nil, testSessionKey)
 	s.translate(gwFrame("assistant", "r9", map[string]any{"text": "one"}))
 	s.translate(gwFrame("assistant", "r9", map[string]any{"text": "one two"}))
 	s.translate(gwFrame("assistant", "r9", map[string]any{"text": "one two three"}))
@@ -129,7 +137,7 @@ func TestTranslate_LastSnapshotPerRunWins(t *testing.T) {
 // TestTranslate_SkipsUnknownAndMalformed: unknown streams, malformed JSON,
 // and successful res acks are all skipped.
 func TestTranslate_SkipsUnknownAndMalformed(t *testing.T) {
-	s := newSession(nil, "k")
+	s := newSession(nil, testSessionKey)
 	for _, raw := range [][]byte{
 		[]byte("not json"),
 		[]byte(`{"type":"event"}`),
@@ -144,7 +152,7 @@ func TestTranslate_SkipsUnknownAndMalformed(t *testing.T) {
 }
 
 func TestTranslate_ResErrorDefaultsMessage(t *testing.T) {
-	s := newSession(nil, "k")
+	s := newSession(nil, testSessionKey)
 	ev, ok := s.translate([]byte(`{"type":"res","ok":false}`))
 	if !ok {
 		t.Fatal("res error not translated")
@@ -358,5 +366,26 @@ func TestOpenSession_NoTunnel(t *testing.T) {
 	var te *agentshim.TransportError
 	if !errors.As(err, &te) {
 		t.Fatalf("error %v is not a TransportError", err)
+	}
+}
+
+// TestTranslate_SkipsOtherSessions guards against the gateway's broadcast:
+// every backend client sees every session's events, and another session's
+// lifecycle end must not end (or leak text into) this one.
+func TestTranslate_SkipsOtherSessions(t *testing.T) {
+	s := newSession(nil, testSessionKey)
+	for _, f := range [][]byte{
+		gwFrameFor("agent:main:slack-thread-1", "assistant", "r9", map[string]any{"text": "not ours"}),
+		gwFrameFor("agent:main:slack-thread-1", "lifecycle", "r9", map[string]any{"phase": "end"}),
+		gwFrameFor("", "lifecycle", "r9", map[string]any{"phase": "end"}),
+	} {
+		if ev, ok := s.translate(f); ok {
+			t.Errorf("foreign frame translated to %+v", ev)
+		}
+	}
+	for _, key := range []string{testSessionKey, "agent:main:" + testSessionKey, "AGENT:MAIN:BROWSER"} {
+		if _, ok := s.translate(gwFrameFor(key, "lifecycle", "r1", map[string]any{"phase": "start"})); !ok {
+			t.Errorf("own frame with sessionKey %q was skipped", key)
+		}
 	}
 }

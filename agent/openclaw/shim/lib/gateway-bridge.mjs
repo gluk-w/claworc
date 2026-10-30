@@ -445,6 +445,9 @@ async function cmdSend(session, turn) {
     if (frame.type !== "event") continue;
     const payload = frame.payload;
     if (!payload || typeof payload !== "object") continue;
+    // The gateway broadcasts every session's events to every client; another
+    // session's lifecycle end must not end (or leak into) this turn.
+    if (!sessionMatches(payload.sessionKey, session)) continue;
     const data = payload.data && typeof payload.data === "object" ? payload.data : {};
 
     switch (payload.stream) {

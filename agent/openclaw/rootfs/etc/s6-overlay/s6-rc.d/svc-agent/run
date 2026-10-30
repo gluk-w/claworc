@@ -45,11 +45,12 @@ if [ -n "$CLAWORC_INITIAL_LLM_CONFIG" ]; then
         echo "configure-llm failed; continuing boot without initial LLM routing" >&2
     fi
 else
-    if [ -n "$OPENCLAW_INITIAL_MODELS" ]; then
-        s6-setuidgid claworc openclaw config set agents.defaults.model "$OPENCLAW_INITIAL_MODELS" --json
-    fi
+    # Providers first: openclaw rejects model refs it can't resolve.
     if [ -n "$OPENCLAW_INITIAL_PROVIDERS" ]; then
         s6-setuidgid claworc openclaw config set models.providers "$OPENCLAW_INITIAL_PROVIDERS" --json
+    fi
+    if [ -n "$OPENCLAW_INITIAL_MODELS" ]; then
+        s6-setuidgid claworc openclaw config set agents.defaults.model "$OPENCLAW_INITIAL_MODELS" --json
     fi
 fi
 

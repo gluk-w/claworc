@@ -39,12 +39,13 @@ func TestConfigureLLM_CallSequence(t *testing.T) {
 		t.Fatalf("ConfigureLLM: %v", err)
 	}
 
+	// Providers first: OpenClaw rejects model refs it can't resolve.
 	want := [][]string{
+		{"config", "unset", "models.providers"},
+		{"config", "set", "models.providers"},
 		{"config", "set", "agents.defaults.model"},
 		{"config", "unset", "agents.defaults.models"},
 		{"config", "set", "agents.defaults.models"},
-		{"config", "unset", "models.providers"},
-		{"config", "set", "models.providers"},
 		{"gateway", "stop"},
 	}
 	if len(exec.calls) != len(want) {
@@ -61,7 +62,7 @@ func TestConfigureLLM_CallSequence(t *testing.T) {
 
 	// agents.defaults.model payload: primary + fallbacks
 	var modelCfg map[string]any
-	if err := json.Unmarshal([]byte(exec.calls[0][3]), &modelCfg); err != nil {
+	if err := json.Unmarshal([]byte(exec.calls[2][3]), &modelCfg); err != nil {
 		t.Fatalf("model config not JSON: %v", err)
 	}
 	if modelCfg["primary"] != "anthropic/claude-sonnet-4-5" {
@@ -73,7 +74,7 @@ func TestConfigureLLM_CallSequence(t *testing.T) {
 	}
 
 	// allowlist contains both models
-	allowlist := exec.calls[2][3]
+	allowlist := exec.calls[4][3]
 	if !strings.Contains(allowlist, "anthropic/claude-sonnet-4-5") || !strings.Contains(allowlist, "openai/gpt-5") {
 		t.Errorf("allowlist = %s", allowlist)
 	}

@@ -208,10 +208,10 @@ func (c *Client) Restart(ctx context.Context) error {
 // routing document into OpenClaw's native config via `openclaw config
 // set/unset --json` and restarts the gateway:
 //
+//   - models.providers       — providers pointing baseUrl at the LLM proxy
+//     with virtual keys (first: the model refs below must resolve)
 //   - agents.defaults.model  — primary + fallbacks
 //   - agents.defaults.models — allowlist restricting the UI model dropdown
-//   - models.providers       — providers pointing baseUrl at the LLM proxy
-//     with virtual keys
 //
 // Error semantics mirror the historical ConfigureInstance behavior: a
 // transport-level exec failure aborts (and is returned); a non-zero exit from
@@ -225,6 +225,26 @@ func (c *Client) ConfigureLLM(ctx context.Context, routing agentshim.LLMRouting)
 
 	name := c.deps.Instance.Name
 
+	// Providers go first: OpenClaw validates agents.defaults.model against
+	// the configured providers' models and rejects refs it can't resolve
+	// ("Unknown model").
+	if len(routing.Providers) > 0 && routing.ProxyURL != "" {
+		providersJSON, err := BuildProvidersJSON(routing)
+		if err != nil {
+			log.Printf("[openclawnative] %s: marshal providers: %v", name, err)
+		} else if providersJSON != "" {
+			// Clear the providers map first so de-selected providers are
+			// removed instead of being deep-merged with the previous config.
+			_, _, _, _ = inst.ExecOpenclaw(ctx, "config", "unset", "models.providers")
+			stdout, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "models.providers", providersJSON, "--json")
+			if err != nil {
+				log.Printf("[openclawnative] %s: set providers: %v", name, err)
+			} else if code != 0 {
+				log.Printf("[openclawnative] %s: set providers failed: stdout=%q stderr=%q", name, utils.SanitizeForLog(stdout), utils.SanitizeForLog(stderr))
+			}
+		}
+	}
+
 	models := routing.Models()
 	if len(models) > 0 {
 		modelJSON := BuildModelsJSON(routing)
@@ -234,7 +254,7 @@ func (c *Client) ConfigureLLM(ctx context.Context, routing agentshim.LLMRouting)
 		}
 		if code != 0 {
 			log.Printf("[openclawnative] %s: set agents.defaults.model failed: %s", name, utils.SanitizeForLog(stderr))
-			// continue — providers must still be configured even if model config failed
+			// continue — the allowlist and gateway restart still apply
 		}
 
 		// Set the models allowlist to restrict the UI dropdown to only
@@ -255,23 +275,6 @@ func (c *Client) ConfigureLLM(ctx context.Context, routing agentshim.LLMRouting)
 				log.Printf("[openclawnative] %s: set models allowlist: %v", name, err)
 			} else if code != 0 {
 				log.Printf("[openclawnative] %s: set models allowlist failed: %s", name, utils.SanitizeForLog(stderr))
-			}
-		}
-	}
-
-	if len(routing.Providers) > 0 && routing.ProxyURL != "" {
-		providersJSON, err := BuildProvidersJSON(routing)
-		if err != nil {
-			log.Printf("[openclawnative] %s: marshal providers: %v", name, err)
-		} else if providersJSON != "" {
-			// Clear the providers map first so de-selected providers are
-			// removed instead of being deep-merged with the previous config.
-			_, _, _, _ = inst.ExecOpenclaw(ctx, "config", "unset", "models.providers")
-			stdout, stderr, code, err := inst.ExecOpenclaw(ctx, "config", "set", "models.providers", providersJSON, "--json")
-			if err != nil {
-				log.Printf("[openclawnative] %s: set providers: %v", name, err)
-			} else if code != 0 {
-				log.Printf("[openclawnative] %s: set providers failed: stdout=%q stderr=%q", name, utils.SanitizeForLog(stdout), utils.SanitizeForLog(stderr))
 			}
 		}
 	}
