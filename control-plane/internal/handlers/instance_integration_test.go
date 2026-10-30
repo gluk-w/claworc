@@ -183,7 +183,6 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 		})
 	}
 
-
 	if orch := orchestrator.Get(); orch != nil {
 		tunnelMgr.StartBackgroundManager(ctx, func(bctx context.Context) ([]uint, error) {
 			var instances []database.Instance
@@ -466,16 +465,18 @@ func TestIntegration_InstanceLifecycle_ConfiguresOpenclaw(t *testing.T) {
 			continue
 		}
 
-		if len(cfg.Models.Providers) > 0 {
+		// configure-llm writes providers and the default model in separate
+		// steps, so wait for both rather than asserting on a half-applied file.
+		finalCfg = cfg
+		if len(cfg.Models.Providers) > 0 && cfg.Agents.Defaults.Model.Primary != "" {
 			t.Logf("models.providers configured with %d provider(s)", len(cfg.Models.Providers))
-			finalCfg = cfg
 			configured = true
 			break
 		}
-		t.Log("models.providers not yet set — retrying")
+		t.Log("models.providers / default model not yet set — retrying")
 		time.Sleep(3 * time.Second)
 	}
-	if !configured {
+	if !configured && len(finalCfg.Models.Providers) == 0 {
 		t.Fatal("models.providers was not configured within 90s — ConfigureInstance may not have run")
 	}
 

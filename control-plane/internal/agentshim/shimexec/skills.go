@@ -105,7 +105,7 @@ func buildSkillTar(files map[string][]byte) ([]byte, error) {
 		name string
 		dir  bool
 	}
-	entries := make([]entry, 0, len(clean)+len(dirs))
+	var entries []entry
 	for d := range dirs {
 		entries = append(entries, entry{name: d, dir: true})
 	}

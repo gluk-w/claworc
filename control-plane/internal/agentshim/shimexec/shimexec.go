@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -95,6 +96,22 @@ type StreamHandle interface {
 
 // verbPath returns the absolute path of a shim verb executable.
 func verbPath(verb string) string { return ShimDir + "/" + verb }
+
+// programPattern is the set of programs a Runner may exec: a shim verb under
+// ShimDir, or cat (Runner.ReadFile). Arguments are always shell-quoted, so
+// pinning the program closes the remaining command-injection surface.
+var programPattern = regexp.MustCompile(`^(/opt/claworc/shim/[a-z][a-z0-9-]*|cat)$`)
+
+// checkProgram rejects an argv whose program isn't a shim verb or cat.
+func checkProgram(argv []string) error {
+	if len(argv) == 0 {
+		return errors.New("shimexec: empty argv")
+	}
+	if !programPattern.MatchString(argv[0]) {
+		return fmt.Errorf("shimexec: refusing to exec %q: not a shim verb", argv[0])
+	}
+	return nil
+}
 
 // mapExit translates a shim verb's exit code into a Go error per the
 // contract's exit-code table.

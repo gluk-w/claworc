@@ -36,12 +36,15 @@ func NewSSHRunner(resolve func(ctx context.Context) (*gossh.Client, error)) *SSH
 
 // shellJoin quotes each argv element and joins them into one command line
 // for the remote shell.
-func shellJoin(argv []string) string {
+func shellJoin(argv []string) (string, error) {
+	if err := checkProgram(argv); err != nil {
+		return "", err
+	}
 	parts := make([]string, len(argv))
 	for i, a := range argv {
 		parts[i] = sshproxy.ShellQuote(a)
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(parts, " "), nil
 }
 
 // newSSHSession resolves a connection and opens one exec session on it.
@@ -82,6 +85,10 @@ func mapWaitErr(werr error) (int, error) {
 
 // Run implements Runner over one SSH exec channel.
 func (r *SSHRunner) Run(ctx context.Context, argv []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	cmdline, err := shellJoin(argv)
+	if err != nil {
+		return -1, err
+	}
 	sess, err := r.newSSHSession(ctx)
 	if err != nil {
 		return -1, err
@@ -92,7 +99,7 @@ func (r *SSHRunner) Run(ctx context.Context, argv []string, stdin io.Reader, std
 	sess.Stdout = stdout
 	sess.Stderr = stderr
 
-	if err := sess.Start(shellJoin(argv)); err != nil {
+	if err := sess.Start(cmdline); err != nil {
 		return -1, &agentshim.TransportError{Err: err}
 	}
 
@@ -116,6 +123,10 @@ func (r *SSHRunner) Run(ctx context.Context, argv []string, stdin io.Reader, std
 // Start implements Runner: it begins a streaming exec (chat-send) whose
 // lifetime is bound to ctx.
 func (r *SSHRunner) Start(ctx context.Context, argv []string, stdin io.Reader) (StreamHandle, error) {
+	cmdline, err := shellJoin(argv)
+	if err != nil {
+		return nil, err
+	}
 	sess, err := r.newSSHSession(ctx)
 	if err != nil {
 		return nil, err
@@ -138,7 +149,7 @@ func (r *SSHRunner) Start(ctx context.Context, argv []string, stdin io.Reader) (
 		sess.Stdin = stdin
 	}
 
-	if err := sess.Start(shellJoin(argv)); err != nil {
+	if err := sess.Start(cmdline); err != nil {
 		sess.Close()
 		return nil, &agentshim.TransportError{Err: err}
 	}

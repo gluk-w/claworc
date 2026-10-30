@@ -41,8 +41,8 @@ func (r *LocalRunner) mapPath(p string) string {
 }
 
 func (r *LocalRunner) command(argv []string) (*exec.Cmd, error) {
-	if len(argv) == 0 {
-		return nil, errors.New("shimexec: empty argv")
+	if err := checkProgram(argv); err != nil {
+		return nil, err
 	}
 	cmd := exec.Command(r.mapPath(argv[0]), argv[1:]...)
 	cmd.Env = append(os.Environ(), r.Env...)

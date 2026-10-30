@@ -10,9 +10,14 @@ import (
 
 // --- SSH Server Hardening Verification Tests ---
 //
-// These tests verify the SSH server configuration in agent/{instance,browser}/rootfs/etc/ssh/sshd_config.d/claworc.conf
-// and the startup script in agent/{instance,browser}/rootfs/etc/s6-overlay/s6-rc.d/svc-sshd/run to ensure
-// security hardening directives are properly set.
+// These tests verify the SSH server configuration in agent/<image>/rootfs/etc/ssh/sshd_config.d/claworc.conf
+// and the startup script in agent/<image>/rootfs/etc/s6-overlay/s6-rc.d/svc-sshd/run to ensure
+// security hardening directives are properly set. The per-directive tests read the OpenClaw image (whose
+// PermitOpen/PermitListen cover the OpenClaw gateway and CDP bridge); TestSecurity_AllImagesHardened checks
+// the image-independent directives on every image.
+
+// sshImages are the agent/ image directories that ship sshd.
+var sshImages = []string{"openclaw", "hermes", "nanoclaw", "template", "browser"}
 
 // findRepoRoot walks up from the test file to find the repository root
 // (identified by having a go.mod or .git directory).
@@ -37,11 +42,17 @@ func findRepoRoot(t *testing.T) string {
 	}
 }
 
-// loadSSHDConfig reads the hardened sshd config from the agent directory.
+// loadSSHDConfig reads the hardened sshd config from the OpenClaw image.
 func loadSSHDConfig(t *testing.T) string {
 	t.Helper()
+	return loadImageSSHDConfig(t, "openclaw")
+}
+
+// loadImageSSHDConfig reads the hardened sshd config from agent/<image>.
+func loadImageSSHDConfig(t *testing.T, image string) string {
+	t.Helper()
 	root := findRepoRoot(t)
-	configPath := filepath.Join(root, "agent", "instance", "rootfs", "etc", "ssh", "sshd_config.d", "claworc.conf")
+	configPath := filepath.Join(root, "agent", image, "rootfs", "etc", "ssh", "sshd_config.d", "claworc.conf")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("read sshd config: %v", err)
@@ -49,11 +60,11 @@ func loadSSHDConfig(t *testing.T) string {
 	return string(data)
 }
 
-// loadSSHDStartupScript reads the sshd startup script.
+// loadSSHDStartupScript reads the sshd startup script from the OpenClaw image.
 func loadSSHDStartupScript(t *testing.T) string {
 	t.Helper()
 	root := findRepoRoot(t)
-	scriptPath := filepath.Join(root, "agent", "instance", "rootfs", "etc", "s6-overlay", "s6-rc.d", "svc-sshd", "run")
+	scriptPath := filepath.Join(root, "agent", "openclaw", "rootfs", "etc", "s6-overlay", "s6-rc.d", "svc-sshd", "run")
 	data, err := os.ReadFile(scriptPath)
 	if err != nil {
 		t.Fatalf("read sshd startup script: %v", err)
@@ -424,5 +435,37 @@ func TestSecurity_PrivateKeyFilePermissions(t *testing.T) {
 	}
 	if pubInfo.Mode().Perm() != 0644 {
 		t.Errorf("SECURITY: public key permissions = %o, want 0644", pubInfo.Mode().Perm())
+	}
+}
+
+// TestSecurity_AllImagesHardened checks the image-independent hardening
+// directives on every agent image, so a new or edited image can't ship a
+// weaker sshd than OpenClaw's.
+func TestSecurity_AllImagesHardened(t *testing.T) {
+	want := map[string]string{
+		"PasswordAuthentication": "no",
+		"PermitEmptyPasswords":   "no",
+		"PubkeyAuthentication":   "yes",
+		"PermitRootLogin":        "prohibit-password",
+		"StrictModes":            "yes",
+		"X11Forwarding":          "no",
+		"AllowAgentForwarding":   "no",
+	}
+	for _, image := range sshImages {
+		t.Run(image, func(t *testing.T) {
+			config := loadImageSSHDConfig(t, image)
+			for directive, expected := range want {
+				if val, ok := getConfigDirective(config, directive); !ok || val != expected {
+					t.Errorf("SECURITY: %s = %q (found=%v), want %q", directive, val, ok, expected)
+				}
+			}
+			if val, ok := getConfigDirective(config, "PermitListen"); ok {
+				for _, addr := range strings.Fields(val) {
+					if !strings.HasPrefix(addr, "127.0.0.1:") && !strings.HasPrefix(addr, "localhost:") {
+						t.Errorf("SECURITY: PermitListen %q is not loopback", addr)
+					}
+				}
+			}
+		})
 	}
 }
