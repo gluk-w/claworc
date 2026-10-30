@@ -1,0 +1,22 @@
+#!/command/with-contenv bash
+
+# Local forwarder for the outbound proxy (docs/proxy.md). The control plane
+# sets CLAWORC_BROWSER_PROXY to scheme://user:pass@host:port; Chromium is
+# pointed at the unauthenticated 127.0.0.1:3128 listener (svc-desktop) and
+# gost handles upstream auth, which Chromium's --proxy-server can't carry.
+#
+# With no proxy configured this service just idles so s6 doesn't respawn it.
+
+if [ -z "$CLAWORC_BROWSER_PROXY" ]; then
+  exec sleep infinity
+fi
+
+# gost names TLS-wrapped HTTP proxies http+tls; socks5 already resolves
+# hostnames on the proxy side, so socks5h maps onto it.
+UPSTREAM="$CLAWORC_BROWSER_PROXY"
+case "$UPSTREAM" in
+  https://*)   UPSTREAM="http+tls://${UPSTREAM#https://}" ;;
+  socks5h://*) UPSTREAM="socks5://${UPSTREAM#socks5h://}" ;;
+esac
+
+exec s6-setuidgid claworc /usr/local/bin/gost -L "http://127.0.0.1:3128" -F "$UPSTREAM"

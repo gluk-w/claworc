@@ -47,6 +47,10 @@ export interface Instance {
   has_timezone_override: boolean;
   user_agent: string | null;
   has_user_agent_override: boolean;
+  /** Outbound proxy: "inherit" uses the global default, "off" connects directly. */
+  proxy_mode: ProxyMode;
+  /** Custom proxy URL with the password masked; "" unless proxy_mode is "custom". */
+  proxy_url: string;
   /** Per-instance env var overrides. Values are masked (e.g. "****abcd"). */
   env_vars: Record<string, string>;
   has_env_override: boolean;
@@ -107,6 +111,8 @@ export interface InstanceCreatePayload {
   vnc_resolution?: string | null;
   timezone?: string | null;
   user_agent?: string | null;
+  proxy_mode?: ProxyMode;
+  proxy_url?: string;
   enabled_providers?: number[];
   env_vars_set?: Record<string, string>;
   browser_provider?: string;
@@ -130,12 +136,17 @@ export interface Toleration {
   tolerationSeconds?: number;
 }
 
+export type ProxyMode = "inherit" | "custom" | "off";
+
 export interface InstanceUpdatePayload {
   brave_api_key?: string;
   models?: { disabled: string[]; extra: string[] };
   default_model?: string;
   timezone?: string;
   user_agent?: string;
+  proxy_mode?: ProxyMode;
+  /** Echoing the masked value back leaves the stored URL unchanged. */
+  proxy_url?: string;
   allowed_source_ips?: string;
   enabled_providers?: number[];
   display_name?: string;

@@ -796,6 +796,22 @@ function EnvironmentTab({
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Proxy</label>
+            <input
+              type="text"
+              defaultValue={settings.default_proxy_url ?? ""}
+              onChange={(e) => setResources((r) => ({ ...r, default_proxy_url: e.target.value }))}
+              placeholder="http://user:pass@proxy.example.com:8080"
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Routes each agent's browser and outbound HTTP traffic through this proxy (http, https or socks5).
+              Agents can override it. Leave empty to connect directly. Saving restarts running agents that use it.
+            </p>
+          </div>
         </div>
       </div>
 

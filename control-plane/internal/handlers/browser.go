@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -30,6 +31,32 @@ func cancelActiveBrowserSpawn(instanceID uint) {
 	}) {
 		_ = TaskMgr.Cancel(t.ID) // ignore ErrAlreadyTerminal / ErrNotFound
 	}
+}
+
+// stopBrowserSessionAsync tears down an instance's browser pod in the
+// background so its next open respawns with the current spec (env, proxy).
+// No-op when no session is running or the bridge isn't configured.
+func stopBrowserSessionAsync(instanceID uint) {
+	if BrowserStopper == nil {
+		return
+	}
+	row, err := database.GetBrowserSession(instanceID)
+	if err != nil || row == nil || (row.Status != "running" && row.Status != "starting") {
+		return
+	}
+	go func() {
+		cancelActiveBrowserSpawn(instanceID)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := BrowserStopper.StopSession(ctx, instanceID); err != nil {
+			log.Printf("Failed to stop browser session for instance %d: %v", instanceID, err)
+			return
+		}
+		_ = database.UpdateBrowserSessionStatus(instanceID, "stopped", "")
+		if OnBrowserStateChanged != nil {
+			OnBrowserStateChanged(instanceID)
+		}
+	}()
 }
 
 // browserStatusResponse is the JSON shape used by GET /browser/status. The

@@ -17,7 +17,7 @@ import PortsEditor from "@common/components/PortsEditor";
 import StickyActionBar from "@common/components/StickyActionBar";
 import ConfirmDialog from "@common/components/ConfirmDialog";
 import AgentTypeIcon from "@common/components/AgentTypeIcon";
-import type { InstanceCreatePayload, PortSpec, Toleration } from "@common/types/instance";
+import type { InstanceCreatePayload, PortSpec, ProxyMode, Toleration } from "@common/types/instance";
 import type { UserTeamMembership } from "@common/types/auth";
 
 const AGENT_TYPE_STORAGE_KEY = "claworc.create.agentType";
@@ -85,6 +85,8 @@ export default function AgentForm({
   const [browserImage, setBrowserImage] = useState("");
   const [vncResolution, setVncResolution] = useState("");
   const [userAgent, setUserAgent] = useState("");
+  const [proxyMode, setProxyMode] = useState<ProxyMode>("inherit");
+  const [proxyUrl, setProxyUrl] = useState("");
 
   // Pod placement overrides (admin + Kubernetes only). Left undefined until
   // touched so the create payload omits them entirely and the backend falls
@@ -231,7 +233,11 @@ export default function AgentForm({
       vnc_resolution: vncResolution || null,
       timezone: timezone || null,
       user_agent: userAgent || null,
+      proxy_mode: proxyMode,
     };
+    if (proxyMode === "custom") {
+      payload.proxy_url = proxyUrl.trim();
+    }
 
     if (browserImage) {
       payload.browser_image = browserImage;
@@ -525,6 +531,32 @@ export default function AgentForm({
               placeholder={settings?.default_user_agent || "Browser default"}
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Proxy</label>
+            <div className="flex gap-2">
+              <select
+                value={proxyMode}
+                onChange={(e) => setProxyMode(e.target.value as ProxyMode)}
+                className="px-2 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 shrink-0"
+              >
+                <option value="inherit">Default{settings?.default_proxy_url ? "" : " (none)"}</option>
+                <option value="custom">Custom</option>
+                <option value="off">Off</option>
+              </select>
+              {proxyMode === "custom" && (
+                <input
+                  type="text"
+                  value={proxyUrl}
+                  onChange={(e) => setProxyUrl(e.target.value)}
+                  placeholder="http://user:pass@proxy.example.com:8080"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="flex-1 min-w-0 px-3 py-1.5 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              )}
+            </div>
+            <p className="mt-1 text-xs text-gray-500">Routes the browser and outbound HTTP through a proxy (http, https or socks5).</p>
           </div>
         </div>
       </div>

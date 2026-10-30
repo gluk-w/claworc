@@ -17,6 +17,16 @@ EXTRA_ARGS=()
 if [ -n "$CHROMIUM_USER_AGENT" ]; then
   EXTRA_ARGS+=("--user-agent=$CHROMIUM_USER_AGENT")
 fi
+# Outbound proxy: svc-proxy listens on 127.0.0.1:3128 and authenticates
+# upstream. Chromium bypasses loopback implicitly, so CDP/noVNC stay direct.
+# WebRTC is limited to proxied UDP so it can't leak the pod's real IP.
+if [ -n "$CLAWORC_BROWSER_PROXY" ]; then
+  while ! bash -c '>/dev/tcp/127.0.0.1/3128' 2>/dev/null; do sleep 0.5; done
+  EXTRA_ARGS+=(
+    "--proxy-server=http://127.0.0.1:3128"
+    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"
+  )
+fi
 
 # Auto-detect browser
 if command -v google-chrome-stable >/dev/null 2>&1; then

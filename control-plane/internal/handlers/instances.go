@@ -22,6 +22,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/internalproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/middleware"
 	"github.com/gluk-w/claworc/control-plane/internal/orchestrator"
+	"github.com/gluk-w/claworc/control-plane/internal/outboundproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/sshproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/taskmanager"
 	"github.com/gluk-w/claworc/control-plane/internal/utils"
@@ -119,6 +120,8 @@ type instanceCreateRequest struct {
 	VNCResolution      *string           `json:"vnc_resolution"`
 	Timezone           *string           `json:"timezone"`
 	UserAgent          *string           `json:"user_agent"`
+	ProxyMode          *string           `json:"proxy_mode"` // "inherit" (default) | "custom" | "off"
+	ProxyURL           *string           `json:"proxy_url"`  // used when proxy_mode is "custom"
 	EnabledProviders   []uint            `json:"enabled_providers"`
 	EnvVarsSet         map[string]string `json:"env_vars_set"`
 	BrowserProvider    *string           `json:"browser_provider"`
@@ -178,6 +181,8 @@ type instanceResponse struct {
 	HasTimezoneOverride       bool                       `json:"has_timezone_override"`
 	UserAgent                 *string                    `json:"user_agent"`
 	HasUserAgentOverride      bool                       `json:"has_user_agent_override"`
+	ProxyMode                 string                     `json:"proxy_mode"`
+	ProxyURL                  string                     `json:"proxy_url"` // password masked
 	EnvVars                   map[string]string          `json:"env_vars"`
 	HasEnvOverride            bool                       `json:"has_env_override"`
 	RequiresRestart           bool                       `json:"requires_restart,omitempty"`
@@ -559,6 +564,8 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		HasTimezoneOverride:       inst.Timezone != "",
 		UserAgent:                 userAgent,
 		HasUserAgentOverride:      inst.UserAgent != "",
+		ProxyMode:                 proxyModeOrDefault(inst.ProxyMode),
+		ProxyURL:                  outboundproxy.MaskEncrypted(inst.ProxyURL),
 		EnvVars:                   envVarsPlain,
 		HasEnvOverride:            len(envVarsPlain) > 0,
 		AllowedSourceIPs:          inst.AllowedSourceIPs,
@@ -668,6 +675,13 @@ func getEffectiveUserAgent(inst database.Instance) string {
 		return val
 	}
 	return ""
+}
+
+func proxyModeOrDefault(mode string) string {
+	if mode == "" {
+		return outboundproxy.ModeInherit
+	}
+	return mode
 }
 
 // restartInstanceAsync restarts a running instance in the background,
@@ -808,6 +822,10 @@ func applyReservedAgentEnv(envVars map[string]string, inst database.Instance, ag
 	for k, v := range agentshim.LegacyEnv(inst.EffectiveAgentType(), routing, agentTokenPlain) {
 		envVars[k] = v
 	}
+
+	// Outbound proxy (HTTP_PROXY & co). Applied after user env vars so a
+	// configured proxy wins; extends rather than replaces a user NO_PROXY.
+	outboundproxy.ApplyAgentEnv(envVars, outboundproxy.Effective(inst))
 }
 
 // decryptedGatewayToken returns the instance's decrypted agent auth token,
@@ -1094,6 +1112,30 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	if body.UserAgent != nil {
 		userAgent = *body.UserAgent
 	}
+	var proxyMode, proxyURL string
+	if body.ProxyMode != nil {
+		proxyMode = *body.ProxyMode
+	}
+	if !outboundproxy.ValidMode(proxyMode) {
+		writeError(w, http.StatusBadRequest, "Invalid proxy_mode (use inherit, custom or off)")
+		return
+	}
+	if proxyMode == outboundproxy.ModeCustom {
+		submitted := ""
+		if body.ProxyURL != nil {
+			submitted = *body.ProxyURL
+		}
+		enc, _, err := outboundproxy.PrepareUpdate(submitted, "")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if enc == "" {
+			writeError(w, http.StatusBadRequest, "proxy_url is required when proxy_mode is custom")
+			return
+		}
+		proxyURL = enc
+	}
 	var browserProvider, browserImage, browserStorage string
 	var browserIdleMinutes *int
 	if body.BrowserProvider != nil {
@@ -1186,6 +1228,8 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		VNCResolution:             vncResolution,
 		Timezone:                  timezone,
 		UserAgent:                 userAgent,
+		ProxyMode:                 proxyMode,
+		ProxyURL:                  proxyURL,
 		GatewayToken:              encGatewayToken,
 		ModelsConfig:              modelsConfigJSON,
 		DefaultModel:              body.DefaultModel,
@@ -1382,6 +1426,8 @@ type instanceUpdateRequest struct {
 	DefaultModel              *string                    `json:"default_model"`
 	Timezone                  *string                    `json:"timezone"`
 	UserAgent                 *string                    `json:"user_agent"`
+	ProxyMode                 *string                    `json:"proxy_mode"`         // "inherit" | "custom" | "off"
+	ProxyURL                  *string                    `json:"proxy_url"`          // masked value echoed back = unchanged
 	AllowedSourceIPs          *string                    `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
 	EnabledProviders          *[]uint                    `json:"enabled_providers"`  // admin only: LLM gateway provider IDs
 	DisplayName               *string                    `json:"display_name"`       // admin only
@@ -1495,6 +1541,49 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	// Update user agent
 	if body.UserAgent != nil {
 		database.DB.Model(&inst).Update("user_agent", *body.UserAgent)
+	}
+
+	// Update outbound proxy. Like env vars, it only reaches the container on
+	// (re)create, so a real change triggers the auto-restart below.
+	proxyChanged := false
+	if body.ProxyMode != nil || body.ProxyURL != nil {
+		before := outboundproxy.Effective(inst)
+		updates := map[string]interface{}{}
+		mode := inst.ProxyMode
+		if body.ProxyMode != nil {
+			if !outboundproxy.ValidMode(*body.ProxyMode) {
+				writeError(w, http.StatusBadRequest, "Invalid proxy_mode (use inherit, custom or off)")
+				return
+			}
+			mode = *body.ProxyMode
+			updates["proxy_mode"] = mode
+		}
+		if body.ProxyURL != nil {
+			enc, changed, err := outboundproxy.PrepareUpdate(*body.ProxyURL, inst.ProxyURL)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if changed {
+				updates["proxy_url"] = enc
+			}
+		}
+		storedURL := inst.ProxyURL
+		if v, ok := updates["proxy_url"]; ok {
+			storedURL = v.(string)
+		}
+		if mode == outboundproxy.ModeCustom && storedURL == "" {
+			writeError(w, http.StatusBadRequest, "proxy_url is required when proxy_mode is custom")
+			return
+		}
+		if len(updates) > 0 {
+			if err := database.DB.Model(&inst).Updates(updates).Error; err != nil {
+				writeError(w, http.StatusInternalServerError, "Failed to save proxy settings")
+				return
+			}
+			inst.ProxyMode, inst.ProxyURL = mode, storedURL
+			proxyChanged = outboundproxy.Effective(inst) != before
+		}
 	}
 
 	// Browser-pod settings (only meaningful for non-legacy instances).
@@ -1776,14 +1865,19 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	// buildCreateParams (evaluated inside restartInstanceAsync's goroutine)
 	// re-reads EnvVars from the DB, so it picks up what we just wrote.
 	restarting := false
-	if envVarsChanged && status == "running" {
+	if (envVarsChanged || proxyChanged) && status == "running" {
 		restartInstanceAsync(inst, callerID(r))
 		restarting = true
 		status = "restarting"
 	}
+	if proxyChanged {
+		// A running browser pod keeps its spawn-time env; recycle it so the
+		// next open picks up the new proxy.
+		stopBrowserSessionAsync(inst.ID)
+	}
 
 	resp := instanceToResponse(inst, status)
-	if envVarsChanged && (restarting || status == "running") {
+	if (envVarsChanged || proxyChanged) && (restarting || status == "running") {
 		resp.RequiresRestart = true
 	}
 	resp.Restarting = restarting
@@ -1894,8 +1988,10 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 	effectiveTimezone := getEffectiveTimezone(inst)
 	effectiveUserAgent := getEffectiveUserAgent(inst)
 
-	// Reserved system env vars (shim-contract + OpenClaw legacy set)
+	// UpdateImage replaces the whole pod spec, so user env vars must be
+	// re-applied here too, then the reserved system set on top.
 	envVars := map[string]string{}
+	MergeUserEnvVars(envVars, LoadGlobalEnvVars(), LoadInstanceEnvVars(inst))
 	applyReservedAgentEnv(envVars, inst, decryptedGatewayToken(inst))
 
 	instID := inst.ID
@@ -2341,6 +2437,8 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		VNCResolution:   src.VNCResolution,
 		Timezone:        src.Timezone,
 		UserAgent:       src.UserAgent,
+		ProxyMode:       src.ProxyMode,
+		ProxyURL:        src.ProxyURL,
 		GatewayToken:    encGatewayToken,
 		ModelsConfig:    src.ModelsConfig,
 		DefaultModel:    src.DefaultModel,

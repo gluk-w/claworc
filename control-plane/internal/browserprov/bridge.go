@@ -12,6 +12,7 @@ import (
 
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/envvars"
+	"github.com/gluk-w/claworc/control-plane/internal/outboundproxy"
 	"github.com/gluk-w/claworc/control-plane/internal/taskmanager"
 )
 
@@ -317,6 +318,11 @@ func (b *BrowserBridge) doSpawn(ctx context.Context, h *taskmanager.Handle, inst
 	// Merge global defaults with per-instance overrides so the browser pod
 	// receives the same user-defined env vars as the agent container.
 	mergedEnv := envvars.Merge(envvars.LoadGlobal(), envvars.LoadInstance(inst))
+	// Outbound proxy: svc-proxy in the browser image forwards Chromium through
+	// it, handling upstream auth that Chromium's --proxy-server can't carry.
+	if proxyURL := outboundproxy.Effective(inst); proxyURL != "" {
+		mergedEnv[outboundproxy.BrowserEnvKey] = proxyURL
+	}
 
 	if _, err := b.provider.EnsureSession(ctx, instanceID, SessionParams{
 		Image:         image,

@@ -114,6 +114,11 @@ type Instance struct {
 	NodeSelector         string `gorm:"type:text;default:'{}'" json:"node_selector"`   // JSON map[string]string
 	Tolerations          string `gorm:"type:text;default:'[]'" json:"tolerations"`     // JSON []Toleration
 	Affinity             string `gorm:"type:text;default:''"   json:"affinity"`        // JSON corev1.Affinity or ""
+	// Outbound proxy (see internal/outboundproxy, docs/proxy.md). ProxyMode is
+	// "inherit" (global default_proxy_url), "custom" (ProxyURL) or "off".
+	// ProxyURL is a Fernet-encrypted scheme://user:pass@host:port.
+	ProxyMode string `gorm:"default:''" json:"-"`
+	ProxyURL  string `gorm:"default:''" json:"-"`
 	// ServiceAccountAnnotations are applied to the per-instance ServiceAccount
 	// claworc creates and mounts into the pod (e.g. for external secret-store
 	// auth methods keyed off SA identity). The SA name itself is derived from

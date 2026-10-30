@@ -67,7 +67,7 @@ import { useDesktop } from "@common/hooks/useDesktop";
 import { useChat } from "@common/hooks/useChat";
 import { useChatViewMode } from "@common/hooks/useChatViewMode";
 import { stopBrowser } from "@common/api/browser";
-import type { InstanceUpdatePayload } from "@common/types/instance";
+import type { InstanceUpdatePayload, ProxyMode } from "@common/types/instance";
 import { buildSSHTooltip } from "@common/utils/sshTooltip";
 
 type Tab = "chat" | "terminal" | "files" | "config" | "logs" | "settings";
@@ -163,6 +163,9 @@ export default function AgentDetailPage() {
   // User-Agent override editing state
   const [editingUserAgent, setEditingUserAgent] = useState(false);
   const [pendingUserAgent, setPendingUserAgent] = useState<string | null>(null);
+  const [editingProxy, setEditingProxy] = useState(false);
+  const [pendingProxyMode, setPendingProxyMode] = useState<ProxyMode>("inherit");
+  const [pendingProxyUrl, setPendingProxyUrl] = useState("");
 
   // Display name editing state
   const [editingDisplayName, setEditingDisplayName] = useState(false);
@@ -319,6 +322,19 @@ export default function AgentDetailPage() {
         onSuccess: () => {
           setEditingUserAgent(false);
           setPendingUserAgent(null);
+        },
+      },
+    );
+  };
+
+  const handleSaveProxy = () => {
+    const payload: InstanceUpdatePayload = { proxy_mode: pendingProxyMode };
+    if (pendingProxyMode === "custom") payload.proxy_url = pendingProxyUrl.trim();
+    updateMutation.mutate(
+      { id: instanceId, payload },
+      {
+        onSuccess: () => {
+          setEditingProxy(false);
         },
       },
     );
@@ -844,6 +860,45 @@ export default function AgentDetailPage() {
                   <dd className="text-sm text-gray-900 mt-0.5">
                     {instance.has_user_agent_override ? instance.user_agent : "Default"}
                     <button type="button" onClick={() => { setPendingUserAgent(instance.user_agent ?? ""); setEditingUserAgent(true); }} className="ml-2 text-xs text-blue-600 hover:text-blue-800">Edit</button>
+                  </dd>
+                )}
+              </div>
+
+              {/* Proxy — editable by all, single column */}
+              <div>
+                <dt className="text-xs text-gray-500">Proxy</dt>
+                {editingProxy ? (
+                  <dd className="mt-0.5">
+                    <div className="flex gap-2">
+                      <select
+                        value={pendingProxyMode}
+                        onChange={(e) => setPendingProxyMode(e.target.value as ProxyMode)}
+                        className="text-sm border border-gray-300 rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 shrink-0"
+                      >
+                        <option value="inherit">Default</option>
+                        <option value="custom">Custom</option>
+                        <option value="off">Off</option>
+                      </select>
+                      {pendingProxyMode === "custom" && (
+                        <EditInput
+                          type="text"
+                          value={pendingProxyUrl}
+                          onChange={(e) => setPendingProxyUrl(e.target.value)}
+                          onSave={handleSaveProxy}
+                          onCancel={() => setEditingProxy(false)}
+                          placeholder="http://user:pass@proxy.example.com:8080"
+                          className="flex-1 min-w-0 text-sm font-mono border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      )}
+                      <button onClick={handleSaveProxy} disabled={updateMutation.isPending || (pendingProxyMode === "custom" && !pendingProxyUrl.trim())} className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shrink-0">{updateMutation.isPending ? "Saving..." : "Save"}</button>
+                      <button type="button" onClick={() => setEditingProxy(false)} className="text-xs text-blue-600 hover:text-blue-800 shrink-0">Cancel</button>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">Routes the browser and outbound HTTP through a proxy (http, https or socks5). Default = global setting. Restarts the agent.</p>
+                  </dd>
+                ) : (
+                  <dd className="text-sm text-gray-900 mt-0.5">
+                    {instance.proxy_mode === "custom" ? <span className="font-mono">{instance.proxy_url}</span> : instance.proxy_mode === "off" ? "Off" : "Default"}
+                    <button type="button" onClick={() => { setPendingProxyMode(instance.proxy_mode ?? "inherit"); setPendingProxyUrl(instance.proxy_url ?? ""); setEditingProxy(true); }} className="ml-2 text-xs text-blue-600 hover:text-blue-800">Edit</button>
                   </dd>
                 )}
               </div>

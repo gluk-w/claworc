@@ -48,6 +48,11 @@ agent-agnostic: everything it does with an agent — chat, webhooks, config edit
 logs, the agent's own web UI (Control UI), restart — goes through the `Client`/`Session` interfaces and is
 driven by the image's shim. See `docs/shim.md`.
 
+**Outbound Proxy** (`internal/outboundproxy/`): Optional HTTP/SOCKS5 proxy (e.g. ProxyEmpire) for an agent's
+outbound traffic. It is set globally (`default_proxy_url`) and can be overridden or turned off per instance. The proxy
+reaches the agent container as `HTTP_PROXY`/`NO_PROXY` env vars, and reaches the browser pod through a local gost
+forwarder (`svc-proxy`). See `docs/proxy.md`.
+
 **Orchestrator** (`internal/orchestrator/`): Thin abstraction over the underlying container runtime
 (Kubernetes `internal/orchestrator/kubernetes.go` or Docker `internal/orchestrator/docker.go`). Its job is generic 
 container primitives only — instance lifecycle, exec, file streaming, SSH address, resource updates, image updates, 

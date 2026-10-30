@@ -23,6 +23,8 @@ export interface Settings {
   default_storage_home: string;
   default_timezone: string;
   default_user_agent: string;
+  /** Global outbound proxy (scheme://user:****@host:port, password masked). Empty if not set. */
+  default_proxy_url: string;
   /** Global env vars applied to every instance. Values are masked (e.g. "****abcd"). */
   default_env_vars: Record<string, string>;
   /** Global pod placement defaults (Kubernetes only). */
@@ -61,6 +63,8 @@ export interface SettingsUpdatePayload {
   default_storage_home?: string;
   default_timezone?: string;
   default_user_agent?: string;
+  /** Outbound proxy URL; "" clears it. Echoing the masked value is a no-op. */
+  default_proxy_url?: string;
   analytics_consent?: "opt_in" | "opt_out";
   /** Env vars to create or overwrite (plaintext values). */
   env_vars_set?: Record<string, string>;

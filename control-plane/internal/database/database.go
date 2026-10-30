@@ -158,6 +158,7 @@ func seedDefaults() error {
 		"default_timezone":             "America/New_York",
 		"default_user_agent":           "",
 		"default_env_vars":             "{}",
+		"default_proxy_url":            "", // Fernet-encrypted; see internal/outboundproxy
 		// On-demand browser pod defaults. New instances created from now on use
 		// the slim agent image; the browser variant is launched lazily as a
 		// separate pod/container by the configured provider.
