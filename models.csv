@@ -6,9 +6,12 @@ openai-codex,OpenAI Codex (ChatGPT subscription),openai,openai-codex-responses,h
 openai-codex,OpenAI Codex (ChatGPT subscription),openai,openai-codex-responses,https://chatgpt.com/backend-api,gpt-5.6-sol,GPT-5.6 Sol,TRUE,TRUE,1050000,128000,0,0,0,0,coding,Included with ChatGPT subscription
 openai-codex,OpenAI Codex (ChatGPT subscription),openai,openai-codex-responses,https://chatgpt.com/backend-api,gpt-5.6-terra,GPT-5.6 Terra,TRUE,TRUE,1050000,128000,0,0,0,0,coding,Included with ChatGPT subscription
 bedrock,Amazon Bedrock,bedrock,bedrock-converse-stream,https://bedrock-runtime.us-east-1.amazonaws.com,us.anthropic.claude-opus-4-6-v1:0,Claude Opus 4.6 (Bedrock),TRUE,TRUE,200000,128000,,,,,,
-anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-opus-4-6,Claude Opus 4.6,TRUE,TRUE,200000,128000,5,25,0.5,6.25,flagship,Most capable — deep reasoning
-anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-sonnet-4-6,Claude Sonnet 4.6,TRUE,TRUE,200000,64000,3,15,0.3,3.75,balanced,Fast & capable — ideal default
-anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-haiku-4-5,Claude Haiku 4.5,TRUE,TRUE,200000,64000,1,5,0.1,1.25,speed,Fastest responses — high-volume
+anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-fable-5-1,Claude Fable 5.1,TRUE,TRUE,1000000,128000,10,50,0.25,12.5,flagship,Most capable — demanding reasoning and long-horizon agentic work
+anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-fable-5,Claude Fable 5,TRUE,TRUE,1000000,128000,10,50,1,12.5,,Previous-generation Fable — autonomous knowledge work and coding
+anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-opus-5-5,Claude Opus 5.5,TRUE,TRUE,1000000,128000,4,20,0.2,5,,Long-running agentic coding and knowledge work — recommended default
+anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-sonnet-5-5,Claude Sonnet 5.5,TRUE,TRUE,1000000,128000,2,10,0.1,2.5,balanced,Best combination of speed and intelligence
+anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-opus-4-6,Claude Opus 4.6,TRUE,TRUE,200000,128000,5,25,0.5,6.25,,Previous-generation Opus
+anthropic,Anthropic,anthropic,anthropic-messages,https://api.anthropic.com/,claude-sonnet-4-6,Claude Sonnet 4.6,TRUE,TRUE,200000,64000,3,15,0.3,3.75,,Previous-generation Sonnet
 openai,OpenAI,openai,openai-responses,https://api.openai.com/,gpt-5.6-luna,GPT-5.6 Luna,TRUE,TRUE,1050000,128000,0.2,1.2,0.02,0.25,,"GPT-5.6 Luna is a fast, cost-efficient model in OpenAI's GPT-5.6 series."
 openai,OpenAI,openai,openai-responses,https://api.openai.com/,gpt-5.6-terra,GPT-5.6 Terra,TRUE,TRUE,1050000,128000,2,12,0.2,2.5,,"GPT-5.6 Terra is a balanced model in OpenAI's GPT-5.6 series, positioned between the flagship Sol tier and the cost-efficient Luna tier."
 openai,OpenAI,openai,openai-responses,https://api.openai.com/,gpt-5.6-sol,GPT-5.6 Sol,TRUE,TRUE,1050000,128000,2,10,0.2,2.5,,GPT-5.6 Sol is the flagship model in OpenAI's GPT-5.6 series.
