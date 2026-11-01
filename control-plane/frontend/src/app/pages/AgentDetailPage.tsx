@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, createElement } from "react";
 import { Link, useParams, useNavigate, useLocation } from "react-router-dom";
-import { AlertTriangle, Eye, X, Maximize, ExternalLink, Plus } from "lucide-react";
+import { AlertTriangle, Eye, X, Plus } from "lucide-react";
 import { useAuth } from "@common/contexts/AuthContext";
 import { useTeam } from "@common/contexts/TeamContext";
 import StatusBadge from "@common/components/StatusBadge";
@@ -10,10 +10,9 @@ import MonacoConfigEditor from "@common/components/MonacoConfigEditor";
 import { validateConfig } from "@common/utils/configValidation";
 import LogViewer from "@common/components/LogViewer";
 import TerminalPanel from "@common/components/TerminalPanel";
-import VncPanel from "@common/components/VncPanel";
-import ChatPanel from "@common/components/ChatPanel";
 import FileBrowser from "@common/components/FileBrowser";
 import { TabPlaceholder } from "@common/components/TabPlaceholder";
+import AgentChatWorkspace from "@common/components/AgentChatWorkspace";
 import EditInput from "@common/components/EditInput";
 import { useInstanceBackups } from "@common/hooks/useBackups";
 import SSHStatus from "@common/components/SSHStatus";
@@ -44,6 +43,7 @@ import { useProviders } from "@common/hooks/useProviders";
 import { useSettings } from "@common/hooks/useSettings";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { fetchCatalogProviderDetail } from "@common/api/llm";
+import { fetchInstance } from "@common/api/instances";
 import type { CatalogProviderDetail } from "@common/api/llm";
 import ProviderIcon from "@common/components/ProviderIcon";
 import ProviderModelSelector from "@common/components/ProviderModelSelector";
@@ -63,10 +63,6 @@ import toast from "react-hot-toast";
 import { useSSHStatus, useSSHEvents } from "@common/hooks/useSSHStatus";
 import { useInstanceLogs } from "@common/hooks/useInstanceLogs";
 import { useTerminal } from "@common/hooks/useTerminal";
-import { useDesktop } from "@common/hooks/useDesktop";
-import { useChat } from "@common/hooks/useChat";
-import { useChatViewMode } from "@common/hooks/useChatViewMode";
-import { stopBrowser } from "@common/api/browser";
 import type { InstanceUpdatePayload, ProxyMode } from "@common/types/instance";
 import { buildSSHTooltip } from "@common/utils/sshTooltip";
 
@@ -148,7 +144,6 @@ export default function AgentDetailPage() {
   // Terminal/Chat are mounted once the user first visits the tab, then stay mounted
   const [terminalActivated, setTerminalActivated] = useState(getTabFromHash() === "terminal");
   const [chatActivated, setChatActivated] = useState(getTabFromHash() === "chat");
-  const [chatViewMode, setChatViewMode] = useChatViewMode(instanceId, instance?.browser_active);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
   // SSH troubleshoot dialog
@@ -215,30 +210,6 @@ export default function AgentDetailPage() {
 
   const logsHook = useInstanceLogs(instanceId, activeTab === "logs");
   const termHook = useTerminal(instanceId, terminalActivated && instance?.status === "running");
-  const desktopHook = useDesktop(instanceId, chatActivated && chatViewMode === "chat-browser" && instance?.status === "running");
-  const chatHook = useChat(instanceId, chatActivated && instance?.status === "running", undefined, {
-    canStop: instance?.agent_capabilities?.chat_abort,
-    canReset: instance?.agent_capabilities?.session_reset,
-  });
-
-  // When the user hides the browser pane, also stop the on-demand browser pod
-  // so we don't burn resources on something nobody can see. Re-enabling the
-  // pane lets DesktopProxy/EnsureSession spin a fresh one back up automatically
-  // — no explicit start call needed here.
-  const lastViewModeRef = useRef(chatViewMode);
-  useEffect(() => {
-    if (!instance) return;
-    if (instance.is_legacy_embedded) return;
-    const prev = lastViewModeRef.current;
-    lastViewModeRef.current = chatViewMode;
-    if (prev === "chat-browser" && chatViewMode === "chat-only") {
-      stopBrowser(instanceId).catch(() => {
-        // Best-effort: a 404/stopped browser is fine; log nothing to avoid
-        // toast spam on a UI-only action.
-      });
-    }
-  }, [chatViewMode, instance, instanceId]);
-
   // Auto-send disabled — user sends first message manually
   // useEffect(() => { ... }, []);
 
@@ -248,6 +219,35 @@ export default function AgentDetailPage() {
       chatInitSentRef.current = false;
     }
   }, [activeTab]);
+
+  // The page isn't remounted when only the :id route param changes (e.g. the
+  // full-screen chat agent switcher), so drop any per-agent edit state.
+  const prevInstanceIdRef = useRef(instanceId);
+  useEffect(() => {
+    if (prevInstanceIdRef.current === instanceId) return;
+    prevInstanceIdRef.current = instanceId;
+    setEditedConfig(null);
+    setConfigParseError(null);
+    setTroubleshootOpen(false);
+    setEventsOpen(false);
+    setEditingTimezone(false);
+    setEditingUserAgent(false);
+    setEditingProxy(false);
+    setEditingDisplayName(false);
+    setEditingTeam(false);
+    setEditingResources(false);
+    setEditingResolution(false);
+    setEditingGatewayProviders(false);
+    setInstanceProviderModalOpen(false);
+  }, [instanceId]);
+
+  // Switch the chat to another agent. Prefetch it first so the page's loading
+  // state never unmounts the chat container — that keeps full screen on.
+  const handleSwitchAgent = async (id: number) => {
+    if (id === instanceId) return;
+    await qc.ensureQueryData({ queryKey: ["instances", id], queryFn: () => fetchInstance(id) });
+    navigate(`/instances/${id}#chat`);
+  };
 
   if (isLoading) {
     return <div className="text-center py-12 text-gray-500">Loading...</div>;
@@ -1290,73 +1290,13 @@ export default function AgentDetailPage() {
           style={activeTab !== "chat" ? { display: "none" } : undefined}
         >
           {instance.status === "running" ? (
-            <>
-              {/* Fullscreen / New Window bar */}
-              <div className="flex items-center justify-end gap-2 px-3 py-1 bg-gray-800 border-b border-gray-700">
-                <button
-                  onClick={() => {
-                    const popup = window.open(`/instances/${instanceId}/chat`, "_blank");
-                    if (popup) {
-                      const handler = (e: MessageEvent) => {
-                        if (e.source === popup && e.data?.type === "chat-history-request" && e.data?.instanceId === instanceId) {
-                          popup.postMessage({ type: "chat-history", messages: chatHook.messages }, window.location.origin);
-                          window.removeEventListener("message", handler);
-                        }
-                      };
-                      window.addEventListener("message", handler);
-                    }
-                  }}
-                  className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded"
-                  title="Open in new window"
-                >
-                  <ExternalLink size={14} /> New Window
-                </button>
-                <button
-                  onClick={() => {
-                    if (document.fullscreenElement) {
-                      document.exitFullscreen();
-                    } else {
-                      chatContainerRef.current?.requestFullscreen();
-                    }
-                  }}
-                  className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded"
-                  title="Toggle fullscreen"
-                >
-                  <Maximize size={14} /> Full Screen
-                </button>
-              </div>
-              <div className="flex flex-1 min-h-0">
-                <div className={chatViewMode === "chat-browser" ? "w-[400px] flex-shrink-0 border-r border-gray-700 relative" : "flex-1 relative"}>
-                  <ChatPanel
-                    messages={chatHook.messages}
-                    connectionState={chatHook.connectionState}
-                    thinkingLabel={chatHook.thinkingLabel}
-                    onSend={chatHook.sendMessage}
-                    onStop={chatHook.stopResponse}
-                    onNewChat={chatHook.newChat}
-                    canStop={chatHook.canStop}
-                    canNewChat={chatHook.canReset}
-                    onReconnect={chatHook.reconnect}
-                    viewMode={chatViewMode}
-                    onViewModeChange={setChatViewMode}
-                  />
-                </div>
-                {chatViewMode === "chat-browser" && (
-                  <div className="flex-1 min-w-0 relative">
-                    <VncPanel
-                      instanceId={instanceId}
-                      connectionState={desktopHook.connectionState}
-                      containerRef={desktopHook.containerRef}
-                      reconnect={desktopHook.reconnect}
-                      copyFromRemote={desktopHook.copyFromRemote}
-                      pasteToRemote={desktopHook.pasteToRemote}
-                      showNewWindow={false}
-                      showFullscreen={false}
-                    />
-                  </div>
-                )}
-              </div>
-            </>
+            <AgentChatWorkspace
+              key={instanceId}
+              instance={instance}
+              switcherMode="fullscreen"
+              onSwitchAgent={handleSwitchAgent}
+              fullscreenRef={chatContainerRef}
+            />
           ) : (
             <TabPlaceholder message="Agent must be running to use Chat." />
           )}
