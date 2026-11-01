@@ -87,6 +87,7 @@ func allMigratedModels() []interface{} {
 		&database.KanbanArtifact{},
 		&database.InstanceSoul{},
 		&database.BrowserSession{},
+		&database.BrowserPasskey{},
 		&database.Team{},
 		&database.TeamMember{},
 		&database.TeamProvider{},

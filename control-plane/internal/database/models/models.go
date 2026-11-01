@@ -137,6 +137,11 @@ type Instance struct {
 	BrowserImage       string `gorm:"default:''" json:"browser_image"`    // e.g. claworc/chromium-browser:latest
 	BrowserIdleMinutes *int   `json:"browser_idle_minutes,omitempty"`     // overrides default_browser_idle_minutes
 	BrowserStorage     string `gorm:"default:''" json:"browser_storage"`  // PVC size, e.g. "10Gi"
+	// VirtualAuthenticator selects the simulated WebAuthn device(s) installed
+	// into the on-demand browser via CDP: "" (off), "platform" (built-in
+	// fingerprint reader), "security_key" (USB key) or "both". See
+	// internal/browserauthn and docs/virtual-authenticator.md.
+	VirtualAuthenticator string `gorm:"default:''" json:"virtual_authenticator"`
 	// BrowserActive toggles whether the browser pane is shown next to the chat
 	// on this instance's page. Toggling it off also stops the browser pod.
 	BrowserActive bool      `gorm:"not null;default:true" json:"browser_active"`
@@ -506,6 +511,30 @@ type WebAuthnCredential struct {
 	SignCount       uint32    `gorm:"default:0" json:"-"`
 	AAGUID          []byte    `json:"-"`
 	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
+}
+
+// BrowserPasskey is a WebAuthn credential created by the virtual
+// authenticator in an instance's on-demand browser. The control plane is the
+// source of truth: credentials are mirrored here as they are created/used and
+// re-injected into every new browser session, so they survive pod restarts.
+// PrivateKey and LargeBlob are Fernet-encrypted and never returned by the API.
+type BrowserPasskey struct {
+	ID                uint       `gorm:"primaryKey;autoIncrement" json:"id"`
+	InstanceID        uint       `gorm:"not null;uniqueIndex:idx_browser_passkey_cred" json:"instance_id"`
+	Authenticator     string     `gorm:"not null;default:platform" json:"authenticator"`                   // "platform" | "security_key"
+	CredentialID      string     `gorm:"not null;size:1024;uniqueIndex:idx_browser_passkey_cred" json:"-"` // base64 (CDP encoding)
+	RpID              string     `gorm:"not null;default:''" json:"rp_id"`
+	UserHandle        string     `gorm:"default:''" json:"-"` // base64
+	UserName          string     `gorm:"default:''" json:"user_name"`
+	UserDisplayName   string     `gorm:"default:''" json:"user_display_name"`
+	IsResident        bool       `gorm:"not null;default:false" json:"is_resident"`
+	PrivateKey        string     `gorm:"type:text;not null" json:"-"` // Fernet(base64 PKCS#8)
+	SignCount         uint32     `gorm:"not null;default:0" json:"sign_count"`
+	BackupEligibility bool       `gorm:"not null;default:false" json:"-"`
+	BackupState       bool       `gorm:"not null;default:false" json:"-"`
+	LargeBlob         string     `gorm:"type:text;default:''" json:"-"` // Fernet(base64)
+	CreatedAt         time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	LastUsedAt        *time.Time `json:"last_used_at,omitempty"`
 }
 
 // UserSSHKey is a public key a user authenticates with against the inbound

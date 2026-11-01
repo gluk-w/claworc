@@ -17,6 +17,7 @@ import (
 
 	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
 	"github.com/gluk-w/claworc/control-plane/internal/analytics"
+	"github.com/gluk-w/claworc/control-plane/internal/browserauthn"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
 	"github.com/gluk-w/claworc/control-plane/internal/internalproxy"
@@ -105,30 +106,31 @@ type modelsConfig struct {
 }
 
 type instanceCreateRequest struct {
-	DisplayName        string            `json:"display_name"`
-	AgentType          string            `json:"agent_type"` // "" defaults to "openclaw"; validated via agentshim registry
-	CPURequest         string            `json:"cpu_request"`
-	CPULimit           string            `json:"cpu_limit"`
-	MemoryRequest      string            `json:"memory_request"`
-	MemoryLimit        string            `json:"memory_limit"`
-	StorageHomebrew    string            `json:"storage_homebrew"`
-	StorageHome        string            `json:"storage_home"`
-	BraveAPIKey        *string           `json:"brave_api_key"`
-	Models             *modelsConfig     `json:"models"`
-	DefaultModel       string            `json:"default_model"`
-	ContainerImage     *string           `json:"container_image"`
-	VNCResolution      *string           `json:"vnc_resolution"`
-	Timezone           *string           `json:"timezone"`
-	UserAgent          *string           `json:"user_agent"`
-	ProxyMode          *string           `json:"proxy_mode"` // "inherit" (default) | "custom" | "off"
-	ProxyURL           *string           `json:"proxy_url"`  // used when proxy_mode is "custom"
-	EnabledProviders   []uint            `json:"enabled_providers"`
-	EnvVarsSet         map[string]string `json:"env_vars_set"`
-	BrowserProvider    *string           `json:"browser_provider"`
-	BrowserImage       *string           `json:"browser_image"`
-	BrowserIdleMinutes *int              `json:"browser_idle_minutes"`
-	BrowserStorage     *string           `json:"browser_storage"`
-	TeamID             *uint             `json:"team_id"`
+	DisplayName          string            `json:"display_name"`
+	AgentType            string            `json:"agent_type"` // "" defaults to "openclaw"; validated via agentshim registry
+	CPURequest           string            `json:"cpu_request"`
+	CPULimit             string            `json:"cpu_limit"`
+	MemoryRequest        string            `json:"memory_request"`
+	MemoryLimit          string            `json:"memory_limit"`
+	StorageHomebrew      string            `json:"storage_homebrew"`
+	StorageHome          string            `json:"storage_home"`
+	BraveAPIKey          *string           `json:"brave_api_key"`
+	Models               *modelsConfig     `json:"models"`
+	DefaultModel         string            `json:"default_model"`
+	ContainerImage       *string           `json:"container_image"`
+	VNCResolution        *string           `json:"vnc_resolution"`
+	Timezone             *string           `json:"timezone"`
+	UserAgent            *string           `json:"user_agent"`
+	VirtualAuthenticator *string           `json:"virtual_authenticator"` // "" | "platform" | "security_key" | "both"
+	ProxyMode            *string           `json:"proxy_mode"`            // "inherit" (default) | "custom" | "off"
+	ProxyURL             *string           `json:"proxy_url"`             // used when proxy_mode is "custom"
+	EnabledProviders     []uint            `json:"enabled_providers"`
+	EnvVarsSet           map[string]string `json:"env_vars_set"`
+	BrowserProvider      *string           `json:"browser_provider"`
+	BrowserImage         *string           `json:"browser_image"`
+	BrowserIdleMinutes   *int              `json:"browser_idle_minutes"`
+	BrowserStorage       *string           `json:"browser_storage"`
+	TeamID               *uint             `json:"team_id"`
 	// Pod placement overrides (admin only). nil means "use the configured
 	// global default" (resolvePlacementDefaults); an explicit value, including
 	// an empty map/slice, overrides it for this instance from creation.
@@ -181,6 +183,7 @@ type instanceResponse struct {
 	HasTimezoneOverride       bool                       `json:"has_timezone_override"`
 	UserAgent                 *string                    `json:"user_agent"`
 	HasUserAgentOverride      bool                       `json:"has_user_agent_override"`
+	VirtualAuthenticator      string                     `json:"virtual_authenticator"`
 	ProxyMode                 string                     `json:"proxy_mode"`
 	ProxyURL                  string                     `json:"proxy_url"` // password masked
 	EnvVars                   map[string]string          `json:"env_vars"`
@@ -564,6 +567,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		HasTimezoneOverride:       inst.Timezone != "",
 		UserAgent:                 userAgent,
 		HasUserAgentOverride:      inst.UserAgent != "",
+		VirtualAuthenticator:      inst.VirtualAuthenticator,
 		ProxyMode:                 proxyModeOrDefault(inst.ProxyMode),
 		ProxyURL:                  outboundproxy.MaskEncrypted(inst.ProxyURL),
 		EnvVars:                   envVarsPlain,
@@ -1112,6 +1116,14 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	if body.UserAgent != nil {
 		userAgent = *body.UserAgent
 	}
+	var virtualAuthenticator string
+	if body.VirtualAuthenticator != nil {
+		if !browserauthn.ValidSetting(*body.VirtualAuthenticator) {
+			writeError(w, http.StatusBadRequest, "Invalid virtual_authenticator (use \"\", platform, security_key or both)")
+			return
+		}
+		virtualAuthenticator = *body.VirtualAuthenticator
+	}
 	var proxyMode, proxyURL string
 	if body.ProxyMode != nil {
 		proxyMode = *body.ProxyMode
@@ -1228,6 +1240,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		VNCResolution:             vncResolution,
 		Timezone:                  timezone,
 		UserAgent:                 userAgent,
+		VirtualAuthenticator:      virtualAuthenticator,
 		ProxyMode:                 proxyMode,
 		ProxyURL:                  proxyURL,
 		GatewayToken:              encGatewayToken,
@@ -1426,16 +1439,17 @@ type instanceUpdateRequest struct {
 	DefaultModel              *string                    `json:"default_model"`
 	Timezone                  *string                    `json:"timezone"`
 	UserAgent                 *string                    `json:"user_agent"`
-	ProxyMode                 *string                    `json:"proxy_mode"`         // "inherit" | "custom" | "off"
-	ProxyURL                  *string                    `json:"proxy_url"`          // masked value echoed back = unchanged
-	AllowedSourceIPs          *string                    `json:"allowed_source_ips"` // admin only: comma-separated IPs/CIDRs
-	EnabledProviders          *[]uint                    `json:"enabled_providers"`  // admin only: LLM gateway provider IDs
-	DisplayName               *string                    `json:"display_name"`       // admin only
-	CPURequest                *string                    `json:"cpu_request"`        // admin only
-	CPULimit                  *string                    `json:"cpu_limit"`          // admin only
-	MemoryRequest             *string                    `json:"memory_request"`     // admin only
-	MemoryLimit               *string                    `json:"memory_limit"`       // admin only
-	VNCResolution             *string                    `json:"vnc_resolution"`     // admin only
+	VirtualAuthenticator      *string                    `json:"virtual_authenticator"` // "" | "platform" | "security_key" | "both"
+	ProxyMode                 *string                    `json:"proxy_mode"`            // "inherit" | "custom" | "off"
+	ProxyURL                  *string                    `json:"proxy_url"`             // masked value echoed back = unchanged
+	AllowedSourceIPs          *string                    `json:"allowed_source_ips"`    // admin only: comma-separated IPs/CIDRs
+	EnabledProviders          *[]uint                    `json:"enabled_providers"`     // admin only: LLM gateway provider IDs
+	DisplayName               *string                    `json:"display_name"`          // admin only
+	CPURequest                *string                    `json:"cpu_request"`           // admin only
+	CPULimit                  *string                    `json:"cpu_limit"`             // admin only
+	MemoryRequest             *string                    `json:"memory_request"`        // admin only
+	MemoryLimit               *string                    `json:"memory_limit"`          // admin only
+	VNCResolution             *string                    `json:"vnc_resolution"`        // admin only
 	EnvVarsSet                map[string]string          `json:"env_vars_set"`
 	EnvVarsUnset              []string                   `json:"env_vars_unset"`
 	BrowserProvider           *string                    `json:"browser_provider"`            // non-legacy only
@@ -1541,6 +1555,27 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	// Update user agent
 	if body.UserAgent != nil {
 		database.DB.Model(&inst).Update("user_agent", *body.UserAgent)
+	}
+
+	// Update the virtual WebAuthn authenticator. Applied live to a running
+	// browser (no restart needed); stored passkeys are kept when turned off.
+	if body.VirtualAuthenticator != nil && *body.VirtualAuthenticator != inst.VirtualAuthenticator {
+		if !browserauthn.ValidSetting(*body.VirtualAuthenticator) {
+			writeError(w, http.StatusBadRequest, "Invalid virtual_authenticator (use \"\", platform, security_key or both)")
+			return
+		}
+		database.DB.Model(&inst).Update("virtual_authenticator", *body.VirtualAuthenticator)
+		inst.VirtualAuthenticator = *body.VirtualAuthenticator
+		if BrowserAuthn != nil {
+			instanceID := inst.ID
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := BrowserAuthn.Reload(ctx, instanceID); err != nil {
+					log.Printf("virtual authenticator reload for instance %d: %v", instanceID, err)
+				}
+			}()
+		}
 	}
 
 	// Update outbound proxy. Like env vars, it only reaches the container on
@@ -2077,6 +2112,11 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 		// Tear down the on-demand browser pod first so its container/volume
 		// don't outlive the agent. Best-effort: a failure here shouldn't
 		// block the agent cleanup or DB delete.
+		// Stop the authenticator manager while the browser is still reachable
+		// so its final reconcile doesn't wait on a pod that's being deleted.
+		if BrowserAuthn != nil {
+			BrowserAuthn.Stop(inst.ID)
+		}
 		if BrowserAdmin != nil {
 			if err := BrowserAdmin.DeleteBrowserPod(r.Context(), inst.ID); err != nil {
 				log.Printf("Failed to delete browser pod for %s: %v", utils.SanitizeForLog(inst.Name), err)
@@ -2088,6 +2128,12 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := database.DeleteBrowserSession(inst.ID); err != nil {
 		log.Printf("Failed to delete browser session row for %s: %v", utils.SanitizeForLog(inst.Name), err)
+	}
+	if BrowserAuthn != nil {
+		BrowserAuthn.Stop(inst.ID) // no-op if already stopped above
+	}
+	if err := database.DeleteBrowserPasskeysForInstance(inst.ID); err != nil {
+		log.Printf("Failed to delete browser passkeys for %s: %v", utils.SanitizeForLog(inst.Name), err)
 	}
 
 	// Delete instance-specific providers (API key is on the provider row)
@@ -2451,6 +2497,9 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		BrowserIdleMinutes: src.BrowserIdleMinutes,
 		BrowserStorage:     src.BrowserStorage,
 		BrowserActive:      src.BrowserActive,
+		// The clone gets a copy of the browser profile, so it also gets the
+		// virtual authenticator and its passkeys (copied after Create).
+		VirtualAuthenticator: src.VirtualAuthenticator,
 		// Carry over placement/service config so the clone schedules and is
 		// reachable the same way the original is.
 		PodAnnotations:            src.PodAnnotations,
@@ -2472,6 +2521,9 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 	if !src.BrowserActive {
 		database.DB.Model(&inst).Update("browser_active", false)
 		inst.BrowserActive = false
+	}
+	if err := database.CloneBrowserPasskeys(src.ID, inst.ID); err != nil {
+		log.Printf("clone: copy browser passkeys to %s: %v", utils.SanitizeForLog(inst.Name), err)
 	}
 
 	// Inherit shared folder memberships from the source so the clone mounts
@@ -2617,6 +2669,9 @@ func cloneOnCancel(instanceID uint, cloneName string) taskmanager.OnCancel {
 		}
 		if err := database.DeleteBrowserSession(instanceID); err != nil {
 			log.Printf("clone-cancel: delete browser session row for %d: %v", instanceID, err)
+		}
+		if err := database.DeleteBrowserPasskeysForInstance(instanceID); err != nil {
+			log.Printf("clone-cancel: delete browser passkeys for %d: %v", instanceID, err)
 		}
 		// Drop instance providers / gateway keys / instance row. Mirrors the
 		// teardown in DeleteInstance so a canceled clone leaves no rows behind.

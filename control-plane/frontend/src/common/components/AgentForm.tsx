@@ -17,7 +17,8 @@ import PortsEditor from "@common/components/PortsEditor";
 import StickyActionBar from "@common/components/StickyActionBar";
 import ConfirmDialog from "@common/components/ConfirmDialog";
 import AgentTypeIcon from "@common/components/AgentTypeIcon";
-import type { InstanceCreatePayload, PortSpec, ProxyMode, Toleration } from "@common/types/instance";
+import type { InstanceCreatePayload, PortSpec, ProxyMode, Toleration, VirtualAuthenticator } from "@common/types/instance";
+import { VIRTUAL_AUTHENTICATOR_HINT, VIRTUAL_AUTHENTICATOR_OPTIONS } from "@common/components/VirtualAuthenticatorSection";
 import type { UserTeamMembership } from "@common/types/auth";
 
 const AGENT_TYPE_STORAGE_KEY = "claworc.create.agentType";
@@ -85,6 +86,7 @@ export default function AgentForm({
   const [browserImage, setBrowserImage] = useState("");
   const [vncResolution, setVncResolution] = useState("");
   const [userAgent, setUserAgent] = useState("");
+  const [virtualAuthenticator, setVirtualAuthenticator] = useState<VirtualAuthenticator>("");
   const [proxyMode, setProxyMode] = useState<ProxyMode>("inherit");
   const [proxyUrl, setProxyUrl] = useState("");
 
@@ -233,6 +235,7 @@ export default function AgentForm({
       vnc_resolution: vncResolution || null,
       timezone: timezone || null,
       user_agent: userAgent || null,
+      virtual_authenticator: virtualAuthenticator,
       proxy_mode: proxyMode,
     };
     if (proxyMode === "custom") {
@@ -531,6 +534,24 @@ export default function AgentForm({
               placeholder={settings?.default_user_agent || "Browser default"}
               className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+          </div>
+          <div>
+            <label htmlFor="agent-virtual-authenticator" className="block text-xs text-gray-500 mb-1">
+              Virtual Passkey Device
+            </label>
+            <select
+              id="agent-virtual-authenticator"
+              value={virtualAuthenticator}
+              onChange={(e) => setVirtualAuthenticator(e.target.value as VirtualAuthenticator)}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            >
+              {VIRTUAL_AUTHENTICATOR_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-400 mt-1">{VIRTUAL_AUTHENTICATOR_HINT}</p>
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">Proxy</label>

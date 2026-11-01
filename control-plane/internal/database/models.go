@@ -15,6 +15,7 @@ type (
 	TeamMember         = models.TeamMember
 	TeamProvider       = models.TeamProvider
 	BrowserSession     = models.BrowserSession
+	BrowserPasskey     = models.BrowserPasskey
 	ProviderModel      = models.ProviderModel
 	ProviderModelCost  = models.ProviderModelCost
 	LLMProvider        = models.LLMProvider

@@ -59,6 +59,12 @@ type BrowserBridge struct {
 	stateCbMu             sync.RWMutex
 	onSessionStateChanged func(instanceID uint)
 
+	// onSessionReady runs after CDP answers but before the session is
+	// reported running, so anything it installs (e.g. the virtual WebAuthn
+	// authenticator, internal/browserauthn) is in place before the agent's
+	// first CDP command. Errors are logged and never fail the spawn.
+	onSessionReady func(ctx context.Context, instanceID uint) error
+
 	cancel func()
 }
 
@@ -189,6 +195,24 @@ func (b *BrowserBridge) SetOnSessionStateChanged(cb func(instanceID uint)) {
 	b.stateCbMu.Lock()
 	b.onSessionStateChanged = cb
 	b.stateCbMu.Unlock()
+}
+
+// SetOnSessionReady installs the session-ready hook (see onSessionReady).
+// Pass nil to clear.
+func (b *BrowserBridge) SetOnSessionReady(cb func(ctx context.Context, instanceID uint) error) {
+	b.stateCbMu.Lock()
+	b.onSessionReady = cb
+	b.stateCbMu.Unlock()
+}
+
+// DialCDPIfRunning dials the browser's CDP port only when a session is
+// already running — it never spawns one and does not count as activity, so
+// long-lived control-plane connections don't keep an idle browser alive.
+func (b *BrowserBridge) DialCDPIfRunning(ctx context.Context, instanceID uint) (io.ReadWriteCloser, error) {
+	if !b.IsCDPReady(ctx, instanceID) {
+		return nil, errors.New("browser session not running")
+	}
+	return b.provider.DialCDP(ctx, instanceID)
 }
 
 func (b *BrowserBridge) notifySessionStateChanged(instanceID uint) {
@@ -341,6 +365,16 @@ func (b *BrowserBridge) doSpawn(ctx context.Context, h *taskmanager.Handle, inst
 	if err := b.waitForCDPReady(ctx, instanceID, b.readyTimeout()); err != nil {
 		_ = database.UpdateBrowserSessionStatus(instanceID, "error", err.Error())
 		return err
+	}
+
+	b.stateCbMu.RLock()
+	ready := b.onSessionReady
+	b.stateCbMu.RUnlock()
+	if ready != nil {
+		h.UpdateMessage("Configuring browser")
+		if err := ready(ctx, instanceID); err != nil {
+			log.Printf("browserprov: session-ready hook instance=%d: %v", instanceID, err)
+		}
 	}
 
 	_ = database.UpdateBrowserSessionStatus(instanceID, "running", "")

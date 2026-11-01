@@ -47,6 +47,8 @@ export interface Instance {
   has_timezone_override: boolean;
   user_agent: string | null;
   has_user_agent_override: boolean;
+  /** Simulated WebAuthn device in the Agent's browser ("" = off). */
+  virtual_authenticator: VirtualAuthenticator;
   /** Outbound proxy: "inherit" uses the global default, "off" connects directly. */
   proxy_mode: ProxyMode;
   /** Custom proxy URL with the password masked; "" unless proxy_mode is "custom". */
@@ -111,6 +113,7 @@ export interface InstanceCreatePayload {
   vnc_resolution?: string | null;
   timezone?: string | null;
   user_agent?: string | null;
+  virtual_authenticator?: VirtualAuthenticator;
   proxy_mode?: ProxyMode;
   proxy_url?: string;
   enabled_providers?: number[];
@@ -144,6 +147,7 @@ export interface InstanceUpdatePayload {
   default_model?: string;
   timezone?: string;
   user_agent?: string;
+  virtual_authenticator?: VirtualAuthenticator;
   proxy_mode?: ProxyMode;
   /** Echoing the masked value back leaves the stored URL unchanged. */
   proxy_url?: string;
@@ -221,4 +225,20 @@ export interface InstanceConfigUpdate {
   config: string;
   restarted: boolean;
   language?: string;
+}
+
+/** Simulated WebAuthn device: off, built-in fingerprint, USB security key, or both. */
+export type VirtualAuthenticator = "" | "platform" | "security_key" | "both";
+
+/** A passkey stored by an Agent's virtual authenticator (no key material). */
+export interface BrowserPasskey {
+  id: number;
+  authenticator: "platform" | "security_key";
+  rp_id: string;
+  user_name: string;
+  user_display_name: string;
+  is_resident: boolean;
+  sign_count: number;
+  created_at: string;
+  last_used_at?: string;
 }

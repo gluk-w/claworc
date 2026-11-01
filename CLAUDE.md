@@ -60,6 +60,10 @@ volume cloning. It does NOT own browser-pod, terminal, or other feature-specific
 own packages (e.g. `browserprov/` for the on-demand browser pod) and depend on the orchestrator only through small
 purpose-specific backend interfaces.
 
+**Virtual Authenticator** (`internal/browserauthn/`): Simulated WebAuthn device (fingerprint and/or USB security
+key) installed over CDP into every tab of an instance's on-demand browser. Passkeys are persisted Fernet-encrypted in
+`browser_passkeys` and re-injected on every browser start, so they survive pod restarts. See `docs/virtual-authenticator.md`.
+
 **Crypto** (`internal/crypto/crypto.go`): API keys encrypted at rest in SQLite using Fernet. The Fernet key is 
 auto-generated on first run and stored in the `settings` table.
 

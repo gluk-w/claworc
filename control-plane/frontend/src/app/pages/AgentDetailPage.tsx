@@ -57,6 +57,7 @@ import { useHealth } from "@common/hooks/useHealth";
 import WebhookSection from "@common/components/WebhookSection";
 import ConnectionsSection from "@common/components/ConnectionsSection";
 import LegacyBrowserBanner from "@common/components/LegacyBrowserBanner";
+import VirtualAuthenticatorSection from "@common/components/VirtualAuthenticatorSection";
 import AppToast from "@common/components/AppToast";
 import { infoToast } from "@common/utils/toast";
 import toast from "react-hot-toast";
@@ -1225,6 +1226,13 @@ export default function AgentDetailPage() {
               )}
             </div>
           )}
+
+          {/* Virtual WebAuthn authenticator + stored passkeys (per-instance) */}
+          <VirtualAuthenticatorSection
+            instanceId={instanceId}
+            value={instance.virtual_authenticator ?? ""}
+            isLegacy={!!instance.is_legacy_embedded}
+          />
 
           {/* Composio connections (per-instance) */}
           <ConnectionsSection instanceId={instanceId} />

@@ -58,6 +58,7 @@ func AutoMigrateAll(gdb interface {
 		&models.KanbanArtifact{},
 		&models.InstanceSoul{},
 		&models.BrowserSession{},
+		&models.BrowserPasskey{},
 		&models.Team{},
 		&models.TeamMember{},
 		&models.TeamProvider{},

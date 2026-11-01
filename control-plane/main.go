@@ -19,6 +19,7 @@ import (
 	"github.com/gluk-w/claworc/control-plane/internal/analytics"
 	"github.com/gluk-w/claworc/control-plane/internal/auth"
 	"github.com/gluk-w/claworc/control-plane/internal/backup"
+	"github.com/gluk-w/claworc/control-plane/internal/browserauthn"
 	"github.com/gluk-w/claworc/control-plane/internal/browserprov"
 	"github.com/gluk-w/claworc/control-plane/internal/config"
 	"github.com/gluk-w/claworc/control-plane/internal/database"
@@ -242,6 +243,13 @@ func main() {
 		handlers.BrowserMigrator = browserprov.NewMigrator(taskMgr, orch, bridge)
 		handlers.BrowserAdmin = browserprov.AdminAdapter{Provider: provider}
 
+		// Virtual WebAuthn authenticator: installed into every tab before the
+		// session is reported running; credentials persist in the DB.
+		authnMgr := browserauthn.New(bridge.DialCDPIfRunning, bridge.IsCDPReady)
+		bridge.SetOnSessionReady(authnMgr.Start)
+		go authnMgr.Run(ctx)
+		handlers.BrowserAuthn = authnMgr
+
 		tunnelMgr.SetCDPDialProvider(func(dctx context.Context, instanceID uint) (sshproxy.DialFunc, bool) {
 			var inst database.Instance
 			if err := database.DB.First(&inst, instanceID).Error; err != nil {
@@ -438,6 +446,10 @@ func main() {
 			r.Post("/instances/{id}/browser/stop", handlers.BrowserStop)
 			r.Post("/instances/{id}/browser/migrate", handlers.BrowserMigrate)
 			r.Patch("/instances/{id}/browser-active", handlers.SetBrowserActive)
+
+			// Virtual WebAuthn authenticator passkeys (see docs/virtual-authenticator.md).
+			r.Get("/instances/{id}/passkeys", handlers.ListInstancePasskeys)
+			r.Delete("/instances/{id}/passkeys/{passkeyId}", handlers.DeleteInstancePasskey)
 
 			// Kanban
 			r.Get("/kanban/boards", handlers.ListKanbanBoards)
