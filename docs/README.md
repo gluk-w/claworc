@@ -38,6 +38,7 @@ verbs under `/opt/claworc/shim/` executed over SSH. See [shim.md](shim.md) and
 | [Adding an agent](adding-an-agent.md) | Building a new agent image and registering it |
 | [Environment variables](environment-variables.md) | Reserved, global, and per-instance env vars; skill `required_env_vars` |
 | [On-demand browser](ondemand-browser.md) | Browser pods spawned on first CDP use (design doc) |
+| [Virtual authenticator](virtual-authenticator.md) | Simulated fingerprint / security key with persistent passkeys |
 
 ### Features
 

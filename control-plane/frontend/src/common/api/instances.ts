@@ -7,6 +7,7 @@ import type {
   InstanceConfig,
   InstanceConfigUpdate,
   InstanceStats,
+  BrowserPasskey,
 } from "@common/types/instance";
 
 export async function fetchInstances(teamId?: number): Promise<Instance[]> {
@@ -117,4 +118,13 @@ export async function fetchInstanceStats(
 
 export async function updateInstanceImage(id: number): Promise<void> {
   await client.post(`/instances/${id}/update-image`);
+}
+
+export async function fetchInstancePasskeys(id: number): Promise<BrowserPasskey[]> {
+  const { data } = await client.get<BrowserPasskey[]>(`/instances/${id}/passkeys`);
+  return data;
+}
+
+export async function deleteInstancePasskey(id: number, passkeyId: number): Promise<void> {
+  await client.delete(`/instances/${id}/passkeys/${passkeyId}`);
 }

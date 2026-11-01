@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gluk-w/claworc/control-plane/internal/agentshim"
@@ -25,14 +26,25 @@ import (
 // setupAgentTypesTestDB opens an in-memory DB with every table the create
 // path touches (teams, providers, gateway keys) plus the seed settings the
 // image-resolution logic reads.
+var agentTypesDBSeq atomic.Int64
+
 func setupAgentTypesTestDB(t *testing.T) {
 	t.Helper()
-	dsn := fmt.Sprintf("file:agenttypes_%s_%p?mode=memory&cache=shared", t.Name(), t)
+	// A process-unique name: t's address can be reused across -count runs, and
+	// the connection stays open, so a reused name would resurrect the old DB.
+	dsn := fmt.Sprintf("file:agenttypes_%s_%d?mode=memory&cache=shared", t.Name(), agentTypesDBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
+	}
+	// Shared-cache in-memory SQLite returns SQLITE_LOCKED ("database table is
+	// locked") when the async provisioning goroutine spawned by CreateInstance
+	// writes on one pooled connection while the test reads on another. A single
+	// connection serialises all access and removes the flake.
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
 	}
 	if err := db.AutoMigrate(
 		&database.Instance{}, &database.Setting{}, &database.User{},

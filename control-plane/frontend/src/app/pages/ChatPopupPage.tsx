@@ -1,20 +1,22 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import ChatPanel from "@common/components/ChatPanel";
-import VncPanel from "@common/components/VncPanel";
-import { useChat } from "@common/hooks/useChat";
-import { useDesktop } from "@common/hooks/useDesktop";
-import { useChatViewMode } from "@common/hooks/useChatViewMode";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
+import AgentChatWorkspace from "@common/components/AgentChatWorkspace";
+import { useQueryClient } from "@tanstack/react-query";
 import { useInstance } from "@common/hooks/useInstances";
+import { fetchInstance } from "@common/api/instances";
 import type { ChatMessage } from "@common/types/chat";
 
-function useHistoryFromOpener(instanceId: number): ChatMessage[] | undefined {
-  const [history, setHistory] = useState<ChatMessage[] | undefined>(
-    window.opener ? undefined : [],
-  );
+/**
+ * Asks the opener window for the chat history it already has. Skipped when
+ * `skip` is set (agent switched inside the pop-out — the opener only answers
+ * for the agent it opened, so asking would just wait out the timeout).
+ */
+function useHistoryFromOpener(instanceId: number, skip: boolean): ChatMessage[] | undefined {
+  const askOpener = !!window.opener && !skip;
+  const [history, setHistory] = useState<ChatMessage[] | undefined>(askOpener ? undefined : []);
 
   useEffect(() => {
-    if (!window.opener) return;
+    if (!askOpener) return;
 
     const handler = (e: MessageEvent) => {
       if (e.origin !== window.location.origin) return;
@@ -31,20 +33,34 @@ function useHistoryFromOpener(instanceId: number): ChatMessage[] | undefined {
       window.removeEventListener("message", handler);
       clearTimeout(timeout);
     };
-  }, [instanceId]);
+  }, [instanceId, askOpener]);
 
   return history;
 }
 
 /** Inner component — only mounted once initial messages are resolved */
 function ChatPopupInner({ instanceId, initialMessages }: { instanceId: number; initialMessages: ChatMessage[] }) {
+  const navigate = useNavigate();
   const { data: instance, isLoading } = useInstance(instanceId);
-  const [chatViewMode, setChatViewMode] = useChatViewMode(instanceId, instance?.browser_active);
-  const chatHook = useChat(instanceId, instance?.status === "running", initialMessages, {
-    canStop: instance?.agent_capabilities?.chat_abort,
-    canReset: instance?.agent_capabilities?.session_reset,
-  });
-  const desktopHook = useDesktop(instanceId, chatViewMode === "chat-browser" && instance?.status === "running");
+  const displayName = instance?.display_name;
+
+  // Show the agent's name in the window/tab title.
+  useEffect(() => {
+    if (!displayName) return;
+    const prev = document.title;
+    document.title = `${displayName} — Chat`;
+    return () => {
+      document.title = prev;
+    };
+  }, [displayName]);
+
+  const qc = useQueryClient();
+  const handleSwitchAgent = async (id: number) => {
+    if (id === instanceId) return;
+    // Prefetch so the pop-out goes straight to the new chat (no loading flash).
+    await qc.ensureQueryData({ queryKey: ["instances", id], queryFn: () => fetchInstance(id) });
+    navigate(`/instances/${id}/chat`, { replace: true, state: { switched: true } });
+  };
 
   if (isLoading) {
     return <div className="flex items-center justify-center h-screen bg-gray-900 text-gray-400">Loading...</div>;
@@ -59,48 +75,34 @@ function ChatPopupInner({ instanceId, initialMessages }: { instanceId: number; i
   }
 
   return (
-    <div className="h-screen flex">
-      <div className={chatViewMode === "chat-browser" ? "w-[400px] flex-shrink-0 border-r border-gray-700 relative" : "flex-1 relative"}>
-        <ChatPanel
-          messages={chatHook.messages}
-          connectionState={chatHook.connectionState}
-          thinkingLabel={chatHook.thinkingLabel}
-          onSend={chatHook.sendMessage}
-          onStop={chatHook.stopResponse}
-          onNewChat={chatHook.newChat}
-          canStop={chatHook.canStop}
-          canNewChat={chatHook.canReset}
-          onReconnect={chatHook.reconnect}
-          viewMode={chatViewMode}
-          onViewModeChange={setChatViewMode}
-        />
-      </div>
-      {chatViewMode === "chat-browser" && (
-        <div className="flex-1 min-w-0 relative">
-          <VncPanel
-            instanceId={instanceId}
-            connectionState={desktopHook.connectionState}
-            containerRef={desktopHook.containerRef}
-            reconnect={desktopHook.reconnect}
-            copyFromRemote={desktopHook.copyFromRemote}
-            pasteToRemote={desktopHook.pasteToRemote}
-            showNewWindow={false}
-            showFullscreen={false}
-          />
-        </div>
-      )}
+    <div className="h-screen flex flex-col">
+      <AgentChatWorkspace
+        instance={instance}
+        initialMessages={initialMessages}
+        switcherMode="always"
+        onSwitchAgent={handleSwitchAgent}
+        showNewWindow={false}
+      />
     </div>
   );
 }
 
-export default function ChatPopupPage() {
-  const { id } = useParams<{ id: string }>();
-  const instanceId = Number(id);
-  const initialMessages = useHistoryFromOpener(instanceId);
+function ChatPopupForInstance({ instanceId, switched }: { instanceId: number; switched: boolean }) {
+  const initialMessages = useHistoryFromOpener(instanceId, switched);
 
   if (initialMessages === undefined) {
     return <div className="flex items-center justify-center h-screen bg-gray-900 text-gray-400">Loading...</div>;
   }
 
   return <ChatPopupInner instanceId={instanceId} initialMessages={initialMessages} />;
+}
+
+export default function ChatPopupPage() {
+  const { id } = useParams<{ id: string }>();
+  const location = useLocation();
+  const instanceId = Number(id);
+  const switched = !!(location.state as { switched?: boolean } | null)?.switched;
+
+  // Key on the agent so switching resets chat history, sockets and VNC.
+  return <ChatPopupForInstance key={instanceId} instanceId={instanceId} switched={switched} />;
 }
