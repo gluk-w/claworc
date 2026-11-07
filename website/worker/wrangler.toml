@@ -1,4 +1,5 @@
 name = "claworc-providers"
+account_id = "0becc4151be8c6c0c8c026803bcdc7fa"
 main = "index.ts"
 compatibility_date = "2024-01-01"
 
